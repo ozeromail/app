@@ -6,7 +6,7 @@ on:
     branches: [main]
     paths: ["core/**", "tools/build-xcframework.sh", ".github/workflows/ios-core.yml"]
   pull_request:
-    paths: ["tools/build-xcframework.sh", ".github/workflows/ios-core.yml"]
+    paths: ["core/.cargo/**", "tools/build-xcframework.sh", ".github/workflows/ios-core.yml"]
   workflow_dispatch:
 
 permissions:
