@@ -25,9 +25,10 @@ class Vault(context: Context) {
             put(DATABASE_KEY, it)
         }
 
-    fun password(account: Long): String? = get("password.$account")?.decodeToString()
+    /** Keyed by email, which is unique per account and known before the account is saved. */
+    fun password(email: String): String? = get("password.${email.lowercase()}")?.decodeToString()
 
-    fun setPassword(account: Long, password: String) = put("password.$account", password.encodeToByteArray())
+    fun setPassword(email: String, password: String) = put("password.${email.lowercase()}", password.encodeToByteArray())
 
     // Written at once: a lost database key makes the whole database unreadable.
     @SuppressLint("ApplySharedPref")

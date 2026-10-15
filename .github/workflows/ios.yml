@@ -1,0 +1,39 @@
+name: ios
+
+# macOS minutes cost 10x, so PRs run this only when the Swift API or iOS files change.
+on:
+  push:
+    branches: [main]
+    paths: ["core/**", "ios/**", "i18n/**", "tools/build-xcframework.sh", "tools/gen-strings.py", ".github/workflows/ios.yml"]
+  pull_request:
+    paths: ["core/.cargo/**", "core/api/**", "ios/**", "tools/build-xcframework.sh", "tools/gen-strings.py", ".github/workflows/ios.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: core and app
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust iOS targets
+        working-directory: core
+        run: |
+          rustup toolchain install
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: tools/build-xcframework.sh
+      - name: Build the app for the simulator
+        run: >
+          xcodebuild build -project ios/OzeroMail.xcodeproj -target OzeroMail
+          -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO

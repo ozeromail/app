@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Generates Android strings.xml from i18n/*.json into the given res directory."""
+"""Generates platform strings from i18n/*.json.
+
+Android: gen-strings.py <res dir> writes values*/strings.xml.
+Apple:   gen-strings.py --apple <dir> writes <locale>.lproj/Localizable.strings.
+"""
 import json
 import shutil
 import sys
@@ -27,17 +31,33 @@ def values_dir(locale):
     return "values-b+" + "+".join(parts)
 
 
+def android(strings, locale):
+    lines = ["<resources>"]
+    lines += [f'    <string name="{k}">{android_value(v)}</string>' for k, v in strings.items()]
+    lines.append("</resources>\n")
+    return [(Path(values_dir(locale)) / "strings.xml", "\n".join(lines))]
+
+
+def apple(strings, locale):
+    # A JSON string literal is also a valid .strings value.
+    lines = [f'"{k}" = {json.dumps(v, ensure_ascii=False)};' for k, v in strings.items()]
+    name = f'"CFBundleDisplayName" = {json.dumps(strings["app_name"], ensure_ascii=False)};\n'
+    folder = Path(f"{locale}.lproj")
+    return [(folder / "Localizable.strings", "\n".join(lines) + "\n"), (folder / "InfoPlist.strings", name)]
+
+
 def main():
-    res = Path(sys.argv[1])
-    shutil.rmtree(res, ignore_errors=True)
+    args = sys.argv[1:]
+    generate = apple if args[0] == "--apple" else android
+    out_dir = Path(args[-1])
+    if generate is android:
+        # Android owns the whole generated res dir; on Apple it is the app bundle.
+        shutil.rmtree(out_dir, ignore_errors=True)
     for src in sorted(I18N.glob("*.json")):
-        strings = json.loads(src.read_text(encoding="utf-8"))
-        lines = ["<resources>"]
-        lines += [f'    <string name="{k}">{android_value(v)}</string>' for k, v in strings.items()]
-        lines.append("</resources>\n")
-        out = res / values_dir(src.stem) / "strings.xml"
-        out.parent.mkdir(parents=True)
-        out.write_text("\n".join(lines), encoding="utf-8")
+        for path, text in generate(json.loads(src.read_text(encoding="utf-8")), src.stem):
+            out = out_dir / path
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(text, encoding="utf-8")
 
 
 if __name__ == "__main__":
