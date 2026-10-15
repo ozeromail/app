@@ -28,6 +28,11 @@ android {
         compose = true
     }
 
+    buildTypes {
+        release {
+            proguardFiles("proguard-rules.pro")
+        }
+    }
 }
 
 kotlin {
@@ -99,10 +104,18 @@ androidComponents {
     }
 }
 
+// The verifier's Kotlin half must be the version the Rust crate in Cargo.lock expects.
+val verifierVersion = providers.fileContents(coreDir.file("Cargo.lock")).asText.map { lock ->
+    Regex("name = \"rustls-platform-verifier-android\"\nversion = \"([^\"]+)\"")
+        .find(lock)?.groupValues?.get(1)
+        ?: error("rustls-platform-verifier-android is missing from core/Cargo.lock")
+}
+
 dependencies {
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.material3)
     implementation(libs.activity.compose)
     implementation(libs.jna) { artifact { type = "aar" } }
     implementation(libs.coroutines.android)
+    implementation(verifierVersion.map { "org.rustls:rustls-platform-verifier:$it" })
 }

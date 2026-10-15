@@ -15,6 +15,7 @@ ozero-app = { path = "app" }
 ozero-imap = { path = "adapters/imap" }
 ozero-mime = { path = "adapters/mime" }
 ozero-store-sqlite = { path = "adapters/store-sqlite" }
+rustls-platform-verifier = "0.7"
 uniffi = { version = "0.32", default-features = false }
 
 [workspace.lints.rust]

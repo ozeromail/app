@@ -14,7 +14,7 @@ imap-codec = "=2.0.0-alpha.9"
 bounded-static = { version = "0.8", default-features = false }
 # imap-codec needs nom's `alloc` but does not enable it.
 nom = { version = "7", default-features = false, features = ["alloc"] }
-rustls-platform-verifier = "0.7"
+rustls-platform-verifier.workspace = true
 tokio = { version = "1.53", default-features = false, features = ["net", "io-util", "time"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 

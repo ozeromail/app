@@ -22,5 +22,10 @@ ozero-store-sqlite.workspace = true
 tokio = { version = "1.53", default-features = false, features = ["rt", "net", "time"] }
 uniffi = { workspace = true, features = ["tokio"] }
 
+# Android's certificate verifier is set up from Kotlin through one JNI call.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = { version = "0.22", default-features = false }
+rustls-platform-verifier.workspace = true
+
 [lints]
 workspace = true

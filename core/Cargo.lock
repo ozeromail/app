@@ -617,11 +617,13 @@ dependencies = [
 name = "ozero-api"
 version = "0.1.0"
 dependencies = [
+ "jni",
  "ozero-app",
  "ozero-domain",
  "ozero-imap",
  "ozero-mime",
  "ozero-store-sqlite",
+ "rustls-platform-verifier",
  "tokio",
  "uniffi",
 ]
