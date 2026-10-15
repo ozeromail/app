@@ -1,0 +1,15 @@
+[package]
+name = "ozero-store-sqlite"
+description = "Store port on SQLite, encrypted with SQLCipher."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ozero-domain.workspace = true
+rusqlite = { version = "0.40", default-features = false, features = ["bundled-sqlcipher-vendored-openssl", "cache"] }
+
+[lints]
+workspace = true
