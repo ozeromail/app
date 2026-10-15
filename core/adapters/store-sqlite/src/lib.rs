@@ -313,9 +313,9 @@ impl Store for SqliteStore {
         let tx = conn.transaction().map_err(storage)?;
         require(&tx, "SELECT 1 FROM message WHERE id = ?1", message.0)?;
         tx.execute(
-            "INSERT INTO message_body (message_id, text) VALUES (?1, ?2)
-             ON CONFLICT (message_id) DO UPDATE SET text = excluded.text",
-            params![message.0, body.text],
+            "INSERT INTO message_body (message_id, text, html) VALUES (?1, ?2, ?3)
+             ON CONFLICT (message_id) DO UPDATE SET text = excluded.text, html = excluded.html",
+            params![message.0, body.text, body.html],
         )
         .map_err(storage)?;
         tx.execute(
@@ -328,10 +328,15 @@ impl Store for SqliteStore {
 
     fn body(&self, message: MessageId) -> Result<Option<Body>, StoreError> {
         self.conn()
-            .prepare_cached("SELECT text FROM message_body WHERE message_id = ?1")
+            .prepare_cached("SELECT text, html FROM message_body WHERE message_id = ?1")
             .and_then(|mut s| {
-                s.query_row([message.0], |r| Ok(Body { text: r.get(0)? }))
-                    .optional()
+                s.query_row([message.0], |r| {
+                    Ok(Body {
+                        text: r.get(0)?,
+                        html: r.get(1)?,
+                    })
+                })
+                .optional()
             })
             .map_err(storage)
     }

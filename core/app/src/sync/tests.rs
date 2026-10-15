@@ -81,6 +81,7 @@ impl MessageParser for Parser {
     fn parse_body(&self, raw: &[u8]) -> Body {
         Body {
             text: String::from_utf8_lossy(raw).into(),
+            html: None,
         }
     }
 }

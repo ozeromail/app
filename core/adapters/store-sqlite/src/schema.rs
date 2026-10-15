@@ -50,4 +50,6 @@ pub const MIGRATIONS: &[&str] = &[
         text       TEXT NOT NULL
     );
     ",
+    // 5: the HTML part of a body.
+    "ALTER TABLE message_body ADD COLUMN html TEXT;",
 ];

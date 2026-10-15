@@ -1,5 +1,6 @@
 //! `MessageParser` on mail-parser: decodes headers in any charset.
 
+use mail_parser::PartType;
 use ozero_domain::{Address, Body, MessageParser, NewMessage, RawMessage};
 
 #[derive(Debug, Default)]
@@ -31,12 +32,24 @@ impl MessageParser for MimeParser {
     }
 
     fn parse_body(&self, raw: &[u8]) -> Body {
-        let text = self
-            .0
-            .parse(raw)
-            .and_then(|m| m.body_text(0).map(|t| t.trim_end().to_owned()))
-            .unwrap_or_default();
-        Body { text }
+        let Some(message) = self.0.parse(raw) else {
+            return Body {
+                text: String::new(),
+                html: None,
+            };
+        };
+        // `body_html` would turn a plain text part into HTML; only a real HTML part counts.
+        let html = message.html_part(0).and_then(|p| match &p.body {
+            PartType::Html(html) => Some(html.to_string()),
+            _ => None,
+        });
+        Body {
+            text: message
+                .body_text(0)
+                .map(|t| t.trim_end().to_owned())
+                .unwrap_or_default(),
+            html,
+        }
     }
 }
 
@@ -85,6 +98,7 @@ mod tests {
               --b\r\nContent-Type: text/html\r\n\r\n<p>Hello</p>\r\n--b--\r\n",
         );
         assert_eq!(body.text, "Привет");
+        assert_eq!(body.html.as_deref(), Some("<p>Hello</p>"));
     }
 
     #[test]
@@ -92,6 +106,14 @@ mod tests {
         let body = MimeParser::default()
             .parse_body(b"Content-Type: text/html\r\n\r\n<p>Hello <b>there</b></p>");
         assert_eq!(body.text, "Hello there");
+        assert_eq!(body.html.as_deref(), Some("<p>Hello <b>there</b></p>"));
+    }
+
+    #[test]
+    fn plain_text_has_no_html() {
+        let body = MimeParser::default().parse_body(b"Subject: Hi\r\n\r\nJust text");
+        assert_eq!(body.text, "Just text");
+        assert_eq!(body.html, None);
     }
 
     #[test]

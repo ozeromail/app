@@ -327,6 +327,7 @@ fn body_is_saved_with_its_snippet() {
 
     let body = Body {
         text: "Hi Anna,\nsee you soon".into(),
+        html: Some("<p>Hi Anna,</p>".into()),
     };
     store.save_body(id, &body).unwrap();
     assert_eq!(store.body(id).unwrap().as_ref(), Some(&body));
