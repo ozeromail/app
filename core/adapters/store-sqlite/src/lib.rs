@@ -7,7 +7,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use ozero_domain::{
     Account, AccountId, AccountKind, Address, Flags, Folder, FolderId, FolderRole, ListQuery,
-    ListScope, MessageId, MessageRow, NewAccount, NewFolder, NewMessage, Store, StoreError,
+    ListScope, MessageId, MessageRow, NewAccount, NewFolder, NewMessage, Server, Store, StoreError,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{Connection, ErrorCode, OptionalExtension, Row, Transaction, params};
@@ -101,9 +101,18 @@ fn migrate(conn: &Connection) -> Result<(), StoreError> {
 impl Store for SqliteStore {
     fn add_account(&self, account: &NewAccount) -> Result<AccountId, StoreError> {
         let conn = self.conn();
+        let server = account.server.as_ref();
         conn.execute(
-            "INSERT INTO account (kind, email, display_name) VALUES (?1, ?2, ?3)",
-            params![kind_str(account.kind), account.email, account.display_name],
+            "INSERT INTO account (kind, email, display_name, server_host, server_port, server_user)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                kind_str(account.kind),
+                account.email,
+                account.display_name,
+                server.map(|s| &s.host),
+                server.map(|s| s.port),
+                server.map(|s| &s.user),
+            ],
         )
         .map_err(storage)?;
         Ok(AccountId(conn.last_insert_rowid()))
@@ -112,14 +121,22 @@ impl Store for SqliteStore {
     fn accounts(&self) -> Result<Vec<Account>, StoreError> {
         let conn = self.conn();
         let mut stmt = conn
-            .prepare_cached("SELECT id, kind, email, display_name FROM account ORDER BY id")
+            .prepare_cached(
+                "SELECT id, kind, email, display_name, server_host, server_port, server_user
+                 FROM account ORDER BY id",
+            )
             .map_err(storage)?;
         let rows = stmt.query_map([], |r| {
+            let server = match (r.get(4)?, r.get(5)?, r.get(6)?) {
+                (Some(host), Some(port), Some(user)) => Some(Server { host, port, user }),
+                _ => None,
+            };
             Ok(Account {
                 id: AccountId(r.get(0)?),
                 kind: r.get::<_, Kind>(1)?.0,
                 email: r.get(2)?,
                 display_name: r.get(3)?,
+                server,
             })
         });
         rows.and_then(|rows| rows.collect()).map_err(storage)

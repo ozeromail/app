@@ -2,5 +2,19 @@
   "app_name": "Ozero Mail",
   "inbox_title": "Inbox",
   "action_done": "Done",
-  "action_undo": "Undo"
+  "action_undo": "Undo",
+  "signin_title": "Add an account",
+  "signin_email": "Email",
+  "signin_password": "Password",
+  "signin_server": "IMAP server",
+  "signin_port": "Port",
+  "signin_action": "Sign in",
+  "inbox_empty": "No messages",
+  "inbox_no_subject": "No subject",
+  "error_auth": "The server didn’t accept this email and password.",
+  "error_network": "Can’t reach the server. Check the connection.",
+  "error_tls": "Can’t set up a secure connection to the server.",
+  "error_server": "The server replied with an error. Try again later.",
+  "error_storage": "Can’t read the mail saved on this device.",
+  "error_account_exists": "This account is already added."
 }
