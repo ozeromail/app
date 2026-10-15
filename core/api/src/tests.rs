@@ -38,7 +38,8 @@ fn html_is_wrapped_in_a_locked_page() {
     assert!(page.contains("default-src 'none'"));
     assert!(page.ends_with("<p>Hi</p></body></html>"));
     // A policy covers only what follows it, so it must come before the message.
-    assert!(page.find("Content-Security-Policy") < page.find("<p>Hi</p>"));
+    let policy = page.find("Content-Security-Policy").unwrap();
+    assert!(policy < page.find("<p>Hi</p>").unwrap());
 }
 
 #[test]

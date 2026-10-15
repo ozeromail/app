@@ -33,7 +33,7 @@ private fun WebView.configure() {
         allowFileAccess = false
         allowContentAccess = false
         blockNetworkLoads = true
-        // Wide newsletters start zoomed out to fit, and can be pinched.
+        // The page sets its own viewport; wider newsletters can be pinched.
         loadWithOverviewMode = true
         useWideViewPort = true
         builtInZoomControls = true
@@ -42,9 +42,11 @@ private fun WebView.configure() {
     webViewClient = object : WebViewClient() {
         // Only a tap opens a link; a page cannot redirect on its own.
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-            if (request.hasGesture() && request.url.scheme in LINK_SCHEMES) {
+            if (request.hasGesture() && request.url.scheme?.lowercase() in LINK_SCHEMES) {
                 try {
-                    view.context.startActivity(Intent(Intent.ACTION_VIEW, request.url))
+                    // Only apps that take links from a browser may open it.
+                    val intent = Intent(Intent.ACTION_VIEW, request.url).addCategory(Intent.CATEGORY_BROWSABLE)
+                    view.context.startActivity(intent)
                 } catch (_: ActivityNotFoundException) {
                     // Nothing handles this link; ignore the tap.
                 }
