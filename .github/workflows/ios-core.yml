@@ -1,0 +1,31 @@
+name: ios-core
+
+# macOS minutes cost 10x, so this runs on main and when the build script changes.
+on:
+  push:
+    branches: [main]
+    paths: ["core/**", "tools/build-xcframework.sh", ".github/workflows/ios-core.yml"]
+  pull_request:
+    paths: ["tools/build-xcframework.sh", ".github/workflows/ios-core.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  xcframework:
+    name: XCFramework
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust iOS targets
+        working-directory: core
+        run: |
+          rustup toolchain install
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: tools/build-xcframework.sh
