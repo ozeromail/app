@@ -11,6 +11,7 @@
 ```
 core/    Rust core: domain → app → api
 android/ Android app (Jetpack Compose)
+ios/     iOS app (SwiftUI)
 i18n/    UI strings: en.json (source), ru.json
 tools/   CI checks
 docs/    decisions (ADR)
@@ -28,4 +29,11 @@ The Android build also needs the Android SDK and NDK and `cargo install cargo-nd
 
 ```sh
 cd android && ./gradlew :app:assembleDebug
+```
+
+The iOS app needs Xcode 16 and the core built as an XCFramework first:
+
+```sh
+tools/build-xcframework.sh
+open ios/OzeroMail.xcodeproj
 ```

@@ -7,7 +7,7 @@ mod provider;
 mod sort;
 mod store;
 
-pub use account::{Account, AccountId, AccountKind, NewAccount, Server};
+pub use account::{Account, AccountId, AccountKind, NewAccount, Server, guess_imap_host};
 pub use folder::{Folder, FolderId, FolderRole, NewFolder};
 pub use message::{
     Address, Cursor, Flags, ListQuery, ListScope, MessageId, MessageRow, NewMessage,

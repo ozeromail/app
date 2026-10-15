@@ -5,7 +5,6 @@ import android.util.Log
 import androidx.annotation.StringRes
 import java.io.File
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -28,19 +27,18 @@ class Mail(private val context: Context) {
 
     /**
      * The core saves the account only after the server has accepted the login.
-     * Not cancellable: leaving the screen must not save an account without its password.
+     * The password goes first, so a saved account always has one.
      */
-    suspend fun signIn(email: String, password: String, host: String, port: Int) =
-        withContext(Dispatchers.IO + NonCancellable) {
-            val id = core.addImapAccount(email, email, host, port.toUShort(), password)
-            vault.setPassword(id, password)
-        }
+    suspend fun signIn(email: String, password: String, host: String, port: Int) = io {
+        vault.setPassword(email, password)
+        core.addImapAccount(email, email, host, port.toUShort(), password)
+    }
 
     /** Syncs all accounts at once; the first failure is thrown once every one has finished. */
     suspend fun refresh() = io {
         val failures = coroutineScope {
             core.accounts().mapNotNull { account ->
-                val password = vault.password(account.id) ?: return@mapNotNull null
+                val password = vault.password(account.email) ?: return@mapNotNull null
                 async {
                     try {
                         core.syncImap(account.id, password)

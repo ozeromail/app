@@ -25,6 +25,12 @@ pub fn core_version() -> String {
     env!("CARGO_PKG_VERSION").to_owned()
 }
 
+/// The server sign-in suggests for an email address, or nothing until it has a domain.
+#[uniffi::export]
+pub fn suggested_imap_host(email: String) -> Option<String> {
+    ozero_domain::guess_imap_host(&email)
+}
+
 /// The mail core of one app install: the encrypted database and the network.
 #[derive(uniffi::Object)]
 pub struct Core {

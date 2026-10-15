@@ -35,3 +35,29 @@ pub struct Account {
     pub display_name: String,
     pub server: Option<Server>,
 }
+
+/// The usual IMAP host for an email address (`imap.<domain>`), for sign-in to suggest.
+pub fn guess_imap_host(email: &str) -> Option<String> {
+    // The last '@': a quoted local part may contain one too.
+    let domain = email.rsplit_once('@')?.1.trim().to_ascii_lowercase();
+    (!domain.is_empty()).then(|| format!("imap.{domain}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn guesses_the_imap_host() {
+        assert_eq!(
+            guess_imap_host("a@example.com ").as_deref(),
+            Some("imap.example.com")
+        );
+        assert_eq!(
+            guess_imap_host("\"a@b\"@Example.com").as_deref(),
+            Some("imap.example.com")
+        );
+        assert_eq!(guess_imap_host("a@"), None);
+        assert_eq!(guess_imap_host("example.com"), None);
+    }
+}

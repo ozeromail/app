@@ -32,6 +32,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import uniffi.ozero_api.CoreException
+import uniffi.ozero_api.suggestedImapHost
 
 /** Adds an IMAP account. The fields sit in the lower half, in reach of the thumb. */
 @Composable
@@ -46,10 +47,10 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit) {
     var error by remember { mutableStateOf<Int?>(null) }
     val scope = rememberCoroutineScope()
 
-    val domain = email.substringAfter('@', "").trim()
-    val host = server ?: if (domain.isEmpty()) "" else "imap.$domain"
+    val suggested = suggestedImapHost(email)
+    val host = (server ?: suggested ?: "").trim()
     val portNumber = port.toIntOrNull()?.takeIf { it in 1..65535 }
-    val ready = !busy && domain.isNotEmpty() && password.isNotEmpty() && host.isNotBlank() && portNumber != null
+    val ready = !busy && suggested != null && password.isNotEmpty() && host.isNotEmpty() && portNumber != null
 
     fun submit() {
         if (!ready || portNumber == null) return
@@ -57,7 +58,7 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit) {
         error = null
         scope.launch {
             try {
-                mail.signIn(email.trim(), password, host.trim(), portNumber)
+                mail.signIn(email.trim(), password, host, portNumber)
                 onSignedIn()
             } catch (e: CoreException) {
                 error = e.text()
