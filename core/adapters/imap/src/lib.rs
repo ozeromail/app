@@ -46,6 +46,17 @@ impl std::fmt::Debug for ImapSession {
     }
 }
 
+pub use tokio_rustls::rustls;
+
+/// TLS settings that trust the same root certificates as the OS.
+/// On Android the verifier must be initialized from Kotlin first.
+pub fn platform_tls() -> Result<Arc<ClientConfig>, ProviderError> {
+    use rustls_platform_verifier::ConfigVerifierExt;
+    ClientConfig::with_platform_verifier()
+        .map(Arc::new)
+        .map_err(|e| ProviderError::Network(e.to_string()))
+}
+
 /// The tagged end of a command and the untagged responses before it.
 struct Reply {
     kind: StatusKind,

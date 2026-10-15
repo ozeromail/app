@@ -48,7 +48,7 @@ jobs:
           workspaces: core
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: tools/dovecot-test.sh
-      - run: cargo test --locked -p ozero-imap -- --ignored
+      - run: cargo test --locked -p ozero-imap -p ozero-api -- --ignored
         working-directory: core
 
   rules:
