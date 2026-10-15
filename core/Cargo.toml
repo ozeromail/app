@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["domain", "app", "api", "api/bindgen", "adapters/store-sqlite"]
+members = ["domain", "app", "api", "api/bindgen", "adapters/store-sqlite", "adapters/mime", "adapters/imap"]
 
 [workspace.package]
 version = "0.1.0"
