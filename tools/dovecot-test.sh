@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Starts a Dovecot with test mail for the IMAP tests:
-#   tools/dovecot-test.sh && cd core && cargo test -p ozero-imap -- --ignored
+#   tools/dovecot-test.sh && cd core && cargo test -p ozero-imap -p ozero-api -- --ignored
 set -euo pipefail
 
 dir="$(cd "$(dirname "$0")/../core/adapters/imap/tests/dovecot" && pwd)"
