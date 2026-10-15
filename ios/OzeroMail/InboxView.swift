@@ -18,10 +18,15 @@ struct InboxView: View {
                         .frame(maxWidth: .infinity)
                         .listRowSeparator(.hidden)
                 }
-                ForEach(messages ?? [], id: \.id) { MessageRow(message: $0) }
+                ForEach(messages ?? [], id: \.id) { message in
+                    NavigationLink(value: message) { MessageRow(message: message) }
+                }
             }
             .listStyle(.plain)
             .navigationTitle("inbox_title")
+            .navigationDestination(for: MessageItem.self) { MessageView(mail: mail, message: $0) }
+            // Back from a message, which now has a snippet.
+            .onAppear { if messages != nil { Task { await load() } } }
             .refreshable { await sync() }
             .safeAreaInset(edge: .bottom) {
                 if let error {
@@ -67,7 +72,7 @@ private struct MessageRow: View {
                 .frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(sender)
+                    Text(message.sender)
                         .fontWeight(message.seen ? .regular : .semibold)
                         .lineLimit(1)
                     Spacer()
@@ -75,21 +80,29 @@ private struct MessageRow: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
-                subject
+                message.subjectText
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                if !message.snippet.isEmpty {
+                    Text(message.snippet)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
             }
         }
     }
+}
 
-    private var sender: String {
-        let name = message.fromName?.trimmingCharacters(in: .whitespaces) ?? ""
-        return name.isEmpty ? message.fromEmail : name
+extension MessageItem {
+    /// The name, or the address when there is none.
+    var sender: String {
+        let name = fromName?.trimmingCharacters(in: .whitespaces) ?? ""
+        return name.isEmpty ? fromEmail : name
     }
 
-    private var subject: Text {
-        message.subject.trimmingCharacters(in: .whitespaces).isEmpty
-            ? Text("inbox_no_subject") : Text(message.subject)
+    var subjectText: Text {
+        subject.trimmingCharacters(in: .whitespaces).isEmpty ? Text("inbox_no_subject") : Text(subject)
     }
 }
 

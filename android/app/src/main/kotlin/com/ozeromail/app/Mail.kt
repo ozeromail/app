@@ -34,6 +34,15 @@ class Mail(private val context: Context) {
         core.addImapAccount(email, email, host, port.toUShort(), password)
     }
 
+    /**
+     * The message text, downloaded once by the core.
+     * A missing password only matters for a download, which then fails to log in.
+     */
+    suspend fun text(message: MessageItem): String = io {
+        val account = core.accounts().firstOrNull { it.id == message.accountId }
+        core.messageText(message.id, account?.let { vault.password(it.email) }.orEmpty())
+    }
+
     /** Syncs all accounts at once; the first failure is thrown once every one has finished. */
     suspend fun refresh() = io {
         val failures = coroutineScope {
@@ -70,6 +79,7 @@ fun CoreException.text(): Int {
         is CoreException.Network -> R.string.error_network
         is CoreException.Tls -> R.string.error_tls
         is CoreException.Server -> R.string.error_server
+        is CoreException.Gone -> R.string.error_gone
         else -> R.string.error_storage
     }
 }

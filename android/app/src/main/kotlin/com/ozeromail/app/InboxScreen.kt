@@ -3,6 +3,7 @@ package com.ozeromail.app
 import android.content.Context
 import android.text.format.DateUtils
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -47,6 +49,8 @@ fun InboxScreen(mail: Mail) {
     var messages by remember { mutableStateOf(emptyList<MessageItem>()) }
     var syncing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<Int?>(null) }
+    var open by remember { mutableStateOf<MessageItem?>(null) }
+    val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
     suspend fun load() {
@@ -77,6 +81,16 @@ fun InboxScreen(mail: Mail) {
         sync()
     }
 
+    val opened = open
+    if (opened != null) {
+        // Back reloads the list: the message now has a snippet.
+        MessageScreen(mail, opened, onBack = {
+            open = null
+            scope.launch { load() }
+        })
+        return
+    }
+
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
         Text(
             stringResource(R.string.inbox_title),
@@ -89,12 +103,12 @@ fun InboxScreen(mail: Mail) {
             onRefresh = { if (!syncing) scope.launch { sync() } },
             modifier = Modifier.weight(1f),
         ) {
-            LazyColumn(Modifier.fillMaxSize()) {
+            LazyColumn(Modifier.fillMaxSize(), state = listState) {
                 if (messages.isEmpty() && !syncing && error == null) {
                     item { Empty() }
                 }
                 items(messages, key = { it.id }) { message ->
-                    MessageRow(message)
+                    MessageRow(message, onClick = { open = message })
                     HorizontalDivider(Modifier.padding(start = 36.dp), color = MaterialTheme.colorScheme.outlineVariant)
                 }
             }
@@ -118,10 +132,10 @@ private fun Empty() {
 }
 
 @Composable
-private fun MessageRow(message: MessageItem) {
+private fun MessageRow(message: MessageItem, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     Row(
-        Modifier.fillMaxWidth().padding(vertical = 10.dp),
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 10.dp),
         verticalAlignment = Alignment.Top,
     ) {
         Box(Modifier.width(36.dp).padding(top = 7.dp), contentAlignment = Alignment.Center) {
@@ -132,7 +146,7 @@ private fun MessageRow(message: MessageItem) {
         Column(Modifier.weight(1f).padding(end = 20.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    message.fromName?.takeIf { it.isNotBlank() } ?: message.fromEmail,
+                    message.sender,
                     fontWeight = if (message.seen) FontWeight.Normal else FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -142,14 +156,30 @@ private fun MessageRow(message: MessageItem) {
                 Text(shortDate(LocalContext.current, message.date), color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
             Text(
-                message.subject.ifBlank { stringResource(R.string.inbox_no_subject) },
+                message.subjectText(),
                 color = colors.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (message.snippet.isNotBlank()) {
+                Text(
+                    message.snippet,
+                    color = colors.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
+
+/** The name, or the address when there is none. */
+val MessageItem.sender: String
+    get() = fromName?.takeIf { it.isNotBlank() } ?: fromEmail
+
+@Composable
+fun MessageItem.subjectText(): String = subject.ifBlank { stringResource(R.string.inbox_no_subject) }
 
 /** Time for today, otherwise the date; the year only when it is not this year. */
 private fun shortDate(context: Context, seconds: Long): String {
