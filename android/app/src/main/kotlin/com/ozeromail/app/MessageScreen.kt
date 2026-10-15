@@ -51,10 +51,11 @@ fun MessageScreen(mail: Mail, message: MessageItem, onBack: () -> Unit) {
         Header(message, Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp))
         HorizontalDivider(Modifier.padding(top = 12.dp), color = colors.outlineVariant)
         val shown = body
+        val html = shown?.html
         val failed = error
         val content = Modifier.weight(1f).fillMaxWidth()
         when {
-            shown?.html != null -> HtmlView(shown.html, content)
+            html != null -> HtmlView(html, content)
             shown != null -> SelectionContainer(content.verticalScroll(rememberScrollState()).padding(20.dp)) {
                 Text(shown.text)
             }
