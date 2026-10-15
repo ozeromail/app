@@ -17,7 +17,7 @@ struct HTMLView: UIViewRepresentable {
         Task {
             // Without the rule list the page's own policy still blocks the network.
             if let rules = await Self.rules.value {
-                config.userContentController.add(rules)
+                view.configuration.userContentController.add(rules)
             }
             view.loadHTMLString(html, baseURL: nil)
         }
@@ -53,6 +53,9 @@ struct HTMLView: UIViewRepresentable {
             _ webView: WKWebView, decidePolicyFor action: WKNavigationAction
         ) async -> WKNavigationActionPolicy {
             switch action.navigationType {
+            case .linkActivated where action.request.url?.scheme == "about":
+                // A link to a part of the same page.
+                return .allow
             case .linkActivated:
                 if let url = action.request.url, ["http", "https", "mailto"].contains(url.scheme?.lowercased()) {
                     await UIApplication.shared.open(url)

@@ -258,6 +258,7 @@ fn sandboxed(html: &str) -> String {
         "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; ",
         "img-src data:; style-src 'unsafe-inline'; font-src data:; ",
         "base-uri 'none'; form-action 'none'\">",
+        "<meta http-equiv=\"x-dns-prefetch-control\" content=\"off\">",
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
         "<style>html{color-scheme:light;background:#fff}",
         "body{margin:0;padding:0 16px 16px;overflow-wrap:break-word}",
