@@ -1,10 +1,11 @@
+import javax.inject.Inject
+import org.gradle.process.ExecOperations
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
 }
-
-val generatedDir = layout.buildDirectory.dir("generated/ozero")
 
 android {
     namespace = "com.ozeromail.app"
@@ -33,48 +34,69 @@ kotlin {
     jvmToolchain(17)
 }
 
-// Rust core: .so per ABI, then Kotlin bindings read from the built library.
-val repoDir = rootDir.parentFile
-val coreSources = fileTree(repoDir.resolve("core")) { exclude("target") }
+// Generated sources: Rust core .so per ABI, Kotlin bindings read from it, strings.xml from i18n/.
+// Registered through the variant API so every task that reads them depends on their tasks.
+abstract class RunTool : DefaultTask() {
+    @get:Inject abstract val exec: ExecOperations
+    @get:InputFiles @get:PathSensitive(PathSensitivity.RELATIVE) abstract val sources: ConfigurableFileCollection
+    @get:Input abstract val command: ListProperty<String>
+    @get:Internal abstract val workDir: DirectoryProperty
+    @get:OutputDirectory abstract val outputDir: DirectoryProperty
 
-val buildCore by tasks.registering(Exec::class) {
-    inputs.files(coreSources)
-    outputs.dir(generatedDir.map { it.dir("jniLibs") })
-    workingDir = repoDir.resolve("core")
-    commandLine(
+    @TaskAction
+    fun run() {
+        val out = outputDir.get().asFile
+        out.deleteRecursively()
+        out.mkdirs()
+        exec.exec {
+            workingDir = workDir.get().asFile
+            commandLine(command.get().map { it.replace("{out}", out.path) })
+        }
+    }
+}
+
+// AGP replaces these with its own generated dirs; the default lets a task run on its own.
+tasks.withType<RunTool>().configureEach {
+    outputDir.convention(layout.buildDirectory.dir("generated/ozero/$name"))
+}
+
+val repoDir = rootDir.parentFile
+val coreDir = layout.projectDirectory.dir("../../core")
+
+val buildCore by tasks.registering(RunTool::class) {
+    sources.from(fileTree(coreDir) { exclude("target") })
+    workDir = coreDir
+    command.addAll(
         "cargo", "ndk",
         "-t", "arm64-v8a", "-t", "armeabi-v7a", "-t", "x86_64",
         "--platform", android.defaultConfig.minSdk.toString(),
-        "-o", generatedDir.get().dir("jniLibs").asFile.path,
+        "-o", "{out}",
         "build", "--release", "-p", "ozero-api",
     )
 }
 
-val generateBindings by tasks.registering(Exec::class) {
-    dependsOn(buildCore)
-    inputs.files(coreSources)
-    outputs.dir(generatedDir.map { it.dir("kotlin") })
-    workingDir = repoDir.resolve("core")
-    commandLine(
-        "cargo", "run", "-p", "ozero-bindgen", "--",
-        "generate", "--language", "kotlin", "--no-format",
-        "--library", generatedDir.get().file("jniLibs/arm64-v8a/libozero_api.so").asFile.path,
-        "--out-dir", generatedDir.get().dir("kotlin").asFile.path,
-    )
+val generateBindings by tasks.registering(RunTool::class) {
+    val library = buildCore.flatMap { it.outputDir.file("arm64-v8a/libozero_api.so") }
+    sources.from(library)
+    workDir = coreDir
+    command.addAll("cargo", "run", "-p", "ozero-bindgen", "--", "generate", "--language", "kotlin", "--no-format")
+    command.add("--library")
+    command.add(library.map { it.asFile.path })
+    command.addAll("--out-dir", "{out}")
 }
 
-val generateStrings by tasks.registering(Exec::class) {
-    inputs.dir(repoDir.resolve("i18n"))
-    inputs.file(repoDir.resolve("tools/gen-strings.py"))
-    outputs.dir(generatedDir.map { it.dir("res") })
-    commandLine("python3", repoDir.resolve("tools/gen-strings.py").path, generatedDir.get().dir("res").asFile.path)
+val generateStrings by tasks.registering(RunTool::class) {
+    sources.from(repoDir.resolve("i18n"), repoDir.resolve("tools/gen-strings.py"))
+    workDir = layout.projectDirectory
+    command.addAll("python3", repoDir.resolve("tools/gen-strings.py").path, "{out}")
 }
 
-// Source dirs come from the task providers, so anything reading them depends on the tasks.
-android.sourceSets["main"].apply {
-    jniLibs.srcDir(buildCore.map { it.outputs.files.singleFile })
-    java.srcDir(generateBindings.map { it.outputs.files.singleFile })
-    res.srcDir(generateStrings.map { it.outputs.files.singleFile })
+androidComponents {
+    onVariants { variant ->
+        variant.sources.jniLibs?.addGeneratedSourceDirectory(buildCore, RunTool::outputDir)
+        variant.sources.java?.addGeneratedSourceDirectory(generateBindings, RunTool::outputDir)
+        variant.sources.res?.addGeneratedSourceDirectory(generateStrings, RunTool::outputDir)
+    }
 }
 
 dependencies {
