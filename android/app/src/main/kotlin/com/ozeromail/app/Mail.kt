@@ -11,6 +11,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import uniffi.ozero_api.Core
 import uniffi.ozero_api.CoreException
+import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
 
 /** What the screens need from the core; every call runs off the main thread. */
@@ -35,12 +36,12 @@ class Mail(private val context: Context) {
     }
 
     /**
-     * The message text, downloaded once by the core.
+     * The message body, downloaded once by the core.
      * A missing password only matters for a download, which then fails to log in.
      */
-    suspend fun text(message: MessageItem): String = io {
+    suspend fun body(message: MessageItem): MessageBody = io {
         val account = core.accounts().firstOrNull { it.id == message.accountId }
-        core.messageText(message.id, account?.let { vault.password(it.email) }.orEmpty())
+        core.messageBody(message.id, account?.let { vault.password(it.email) }.orEmpty())
     }
 
     /** Syncs all accounts at once; the first failure is thrown once every one has finished. */
