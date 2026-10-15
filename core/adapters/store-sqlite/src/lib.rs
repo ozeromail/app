@@ -183,6 +183,30 @@ impl Store for SqliteStore {
         rows.and_then(|rows| rows.collect()).map_err(storage)
     }
 
+    fn set_validity(&self, folder: FolderId, validity: u32) -> Result<(), StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        let current: u32 = tx
+            .query_row(
+                "SELECT validity FROM folder WHERE id = ?1",
+                [folder.0],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(storage)?
+            .ok_or(StoreError::NotFound)?;
+        if current != validity {
+            tx.execute("DELETE FROM message WHERE folder_id = ?1", [folder.0])
+                .map_err(storage)?;
+            tx.execute(
+                "UPDATE folder SET validity = ?2 WHERE id = ?1",
+                params![folder.0, validity],
+            )
+            .map_err(storage)?;
+        }
+        tx.commit().map_err(storage)
+    }
+
     fn save_messages(&self, folder: FolderId, messages: &[NewMessage]) -> Result<(), StoreError> {
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(storage)?;

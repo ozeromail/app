@@ -17,6 +17,10 @@ pub trait Store: Send + Sync {
     ) -> Result<Vec<Folder>, StoreError>;
     fn folders(&self, account: AccountId) -> Result<Vec<Folder>, StoreError>;
 
+    /// Records the folder's `Recent::validity`. When it changed, drops the folder's
+    /// messages first: their `remote_id`s now name other messages.
+    fn set_validity(&self, folder: FolderId, validity: u32) -> Result<(), StoreError>;
+
     /// Inserts new messages and updates known ones, matched by `remote_id`, in one transaction.
     fn save_messages(&self, folder: FolderId, messages: &[NewMessage]) -> Result<(), StoreError>;
     fn list(&self, query: &ListQuery) -> Result<Vec<MessageRow>, StoreError>;
