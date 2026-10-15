@@ -4,8 +4,8 @@ use std::sync::Mutex;
 use std::task::{Context, Poll, Waker};
 
 use ozero_domain::{
-    Account, Address, Flags, Folder, FolderId, ListQuery, MessageRow, NewAccount, NewFolder,
-    NewMessage, RawMessage, Recent,
+    Account, Address, Body, Flags, Folder, FolderId, ListQuery, MessageId, MessageRow, NewAccount,
+    NewFolder, NewMessage, RawMessage, Recent,
 };
 
 use super::*;
@@ -44,6 +44,20 @@ impl MailProvider for Server {
             }],
         }))
     }
+
+    fn body(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_id: &str,
+    ) -> impl Future<Output = Result<Vec<u8>, ProviderError>> + Send {
+        self.asked.push((format!("{folder}/{remote_id}"), validity));
+        ready(if remote_id == "empty" {
+            Ok(vec![])
+        } else {
+            Ok(b"Hello".to_vec())
+        })
+    }
 }
 
 struct Parser;
@@ -63,12 +77,19 @@ impl MessageParser for Parser {
             flags: raw.flags,
         }
     }
+
+    fn parse_body(&self, raw: &[u8]) -> Body {
+        Body {
+            text: String::from_utf8_lossy(raw).into(),
+        }
+    }
 }
 
 #[derive(Default)]
 struct Memory {
     validity: Mutex<Vec<(FolderId, u32)>>,
     saved: Mutex<Vec<(FolderId, Vec<NewMessage>)>>,
+    bodies: Mutex<Vec<(MessageId, Body)>>,
 }
 
 impl Store for Memory {
@@ -114,6 +135,19 @@ impl Store for Memory {
 
     fn list(&self, _: &ListQuery) -> Result<Vec<MessageRow>, StoreError> {
         Ok(vec![])
+    }
+
+    fn location(&self, _: MessageId) -> Result<MessageLocation, StoreError> {
+        Err(StoreError::NotFound)
+    }
+
+    fn save_body(&self, message: MessageId, body: &Body) -> Result<(), StoreError> {
+        self.bodies.lock().unwrap().push((message, body.clone()));
+        Ok(())
+    }
+
+    fn body(&self, _: MessageId) -> Result<Option<Body>, StoreError> {
+        Ok(None)
     }
 }
 
@@ -162,4 +196,48 @@ fn fails_without_an_inbox() {
         Err(SyncError::NoInbox)
     );
     assert!(server.asked.is_empty());
+}
+
+fn location(remote_id: &str) -> MessageLocation {
+    MessageLocation {
+        id: MessageId(4),
+        account_id: AccountId(1),
+        folder_remote_id: "INBOX".into(),
+        validity: 9,
+        remote_id: remote_id.into(),
+    }
+}
+
+fn server() -> Server {
+    Server {
+        folders: vec![],
+        asked: vec![],
+    }
+}
+
+#[test]
+fn downloads_a_body() {
+    let store = Memory::default();
+    let mut server = server();
+    let body = run(download_body(&store, &mut server, &Parser, &location("7"))).unwrap();
+    assert_eq!(body.text, "Hello");
+
+    assert_eq!(server.asked, [("INBOX/7".to_string(), 9)]);
+    let bodies = store.bodies.lock().unwrap();
+    assert_eq!(bodies[0].0, MessageId(4));
+    assert_eq!(bodies[0].1.text, "Hello");
+}
+
+#[test]
+fn does_not_save_a_body_without_text() {
+    let store = Memory::default();
+    let body = run(download_body(
+        &store,
+        &mut server(),
+        &Parser,
+        &location("empty"),
+    ))
+    .unwrap();
+    assert_eq!(body.text, "");
+    assert!(store.bodies.lock().unwrap().is_empty());
 }

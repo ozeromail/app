@@ -43,4 +43,11 @@ pub const MIGRATIONS: &[&str] = &[
     ALTER TABLE account ADD COLUMN server_port INTEGER;
     ALTER TABLE account ADD COLUMN server_user TEXT;
     ",
+    // 4: message bodies. Kept apart from the list columns so list reads stay small.
+    "
+    CREATE TABLE message_body (
+        message_id INTEGER PRIMARY KEY REFERENCES message(id) ON DELETE CASCADE,
+        text       TEXT NOT NULL
+    );
+    ",
 ];

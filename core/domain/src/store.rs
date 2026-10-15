@@ -1,7 +1,8 @@
 use std::fmt;
 
 use crate::{
-    Account, AccountId, Folder, FolderId, ListQuery, MessageRow, NewAccount, NewFolder, NewMessage,
+    Account, AccountId, Body, Folder, FolderId, ListQuery, MessageId, MessageLocation, MessageRow,
+    NewAccount, NewFolder, NewMessage,
 };
 
 /// Local database port. The UI reads only from here; sync writes here.
@@ -24,6 +25,11 @@ pub trait Store: Send + Sync {
     /// Inserts new messages and updates known ones, matched by `remote_id`, in one transaction.
     fn save_messages(&self, folder: FolderId, messages: &[NewMessage]) -> Result<(), StoreError>;
     fn list(&self, query: &ListQuery) -> Result<Vec<MessageRow>, StoreError>;
+
+    fn location(&self, message: MessageId) -> Result<MessageLocation, StoreError>;
+    /// Saves the body and sets the message's snippet from it.
+    fn save_body(&self, message: MessageId, body: &Body) -> Result<(), StoreError>;
+    fn body(&self, message: MessageId) -> Result<Option<Body>, StoreError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

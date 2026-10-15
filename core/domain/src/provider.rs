@@ -1,7 +1,7 @@
 use std::fmt;
 use std::future::Future;
 
-use crate::{Flags, NewFolder, NewMessage};
+use crate::{Body, Flags, NewFolder, NewMessage};
 
 /// A message as the server returns it, before MIME parsing.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,11 +34,21 @@ pub trait MailProvider: Send {
         folder: &str,
         limit: u32,
     ) -> impl Future<Output = Result<Recent, ProviderError>> + Send;
+
+    /// The raw message with `remote_id` in a folder, without marking it read; may be cut at a
+    /// size limit. Fails with `Gone` if the folder's validity is no longer `validity`.
+    fn body(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_id: &str,
+    ) -> impl Future<Output = Result<Vec<u8>, ProviderError>> + Send;
 }
 
 /// Turns what a provider returned into what the store keeps.
 pub trait MessageParser: Send + Sync {
     fn parse(&self, raw: RawMessage) -> NewMessage;
+    fn parse_body(&self, raw: &[u8]) -> Body;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,6 +59,8 @@ pub enum ProviderError {
     Network(String),
     /// The server answered something we cannot use.
     Protocol(String),
+    /// The message is no longer on the server under this id.
+    Gone,
 }
 
 impl fmt::Display for ProviderError {
@@ -57,6 +69,7 @@ impl fmt::Display for ProviderError {
             Self::Auth => write!(f, "the server refused the login"),
             Self::Network(e) => write!(f, "network error: {e}"),
             Self::Protocol(e) => write!(f, "protocol error: {e}"),
+            Self::Gone => write!(f, "the message is gone from the server"),
         }
     }
 }

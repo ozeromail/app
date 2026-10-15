@@ -3,7 +3,8 @@
 use std::fmt;
 
 use ozero_domain::{
-    AccountId, FolderRole, MailProvider, MessageParser, ProviderError, Store, StoreError,
+    AccountId, Body, FolderRole, MailProvider, MessageLocation, MessageParser, ProviderError,
+    Store, StoreError,
 };
 
 /// Saves the account's folders, then the newest `limit` messages of its inbox.
@@ -29,6 +30,28 @@ pub async fn sync_inbox(
         .collect();
     store.save_messages(inbox.id, &messages)?;
     Ok(())
+}
+
+/// Downloads a saved message's body and returns it; saves it unless it has no text,
+/// so a message the parser could not read is tried again next time.
+pub async fn download_body(
+    store: &dyn Store,
+    provider: &mut impl MailProvider,
+    parser: &dyn MessageParser,
+    message: &MessageLocation,
+) -> Result<Body, SyncError> {
+    let raw = provider
+        .body(
+            &message.folder_remote_id,
+            message.validity,
+            &message.remote_id,
+        )
+        .await?;
+    let body = parser.parse_body(&raw);
+    if !body.text.is_empty() {
+        store.save_body(message.id, &body)?;
+    }
+    Ok(body)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

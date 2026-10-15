@@ -79,6 +79,28 @@ async fn fetches_the_newest_messages_oldest_first() {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "needs tools/dovecot-test.sh"]
+async fn fetches_a_body_without_marking_it_read() {
+    let mut imap = session().await;
+    let validity = imap.recent("INBOX", 1).await.unwrap().validity;
+    let body = imap.body("INBOX", validity, "2").await.unwrap();
+    let text = String::from_utf8_lossy(&body);
+    assert!(
+        text.contains("Subject: Message 2") && text.contains("Hello 2"),
+        "{text}"
+    );
+
+    let second = &imap.recent("INBOX", 2).await.unwrap().messages[0];
+    assert_eq!(second.remote_id, "2");
+    assert!(!second.flags.seen);
+
+    for (uid, validity) in [("99", validity), ("2", validity + 1)] {
+        let err = imap.body("INBOX", validity, uid).await.unwrap_err();
+        assert_eq!(err, ProviderError::Gone, "{uid}");
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "needs tools/dovecot-test.sh"]
 async fn wrong_password_is_an_auth_error() {
     let err = connect(test_ca(), "wrong").await.unwrap_err();
     assert_eq!(err, ProviderError::Auth);
