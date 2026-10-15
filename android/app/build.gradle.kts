@@ -104,4 +104,5 @@ dependencies {
     implementation(libs.compose.material3)
     implementation(libs.activity.compose)
     implementation(libs.jna) { artifact { type = "aar" } }
+    implementation(libs.coroutines.android)
 }
