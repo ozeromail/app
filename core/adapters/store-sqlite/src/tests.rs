@@ -272,3 +272,21 @@ fn large_lists_read_an_index_in_order() {
         assert!(!plan.contains("TEMP B-TREE"), "sorts in memory:\n{plan}");
     }
 }
+
+#[test]
+fn new_validity_drops_the_folder_messages() {
+    let store = store();
+    let folder = inbox(&store, account(&store, "a@example.com"));
+    store.set_validity(folder, 5).unwrap();
+    store.save_messages(folder, &[message(1, 100)]).unwrap();
+
+    store.set_validity(folder, 5).unwrap();
+    assert_eq!(list(&store, ListScope::Folder(folder), 10, None).len(), 1);
+
+    store.set_validity(folder, 6).unwrap();
+    assert!(list(&store, ListScope::Folder(folder), 10, None).is_empty());
+    assert_eq!(
+        store.set_validity(FolderId(42), 1).unwrap_err(),
+        StoreError::NotFound
+    );
+}

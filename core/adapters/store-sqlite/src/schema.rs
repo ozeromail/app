@@ -35,4 +35,6 @@ pub const MIGRATIONS: &[&str] = &[
     -- Unified lists walk messages by date across folders and stop at the page limit.
     CREATE INDEX message_date ON message(date DESC, id DESC);
     ",
+    // 2: what the folder's remote ids mean (IMAP UIDVALIDITY).
+    "ALTER TABLE folder ADD COLUMN validity INTEGER NOT NULL DEFAULT 0;",
 ];
