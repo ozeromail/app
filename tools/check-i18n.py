@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""Checks that every locale in i18n/ has exactly the keys of en.json (the source)."""
+"""Checks that keys are snake_case and every locale has exactly the keys of en.json."""
 import json
+import re
 import sys
 from pathlib import Path
 
 I18N = Path(__file__).resolve().parent.parent / "i18n"
+KEY = re.compile(r"[a-z][a-z0-9_]*")
 
 
 def main():
     source = json.loads((I18N / "en.json").read_text(encoding="utf-8"))
     errors = []
+    errors += [f"en.json: '{k}' must be snake_case" for k in source if not KEY.fullmatch(k)]
     for path in sorted(I18N.glob("*.json")):
         if path.name == "en.json":
             continue

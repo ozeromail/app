@@ -1,0 +1,44 @@
+name: android
+
+on:
+  pull_request:
+    paths: ["android/**", "core/**", "i18n/**", "tools/gen-strings.py", ".github/workflows/android.yml"]
+  push:
+    branches: [main]
+    paths: ["android/**", "core/**", "i18n/**", "tools/gen-strings.py", ".github/workflows/android.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build, lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Install Rust Android targets
+        working-directory: core
+        run: |
+          rustup toolchain install
+          rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-ndk
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build and lint
+        working-directory: android
+        run: ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME" ./gradlew :app:assembleDebug :app:lintDebug

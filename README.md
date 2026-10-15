@@ -10,6 +10,7 @@
 
 ```
 core/    Rust core: domain → app → api
+android/ Android app (Jetpack Compose)
 i18n/    UI strings: en.json (source), ru.json
 tools/   CI checks
 docs/    decisions (ADR)
@@ -21,4 +22,10 @@ Requires `rustup`; the Rust version is pinned in `rust-toolchain.toml`.
 
 ```sh
 cd core && cargo test
+```
+
+The Android build also needs the Android SDK and NDK and `cargo install cargo-ndk`:
+
+```sh
+cd android && ./gradlew :app:assembleDebug
 ```

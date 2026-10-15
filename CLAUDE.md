@@ -22,7 +22,7 @@ Mail client: shared Rust core (`core/`), native apps in Jetpack Compose (`androi
 ## Strings
 
 - Code uses keys only. `i18n/en.json` is the source, `i18n/ru.json` the second locale.
-- Add every key to both files; `tools/check-i18n.py` enforces this.
+- Add every key to both files; `tools/check-i18n.py` enforces this. Android `strings.xml` is generated at build time.
 - The name is always "Ozero Mail" in text; lowercase only in the logo.
 
 ## Before a PR
