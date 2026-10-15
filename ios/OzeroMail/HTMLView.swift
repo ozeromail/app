@@ -10,7 +10,7 @@ struct HTMLView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
-        config.websiteDataStore = .nonPersistent()
+        config.websiteDataStore = Self.store
         config.defaultWebpagePreferences.allowsContentJavaScript = false
         let view = WKWebView(frame: .zero, configuration: config)
         view.navigationDelegate = context.coordinator
@@ -26,14 +26,25 @@ struct HTMLView: UIViewRepresentable {
 
     func updateUIView(_ view: WKWebView, context: Context) {}
 
-    /// Blocks every load that is not the page itself or inline data. Compiled once.
+    /// One store for every message: nothing is kept on disk, and the views can share a process.
+    @MainActor private static let store = WKWebsiteDataStore.nonPersistent()
+
+    /// Blocks every load that is not the page itself or inline data. Compiled once, then read from disk.
     @MainActor private static let rules = Task<WKContentRuleList?, Never> {
+        // A new rule needs a new id, or the old compiled list is read back.
+        let id = "ozero-offline-1"
         let json = #"[{"trigger":{"url-filter":".*"},"action":{"type":"block"}},"#
             + #"{"trigger":{"url-filter":"^(about|data):"},"action":{"type":"ignore-previous-rules"}}]"#
+        let found: WKContentRuleListStore? = WKContentRuleListStore.default()
+        guard let lists = found else { return nil }
+        let saved = await withCheckedContinuation { done in
+            lists.lookUpContentRuleList(forIdentifier: id) { list, _ in done.resume(returning: list) }
+        }
+        if let saved { return saved }
         return await withCheckedContinuation { done in
-            WKContentRuleListStore.default().compileContentRuleList(
-                forIdentifier: "ozero-offline", encodedContentRuleList: json
-            ) { list, _ in done.resume(returning: list) }
+            lists.compileContentRuleList(forIdentifier: id, encodedContentRuleList: json) { list, _ in
+                done.resume(returning: list)
+            }
         }
     }
 

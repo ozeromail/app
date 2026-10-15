@@ -50,6 +50,9 @@ pub const MIGRATIONS: &[&str] = &[
         text       TEXT NOT NULL
     );
     ",
-    // 5: the HTML part of a body.
-    "ALTER TABLE message_body ADD COLUMN html TEXT;",
+    // 5: the HTML part of a body. Saved bodies are only a cache, so they download again with it.
+    "
+    DELETE FROM message_body;
+    ALTER TABLE message_body ADD COLUMN html TEXT;
+    ",
 ];
