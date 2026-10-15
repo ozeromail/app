@@ -7,7 +7,7 @@ use std::sync::{Arc, OnceLock};
 use ozero_app::sync::{SyncError, sync_inbox};
 use ozero_domain::{
     Account, AccountId, AccountKind, FolderRole, ListQuery, ListScope, MessageRow, NewAccount,
-    ProviderError, Store, StoreError,
+    ProviderError, Server, Store, StoreError,
 };
 use ozero_imap::ImapSession;
 use ozero_imap::rustls::ClientConfig;
@@ -52,15 +52,6 @@ impl Core {
         }))
     }
 
-    pub fn add_imap_account(&self, email: String, display_name: String) -> Result<i64, CoreError> {
-        let account = NewAccount {
-            kind: AccountKind::Imap,
-            email,
-            display_name,
-        };
-        Ok(self.store.add_account(&account)?.0)
-    }
-
     pub fn accounts(&self) -> Result<Vec<AccountItem>, CoreError> {
         Ok(self
             .store
@@ -83,36 +74,69 @@ impl Core {
 
 #[uniffi::export(async_runtime = "tokio")]
 impl Core {
-    /// Brings the account's folders and newest inbox messages into the database.
-    pub async fn sync_imap(
+    /// Saves an IMAP account once the server has accepted the login; `email` is the login name.
+    pub async fn add_imap_account(
         &self,
-        account: i64,
+        email: String,
+        display_name: String,
         host: String,
         port: u16,
-        user: String,
         password: String,
-    ) -> Result<(), CoreError> {
-        let account = AccountId(account);
-        // Check before going online, so a stale id costs no login.
+    ) -> Result<i64, CoreError> {
+        // Checked before going online, so a repeat sign-in costs no login.
         let known = self.store.accounts()?;
-        if !known
-            .iter()
-            .any(|a| a.id == account && a.kind == AccountKind::Imap)
-        {
-            return Err(CoreError::Storage {
-                detail: "no such IMAP account".into(),
-            });
+        if known.iter().any(|a| a.email.eq_ignore_ascii_case(&email)) {
+            return Err(CoreError::AccountExists);
         }
-        let mut imap = ImapSession::connect(&host, port, self.tls()?, &user, &password).await?;
+        let server = Server {
+            host,
+            port,
+            user: email.clone(),
+        };
+        let imap = self.connect(&server, &password).await?;
+        // The login worked; a failed goodbye changes nothing.
+        let _ = imap.logout().await;
+        let account = NewAccount {
+            kind: AccountKind::Imap,
+            email,
+            display_name,
+            server: Some(server),
+        };
+        Ok(self.store.add_account(&account)?.0)
+    }
+
+    /// Brings the account's folders and newest inbox messages into the database.
+    pub async fn sync_imap(&self, account: i64, password: String) -> Result<(), CoreError> {
+        let account = AccountId(account);
+        let server = self
+            .store
+            .accounts()?
+            .into_iter()
+            .find(|a| a.id == account && a.kind == AccountKind::Imap)
+            .and_then(|a| a.server)
+            .ok_or_else(|| CoreError::Storage {
+                detail: "no such IMAP account".into(),
+            })?;
+        let mut imap = self.connect(&server, &password).await?;
         sync_inbox(&self.store, &mut imap, &self.parser, account, SYNC_LIMIT).await?;
-        // The data is saved; a failed goodbye changes nothing.
         let _ = imap.logout().await;
         Ok(())
     }
 }
 
 impl Core {
-    /// Built on first use: on Android the verifier must be set up from Kotlin before that.
+    async fn connect(&self, server: &Server, password: &str) -> Result<ImapSession, CoreError> {
+        Ok(ImapSession::connect(
+            &server.host,
+            server.port,
+            self.tls()?,
+            &server.user,
+            password,
+        )
+        .await?)
+    }
+
+    /// Built on first use: on Android `CoreNative.init` must have run before that.
     fn tls(&self) -> Result<Arc<ClientConfig>, CoreError> {
         if let Some(tls) = self.tls.get() {
             return Ok(tls.clone());
@@ -122,20 +146,44 @@ impl Core {
     }
 }
 
-#[cfg(not(target_os = "android"))]
 fn tls_config() -> Result<Arc<ClientConfig>, CoreError> {
+    // Without the JNI setup the Android verifier panics on first use; refuse cleanly instead.
+    #[cfg(target_os = "android")]
+    if !android::READY.load(std::sync::atomic::Ordering::Acquire) {
+        return Err(CoreError::Tls {
+            detail: "CoreNative.init was not called".into(),
+        });
+    }
     ozero_imap::platform_tls().map_err(|e| CoreError::Tls {
         detail: e.to_string(),
     })
 }
 
-/// The Android verifier needs a JNI handshake that is not wired yet; it would panic
-/// on first use, so refuse cleanly until it is.
 #[cfg(target_os = "android")]
-fn tls_config() -> Result<Arc<ClientConfig>, CoreError> {
-    Err(CoreError::Tls {
-        detail: "certificate checks are not set up on Android yet".into(),
-    })
+mod android {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use jni::EnvUnowned;
+    use jni::errors::ThrowRuntimeExAndDefault;
+    use jni::jni_mangle;
+    use jni::objects::{JClass, JObject};
+
+    pub static READY: AtomicBool = AtomicBool::new(false);
+
+    /// `CoreNative.init(context)`: lets the certificate verifier call Android's trust manager.
+    #[jni_mangle("com.ozeromail.app.CoreNative")]
+    pub fn init<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        context: JObject<'caller>,
+    ) {
+        env.with_env(|env| {
+            rustls_platform_verifier::android::init_with_env(env, context)?;
+            READY.store(true, Ordering::Release);
+            Ok::<_, jni::errors::Error>(())
+        })
+        .resolve::<ThrowRuntimeExAndDefault>();
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -193,6 +241,8 @@ pub enum CoreError {
     WrongKey,
     /// The database was written by a newer app version.
     TooNew,
+    /// An account with this email is already added.
+    AccountExists,
     /// The server refused the login.
     Auth,
     Network {
@@ -215,6 +265,7 @@ impl fmt::Display for CoreError {
         match self {
             Self::WrongKey => write!(f, "the database key is wrong"),
             Self::TooNew => write!(f, "the database is from a newer app version"),
+            Self::AccountExists => write!(f, "the account is already added"),
             Self::Auth => write!(f, "the server refused the login"),
             Self::Network { detail } => write!(f, "network error: {detail}"),
             Self::Tls { detail } => write!(f, "TLS setup failed: {detail}"),

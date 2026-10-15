@@ -34,6 +34,11 @@ fn account(store: &SqliteStore, email: &str) -> AccountId {
             kind: AccountKind::Imap,
             email: email.into(),
             display_name: email.into(),
+            server: Some(Server {
+                host: "imap.example.com".into(),
+                port: 993,
+                user: email.into(),
+            }),
         })
         .unwrap()
 }
@@ -99,7 +104,15 @@ fn file_is_encrypted_and_needs_the_key() {
     );
 
     let reopened = SqliteStore::open(&db.0, &KEY).unwrap();
-    assert_eq!(reopened.accounts().unwrap()[0].email, "a@example.com");
+    let accounts = reopened.accounts().unwrap();
+    assert_eq!(accounts[0].email, "a@example.com");
+    assert_eq!(
+        accounts[0]
+            .server
+            .as_ref()
+            .map(|s| (s.host.as_str(), s.port)),
+        Some(("imap.example.com", 993))
+    );
 }
 
 #[test]

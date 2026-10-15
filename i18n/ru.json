@@ -2,5 +2,19 @@
   "app_name": "Ozero Mail",
   "inbox_title": "Входящие",
   "action_done": "Готово",
-  "action_undo": "Отменить"
+  "action_undo": "Отменить",
+  "signin_title": "Добавить аккаунт",
+  "signin_email": "Почта",
+  "signin_password": "Пароль",
+  "signin_server": "Сервер IMAP",
+  "signin_port": "Порт",
+  "signin_action": "Войти",
+  "inbox_empty": "Писем нет",
+  "inbox_no_subject": "Без темы",
+  "error_auth": "Сервер не принял эту почту и пароль.",
+  "error_network": "Не удаётся связаться с сервером. Проверьте подключение.",
+  "error_tls": "Не удаётся установить защищённое соединение с сервером.",
+  "error_server": "Сервер ответил ошибкой. Попробуйте позже.",
+  "error_storage": "Не удаётся прочитать почту, сохранённую на устройстве.",
+  "error_account_exists": "Этот аккаунт уже добавлен."
 }

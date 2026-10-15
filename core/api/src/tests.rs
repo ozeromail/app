@@ -40,9 +40,6 @@ fn rejects_a_short_key() {
 fn syncs_an_imap_inbox_into_the_list() {
     let db = TempDb::new("sync");
     let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
-    let account = core
-        .add_imap_account("test@example.com".into(), "Test".into())
-        .unwrap();
 
     let mut roots = RootCertStore::empty();
     let ca = include_bytes!("../../adapters/imap/tests/dovecot/ca.crt");
@@ -57,15 +54,21 @@ fn syncs_an_imap_inbox_into_the_list() {
         .enable_all()
         .build()
         .unwrap();
-    let sync = || {
-        runtime.block_on(core.sync_imap(
-            account,
+    let add = |password: &str| {
+        runtime.block_on(core.add_imap_account(
+            "test@example.com".into(),
+            "Test".into(),
             "localhost".into(),
             31993,
-            "test@example.com".into(),
-            "pass".into(),
+            password.into(),
         ))
     };
+    assert_eq!(add("wrong").unwrap_err(), CoreError::Auth);
+    assert!(core.accounts().unwrap().is_empty());
+    let account = add("pass").unwrap();
+    assert_eq!(add("pass").unwrap_err(), CoreError::AccountExists);
+
+    let sync = || runtime.block_on(core.sync_imap(account, "pass".into()));
     sync().unwrap();
     // A second sync updates the same rows.
     sync().unwrap();

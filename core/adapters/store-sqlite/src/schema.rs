@@ -37,4 +37,10 @@ pub const MIGRATIONS: &[&str] = &[
     ",
     // 2: what the folder's remote ids mean (IMAP UIDVALIDITY).
     "ALTER TABLE folder ADD COLUMN validity INTEGER NOT NULL DEFAULT 0;",
+    // 3: IMAP server settings, NULL for other kinds.
+    "
+    ALTER TABLE account ADD COLUMN server_host TEXT;
+    ALTER TABLE account ADD COLUMN server_port INTEGER;
+    ALTER TABLE account ADD COLUMN server_user TEXT;
+    ",
 ];
