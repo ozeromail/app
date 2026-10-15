@@ -28,6 +28,20 @@ fn version_is_set() {
 }
 
 #[test]
+fn html_is_wrapped_in_a_locked_page() {
+    let body = MessageBody::from(Body {
+        text: "Hi".into(),
+        html: Some("<p>Hi</p>".into()),
+    });
+    let page = body.html.unwrap();
+    assert!(page.starts_with("<!doctype html>"));
+    assert!(page.contains("default-src 'none'"));
+    assert!(page.ends_with("<p>Hi</p></body></html>"));
+    // A policy covers only what follows it, so it must come before the message.
+    assert!(page.find("Content-Security-Policy") < page.find("<p>Hi</p>"));
+}
+
+#[test]
 fn rejects_a_short_key() {
     assert_eq!(
         Core::open(TempDb::new("short-key").0.clone(), vec![1; 16]).unwrap_err(),
@@ -81,9 +95,13 @@ fn syncs_an_imap_inbox_into_the_list() {
     assert_eq!(inbox[0].account_id, account);
 
     let message = inbox[1].id;
-    let text = |password: &str| runtime.block_on(core.message_text(message, password.into()));
-    assert_eq!(text("pass").unwrap(), "Hello 2");
+    let body = |password: &str| runtime.block_on(core.message_body(message, password.into()));
+    let plain = MessageBody {
+        text: "Hello 2".into(),
+        html: None,
+    };
+    assert_eq!(body("pass").unwrap(), plain);
     // Saved now: no login, so a wrong password does not matter.
-    assert_eq!(text("wrong").unwrap(), "Hello 2");
+    assert_eq!(body("wrong").unwrap(), plain);
     assert_eq!(core.unified_inbox(50).unwrap()[1].snippet, "Hello 2");
 }

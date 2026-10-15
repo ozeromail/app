@@ -6,7 +6,7 @@ use std::sync::{Arc, OnceLock};
 
 use ozero_app::sync::{SyncError, download_body, sync_inbox};
 use ozero_domain::{
-    Account, AccountId, AccountKind, FolderRole, ListQuery, ListScope, MessageId, MessageRow,
+    Account, AccountId, AccountKind, Body, FolderRole, ListQuery, ListScope, MessageId, MessageRow,
     NewAccount, ProviderError, Server, Store, StoreError,
 };
 use ozero_imap::ImapSession;
@@ -120,19 +120,23 @@ impl Core {
         Ok(())
     }
 
-    /// The message text: the saved one, or downloaded once and saved with its snippet.
+    /// The message body: the saved one, or downloaded once and saved with its snippet.
     /// `password` is the message's account's.
-    pub async fn message_text(&self, message: i64, password: String) -> Result<String, CoreError> {
+    pub async fn message_body(
+        &self,
+        message: i64,
+        password: String,
+    ) -> Result<MessageBody, CoreError> {
         let message = MessageId(message);
         if let Some(body) = self.store.body(message)? {
-            return Ok(body.text);
+            return Ok(body.into());
         }
         let location = self.store.location(message)?;
         let mut imap = self.connect(location.account_id, &password).await?;
         let body = download_body(&self.store, &mut imap, &self.parser, &location).await?;
         // Closing without LOGOUT saves the reader a round trip; the server cleans up.
         drop(imap);
-        Ok(body.text)
+        Ok(body.into())
     }
 }
 
@@ -227,6 +231,44 @@ impl From<Account> for AccountItem {
             display_name: a.display_name,
         }
     }
+}
+
+/// What the reading screen shows.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MessageBody {
+    pub text: String,
+    /// A whole HTML document for a web view with JavaScript and network off.
+    pub html: Option<String>,
+}
+
+impl From<Body> for MessageBody {
+    fn from(body: Body) -> Self {
+        Self {
+            html: body.html.as_deref().map(sandboxed),
+            text: body.text,
+        }
+    }
+}
+
+/// Wraps a message's HTML so the page can load nothing from outside, even if the
+/// web view's own blocking fails: no scripts, frames, forms or remote images.
+fn sandboxed(html: &str) -> String {
+    const HEAD: &str = concat!(
+        "<!doctype html><html><head><meta charset=\"utf-8\">",
+        "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; ",
+        "img-src data:; style-src 'unsafe-inline'; font-src data:; ",
+        "base-uri 'none'; form-action 'none'\">",
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
+        "<style>html{color-scheme:light;background:#fff}",
+        "body{margin:0;padding:0 16px 16px;overflow-wrap:break-word}",
+        "img{max-width:100%;height:auto}</style>",
+        "</head><body dir=\"auto\">",
+    );
+    let mut page = String::with_capacity(HEAD.len() + html.len() + 14);
+    page.push_str(HEAD);
+    page.push_str(html);
+    page.push_str("</body></html>");
+    page
 }
 
 /// One row of a message list.

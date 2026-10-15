@@ -60,6 +60,8 @@ impl MessageRow {
 pub struct Body {
     /// Plain text; an HTML-only message is converted to text.
     pub text: String,
+    /// The HTML part as sent, if there is one. Shown only in a sandbox.
+    pub html: Option<String>,
 }
 
 impl Body {
@@ -132,7 +134,11 @@ mod tests {
     use super::*;
 
     fn snippet(text: &str) -> String {
-        Body { text: text.into() }.snippet()
+        Body {
+            text: text.into(),
+            html: None,
+        }
+        .snippet()
     }
 
     #[test]
