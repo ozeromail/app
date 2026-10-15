@@ -31,6 +31,8 @@ The Android build also needs the Android SDK and NDK and `cargo install cargo-nd
 cd android && ./gradlew :app:assembleDebug
 ```
 
+Android CI uploads the debug APK as the `ozero-mail-debug` artifact. It is signed with the debug key from the `ANDROID_DEBUG_KEYSTORE` secret (a base64 keystore), so each build installs over the last.
+
 The iOS app needs Xcode 16 and the core built as an XCFramework first:
 
 ```sh

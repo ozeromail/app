@@ -39,6 +39,26 @@ jobs:
           workspaces: core
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: gradle/actions/setup-gradle@v4
+      # A fixed debug key lets each new APK install over the last one.
+      - name: Use the shared debug key
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_DEBUG_KEYSTORE }}
+        run: |
+          if [ -n "$KEYSTORE" ]; then
+            mkdir -p ~/.android
+            echo "$KEYSTORE" | base64 -d > ~/.android/debug.keystore
+          else
+            echo "::warning::ANDROID_DEBUG_KEYSTORE is not set; this APK will not install over earlier builds"
+          fi
       - name: Build and lint
         working-directory: android
         run: ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME" ./gradlew :app:assembleDebug :app:lintDebug
+      - name: Upload debug APK
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ozero-mail-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 14
