@@ -35,6 +35,22 @@ jobs:
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
 
+  imap:
+    name: IMAP against Dovecot
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: tools/dovecot-test.sh
+      - run: cargo test --locked -p ozero-imap -- --ignored
+        working-directory: core
+
   rules:
     name: layers, strings, licenses
     runs-on: ubuntu-24.04
