@@ -1,0 +1,3 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 112 48" width="448" height="192"><defs><mask id="ma" maskUnits="userSpaceOnUse"><rect x="-10" y="-10" width="132" height="68" fill="#fff"/><circle cx="56" cy="24" r="27.5" fill="#000"/></mask>
+<mask id="mb" maskUnits="userSpaceOnUse"><rect x="-10" y="-10" width="132" height="68" fill="#fff"/><circle cx="88" cy="24" r="27.5" fill="#000"/></mask></defs>
+<circle cx="24" cy="24" r="24" fill="#ef4a5c" mask="url(#ma)"/><circle cx="56" cy="24" r="24" fill="#14a38b" mask="url(#mb)"/><circle cx="88" cy="24" r="24" fill="#8a5cf6"/></svg>
