@@ -12,6 +12,9 @@ publish = false
 [workspace.dependencies]
 ozero-domain = { path = "domain" }
 ozero-app = { path = "app" }
+ozero-imap = { path = "adapters/imap" }
+ozero-mime = { path = "adapters/mime" }
+ozero-store-sqlite = { path = "adapters/store-sqlite" }
 uniffi = { version = "0.32", default-features = false }
 
 [workspace.lints.rust]
