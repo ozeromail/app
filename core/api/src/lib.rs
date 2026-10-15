@@ -100,7 +100,7 @@ impl Core {
             .any(|a| a.id == account && a.kind == AccountKind::Imap)
         {
             return Err(CoreError::Storage {
-                message: "no such IMAP account".into(),
+                detail: "no such IMAP account".into(),
             });
         }
         let mut imap = ImapSession::connect(&host, port, self.tls()?, &user, &password).await?;
@@ -125,7 +125,7 @@ impl Core {
 #[cfg(not(target_os = "android"))]
 fn tls_config() -> Result<Arc<ClientConfig>, CoreError> {
     ozero_imap::platform_tls().map_err(|e| CoreError::Tls {
-        message: e.to_string(),
+        detail: e.to_string(),
     })
 }
 
@@ -134,7 +134,7 @@ fn tls_config() -> Result<Arc<ClientConfig>, CoreError> {
 #[cfg(target_os = "android")]
 fn tls_config() -> Result<Arc<ClientConfig>, CoreError> {
     Err(CoreError::Tls {
-        message: "certificate checks are not set up on Android yet".into(),
+        detail: "certificate checks are not set up on Android yet".into(),
     })
 }
 
@@ -186,7 +186,7 @@ impl From<MessageRow> for MessageItem {
     }
 }
 
-/// Apps map each variant to a string key; `message` and `Display` are for logs and never hold mail contents.
+/// Apps map each variant to a string key; `detail` and `Display` are for logs and never hold mail contents.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Error)]
 pub enum CoreError {
     /// The database key is wrong or not 32 bytes.
@@ -196,17 +196,17 @@ pub enum CoreError {
     /// The server refused the login.
     Auth,
     Network {
-        message: String,
+        detail: String,
     },
     /// Secure connections cannot be set up on this device.
     Tls {
-        message: String,
+        detail: String,
     },
     Server {
-        message: String,
+        detail: String,
     },
     Storage {
-        message: String,
+        detail: String,
     },
 }
 
@@ -216,10 +216,10 @@ impl fmt::Display for CoreError {
             Self::WrongKey => write!(f, "the database key is wrong"),
             Self::TooNew => write!(f, "the database is from a newer app version"),
             Self::Auth => write!(f, "the server refused the login"),
-            Self::Network { message } => write!(f, "network error: {message}"),
-            Self::Tls { message } => write!(f, "TLS setup failed: {message}"),
-            Self::Server { message } => write!(f, "server error: {message}"),
-            Self::Storage { message } => write!(f, "storage error: {message}"),
+            Self::Network { detail } => write!(f, "network error: {detail}"),
+            Self::Tls { detail } => write!(f, "TLS setup failed: {detail}"),
+            Self::Server { detail } => write!(f, "server error: {detail}"),
+            Self::Storage { detail } => write!(f, "storage error: {detail}"),
         }
     }
 }
@@ -232,7 +232,7 @@ impl From<StoreError> for CoreError {
             StoreError::WrongKey => Self::WrongKey,
             StoreError::TooNew { .. } => Self::TooNew,
             other => Self::Storage {
-                message: other.to_string(),
+                detail: other.to_string(),
             },
         }
     }
@@ -242,8 +242,8 @@ impl From<ProviderError> for CoreError {
     fn from(e: ProviderError) -> Self {
         match e {
             ProviderError::Auth => Self::Auth,
-            ProviderError::Network(message) => Self::Network { message },
-            ProviderError::Protocol(message) => Self::Server { message },
+            ProviderError::Network(detail) => Self::Network { detail },
+            ProviderError::Protocol(detail) => Self::Server { detail },
         }
     }
 }
@@ -254,7 +254,7 @@ impl From<SyncError> for CoreError {
             SyncError::Provider(e) => e.into(),
             SyncError::Store(e) => e.into(),
             SyncError::NoInbox => Self::Server {
-                message: e.to_string(),
+                detail: e.to_string(),
             },
         }
     }
