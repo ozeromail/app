@@ -303,3 +303,47 @@ fn new_validity_drops_the_folder_messages() {
         StoreError::NotFound
     );
 }
+
+#[test]
+fn body_is_saved_with_its_snippet() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let folder = inbox(&store, account);
+    store.set_validity(folder, 5).unwrap();
+    store.save_messages(folder, &[message(1, 100)]).unwrap();
+    let id = list(&store, ListScope::Folder(folder), 10, None)[0].id;
+
+    assert_eq!(store.body(id).unwrap(), None);
+    assert_eq!(
+        store.location(id).unwrap(),
+        MessageLocation {
+            id,
+            account_id: account,
+            folder_remote_id: "INBOX".into(),
+            validity: 5,
+            remote_id: "1".into(),
+        }
+    );
+
+    let body = Body {
+        text: "Hi Anna,\nsee you soon".into(),
+    };
+    store.save_body(id, &body).unwrap();
+    assert_eq!(store.body(id).unwrap().as_ref(), Some(&body));
+
+    // A resync with no snippet keeps the one from the body.
+    let mut again = message(1, 100);
+    again.snippet = String::new();
+    store.save_messages(folder, &[again]).unwrap();
+    let rows = list(&store, ListScope::Folder(folder), 10, None);
+    assert_eq!(rows[0].snippet, "Hi Anna, see you soon");
+
+    // The body goes with its message.
+    store.set_validity(folder, 6).unwrap();
+    assert_eq!(store.body(id).unwrap(), None);
+    assert_eq!(store.location(id).unwrap_err(), StoreError::NotFound);
+    assert_eq!(
+        store.save_body(id, &body).unwrap_err(),
+        StoreError::NotFound
+    );
+}

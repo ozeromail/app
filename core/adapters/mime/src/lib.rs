@@ -1,6 +1,6 @@
 //! `MessageParser` on mail-parser: decodes headers in any charset.
 
-use ozero_domain::{Address, MessageParser, NewMessage, RawMessage};
+use ozero_domain::{Address, Body, MessageParser, NewMessage, RawMessage};
 
 #[derive(Debug, Default)]
 pub struct MimeParser(mail_parser::MessageParser);
@@ -28,6 +28,15 @@ impl MessageParser for MimeParser {
             date: raw.received,
             flags: raw.flags,
         }
+    }
+
+    fn parse_body(&self, raw: &[u8]) -> Body {
+        let text = self
+            .0
+            .parse(raw)
+            .and_then(|m| m.body_text(0).map(|t| t.trim_end().to_owned()))
+            .unwrap_or_default();
+        Body { text }
     }
 }
 
@@ -68,7 +77,34 @@ mod tests {
     }
 
     #[test]
+    fn reads_the_text_part() {
+        let body = MimeParser::default().parse_body(
+            b"Content-Type: multipart/alternative; boundary=b\r\n\r\n\
+              --b\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n\
+              \xd0\x9f\xd1\x80\xd0\xb8\xd0\xb2\xd0\xb5\xd1\x82\r\n\
+              --b\r\nContent-Type: text/html\r\n\r\n<p>Hello</p>\r\n--b--\r\n",
+        );
+        assert_eq!(body.text, "Привет");
+    }
+
+    #[test]
+    fn turns_html_only_into_text() {
+        let body = MimeParser::default()
+            .parse_body(b"Content-Type: text/html\r\n\r\n<p>Hello <b>there</b></p>");
+        assert_eq!(body.text, "Hello there");
+    }
+
+    #[test]
+    fn survives_a_cut_message() {
+        let body = MimeParser::default().parse_body(
+            b"Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\n\r\nPart one\r\n--b\r\nContent-Type: app",
+        );
+        assert_eq!(body.text, "Part one");
+    }
+
+    #[test]
     fn survives_garbage() {
+        assert_eq!(MimeParser::default().parse_body(b"\xff\xfe").text, "");
         let m = parse(b"\xff\xfe not a header");
         assert_eq!(m.remote_id, "1");
         assert_eq!(m.from.email, "");

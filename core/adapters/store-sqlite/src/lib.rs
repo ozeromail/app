@@ -6,8 +6,9 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
 use ozero_domain::{
-    Account, AccountId, AccountKind, Address, Flags, Folder, FolderId, FolderRole, ListQuery,
-    ListScope, MessageId, MessageRow, NewAccount, NewFolder, NewMessage, Server, Store, StoreError,
+    Account, AccountId, AccountKind, Address, Body, Flags, Folder, FolderId, FolderRole, ListQuery,
+    ListScope, MessageId, MessageLocation, MessageRow, NewAccount, NewFolder, NewMessage, Server,
+    Store, StoreError,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{Connection, ErrorCode, OptionalExtension, Row, Transaction, params};
@@ -230,6 +231,7 @@ impl Store for SqliteStore {
         require(&tx, "SELECT 1 FROM folder WHERE id = ?1", folder.0)?;
         {
             // Rewrites a known row only when something changed, so a resync does not grow the WAL.
+            // An empty snippet keeps the one taken from a saved body.
             let mut upsert = tx
                 .prepare_cached(
                     "INSERT INTO message (folder_id, remote_id, message_id, from_name, from_email,
@@ -238,10 +240,12 @@ impl Store for SqliteStore {
                      ON CONFLICT (folder_id, remote_id) DO UPDATE SET
                          message_id = excluded.message_id, from_name = excluded.from_name,
                          from_email = excluded.from_email, subject = excluded.subject,
-                         snippet = excluded.snippet, date = excluded.date, flags = excluded.flags
+                         snippet = coalesce(nullif(excluded.snippet, ''), snippet),
+                         date = excluded.date, flags = excluded.flags
                      WHERE (message_id, from_name, from_email, subject, snippet, date, flags)
                          IS NOT (excluded.message_id, excluded.from_name, excluded.from_email,
-                                 excluded.subject, excluded.snippet, excluded.date, excluded.flags)",
+                                 excluded.subject, coalesce(nullif(excluded.snippet, ''), snippet),
+                                 excluded.date, excluded.flags)",
                 )
                 .map_err(storage)?;
             for m in messages {
@@ -280,6 +284,56 @@ impl Store for SqliteStore {
                 .collect()
         });
         rows.map_err(storage)
+    }
+
+    fn location(&self, message: MessageId) -> Result<MessageLocation, StoreError> {
+        self.conn()
+            .prepare_cached(
+                "SELECT f.account_id, f.remote_id, f.validity, m.remote_id
+                 FROM message m JOIN folder f ON f.id = m.folder_id WHERE m.id = ?1",
+            )
+            .and_then(|mut s| {
+                s.query_row([message.0], |r| {
+                    Ok(MessageLocation {
+                        id: message,
+                        account_id: AccountId(r.get(0)?),
+                        folder_remote_id: r.get(1)?,
+                        validity: r.get(2)?,
+                        remote_id: r.get(3)?,
+                    })
+                })
+                .optional()
+            })
+            .map_err(storage)?
+            .ok_or(StoreError::NotFound)
+    }
+
+    fn save_body(&self, message: MessageId, body: &Body) -> Result<(), StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        require(&tx, "SELECT 1 FROM message WHERE id = ?1", message.0)?;
+        tx.execute(
+            "INSERT INTO message_body (message_id, text) VALUES (?1, ?2)
+             ON CONFLICT (message_id) DO UPDATE SET text = excluded.text",
+            params![message.0, body.text],
+        )
+        .map_err(storage)?;
+        tx.execute(
+            "UPDATE message SET snippet = ?2 WHERE id = ?1",
+            params![message.0, body.snippet()],
+        )
+        .map_err(storage)?;
+        tx.commit().map_err(storage)
+    }
+
+    fn body(&self, message: MessageId) -> Result<Option<Body>, StoreError> {
+        self.conn()
+            .prepare_cached("SELECT text FROM message_body WHERE message_id = ?1")
+            .and_then(|mut s| {
+                s.query_row([message.0], |r| Ok(Body { text: r.get(0)? }))
+                    .optional()
+            })
+            .map_err(storage)
     }
 }
 

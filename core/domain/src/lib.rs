@@ -10,7 +10,8 @@ mod store;
 pub use account::{Account, AccountId, AccountKind, NewAccount, Server, guess_imap_host};
 pub use folder::{Folder, FolderId, FolderRole, NewFolder};
 pub use message::{
-    Address, Cursor, Flags, ListQuery, ListScope, MessageId, MessageRow, NewMessage,
+    Address, Body, Cursor, Flags, ListQuery, ListScope, MessageId, MessageLocation, MessageRow,
+    NewMessage,
 };
 pub use provider::{MailProvider, MessageParser, ProviderError, RawMessage, Recent};
 pub use sort::Category;

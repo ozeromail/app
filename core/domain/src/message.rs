@@ -55,6 +55,54 @@ impl MessageRow {
     }
 }
 
+/// The readable part of a message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Body {
+    /// Plain text; an HTML-only message is converted to text.
+    pub text: String,
+}
+
+impl Body {
+    /// The start of the text on one line, for message lists.
+    pub fn snippet(&self) -> String {
+        const LEN: usize = 160;
+        let (mut out, mut len) = (String::new(), 0);
+        let words = self
+            .text
+            .lines()
+            .filter(|l| !l.trim_start().starts_with('>'))
+            .flat_map(str::split_whitespace);
+        for word in words {
+            let word_len = word.chars().count();
+            if len == 0 && word_len > LEN {
+                // One long word, such as a link: cut it rather than show nothing.
+                return word.chars().take(LEN).collect();
+            }
+            if len + word_len + 1 > LEN {
+                break;
+            }
+            if len > 0 {
+                out.push(' ');
+                len += 1;
+            }
+            out.push_str(word);
+            len += word_len;
+        }
+        out
+    }
+}
+
+/// Where a saved message lives on its server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MessageLocation {
+    pub id: MessageId,
+    pub account_id: AccountId,
+    pub folder_remote_id: String,
+    /// The folder's validity when the message was saved; see `Recent::validity`.
+    pub validity: u32,
+    pub remote_id: String,
+}
+
 /// Keyset position in a list sorted newest first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cursor {
@@ -77,4 +125,33 @@ pub struct ListQuery {
     pub limit: u32,
     /// Show messages older than this; `None` starts from the newest.
     pub after: Option<Cursor>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn snippet(text: &str) -> String {
+        Body { text: text.into() }.snippet()
+    }
+
+    #[test]
+    fn snippet_joins_lines_and_skips_quotes() {
+        assert_eq!(
+            snippet("Hi Anna,\n\n> old reply\n  see you\tsoon"),
+            "Hi Anna, see you soon"
+        );
+    }
+
+    #[test]
+    fn snippet_stops_at_a_word() {
+        let s = snippet(&"слово ".repeat(100));
+        assert!(s.chars().count() <= 160);
+        assert!(s.ends_with("слово"));
+    }
+
+    #[test]
+    fn snippet_cuts_a_long_first_word() {
+        assert_eq!(snippet(&"x".repeat(500)).len(), 160);
+    }
 }

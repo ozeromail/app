@@ -4,10 +4,10 @@ use std::fmt;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
-use ozero_app::sync::{SyncError, sync_inbox};
+use ozero_app::sync::{SyncError, download_body, sync_inbox};
 use ozero_domain::{
-    Account, AccountId, AccountKind, FolderRole, ListQuery, ListScope, MessageRow, NewAccount,
-    ProviderError, Server, Store, StoreError,
+    Account, AccountId, AccountKind, FolderRole, ListQuery, ListScope, MessageId, MessageRow,
+    NewAccount, ProviderError, Server, Store, StoreError,
 };
 use ozero_imap::ImapSession;
 use ozero_imap::rustls::ClientConfig;
@@ -99,7 +99,7 @@ impl Core {
             port,
             user: email.clone(),
         };
-        let imap = self.connect(&server, &password).await?;
+        let imap = self.login(&server, &password).await?;
         // The login worked; a failed goodbye changes nothing.
         let _ = imap.logout().await;
         let account = NewAccount {
@@ -114,6 +114,31 @@ impl Core {
     /// Brings the account's folders and newest inbox messages into the database.
     pub async fn sync_imap(&self, account: i64, password: String) -> Result<(), CoreError> {
         let account = AccountId(account);
+        let mut imap = self.connect(account, &password).await?;
+        sync_inbox(&self.store, &mut imap, &self.parser, account, SYNC_LIMIT).await?;
+        let _ = imap.logout().await;
+        Ok(())
+    }
+
+    /// The message text: the saved one, or downloaded once and saved with its snippet.
+    /// `password` is the message's account's.
+    pub async fn message_text(&self, message: i64, password: String) -> Result<String, CoreError> {
+        let message = MessageId(message);
+        if let Some(body) = self.store.body(message)? {
+            return Ok(body.text);
+        }
+        let location = self.store.location(message)?;
+        let mut imap = self.connect(location.account_id, &password).await?;
+        let body = download_body(&self.store, &mut imap, &self.parser, &location).await?;
+        // Closing without LOGOUT saves the reader a round trip; the server cleans up.
+        drop(imap);
+        Ok(body.text)
+    }
+}
+
+impl Core {
+    /// Logs in to a saved IMAP account.
+    async fn connect(&self, account: AccountId, password: &str) -> Result<ImapSession, CoreError> {
         let server = self
             .store
             .accounts()?
@@ -123,15 +148,10 @@ impl Core {
             .ok_or_else(|| CoreError::Storage {
                 detail: "no such IMAP account".into(),
             })?;
-        let mut imap = self.connect(&server, &password).await?;
-        sync_inbox(&self.store, &mut imap, &self.parser, account, SYNC_LIMIT).await?;
-        let _ = imap.logout().await;
-        Ok(())
+        self.login(&server, password).await
     }
-}
 
-impl Core {
-    async fn connect(&self, server: &Server, password: &str) -> Result<ImapSession, CoreError> {
+    async fn login(&self, server: &Server, password: &str) -> Result<ImapSession, CoreError> {
         Ok(ImapSession::connect(
             &server.host,
             server.port,
@@ -261,6 +281,8 @@ pub enum CoreError {
     Server {
         detail: String,
     },
+    /// The message is no longer on the server; a sync will drop it.
+    Gone,
     Storage {
         detail: String,
     },
@@ -276,6 +298,7 @@ impl fmt::Display for CoreError {
             Self::Network { detail } => write!(f, "network error: {detail}"),
             Self::Tls { detail } => write!(f, "TLS setup failed: {detail}"),
             Self::Server { detail } => write!(f, "server error: {detail}"),
+            Self::Gone => write!(f, "the message is gone from the server"),
             Self::Storage { detail } => write!(f, "storage error: {detail}"),
         }
     }
@@ -301,6 +324,7 @@ impl From<ProviderError> for CoreError {
             ProviderError::Auth => Self::Auth,
             ProviderError::Network(detail) => Self::Network { detail },
             ProviderError::Protocol(detail) => Self::Server { detail },
+            ProviderError::Gone => Self::Gone,
         }
     }
 }

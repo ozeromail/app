@@ -79,4 +79,11 @@ fn syncs_an_imap_inbox_into_the_list() {
     assert_eq!(inbox[0].from_name.as_deref(), Some("Анна"));
     assert!(inbox[0].seen && inbox[0].flagged);
     assert_eq!(inbox[0].account_id, account);
+
+    let message = inbox[1].id;
+    let text = |password: &str| runtime.block_on(core.message_text(message, password.into()));
+    assert_eq!(text("pass").unwrap(), "Hello 2");
+    // Saved now: no login, so a wrong password does not matter.
+    assert_eq!(text("wrong").unwrap(), "Hello 2");
+    assert_eq!(core.unified_inbox(50).unwrap()[1].snippet, "Hello 2");
 }

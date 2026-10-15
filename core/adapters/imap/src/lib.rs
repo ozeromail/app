@@ -2,6 +2,7 @@
 
 mod utf7;
 
+use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -29,6 +30,8 @@ use tokio_rustls::rustls::pki_types::ServerName;
 const TIMEOUT: Duration = Duration::from_secs(30);
 /// Upper bound for one server response, literals included.
 const MAX_RESPONSE: u32 = 16 * 1024 * 1024;
+/// How much of one message `body` downloads; text parts come first, big attachments last.
+const MAX_BODY: NonZeroU32 = NonZeroU32::MIN.saturating_add(4 * 1024 * 1024 - 1);
 /// Headers the message list needs.
 const HEADER_FIELDS: [&str; 4] = ["FROM", "SUBJECT", "DATE", "MESSAGE-ID"];
 
@@ -220,24 +223,9 @@ impl ImapSession {
     async fn write(&mut self, data: &[u8]) -> Result<(), ProviderError> {
         timed(self.stream.write_all(data)).await
     }
-}
 
-impl MailProvider for ImapSession {
-    async fn folders(&mut self) -> Result<Vec<NewFolder>, ProviderError> {
-        let list = CommandBody::list("", "*").map_err(|_| protocol("bad LIST"))?;
-        Ok(self
-            .run(list)
-            .await?
-            .data
-            .into_iter()
-            .filter_map(|d| match d {
-                Data::List { items, mailbox, .. } => folder(&items, &mailbox),
-                _ => None,
-            })
-            .collect())
-    }
-
-    async fn recent(&mut self, folder: &str, limit: u32) -> Result<Recent, ProviderError> {
+    /// Opens a folder read-only; returns its UIDVALIDITY and message count.
+    async fn examine(&mut self, folder: &str) -> Result<(u32, u32), ProviderError> {
         let examine = CommandBody::examine(folder).map_err(|_| protocol("bad folder name"))?;
         let reply = self.run(examine).await?;
         let validity = reply
@@ -258,6 +246,27 @@ impl MailProvider for ImapSession {
                 _ => None,
             })
             .ok_or_else(|| protocol("EXAMINE without EXISTS"))?;
+        Ok((validity, exists))
+    }
+}
+
+impl MailProvider for ImapSession {
+    async fn folders(&mut self) -> Result<Vec<NewFolder>, ProviderError> {
+        let list = CommandBody::list("", "*").map_err(|_| protocol("bad LIST"))?;
+        Ok(self
+            .run(list)
+            .await?
+            .data
+            .into_iter()
+            .filter_map(|d| match d {
+                Data::List { items, mailbox, .. } => folder(&items, &mailbox),
+                _ => None,
+            })
+            .collect())
+    }
+
+    async fn recent(&mut self, folder: &str, limit: u32) -> Result<Recent, ProviderError> {
+        let (validity, exists) = self.examine(folder).await?;
         if exists == 0 || limit == 0 {
             return Ok(Recent {
                 validity,
@@ -304,6 +313,60 @@ impl MailProvider for ImapSession {
             messages: messages.into_iter().map(|(_, m)| m).collect(),
         })
     }
+
+    async fn body(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_id: &str,
+    ) -> Result<Vec<u8>, ProviderError> {
+        let uid: u32 = remote_id
+            .parse()
+            .map_err(|_| protocol(format!("bad UID {remote_id}")))?;
+        // A new UIDVALIDITY means the UID may name another message now.
+        if self.examine(folder).await?.0 != validity {
+            return Err(ProviderError::Gone);
+        }
+        let items = vec![
+            MessageDataItemName::Uid,
+            MessageDataItemName::BodyExt {
+                section: None,
+                partial: Some((0, MAX_BODY)),
+                peek: true,
+            },
+        ];
+        let fetch =
+            CommandBody::fetch(uid..=uid, items, true).map_err(|_| protocol("bad FETCH"))?;
+        // The server may add FETCH replies about other messages, such as flag changes.
+        // No reply for the UID means the message was expunged.
+        self.run(fetch)
+            .await?
+            .data
+            .into_iter()
+            .find_map(|d| match d {
+                Data::Fetch { items, .. } => message_bytes(items, uid),
+                _ => None,
+            })
+            .ok_or(ProviderError::Gone)
+    }
+}
+
+/// The message bytes of a FETCH reply for `uid`.
+fn message_bytes<'a>(
+    items: impl IntoIterator<Item = MessageDataItem<'a>>,
+    uid: u32,
+) -> Option<Vec<u8>> {
+    let (mut found, mut data) = (None, None);
+    for item in items {
+        match item {
+            MessageDataItem::Uid(u) => found = Some(u.get()),
+            MessageDataItem::BodyExt { data: d, .. } => {
+                data = d.0.map(|s| s.into_inner().into_owned());
+            }
+            _ => {}
+        }
+    }
+    data.filter(|_| found == Some(uid))
 }
 
 /// A LIST entry that can hold messages.
