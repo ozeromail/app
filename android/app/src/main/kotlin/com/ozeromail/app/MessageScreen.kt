@@ -29,56 +29,66 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import uniffi.ozero_api.CoreException
+import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
 
-/** One message as plain text; the system back gesture returns to the list. */
+/** One message: its HTML when it has one, otherwise the text. System back returns to the list. */
 @Composable
 fun MessageScreen(mail: Mail, message: MessageItem, onBack: () -> Unit) {
     BackHandler(onBack = onBack)
-    var text by remember(message.id) { mutableStateOf<String?>(null) }
+    var body by remember(message.id) { mutableStateOf<MessageBody?>(null) }
     var error by remember(message.id) { mutableStateOf<Int?>(null) }
     LaunchedEffect(message.id) {
         try {
-            text = mail.text(message)
+            body = mail.body(message)
         } catch (e: CoreException) {
             error = e.text()
         }
     }
 
     val colors = MaterialTheme.colorScheme
-    Column(
-        Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState()).padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        SelectionContainer {
+    Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+        Header(message, Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp))
+        HorizontalDivider(Modifier.padding(top = 12.dp), color = colors.outlineVariant)
+        val shown = body
+        val failed = error
+        val content = Modifier.weight(1f).fillMaxWidth()
+        when {
+            shown?.html != null -> HtmlView(shown.html, content)
+            shown != null -> SelectionContainer(content.verticalScroll(rememberScrollState()).padding(20.dp)) {
+                Text(shown.text)
+            }
+            failed != null -> Text(stringResource(failed), color = colors.onSurfaceVariant, modifier = Modifier.padding(20.dp))
+            else -> Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        }
+    }
+}
+
+@Composable
+private fun Header(message: MessageItem, modifier: Modifier) {
+    val colors = MaterialTheme.colorScheme
+    SelectionContainer(modifier) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
                 message.subjectText(),
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.SemiBold,
             )
-        }
-        Text(message.sender, fontWeight = FontWeight.Medium)
-        if (message.sender != message.fromEmail) {
-            Text(message.fromEmail, color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-        }
-        Text(
-            DateUtils.formatDateTime(
-                LocalContext.current,
-                message.date * 1000,
-                DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_SHOW_TIME or DateUtils.FORMAT_SHOW_YEAR,
-            ),
-            color = colors.onSurfaceVariant,
-            style = MaterialTheme.typography.bodySmall,
-        )
-        HorizontalDivider(Modifier.padding(vertical = 12.dp), color = colors.outlineVariant)
-        val shown = text
-        val failed = error
-        when {
-            shown != null -> SelectionContainer { Text(shown) }
-            failed != null -> Text(stringResource(failed), color = colors.onSurfaceVariant)
-            else -> Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
+            Text(message.sender, fontWeight = FontWeight.Medium)
+            if (message.sender != message.fromEmail) {
+                Text(message.fromEmail, color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
+            Text(
+                DateUtils.formatDateTime(
+                    LocalContext.current,
+                    message.date * 1000,
+                    DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_SHOW_TIME or DateUtils.FORMAT_SHOW_YEAR,
+                ),
+                color = colors.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
     }
 }

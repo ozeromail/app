@@ -43,12 +43,12 @@ final class Mail: Sendable {
             email: email, displayName: email, host: host, port: port, password: password)
     }
 
-    /// The message text, downloaded once by the core.
+    /// The message body, downloaded once by the core.
     /// A missing password only matters for a download, which then fails to log in.
-    func text(of message: MessageItem) async throws -> String {
+    func body(of message: MessageItem) async throws -> MessageBody {
         let account = try core.accounts().first { $0.id == message.accountId }
         let password = account.flatMap { try? vault.password(email: $0.email) } ?? ""
-        return try await core.messageText(message: message.id, password: password)
+        return try await core.messageBody(message: message.id, password: password)
     }
 
     /// Syncs all accounts at once; the first failure is thrown once every one has finished.
