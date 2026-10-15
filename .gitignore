@@ -1,0 +1,25 @@
+# Rust
+/core/target/
+
+# Android
+.gradle/
+build/
+local.properties
+*.keystore
+*.jks
+
+# iOS
+DerivedData/
+xcuserdata/
+*.xcframework
+
+# Secrets never live in the repo
+*.p8
+*.p12
+*.mobileprovision
+.env*
+
+# OS and editors
+.DS_Store
+.idea/
+.vscode/

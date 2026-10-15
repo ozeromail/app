@@ -1,0 +1,35 @@
+[workspace]
+resolver = "3"
+members = ["domain", "app", "api"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "LicenseRef-Proprietary"
+publish = false
+
+[workspace.dependencies]
+ozero-domain = { path = "domain" }
+ozero-app = { path = "app" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = "s"
+overflow-checks = true
+strip = "symbols"

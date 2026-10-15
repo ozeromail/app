@@ -1,0 +1,8 @@
+# Only GitHub Actions are updated automatically.
+# Rust and Gradle dependencies are updated by hand, one reviewed change at a time.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
