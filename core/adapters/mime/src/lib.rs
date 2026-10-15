@@ -33,10 +33,7 @@ impl MessageParser for MimeParser {
 
     fn parse_body(&self, raw: &[u8]) -> Body {
         let Some(message) = self.0.parse(raw) else {
-            return Body {
-                text: String::new(),
-                html: None,
-            };
+            return Body::default();
         };
         // `body_html` would turn a plain text part into HTML; only a real HTML part counts.
         let html = message.html_part(0).and_then(|p| match &p.body {

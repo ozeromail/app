@@ -56,11 +56,11 @@ impl MessageRow {
 }
 
 /// The readable part of a message.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Body {
     /// Plain text; an HTML-only message is converted to text.
     pub text: String,
-    /// The HTML part as sent, if there is one. Shown only in a sandbox.
+    /// The HTML part as sent, if there is one.
     pub html: Option<String>,
 }
 
@@ -136,7 +136,7 @@ mod tests {
     fn snippet(text: &str) -> String {
         Body {
             text: text.into(),
-            html: None,
+            ..Body::default()
         }
         .snippet()
     }

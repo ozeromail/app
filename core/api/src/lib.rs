@@ -264,11 +264,7 @@ fn sandboxed(html: &str) -> String {
         "img{max-width:100%;height:auto}</style>",
         "</head><body dir=\"auto\">",
     );
-    let mut page = String::with_capacity(HEAD.len() + html.len() + 14);
-    page.push_str(HEAD);
-    page.push_str(html);
-    page.push_str("</body></html>");
-    page
+    [HEAD, html, "</body></html>"].concat()
 }
 
 /// One row of a message list.

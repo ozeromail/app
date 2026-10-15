@@ -1,6 +1,5 @@
 package com.ozeromail.app
 
-import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.webkit.WebResourceRequest
@@ -28,7 +27,6 @@ fun HtmlView(html: String, modifier: Modifier = Modifier) {
     )
 }
 
-@SuppressLint("SetJavaScriptEnabled")
 private fun WebView.configure() {
     settings.apply {
         javaScriptEnabled = false
