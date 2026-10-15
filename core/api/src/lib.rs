@@ -9,8 +9,8 @@ use ozero_domain::{
     Account, AccountId, AccountKind, FolderRole, ListQuery, ListScope, MessageRow, NewAccount,
     ProviderError, Store, StoreError,
 };
-use ozero_imap::rustls::ClientConfig;
 use ozero_imap::ImapSession;
+use ozero_imap::rustls::ClientConfig;
 use ozero_mime::MimeParser;
 use ozero_store_sqlite::SqliteStore;
 
