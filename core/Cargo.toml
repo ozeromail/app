@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["domain", "app", "api"]
+members = ["domain", "app", "api", "api/bindgen"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,9 +12,11 @@ publish = false
 [workspace.dependencies]
 ozero-domain = { path = "domain" }
 ozero-app = { path = "app" }
+uniffi = { version = "0.32", default-features = false }
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+# deny, not forbid: UniFFI-generated code allows itself unsafe; hand-written unsafe is still an error.
+unsafe_code = "deny"
 missing_debug_implementations = "warn"
 
 [workspace.lints.clippy]
@@ -32,4 +34,5 @@ lto = "fat"
 codegen-units = 1
 opt-level = "s"
 overflow-checks = true
-strip = "symbols"
+# Keep the symbol table: uniffi-bindgen reads UniFFI metadata from it. AGP strips the packaged .so.
+strip = "debuginfo"

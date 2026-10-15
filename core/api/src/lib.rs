@@ -1,10 +1,11 @@
 //! Facade the Android and iOS apps call through UniFFI.
-//!
-//! UniFFI bindings are added together with the Android app.
 
-/// Version of the core, shown in About and attached to manual crash reports.
-pub fn core_version() -> &'static str {
-    env!("CARGO_PKG_VERSION")
+uniffi::setup_scaffolding!();
+
+/// Version of the core, shown in About and in manual crash reports.
+#[uniffi::export]
+pub fn core_version() -> String {
+    env!("CARGO_PKG_VERSION").to_owned()
 }
 
 #[cfg(test)]

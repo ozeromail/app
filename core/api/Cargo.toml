@@ -7,5 +7,13 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[lib]
+name = "ozero_api"
+# cdylib for Android, staticlib for the iOS XCFramework, lib for tests.
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[dependencies]
+uniffi.workspace = true
+
 [lints]
 workspace = true

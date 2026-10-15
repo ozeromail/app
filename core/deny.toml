@@ -30,6 +30,9 @@ multiple-versions = "deny"
 wildcards = "deny"
 # Path dependencies between our own unpublished crates are fine.
 allow-wildcard-paths = true
+skip = [
+  { crate = "syn@2", reason = "UniFFI build-time macros still use syn 2" },
+]
 
 [sources]
 unknown-registry = "deny"
