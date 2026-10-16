@@ -33,6 +33,8 @@ pub trait Store: Send + Sync {
     /// Unread People mail in an inbox saved since the last call, newest first, for a
     /// notification. Everything saved before this call stops being new.
     fn take_fresh(&self) -> Result<Vec<MessageRow>, StoreError>;
+    /// Like `take_fresh` without reading the mail: it is on screen already.
+    fn clear_fresh(&self) -> Result<(), StoreError>;
 
     fn location(&self, message: MessageId) -> Result<MessageLocation, StoreError>;
     /// Saves the body and sets the message's snippet from it.

@@ -41,11 +41,11 @@ class Mail(private val context: Context) {
 
     suspend fun inbox(tab: Category): List<MessageItem> = io { core.unifiedInbox(tab, INBOX_SIZE) }
 
-    /**
-     * Unread mail in People that came since the last call, for a notification. The inbox calls
-     * it too, so mail already seen there is not announced later.
-     */
+    /** Unread mail in People that came since the last call, for a notification. */
     suspend fun newMail(): List<MessageItem> = io { core.takeNewMail() }
+
+    /** The mail synced so far is on screen, so it is not announced later. */
+    suspend fun forgetNewMail() = io { core.forgetNewMail() }
 
     /** The inbox tabs in order, with their unread counts. */
     suspend fun tabs(): List<InboxTab> = io { core.inboxTabs() }

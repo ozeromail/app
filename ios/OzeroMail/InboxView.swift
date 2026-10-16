@@ -84,10 +84,10 @@ struct InboxView: View {
             // Also runs on the way back from a message, which now has a snippet.
             .task(id: tab) { await load() }
         }
+        .task { await sync() }
         .task {
             // Asked once the inbox shows, so it is clear what the notifications are for.
             _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
-            await sync()
         }
         .fullScreenCover(item: $composing) { composing in
             ComposeView(mail: mail, composing: composing) { id, sent in
@@ -178,8 +178,7 @@ struct InboxView: View {
         defer { syncing = false }
         do {
             try await mail.refresh()
-            // On screen now, so no notification later.
-            _ = try await mail.newMail()
+            try await mail.forgetNewMail()
         } catch {
             self.error = error.text()
         }
