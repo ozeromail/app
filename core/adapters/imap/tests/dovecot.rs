@@ -134,6 +134,8 @@ async fn moves_messages_to_another_folder() {
     assert_eq!(archived.len(), 1);
     let header = String::from_utf8_lossy(&archived[0].header);
     assert!(header.contains("Subject: Move me"), "{header}");
+    // The inbox tabs need the list headers.
+    assert!(header.contains("List-Unsubscribe:"), "{header}");
 }
 
 #[tokio::test(flavor = "current_thread")]

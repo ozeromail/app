@@ -1,7 +1,7 @@
 //! `MessageParser` on mail-parser: decodes headers in any charset.
 
 use mail_parser::PartType;
-use ozero_domain::{Address, Body, MessageParser, NewMessage, RawMessage};
+use ozero_domain::{Address, Body, Category, MessageParser, NewMessage, RawMessage, Signals};
 
 #[derive(Debug, Default)]
 pub struct MimeParser(mail_parser::MessageParser);
@@ -11,15 +11,21 @@ impl MessageParser for MimeParser {
         let parsed = self.0.parse_headers(&raw.header);
         let header = parsed.as_ref();
         let from = header.and_then(|h| h.from()).and_then(|a| a.first());
+        let email = from.and_then(|a| a.address()).unwrap_or_default();
+        let raw_header = |name: &'static str| header.and_then(|h| h.header_raw(name));
+        let category = Category::of(&Signals {
+            from: email,
+            list_id: raw_header("List-Id"),
+            list_unsubscribe: raw_header("List-Unsubscribe"),
+            precedence: raw_header("Precedence"),
+            auto_submitted: raw_header("Auto-Submitted"),
+        });
         NewMessage {
             remote_id: raw.remote_id,
             message_id: header.and_then(|h| h.message_id()).map(str::to_owned),
             from: Address {
                 name: from.and_then(|a| a.name()).map(str::to_owned),
-                email: from
-                    .and_then(|a| a.address())
-                    .unwrap_or_default()
-                    .to_owned(),
+                email: email.to_owned(),
             },
             subject: header
                 .and_then(|h| h.subject())
@@ -28,6 +34,7 @@ impl MessageParser for MimeParser {
             snippet: String::new(),
             date: raw.received,
             flags: raw.flags,
+            category,
         }
     }
 
@@ -77,6 +84,29 @@ mod tests {
         assert_eq!(m.subject, "Привет");
         assert_eq!(m.message_id.as_deref(), Some("1@example.com"));
         assert_eq!(m.date, 100);
+    }
+
+    #[test]
+    fn sorts_by_headers() {
+        let category = |header: &[u8]| parse(header).category;
+        assert_eq!(
+            category(b"From: anna@example.com\r\n\r\n"),
+            Category::People
+        );
+        assert_eq!(
+            category(
+                b"From: news@shop.example\r\nList-Unsubscribe: <mailto:u@shop.example>\r\n\r\n"
+            ),
+            Category::Newsletters
+        );
+        assert_eq!(
+            category(b"From: it@example.com\r\nAuto-Submitted: auto-generated\r\n\r\n"),
+            Category::Notifications
+        );
+        assert_eq!(
+            category(b"From: digest@blog.example\r\nLIST-ID: <digest.blog.example>\r\n\r\n"),
+            Category::Newsletters
+        );
     }
 
     #[test]

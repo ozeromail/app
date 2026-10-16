@@ -69,6 +69,7 @@ fn message(uid: u32, date: i64) -> NewMessage {
         snippet: "Hello".into(),
         date,
         flags: Flags::default(),
+        category: Category::People,
     }
 }
 
@@ -83,6 +84,7 @@ fn list(
             scope,
             limit,
             after,
+            category: None,
         })
         .unwrap()
 }
@@ -277,7 +279,7 @@ fn large_lists_read_an_index_in_order() {
     for sql in [LIST_FOLDER, LIST_UNIFIED_BY_DATE] {
         let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
         let plan: Vec<String> = stmt
-            .query_map(params!["1", 0, 0, 30], |r| r.get(3))
+            .query_map(params!["1", 0, 0, 30, 1], |r| r.get(3))
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap();
@@ -506,4 +508,43 @@ fn a_refused_archive_shows_the_message_again() {
     store.revert(&due).unwrap();
     assert_eq!(list(&store, ListScope::Folder(folder), 10, None).len(), 1);
     assert!(store.due(account, 0).unwrap().is_empty());
+}
+
+#[test]
+fn tabs_list_and_count_their_own_messages() {
+    let store = store();
+    let folder = inbox(&store, account(&store, "a@example.com"));
+    let mut news = message(2, 200);
+    news.category = Category::Newsletters;
+    store
+        .save_messages(folder, &[message(1, 100), news.clone()])
+        .unwrap();
+
+    let tab = |category| {
+        let rows = store
+            .list(&ListQuery {
+                scope: ListScope::Folder(folder),
+                limit: 10,
+                after: None,
+                category: Some(category),
+            })
+            .unwrap();
+        rows.iter().map(|r| r.subject.clone()).collect::<Vec<_>>()
+    };
+    assert_eq!(tab(Category::People), ["Subject 1"]);
+    assert_eq!(tab(Category::Newsletters), ["Subject 2"]);
+    assert!(tab(Category::Notifications).is_empty());
+    let unread = |category| {
+        store
+            .unread(ListScope::Unified(FolderRole::Inbox), category)
+            .unwrap()
+    };
+    assert_eq!(unread(Category::People), 1);
+
+    // A resync sorts a known message again.
+    news.category = Category::Notifications;
+    store.save_messages(folder, &[news]).unwrap();
+    assert_eq!(tab(Category::Notifications), ["Subject 2"]);
+    assert_eq!(unread(Category::Newsletters), 0);
+    assert_eq!(unread(Category::Notifications), 1);
 }

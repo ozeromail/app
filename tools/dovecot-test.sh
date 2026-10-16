@@ -32,4 +32,4 @@ for i in 1 2 3; do
     "$user" "$i" "$i" "$i" "$i" | doveadm save -u "$user"
 done
 doveadm flags add -u "$user" '\Seen \Flagged' mailbox INBOX uid 3
-printf 'From: anna@example.com\r\nSubject: Move me\r\n\r\nHello\r\n' | doveadm save -u "$user" -m Moves
+printf 'From: anna@example.com\r\nSubject: Move me\r\nList-Unsubscribe: <mailto:u@example.com>\r\n\r\nHello\r\n' | doveadm save -u "$user" -m Moves

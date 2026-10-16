@@ -6,9 +6,9 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
 use ozero_domain::{
-    Account, AccountId, AccountKind, Action, Address, Body, Flags, Folder, FolderId, FolderRole,
-    ListQuery, ListScope, MessageId, MessageLocation, MessageRow, NewAccount, NewFolder,
-    NewMessage, Op, OpId, Server, Store, StoreError,
+    Account, AccountId, AccountKind, Action, Address, Body, Category, Flags, Folder, FolderId,
+    FolderRole, ListQuery, ListScope, MessageId, MessageLocation, MessageRow, NewAccount,
+    NewFolder, NewMessage, Op, OpId, Server, Store, StoreError,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{Connection, ErrorCode, OptionalExtension, Row, Transaction, params};
@@ -245,6 +245,7 @@ impl Store for SqliteStore {
                         m.snippet,
                         m.date,
                         flags_bits(m.flags),
+                        category_int(m.category),
                     ])
                     .map_err(storage)?;
             }
@@ -265,10 +266,31 @@ impl Store for SqliteStore {
         };
         let conn = self.conn();
         let rows = conn.prepare_cached(sql).and_then(|mut s| {
-            s.query_map(params![scope, date, id, query.limit], message_row)?
+            let category = query.category.map(category_int);
+            s.query_map(params![scope, date, id, query.limit, category], message_row)?
                 .collect()
         });
         rows.map_err(storage)
+    }
+
+    fn unread(&self, scope: ListScope, category: Category) -> Result<u32, StoreError> {
+        let (folders, scope): (&str, &dyn rusqlite::ToSql) = match &scope {
+            ListScope::Folder(folder) => ("m.folder_id = ?1", &folder.0),
+            ListScope::Unified(role) => (
+                "m.folder_id IN (SELECT id FROM folder WHERE role = ?1)",
+                role_ref(*role),
+            ),
+        };
+        let sql = format!(
+            "SELECT count(*) FROM message m WHERE {folders} AND m.category = ?2 AND m.flags & ?3 = 0
+             AND NOT EXISTS (SELECT 1 FROM op WHERE op.message_id = m.id AND op.kind = 'archive')"
+        );
+        self.conn()
+            .prepare_cached(&sql)
+            .and_then(|mut s| {
+                s.query_row(params![scope, category_int(category), SEEN], |r| r.get(0))
+            })
+            .map_err(storage)
     }
 
     fn location(&self, message: MessageId) -> Result<MessageLocation, StoreError> {
@@ -531,18 +553,18 @@ macro_rules! merged_flags {
 
 const SAVE_MESSAGE: &str = concat!(
     "INSERT INTO message (folder_id, remote_id, message_id, from_name, from_email,
-                          subject, snippet, date, flags)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                          subject, snippet, date, flags, category)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
      ON CONFLICT (folder_id, remote_id) DO UPDATE SET
          message_id = excluded.message_id, from_name = excluded.from_name,
          from_email = excluded.from_email, subject = excluded.subject,
          snippet = coalesce(nullif(excluded.snippet, ''), snippet),
-         date = excluded.date, flags = ",
+         date = excluded.date, category = excluded.category, flags = ",
     merged_flags!(),
-    " WHERE (message_id, from_name, from_email, subject, snippet, date, flags)
+    " WHERE (message_id, from_name, from_email, subject, snippet, date, category, flags)
          IS NOT (excluded.message_id, excluded.from_name, excluded.from_email,
                  excluded.subject, coalesce(nullif(excluded.snippet, ''), snippet),
-                 excluded.date, ",
+                 excluded.date, excluded.category, ",
     merged_flags!(),
     ")"
 );
@@ -556,6 +578,7 @@ macro_rules! list_sql {
              WHERE ",
             $scope,
             " AND (m.date, m.id) < (?2, ?3)
+             AND (?5 IS NULL OR m.category = ?5)
              AND NOT EXISTS (SELECT 1 FROM op WHERE op.message_id = m.id AND op.kind = 'archive')
              ORDER BY m.date DESC, m.id DESC
              LIMIT ?4"
@@ -577,6 +600,14 @@ fn walks_by_date(role: FolderRole) -> bool {
         role,
         FolderRole::Inbox | FolderRole::Archive | FolderRole::Sent
     )
+}
+
+fn category_int(category: Category) -> i64 {
+    match category {
+        Category::People => 0,
+        Category::Notifications => 1,
+        Category::Newsletters => 2,
+    }
 }
 
 fn role_ref(role: FolderRole) -> &'static &'static str {
