@@ -33,8 +33,8 @@ pub trait Store: Send + Sync {
     ) -> Result<(), StoreError>;
     /// One row per conversation in a folder and inbox tab: its newest message in the list.
     fn list(&self, query: &ListQuery) -> Result<Vec<MessageRow>, StoreError>;
-    /// The conversation of a message in its folder and inbox tab, oldest first, leaving out
-    /// what is being archived.
+    /// The conversation of a message in its folder and inbox tab, with the user's replies from
+    /// the sent folder, oldest first, leaving out what is being archived.
     fn thread(&self, message: MessageId) -> Result<Vec<MessageRow>, StoreError>;
     /// Unread messages in each tab of the unified inbox, leaving out those being archived.
     /// A tab without any is missing.

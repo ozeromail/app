@@ -12,7 +12,7 @@ fn folder(remote_id: &str, role: FolderRole) -> NewFolder {
 }
 
 #[test]
-fn saves_inbox_changes_since_the_checkpoint() {
+fn saves_inbox_and_sent_changes_since_the_checkpoint() {
     let since = Checkpoint {
         validity: 9,
         next: 7,
@@ -28,15 +28,20 @@ fn saves_inbox_changes_since_the_checkpoint() {
         ],
         ..Server::default()
     };
-    run(sync_inbox(&store, &mut server, &Parser, AccountId(1), 50)).unwrap();
+    run(sync_mail(&store, &mut server, &Parser, AccountId(1), 50)).unwrap();
 
+    let known: Vec<String> = vec!["5".into(), "6".into()];
     assert_eq!(
         server.synced,
-        [("INBOX".to_string(), since, vec!["5".into(), "6".into()], 50)]
+        [
+            ("INBOX".to_string(), since, known.clone(), 50),
+            ("Sent".to_string(), since, known, 12),
+        ]
     );
     let changes = store.changes.lock().unwrap();
-    let (folder, saved) = &changes[0];
-    assert_eq!(*folder, FolderId(2));
+    let folders: Vec<_> = changes.iter().map(|(f, _)| *f).collect();
+    assert_eq!(folders, [FolderId(2), FolderId(1)]);
+    let saved = &changes[0].1;
     assert_eq!(saved.checkpoint.next, 8);
     assert_eq!(saved.new[0].subject, "Hi");
     assert_eq!(saved.gone, ["6"]);
@@ -50,7 +55,7 @@ fn fails_without_an_inbox() {
         ..Server::default()
     };
     assert_eq!(
-        run(sync_inbox(
+        run(sync_mail(
             &Memory::default(),
             &mut server,
             &Parser,

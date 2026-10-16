@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// A conversation, opened at its newest message: its HTML when it has one, otherwise the
-/// text. The older messages sit above it, short; a tap shows one. Reply answers the one shown.
+/// A conversation, opened at the list's message: its HTML when it has one, otherwise the
+/// text. The other messages, the user's replies among them, sit above it, short; a tap shows
+/// one. Reply answers the shown message, or the newest one not from the user.
 struct MessageView: View {
     let mail: Mail
     let message: MessageItem
@@ -59,7 +60,10 @@ struct MessageView: View {
         .safeAreaInset(edge: .bottom) {
             HStack {
                 Spacer()
-                Button("message_reply") { onReply(current) }.buttonStyle(.borderedProminent)
+                Button("message_reply") {
+                    onReply(current.sent ? thread.last(where: { !$0.sent }) ?? message : current)
+                }
+                .buttonStyle(.borderedProminent)
             }
             .padding(.horizontal)
             .padding(.vertical, 8)
@@ -68,7 +72,7 @@ struct MessageView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task(id: message.id) {
             do {
-                if message.threadCount > 1 { thread = try mail.thread(of: message) }
+                thread = try mail.thread(of: message)
                 if message.threadUnread > 0 { try mail.markRead(message) }
             } catch {
                 self.error = error.text()

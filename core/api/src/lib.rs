@@ -9,7 +9,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ozero_app::ops::push_ops;
 use ozero_app::send::{SentCopy, push_sends};
-use ozero_app::sync::{SyncError, download_body, sync_inbox};
+use ozero_app::sync::{SyncError, download_body, sync_mail};
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Body, Category, Draft, FolderRole, ListQuery,
     ListScope, MessageId, MessageRow, NewAccount, OpId, OutboxId, ProviderError, Server, Store,
@@ -23,7 +23,7 @@ use ozero_store_sqlite::SqliteStore;
 
 uniffi::setup_scaffolding!();
 
-/// How many of the newest inbox messages one sync brings in.
+/// How many new messages of the inbox and of the sent folder one sync brings in.
 const SYNC_LIMIT: u32 = 200;
 /// Mail older than this many seconds is not announced: a day.
 const NEWS_AGE: i64 = 86_400;
@@ -341,7 +341,7 @@ impl Core {
     }
 
     /// Sends the account's queued actions and mail, then brings its folders and what changed
-    /// in its inbox into the database.
+    /// in its inbox and sent folder into the database.
     pub async fn sync_imap(&self, account: i64, password: String) -> Result<(), CoreError> {
         let account = self.account(AccountId(account))?;
         let lock = self.busy(account.id);
@@ -350,7 +350,7 @@ impl Core {
         // A send that fails, say on a broken SMTP server, must not stop new mail coming in.
         let pushed = self.push_due(&account, &password, &mut slot).await;
         let imap = self.imap(&mut slot, &account, &password).await?;
-        sync_inbox(&self.store, imap, &self.parser, account.id, SYNC_LIMIT).await?;
+        sync_mail(&self.store, imap, &self.parser, account.id, SYNC_LIMIT).await?;
         if let Some(imap) = slot {
             let _ = imap.logout().await;
         }
@@ -683,6 +683,8 @@ pub struct MessageItem {
     pub thread_count: u32,
     /// How many of them are unread.
     pub thread_unread: u32,
+    /// The user wrote it: it is in the sent folder.
+    pub sent: bool,
 }
 
 impl From<MessageRow> for MessageItem {
@@ -699,6 +701,7 @@ impl From<MessageRow> for MessageItem {
             flagged: row.flags.flagged,
             thread_count: row.thread_count,
             thread_unread: row.thread_unread,
+            sent: row.sent,
         }
     }
 }
