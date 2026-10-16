@@ -76,4 +76,27 @@ pub const MIGRATIONS: &[&str] = &[
     -- Tab counts read only unread rows; `1` is the seen bit.
     CREATE INDEX message_unread ON message(folder_id, category) WHERE flags & 1 = 0;
     ",
+    // 9: sending. Known IMAP accounts get the usual SMTP host next to their IMAP one, on 465.
+    // `recipients` holds one address per line; `failed` is why the server refused it for good.
+    "
+    ALTER TABLE account ADD COLUMN smtp_host TEXT;
+    ALTER TABLE account ADD COLUMN smtp_port INTEGER;
+    ALTER TABLE account ADD COLUMN smtp_user TEXT;
+    UPDATE account SET smtp_host = 'smtp.' || substr(server_host, 6), smtp_port = 465,
+                       smtp_user = server_user
+     WHERE server_host LIKE 'imap.%';
+    CREATE TABLE outbox (
+        id          INTEGER PRIMARY KEY,
+        account_id  INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+        recipients  TEXT NOT NULL,
+        subject     TEXT NOT NULL,
+        text        TEXT NOT NULL,
+        reply_to    INTEGER REFERENCES message(id) ON DELETE SET NULL,
+        in_reply_to TEXT,
+        message_id  TEXT NOT NULL,
+        date        INTEGER NOT NULL,
+        not_before  INTEGER NOT NULL,
+        failed      TEXT
+    );
+    ",
 ];

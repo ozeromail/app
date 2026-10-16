@@ -17,6 +17,7 @@ ozero-app.workspace = true
 ozero-domain.workspace = true
 ozero-imap.workspace = true
 ozero-mime.workspace = true
+ozero-smtp.workspace = true
 ozero-store-sqlite.workspace = true
 # Makes sure the runtime UniFFI polls async exports on has IO and timers; `sync` for locks.
 tokio = { version = "1.53", default-features = false, features = ["rt", "net", "time", "sync"] }

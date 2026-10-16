@@ -6,9 +6,10 @@ use std::sync::Mutex;
 use std::task::{Context, Poll, Waker};
 
 use ozero_domain::{
-    Account, AccountId, Action, Address, Body, Category, Flags, Folder, FolderId, ListQuery,
-    MailProvider, MessageId, MessageLocation, MessageParser, MessageRow, NewAccount, NewFolder,
-    NewMessage, Op, OpId, ProviderError, RawMessage, Recent, Store, StoreError,
+    Account, AccountId, Action, Address, Body, Category, Draft, Flags, Folder, FolderId, ListQuery,
+    MailProvider, MailSender, MessageBuilder, MessageId, MessageLocation, MessageParser,
+    MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing, ProviderError,
+    RawMessage, Recent, Store, StoreError,
 };
 
 /// Fakes answer at once, so one poll finishes the future.
@@ -27,6 +28,7 @@ pub struct Server {
     pub applied: Vec<(String, u32, Vec<String>, Action)>,
     pub refuse: Vec<ProviderError>,
     pub moved_to: Vec<String>,
+    pub appended: Vec<(String, Vec<u8>)>,
 }
 
 impl MailProvider for Server {
@@ -85,6 +87,47 @@ impl MailProvider for Server {
         self.moved_to.push(to.into());
         ready(self.apply(folder, validity, remote_ids, Action::Archive))
     }
+
+    fn append(
+        &mut self,
+        folder: &str,
+        message: &[u8],
+    ) -> impl Future<Output = Result<(), ProviderError>> + Send {
+        self.appended.push((folder.into(), message.to_vec()));
+        ready(Ok(()))
+    }
+}
+
+/// A fake SMTP server: records each message, or fails with the first of `refuse`.
+#[derive(Default)]
+pub struct Postman {
+    pub sent: Vec<(String, Vec<String>, Vec<u8>)>,
+    pub refuse: Vec<ProviderError>,
+}
+
+impl MailSender for Postman {
+    fn send(
+        &mut self,
+        from: &str,
+        to: &[String],
+        message: &[u8],
+    ) -> impl Future<Output = Result<(), ProviderError>> + Send {
+        ready(if self.refuse.is_empty() {
+            self.sent.push((from.into(), to.to_vec(), message.to_vec()));
+            Ok(())
+        } else {
+            Err(self.refuse.remove(0))
+        })
+    }
+}
+
+/// Writes only the subject.
+pub struct Builder;
+
+impl MessageBuilder for Builder {
+    fn build(&self, _: &Address, message: &Outgoing) -> Vec<u8> {
+        message.subject.clone().into_bytes()
+    }
 }
 
 impl Server {
@@ -141,6 +184,8 @@ pub struct Memory {
     pub ops: Vec<Op>,
     pub finished: Mutex<Vec<OpId>>,
     pub reverted: Mutex<Vec<OpId>>,
+    pub sent: Mutex<Vec<OutboxId>>,
+    pub refused: Mutex<Vec<(OutboxId, String)>>,
 }
 
 impl Store for Memory {
@@ -226,6 +271,28 @@ impl Store for Memory {
             .lock()
             .unwrap()
             .extend(ops.iter().map(|o| o.id));
+        Ok(())
+    }
+
+    fn queue_send(&self, _: &Draft, _: &str, _: i64, _: i64) -> Result<OutboxId, StoreError> {
+        Ok(OutboxId(1))
+    }
+
+    fn undo_send(&self, _: OutboxId, _: i64) -> Result<Option<Draft>, StoreError> {
+        Ok(None)
+    }
+
+    fn due_sends(&self, _: AccountId, _: i64) -> Result<Vec<Outgoing>, StoreError> {
+        Ok(vec![])
+    }
+
+    fn sent(&self, id: OutboxId) -> Result<(), StoreError> {
+        self.sent.lock().unwrap().push(id);
+        Ok(())
+    }
+
+    fn refused(&self, id: OutboxId, reason: &str) -> Result<(), StoreError> {
+        self.refused.lock().unwrap().push((id, reason.into()));
         Ok(())
     }
 

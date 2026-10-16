@@ -1,7 +1,7 @@
 use std::fmt;
 use std::future::Future;
 
-use crate::{Body, Flags, NewFolder, NewMessage};
+use crate::{Address, Body, Flags, NewFolder, NewMessage, Outgoing};
 
 /// A message as the server returns it, before MIME parsing.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,6 +62,29 @@ pub trait MailProvider: Send {
         remote_ids: &[String],
         to: &str,
     ) -> impl Future<Output = Result<(), ProviderError>> + Send;
+
+    /// Saves a message into a folder, marked read: a sent copy into Sent.
+    fn append(
+        &mut self,
+        folder: &str,
+        message: &[u8],
+    ) -> impl Future<Output = Result<(), ProviderError>> + Send;
+}
+
+/// Hands mail over for delivery: SMTP, or a provider's own send call.
+pub trait MailSender: Send {
+    /// Sends the whole message to `to`, from the account's address `from`.
+    fn send(
+        &mut self,
+        from: &str,
+        to: &[String],
+        message: &[u8],
+    ) -> impl Future<Output = Result<(), ProviderError>> + Send;
+}
+
+/// Writes a queued message as MIME.
+pub trait MessageBuilder: Send + Sync {
+    fn build(&self, from: &Address, message: &Outgoing) -> Vec<u8>;
 }
 
 /// Turns what a provider returned into what the store keeps.

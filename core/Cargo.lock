@@ -622,6 +622,7 @@ dependencies = [
  "ozero-domain",
  "ozero-imap",
  "ozero-mime",
+ "ozero-smtp",
  "ozero-store-sqlite",
  "rustls-platform-verifier",
  "tokio",
@@ -665,6 +666,15 @@ version = "0.1.0"
 dependencies = [
  "mail-parser",
  "ozero-domain",
+]
+
+[[package]]
+name = "ozero-smtp"
+version = "0.1.0"
+dependencies = [
+ "ozero-domain",
+ "tokio",
+ "tokio-rustls",
 ]
 
 [[package]]

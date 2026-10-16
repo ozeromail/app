@@ -1,5 +1,9 @@
 //! `MessageParser` on mail-parser: decodes headers in any charset.
 
+mod build;
+
+pub use build::MimeBuilder;
+
 use mail_parser::PartType;
 use ozero_domain::{Address, Body, Category, MessageParser, NewMessage, RawMessage, Signals};
 
