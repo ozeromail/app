@@ -31,13 +31,13 @@ final class Mail: Sendable {
         try !core.accounts().isEmpty
     }
 
-    func inbox(_ tab: Tab) async throws -> [MessageItem] {
+    func inbox(_ tab: Category) async throws -> [MessageItem] {
         try core.unifiedInbox(tab: tab, limit: Self.inboxSize)
     }
 
-    /// Unread messages of every tab.
-    func unread() async throws -> [Tab: UInt32] {
-        try Dictionary(uniqueKeysWithValues: Tab.all.map { ($0, try core.unread(tab: $0)) })
+    /// The inbox tabs in order, with their unread counts.
+    func tabs() async throws -> [InboxTab] {
+        try core.inboxTabs()
     }
 
     /// The core saves the account only after the server has accepted the login.
@@ -138,10 +138,7 @@ extension Error {
     }
 }
 
-extension Tab {
-    /// In the order the tab bar shows them.
-    static let all: [Tab] = [.people, .notifications, .newsletters]
-
+extension Category {
     var label: LocalizedStringKey {
         switch self {
         case .people: "tab_people"

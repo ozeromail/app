@@ -69,6 +69,9 @@ pub const MIGRATIONS: &[&str] = &[
     ",
     // 7: the folder a move goes to, chosen when it is queued.
     "ALTER TABLE op ADD COLUMN target INTEGER REFERENCES folder(id) ON DELETE SET NULL;",
-    // 8: the inbox tab; 0 people, 1 notifications, 2 newsletters. The next sync sorts known mail.
-    "ALTER TABLE message ADD COLUMN category INTEGER NOT NULL DEFAULT 0;",
+    // 8: the inbox tab. The next sync sorts known mail; a tab walks its own index by date.
+    "
+    ALTER TABLE message ADD COLUMN category TEXT NOT NULL DEFAULT 'people';
+    CREATE INDEX message_tab ON message(category, date DESC, id DESC);
+    ",
 ];

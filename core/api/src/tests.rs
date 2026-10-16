@@ -88,7 +88,7 @@ fn syncs_an_imap_inbox_into_the_list() {
     // A second sync updates the same rows.
     sync().unwrap();
 
-    let inbox = core.unified_inbox(Tab::People, 50).unwrap();
+    let inbox = core.unified_inbox(Category::People, 50).unwrap();
     let subjects: Vec<_> = inbox.iter().map(|m| m.subject.as_str()).collect();
     assert_eq!(subjects, ["Message 3", "Message 2", "Message 1"]);
     assert_eq!(inbox[0].from_name.as_deref(), Some("Анна"));
@@ -105,7 +105,7 @@ fn syncs_an_imap_inbox_into_the_list() {
     // Saved now: no login, so a wrong password does not matter.
     assert_eq!(body("wrong").unwrap(), plain);
     assert_eq!(
-        core.unified_inbox(Tab::People, 50).unwrap()[1].snippet,
+        core.unified_inbox(Category::People, 50).unwrap()[1].snippet,
         "Hello 2"
     );
 
@@ -113,11 +113,17 @@ fn syncs_an_imap_inbox_into_the_list() {
     let first = inbox[2].id;
     for seen in [true, false] {
         core.mark_read(first, seen).unwrap();
-        assert_eq!(core.unified_inbox(Tab::People, 50).unwrap()[2].seen, seen);
+        assert_eq!(
+            core.unified_inbox(Category::People, 50).unwrap()[2].seen,
+            seen
+        );
         runtime
             .block_on(core.push_actions(account, "pass".into()))
             .unwrap();
         sync().unwrap();
-        assert_eq!(core.unified_inbox(Tab::People, 50).unwrap()[2].seen, seen);
+        assert_eq!(
+            core.unified_inbox(Category::People, 50).unwrap()[2].seen,
+            seen
+        );
     }
 }

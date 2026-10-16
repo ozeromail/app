@@ -9,8 +9,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use ozero_app::ops::push_ops;
 use ozero_app::sync::{SyncError, download_body, sync_inbox};
 use ozero_domain::{
-    Account, AccountId, AccountKind, Action, Body, Category, FolderRole, ListQuery, ListScope,
-    MessageId, MessageRow, NewAccount, OpId, ProviderError, Server, Store, StoreError,
+    Account, AccountId, AccountKind, Action, Body, Category, ListQuery, ListScope, MessageId,
+    MessageRow, NewAccount, OpId, ProviderError, Server, Store, StoreError,
 };
 use ozero_imap::ImapSession;
 use ozero_imap::rustls::ClientConfig;
@@ -107,21 +107,28 @@ impl Core {
     }
 
     /// The newest messages of one tab across all inboxes, newest first.
-    pub fn unified_inbox(&self, tab: Tab, limit: u32) -> Result<Vec<MessageItem>, CoreError> {
+    pub fn unified_inbox(&self, tab: Category, limit: u32) -> Result<Vec<MessageItem>, CoreError> {
         let rows = self.store.list(&ListQuery {
-            scope: ListScope::Unified(FolderRole::Inbox),
+            scope: ListScope::Inbox(tab),
             limit,
             after: None,
-            category: Some(tab.into()),
         })?;
         Ok(rows.into_iter().map(MessageItem::from).collect())
     }
 
-    /// Unread messages of one tab across all inboxes.
-    pub fn unread(&self, tab: Tab) -> Result<u32, CoreError> {
-        Ok(self
-            .store
-            .unread(ListScope::Unified(FolderRole::Inbox), tab.into())?)
+    /// The inbox tabs in order, each with its unread count.
+    pub fn inbox_tabs(&self) -> Result<Vec<InboxTab>, CoreError> {
+        let unread = self.store.inbox_unread()?;
+        Ok(Category::ALL
+            .into_iter()
+            .map(|category| InboxTab {
+                category,
+                unread: unread
+                    .iter()
+                    .find(|(c, _)| *c == category)
+                    .map_or(0, |(_, n)| *n),
+            })
+            .collect())
     }
 
     /// Marks a message read or unread on the device at once; `push_actions` tells the server.
@@ -348,21 +355,17 @@ mod android {
 }
 
 /// Inbox tab, sorted by rules on the device.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
-pub enum Tab {
+#[uniffi::remote(Enum)]
+pub enum Category {
     People,
     Notifications,
     Newsletters,
 }
 
-impl From<Tab> for Category {
-    fn from(tab: Tab) -> Self {
-        match tab {
-            Tab::People => Self::People,
-            Tab::Notifications => Self::Notifications,
-            Tab::Newsletters => Self::Newsletters,
-        }
-    }
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct InboxTab {
+    pub category: Category,
+    pub unread: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]

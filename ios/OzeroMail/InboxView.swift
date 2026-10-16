@@ -10,8 +10,8 @@ struct InboxView: View {
     @State private var error: LocalizedStringKey?
     /// The last archive, while its toast can still take it back.
     @State private var undoable: Int64?
-    @State private var tab = Tab.people
-    @State private var unread: [Tab: UInt32] = [:]
+    @State private var tab = Category.people
+    @State private var tabs: [InboxTab] = []
 
     var body: some View {
         NavigationStack {
@@ -50,9 +50,9 @@ struct InboxView: View {
                         Text(error).font(.footnote).foregroundStyle(.secondary).padding()
                     }
                     Picker("inbox_title", selection: $tab) {
-                        ForEach(Tab.all, id: \.self) { item in
-                            let count = unread[item] ?? 0
-                            (Text(item.label) + Text(count > 0 ? " \(count)" : "")).tag(item)
+                        ForEach(tabs, id: \.category) { item in
+                            (Text(item.category.label) + Text(item.unread > 0 ? " \(item.unread)" : ""))
+                                .tag(item.category)
                         }
                     }
                     .pickerStyle(.segmented)
@@ -61,10 +61,10 @@ struct InboxView: View {
                 }
                 .background(.bar)
             }
-            .onChange(of: tab) { Task { await load() } }
+            .task(id: tab) { await loadList() }
         }
         .task {
-            await load()
+            await counts()
             await sync()
         }
     }
@@ -74,7 +74,7 @@ struct InboxView: View {
         do {
             undoable = try mail.archive(message)
             messages?.removeAll { $0.id == message.id }
-            Task { await load() }
+            Task { await counts() }
         } catch {
             self.error = error.text()
         }
@@ -91,16 +91,28 @@ struct InboxView: View {
         }
     }
 
-    private func load() async {
+    private func loadList() async {
         let shown = tab
         do {
-            let list = try await mail.inbox(shown)
-            unread = try await mail.unread()
+            let found = try await mail.inbox(shown)
             // A tab picked meanwhile loads its own list.
-            if tab == shown { messages = list }
+            if tab == shown { messages = found }
         } catch {
             self.error = error.text()
         }
+    }
+
+    private func counts() async {
+        do {
+            tabs = try await mail.tabs()
+        } catch {
+            self.error = error.text()
+        }
+    }
+
+    private func load() async {
+        await loadList()
+        await counts()
     }
 
     private func sync() async {

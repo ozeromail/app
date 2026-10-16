@@ -7,8 +7,8 @@ use std::task::{Context, Poll, Waker};
 
 use ozero_domain::{
     Account, AccountId, Action, Address, Body, Category, Flags, Folder, FolderId, ListQuery,
-    ListScope, MailProvider, MessageId, MessageLocation, MessageParser, MessageRow, NewAccount,
-    NewFolder, NewMessage, Op, OpId, ProviderError, RawMessage, Recent, Store, StoreError,
+    MailProvider, MessageId, MessageLocation, MessageParser, MessageRow, NewAccount, NewFolder,
+    NewMessage, Op, OpId, ProviderError, RawMessage, Recent, Store, StoreError,
 };
 
 /// Fakes answer at once, so one poll finishes the future.
@@ -184,8 +184,8 @@ impl Store for Memory {
         Ok(())
     }
 
-    fn unread(&self, _: ListScope, _: Category) -> Result<u32, StoreError> {
-        Ok(0)
+    fn inbox_unread(&self) -> Result<Vec<(Category, u32)>, StoreError> {
+        Ok(vec![])
     }
 
     fn list(&self, _: &ListQuery) -> Result<Vec<MessageRow>, StoreError> {
