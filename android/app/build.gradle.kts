@@ -117,5 +117,6 @@ dependencies {
     implementation(libs.activity.compose)
     implementation(libs.jna) { artifact { type = "aar" } }
     implementation(libs.coroutines.android)
+    implementation(libs.work.runtime)
     implementation(verifierVersion.map { "org.rustls:rustls-platform-verifier:$it" })
 }
