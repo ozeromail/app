@@ -19,5 +19,8 @@
   "error_account_exists": "This account is already added.",
   "error_gone": "This message is no longer on the server. Refresh the inbox.",
   "error_no_archive": "This account has no Archive folder.",
-  "inbox_archived": "Moved to Archive"
+  "inbox_archived": "Moved to Archive",
+  "tab_people": "People",
+  "tab_notifications": "Notifications",
+  "tab_newsletters": "Newsletters"
 }
