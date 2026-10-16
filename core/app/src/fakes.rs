@@ -163,6 +163,7 @@ pub struct Parser;
 impl MessageParser for Parser {
     fn parse(&self, raw: RawMessage) -> NewMessage {
         NewMessage {
+            references: vec![],
             remote_id: raw.remote_id,
             message_id: None,
             from: Address {
@@ -259,6 +260,10 @@ impl Store for Memory {
         Ok(vec![])
     }
 
+    fn thread(&self, _: MessageId) -> Result<Vec<MessageRow>, StoreError> {
+        Ok(vec![])
+    }
+
     fn location(&self, _: MessageId) -> Result<MessageLocation, StoreError> {
         Err(StoreError::NotFound)
     }
@@ -272,11 +277,11 @@ impl Store for Memory {
         Ok(None)
     }
 
-    fn queue(&self, _: MessageId, _: Action, _: i64) -> Result<OpId, StoreError> {
-        Ok(OpId(1))
+    fn queue(&self, _: MessageId, _: Action, _: i64) -> Result<Vec<OpId>, StoreError> {
+        Ok(vec![OpId(1)])
     }
 
-    fn undo(&self, _: OpId, _: i64) -> Result<bool, StoreError> {
+    fn undo(&self, _: &[OpId], _: i64) -> Result<bool, StoreError> {
         Ok(false)
     }
 

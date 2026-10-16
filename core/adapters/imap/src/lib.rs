@@ -38,12 +38,14 @@ const MAX_RESPONSE: u32 = 16 * 1024 * 1024;
 const MAX_BODY: NonZeroU32 = NonZeroU32::MIN.saturating_add(4 * 1024 * 1024 - 1);
 /// UIDs per STORE or MOVE command.
 const UID_CHUNK: usize = 500;
-/// Headers the message list and the inbox tabs need.
-const HEADER_FIELDS: [&str; 9] = [
+/// Headers the message list, conversations and the inbox tabs need.
+const HEADER_FIELDS: [&str; 11] = [
     "FROM",
     "SUBJECT",
     "DATE",
     "MESSAGE-ID",
+    "IN-REPLY-TO",
+    "REFERENCES",
     "LIST-ID",
     "LIST-UNSUBSCRIBE",
     "LIST-UNSUBSCRIBE-POST",
@@ -394,8 +396,8 @@ impl MailProvider for ImapSession {
             flags: vec![],
             gone: vec![],
         };
-        // Nothing saved can be trusted, or nothing is saved yet: start from the newest.
-        if since.validity != opened.validity || (since.next == 0 && known.is_empty()) {
+        // Nothing saved can be trusted, or there is no checkpoint yet: start from the newest.
+        if since.validity != opened.validity || since.next == 0 {
             changes.new = self.newest(opened.exists, limit).await?;
             if let Some(last) = changes.new.last() {
                 // Without UIDNEXT, mail after the newest one fetched is new.
@@ -404,7 +406,6 @@ impl MailProvider for ImapSession {
             }
             return Ok(changes);
         }
-        // Without a checkpoint, saved mail from before it was kept tells which mail is new.
         // UIDs end at u32::MAX, so a checkpoint past it has no new mail left.
         let next = NonZeroU32::new(u32::try_from(since.next).unwrap_or(u32::MAX))
             .unwrap_or(NonZeroU32::MIN);

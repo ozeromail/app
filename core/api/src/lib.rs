@@ -130,7 +130,8 @@ impl Core {
             .collect())
     }
 
-    /// The newest messages of one tab across all inboxes, newest first.
+    /// The newest conversations of one tab across all inboxes, newest first: each row is the
+    /// newest message of its conversation.
     pub fn unified_inbox(&self, tab: Category, limit: u32) -> Result<Vec<MessageItem>, CoreError> {
         let rows = self.store.list(&ListQuery {
             scope: ListScope::Inbox(tab),
@@ -173,26 +174,34 @@ impl Core {
             .collect())
     }
 
-    /// Marks a message read or unread on the device at once; `push_actions` tells the server.
+    /// The conversation of a message, oldest first.
+    pub fn thread(&self, message: i64) -> Result<Vec<MessageItem>, CoreError> {
+        let rows = self.store.thread(MessageId(message))?;
+        Ok(rows.into_iter().map(MessageItem::from).collect())
+    }
+
+    /// Marks a message's conversation read or unread on the device at once;
+    /// `push_actions` tells the server.
     pub fn mark_read(&self, message: i64, seen: bool) -> Result<(), CoreError> {
         self.store
             .queue(MessageId(message), Action::Seen(seen), now())?;
         Ok(())
     }
 
-    /// Takes the message out of the lists at once and holds the move to the archive for
-    /// `HOLD`, so `undo` can take it back. Returns the action for `undo`.
+    /// Takes a message's conversation out of the lists at once and holds the move to the
+    /// archive for `HOLD`, so `undo` can take it back. Returns the actions for `undo`.
     /// Fails with `NoArchive` if the account has no archive folder.
-    pub fn archive(&self, message: i64) -> Result<i64, CoreError> {
-        let op = self
+    pub fn archive(&self, message: i64) -> Result<Vec<i64>, CoreError> {
+        let ops = self
             .store
             .queue(MessageId(message), Action::Archive, now() + HOLD)?;
-        Ok(op.0)
+        Ok(ops.into_iter().map(|op| op.0).collect())
     }
 
-    /// Takes back a held action. False once it may be on its way to the server.
-    pub fn undo(&self, action: i64) -> Result<bool, CoreError> {
-        Ok(self.store.undo(OpId(action), now())?)
+    /// Takes back held actions. False if any may be on its way to the server.
+    pub fn undo(&self, actions: Vec<i64>) -> Result<bool, CoreError> {
+        let ops: Vec<_> = actions.into_iter().map(OpId).collect();
+        Ok(self.store.undo(&ops, now())?)
     }
 
     /// Puts a message in the outbox, held for `HOLD` so `undo_send` can take it back;
@@ -670,6 +679,10 @@ pub struct MessageItem {
     pub date: i64,
     pub seen: bool,
     pub flagged: bool,
+    /// Messages in its conversation, this one included.
+    pub thread_count: u32,
+    /// How many of them are unread.
+    pub thread_unread: u32,
 }
 
 impl From<MessageRow> for MessageItem {
@@ -684,6 +697,8 @@ impl From<MessageRow> for MessageItem {
             date: row.date,
             seen: row.flags.seen,
             flagged: row.flags.flagged,
+            thread_count: row.thread_count,
+            thread_unread: row.thread_unread,
         }
     }
 }

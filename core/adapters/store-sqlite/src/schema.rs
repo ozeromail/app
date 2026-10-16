@@ -107,4 +107,19 @@ pub const MIGRATIONS: &[&str] = &[
     ",
     // 11: where the folder's last sync stopped (IMAP UIDNEXT); 0 means unknown.
     "ALTER TABLE folder ADD COLUMN next_id INTEGER NOT NULL DEFAULT 0;",
+    // 12: conversations. `thread_id` is the id of one of its messages; a reset checkpoint
+    // fetches the newest headers again, now with their references.
+    "
+    ALTER TABLE message ADD COLUMN thread_id INTEGER;
+    UPDATE message SET thread_id = id;
+    CREATE INDEX message_thread ON message(thread_id, folder_id, date DESC, id DESC);
+    CREATE INDEX message_message_id ON message(message_id) WHERE message_id IS NOT NULL;
+    CREATE TABLE message_ref (
+        message_id INTEGER NOT NULL REFERENCES message(id) ON DELETE CASCADE,
+        ref        TEXT NOT NULL,
+        PRIMARY KEY (message_id, ref)
+    ) WITHOUT ROWID;
+    CREATE INDEX message_ref_ref ON message_ref(ref);
+    UPDATE folder SET next_id = 0;
+    ",
 ];

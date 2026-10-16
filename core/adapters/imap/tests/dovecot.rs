@@ -194,15 +194,15 @@ async fn fetches_only_what_changed() {
     assert!(changed.flags[0].1.seen);
     assert_eq!(changed.checkpoint.next, 4);
 
-    // Mail saved before checkpoints existed tells what is new.
+    // Without a checkpoint the newest messages come again, so their headers are saved anew.
     let upgraded = Checkpoint { validity, next: 0 };
     let after = imap
         .changes("Changes", upgraded, &["1".into()], 50)
         .await
         .unwrap();
     let uids: Vec<_> = after.new.iter().map(|m| m.remote_id.as_str()).collect();
-    assert_eq!(uids, ["3"]);
-    assert_eq!((after.flags.len(), after.checkpoint.next), (1, 4));
+    assert_eq!(uids, ["1", "3"]);
+    assert_eq!(after.checkpoint.next, 4);
 
     // Another validity means nothing known is trusted: the newest messages come again.
     let stale = Checkpoint {

@@ -298,6 +298,13 @@ impl Store for SqliteStore {
         rows.map_err(storage)
     }
 
+    fn thread(&self, message: MessageId) -> Result<Vec<MessageRow>, StoreError> {
+        let conn = self.conn();
+        conn.prepare_cached(THREAD)
+            .and_then(|mut s| s.query_map([message.0], message_row)?.collect())
+            .map_err(storage)
+    }
+
     fn take_fresh(&self, since: i64) -> Result<Vec<MessageRow>, StoreError> {
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(storage)?;
@@ -377,62 +384,51 @@ impl Store for SqliteStore {
         message: MessageId,
         action: Action,
         not_before: i64,
-    ) -> Result<OpId, StoreError> {
+    ) -> Result<Vec<OpId>, StoreError> {
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(storage)?;
-        let (kind, value) = stored(action);
-        let (flags, queued): (u8, Option<i64>) = tx
-            .prepare_cached(
-                "SELECT m.flags, o.undo FROM message m
-                 LEFT JOIN op o ON o.message_id = m.id AND o.kind = ?2 WHERE m.id = ?1",
-            )
+        let ids = tx
+            .prepare_cached(THREAD_IDS)
             .and_then(|mut s| {
-                s.query_row(params![message.0, kind], |r| Ok((r.get(0)?, r.get(1)?)))
-                    .optional()
-            })
-            .map_err(storage)?
-            .ok_or(StoreError::NotFound)?;
-        // What to restore on revert or undo, and where a move goes.
-        let (undo, target) = match action {
-            Action::Seen(seen) => {
-                set_seen(&tx, message.0, seen)?;
-                (queued.unwrap_or(i64::from(flags & SEEN != 0)), None)
-            }
-            // Undone by dropping the op, which shows the message again.
-            Action::Archive => (0, Some(archive_folder(&tx, message)?)),
-        };
-        // Kept even when it undoes itself: a push may be sending the older value right now.
-        let id = tx
-            .prepare_cached(
-                "INSERT INTO op (message_id, kind, value, undo, not_before, target)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                 ON CONFLICT (message_id, kind) DO UPDATE SET
-                     value = excluded.value, not_before = excluded.not_before,
-                     target = excluded.target
-                 RETURNING id",
-            )
-            .and_then(|mut s| {
-                s.query_row(
-                    params![message.0, kind, value, undo, not_before, target],
-                    |r| r.get(0),
-                )
+                s.query_map([message.0], |r| Ok((r.get(0)?, r.get::<_, u8>(1)?)))?
+                    .collect::<Result<Vec<(i64, u8)>, _>>()
             })
             .map_err(storage)?;
+        if ids.is_empty() {
+            return Err(StoreError::NotFound);
+        }
+        let mut ops = vec![];
+        for (id, flags) in ids {
+            // The rest of the conversation only where it changes something.
+            let changes = match action {
+                Action::Seen(seen) => (flags & SEEN != 0) != seen,
+                Action::Archive => true,
+            };
+            if id == message.0 || changes {
+                ops.push(queue_one(&tx, MessageId(id), action, not_before)?);
+            }
+        }
         tx.commit().map_err(storage)?;
-        Ok(OpId(id))
+        Ok(ops)
     }
 
-    fn undo(&self, op: OpId, now: i64) -> Result<bool, StoreError> {
+    fn undo(&self, ops: &[OpId], now: i64) -> Result<bool, StoreError> {
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(storage)?;
-        let held = take_back(
-            &tx,
-            "DELETE FROM op WHERE id = ?1 AND not_before > ?2 RETURNING message_id, kind, undo",
-            op,
-            now,
-        )?;
+        // All or none, so a conversation never comes back in part.
+        for op in ops {
+            let taken = take_back(
+                &tx,
+                "DELETE FROM op WHERE id = ?1 AND not_before > ?2 RETURNING message_id, kind, undo",
+                *op,
+                now,
+            )?;
+            if !taken {
+                return Ok(false);
+            }
+        }
         tx.commit().map_err(storage)?;
-        Ok(held)
+        Ok(true)
     }
 
     fn next_send(&self, account: AccountId) -> Result<Option<i64>, StoreError> {
@@ -654,6 +650,54 @@ impl Store for SqliteStore {
     }
 }
 
+/// Applies the action to one message now and queues it, replacing a queued one of its kind.
+fn queue_one(
+    tx: &Transaction<'_>,
+    message: MessageId,
+    action: Action,
+    not_before: i64,
+) -> Result<OpId, StoreError> {
+    let (kind, value) = stored(action);
+    let (flags, queued): (u8, Option<i64>) = tx
+        .prepare_cached(
+            "SELECT m.flags, o.undo FROM message m
+             LEFT JOIN op o ON o.message_id = m.id AND o.kind = ?2 WHERE m.id = ?1",
+        )
+        .and_then(|mut s| {
+            s.query_row(params![message.0, kind], |r| Ok((r.get(0)?, r.get(1)?)))
+                .optional()
+        })
+        .map_err(storage)?
+        .ok_or(StoreError::NotFound)?;
+    // What to restore on revert or undo, and where a move goes.
+    let (undo, target) = match action {
+        Action::Seen(seen) => {
+            set_seen(tx, message.0, seen)?;
+            (queued.unwrap_or(i64::from(flags & SEEN != 0)), None)
+        }
+        // Undone by dropping the op, which shows the message again.
+        Action::Archive => (0, Some(archive_folder(tx, message)?)),
+    };
+    // Kept even when it undoes itself: a push may be sending the older value right now.
+    let id = tx
+        .prepare_cached(
+            "INSERT INTO op (message_id, kind, value, undo, not_before, target)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT (message_id, kind) DO UPDATE SET
+                 value = excluded.value, not_before = excluded.not_before,
+                 target = excluded.target
+             RETURNING id",
+        )
+        .and_then(|mut s| {
+            s.query_row(
+                params![message.0, kind, value, undo, not_before, target],
+                |r| r.get(0),
+            )
+        })
+        .map_err(storage)?;
+    Ok(OpId(id))
+}
+
 /// Records the folder's validity; when it changed, drops its messages and checkpoint.
 fn reset_if_new(tx: &Transaction<'_>, folder: FolderId, validity: u32) -> Result<(), StoreError> {
     let current: u32 = tx
@@ -685,6 +729,13 @@ fn upsert_messages(
     messages: &[NewMessage],
 ) -> Result<(), StoreError> {
     let mut upsert = tx.prepare_cached(SAVE_MESSAGE).map_err(storage)?;
+    let account: i64 = tx
+        .query_row(
+            "SELECT account_id FROM folder WHERE id = ?1",
+            [folder.0],
+            |r| r.get(0),
+        )
+        .map_err(storage)?;
     for m in messages {
         upsert
             .execute(params![
@@ -700,6 +751,67 @@ fn upsert_messages(
                 category_ref(m.category),
             ])
             .map_err(storage)?;
+        link_thread(tx, account, folder, m)?;
+    }
+    Ok(())
+}
+
+/// Puts a saved message in the conversation of the messages it answers, that answer it, or
+/// that answer the same ones, in its account. Conversations it joins become one.
+fn link_thread(
+    tx: &Transaction<'_>,
+    account: i64,
+    folder: FolderId,
+    m: &NewMessage,
+) -> Result<(), StoreError> {
+    let (id, own): (i64, Option<i64>) = tx
+        .prepare_cached("SELECT id, thread_id FROM message WHERE folder_id = ?1 AND remote_id = ?2")
+        .and_then(|mut s| {
+            s.query_row(params![folder.0, m.remote_id], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+        })
+        .map_err(storage)?;
+    let mut threads = vec![own.unwrap_or(id)];
+    {
+        // A message saved before was linked then; later ones link to it themselves.
+        let saved: i64 = tx
+            .prepare_cached("SELECT count(*) FROM message_ref WHERE message_id = ?1")
+            .and_then(|mut s| s.query_row([id], |r| r.get(0)))
+            .map_err(storage)?;
+        if own.is_some() && usize::try_from(saved).ok() == Some(m.references.len()) {
+            return Ok(());
+        }
+        let mut save = tx
+            .prepare_cached("INSERT OR IGNORE INTO message_ref (message_id, ref) VALUES (?1, ?2)")
+            .map_err(storage)?;
+        for reference in &m.references {
+            save.execute(params![id, reference]).map_err(storage)?;
+        }
+        let mut find = tx.prepare_cached(FIND_THREADS).map_err(storage)?;
+        for key in m.references.iter().chain(&m.message_id) {
+            let found = find
+                .query_map(params![account, id, key], |r| r.get(0))
+                .and_then(|rows| rows.collect::<Result<Vec<i64>, _>>())
+                .map_err(storage)?;
+            threads.extend(found);
+        }
+    }
+    threads.sort_unstable();
+    threads.dedup();
+    let thread = threads[0];
+    if own != Some(thread) {
+        tx.execute(
+            "UPDATE message SET thread_id = ?1 WHERE id = ?2",
+            [thread, id],
+        )
+        .map_err(storage)?;
+    }
+    let mut merge = tx
+        .prepare_cached("UPDATE message SET thread_id = ?1 WHERE thread_id = ?2")
+        .map_err(storage)?;
+    for other in &threads[1..] {
+        merge.execute([thread, *other]).map_err(storage)?;
     }
     Ok(())
 }
@@ -791,16 +903,49 @@ const SAVE_MESSAGE: &str = concat!(
 /// Lists leave out a message while its move to the archive is held.
 macro_rules! not_archiving {
     () => {
-        "NOT EXISTS (SELECT 1 FROM op WHERE op.message_id = m.id AND op.kind = 'archive')"
+        not_archiving!("m")
+    };
+    ($m:literal) => {
+        concat!(
+            "NOT EXISTS (SELECT 1 FROM op WHERE op.message_id = ",
+            $m,
+            ".id AND op.kind = 'archive')"
+        )
     };
 }
 
-/// The columns `message_row` reads, in its order.
+/// The messages of `m`'s conversation, `n`, that lists show with it: in its folder and
+/// inbox tab.
+macro_rules! in_thread {
+    () => {
+        concat!(
+            "FROM message n WHERE n.thread_id = m.thread_id AND n.folder_id = m.folder_id
+             AND n.category = m.category AND ",
+            not_archiving!("n")
+        )
+    };
+}
+
+/// The columns `message_row` reads, in its order, with `$thread`'s count and unread count.
+/// `1` is `SEEN`.
+macro_rules! message_from {
+    // The message on its own.
+    () => {
+        message_from!("1, 1 - (m.flags & 1)")
+    };
+    ($thread:expr) => {
+        concat!(
+            "SELECT m.id, f.account_id, m.from_name, m.from_email, m.subject, m.snippet, m.date,
+                    m.flags, ",
+            $thread,
+            " FROM message m JOIN folder f ON f.id = m.folder_id"
+        )
+    };
+}
+
 macro_rules! message_select {
     () => {
-        "SELECT m.id, f.account_id, m.from_name, m.from_email, m.subject, m.snippet, m.date, m.flags
-         FROM message m JOIN folder f ON f.id = m.folder_id
-         WHERE "
+        concat!(message_from!(), " WHERE ")
     };
 }
 
@@ -808,12 +953,22 @@ macro_rules! message_select {
 macro_rules! list_sql {
     ($scope:literal) => {
         concat!(
-            message_select!(),
+            message_from!(concat!(
+                "(SELECT count(*) ",
+                in_thread!(),
+                "), (SELECT count(*) ",
+                in_thread!(),
+                " AND n.flags & 1 = 0)"
+            )),
+            " WHERE ",
             $scope,
             " AND (m.date, m.id) < (?2, ?3)
              AND ",
             not_archiving!(),
-            "
+            // One row per conversation: its newest message.
+            " AND NOT EXISTS (SELECT 1 ",
+            in_thread!(),
+            " AND (n.date, n.id) > (m.date, m.id))
              ORDER BY m.date DESC, m.id DESC
              LIMIT ?4"
         )
@@ -824,6 +979,33 @@ const LIST_FOLDER: &str = list_sql!("m.folder_id = ?1");
 // Walks the tab's date index; the `+` keeps SQLite from starting at the folder instead.
 const LIST_INBOX_TAB: &str =
     list_sql!("m.category = ?1 AND +m.folder_id IN (SELECT id FROM folder WHERE role = 'inbox')");
+
+/// The conversation of message `?1` in its folder and inbox tab, oldest first.
+macro_rules! thread_of {
+    ($select:expr) => {
+        concat!(
+            $select,
+            " JOIN message s ON s.thread_id = m.thread_id AND s.folder_id = m.folder_id
+                 AND s.category = m.category
+             WHERE s.id = ?1 AND ",
+            not_archiving!(),
+            " ORDER BY m.date, m.id"
+        )
+    };
+}
+
+const THREAD: &str = thread_of!(message_from!());
+const THREAD_IDS: &str = thread_of!("SELECT m.id, m.flags FROM message m");
+
+/// Conversations in account `?1` of messages, other than `?2`, with Message-ID `?3`
+/// or answering it.
+const FIND_THREADS: &str = "
+    SELECT m.thread_id FROM message m JOIN folder f ON f.id = m.folder_id
+    WHERE m.message_id = ?3 AND f.account_id = ?1 AND m.id != ?2 AND m.thread_id IS NOT NULL
+    UNION ALL
+    SELECT m.thread_id FROM message_ref r JOIN message m ON m.id = r.message_id
+        JOIN folder f ON f.id = m.folder_id
+    WHERE r.ref = ?3 AND f.account_id = ?1 AND m.id != ?2 AND m.thread_id IS NOT NULL";
 
 const CLEAR_FRESH: &str = "UPDATE message SET fresh = 0 WHERE fresh = 1";
 
@@ -907,6 +1089,8 @@ fn message_row(r: &Row<'_>) -> rusqlite::Result<MessageRow> {
         snippet: r.get(5)?,
         date: r.get(6)?,
         flags: parse_flags(r.get(7)?),
+        thread_count: r.get(8)?,
+        thread_unread: r.get(9)?,
     })
 }
 

@@ -96,6 +96,7 @@ fn message(uid: u32, date: i64) -> NewMessage {
     NewMessage {
         remote_id: uid.to_string(),
         message_id: Some(format!("<{uid}@example.com>")),
+        references: vec![],
         from: Address {
             name: Some("Anna".into()),
             email: "anna@example.com".into(),
@@ -588,8 +589,8 @@ fn archiving_hides_the_message_until_undo_or_the_server_has_it() {
     );
     assert!(store.due(account, 49).unwrap().is_empty());
     assert_eq!(store.next_send(account).unwrap(), Some(50));
-    assert!(!store.undo(op, 50).unwrap());
-    assert!(store.undo(op, 49).unwrap());
+    assert!(!store.undo(&op, 50).unwrap());
+    assert!(store.undo(&op, 49).unwrap());
     assert_eq!(list(&store, ListScope::Folder(folder), 10, None).len(), 2);
     assert_eq!(store.next_send(account).unwrap(), None);
 
@@ -767,4 +768,130 @@ fn new_people_mail_is_taken_once() {
     store.save_messages(folder, &[message(5, 500)]).unwrap();
     store.clear_fresh().unwrap();
     assert!(store.take_fresh(0).unwrap().is_empty());
+}
+
+/// Message `uid` with Message-ID `<uid@example.com>` answering `refs`.
+fn reply(uid: u32, date: i64, refs: &[u32]) -> NewMessage {
+    NewMessage {
+        references: refs.iter().map(|r| format!("<{r}@example.com>")).collect(),
+        ..message(uid, date)
+    }
+}
+
+fn subjects(rows: &[MessageRow]) -> Vec<&str> {
+    rows.iter().map(|r| r.subject.as_str()).collect()
+}
+
+#[test]
+fn replies_join_one_conversation_in_any_order() {
+    let store = store();
+    let folder = inbox(&store, account(&store, "a@example.com"));
+    // 2 answers 1; 3 answers 2 but arrives before both; 4 answers 1 too.
+    store
+        .save_messages(folder, &[reply(3, 300, &[1, 2])])
+        .unwrap();
+    store.save_messages(folder, &[message(5, 50)]).unwrap();
+    store.save_messages(folder, &[reply(2, 200, &[1])]).unwrap();
+    store
+        .save_messages(folder, &[message(1, 100), reply(4, 400, &[1])])
+        .unwrap();
+
+    let rows = list(&store, ListScope::Folder(folder), 10, None);
+    assert_eq!(subjects(&rows), ["Subject 4", "Subject 5"]);
+    assert_eq!((rows[0].thread_count, rows[0].thread_unread), (4, 4));
+    assert_eq!((rows[1].thread_count, rows[1].thread_unread), (1, 1));
+
+    let thread = store.thread(rows[0].id).unwrap();
+    assert_eq!(
+        subjects(&thread),
+        ["Subject 1", "Subject 2", "Subject 3", "Subject 4"]
+    );
+    assert_eq!(store.thread(thread[0].id).unwrap(), thread);
+}
+
+#[test]
+fn a_reply_bridges_two_conversations() {
+    let store = store();
+    let folder = inbox(&store, account(&store, "a@example.com"));
+    store
+        .save_messages(folder, &[message(1, 100), message(2, 200)])
+        .unwrap();
+    assert_eq!(list(&store, ListScope::Folder(folder), 10, None).len(), 2);
+
+    store
+        .save_messages(folder, &[reply(3, 300, &[1, 2])])
+        .unwrap();
+    let rows = list(&store, ListScope::Folder(folder), 10, None);
+    assert_eq!(subjects(&rows), ["Subject 3"]);
+    assert_eq!(rows[0].thread_count, 3);
+}
+
+#[test]
+fn conversations_stay_in_their_account() {
+    let store = store();
+    let a = inbox(&store, account(&store, "a@example.com"));
+    let b = inbox(&store, account(&store, "b@example.com"));
+    store.save_messages(a, &[message(1, 100)]).unwrap();
+    store.save_messages(b, &[reply(2, 200, &[1])]).unwrap();
+    assert_eq!(
+        store
+            .thread(list(&store, ListScope::Folder(b), 10, None)[0].id)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn actions_apply_to_the_whole_conversation() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let folder = inbox(&store, account);
+    archive_folder(&store, account);
+    store
+        .save_messages(
+            folder,
+            &[message(1, 100), reply(2, 200, &[1]), message(3, 300)],
+        )
+        .unwrap();
+    let rows = list(&store, ListScope::Folder(folder), 10, None);
+    let conversation = rows[1].id;
+
+    store.queue(conversation, Action::Seen(true), 0).unwrap();
+    let rows = list(&store, ListScope::Folder(folder), 10, None);
+    assert_eq!((rows[1].thread_count, rows[1].thread_unread), (2, 0));
+    assert_eq!(rows[0].thread_unread, 1);
+
+    let ops = store.queue(conversation, Action::Archive, 50).unwrap();
+    assert_eq!(ops.len(), 2);
+    assert_eq!(
+        subjects(&list(&store, ListScope::Folder(folder), 10, None)),
+        ["Subject 3"]
+    );
+    assert!(store.thread(conversation).unwrap().is_empty());
+    // One op no longer held: none come back.
+    let mut late = ops.clone();
+    late.push(OpId(999));
+    assert!(!store.undo(&late, 49).unwrap());
+    assert_eq!(list(&store, ListScope::Folder(folder), 10, None).len(), 1);
+    assert!(store.undo(&ops, 49).unwrap());
+    assert_eq!(list(&store, ListScope::Folder(folder), 10, None).len(), 2);
+}
+
+#[test]
+fn a_conversation_reads_its_index() {
+    let store = store();
+    let conn = store.conn();
+    for sql in [THREAD, THREAD_IDS] {
+        let plan: Vec<String> = conn
+            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+            .unwrap()
+            .query_map([1], |r| r.get(3))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let plan = plan.join("\n");
+        assert!(plan.contains("message_thread"), "{plan}");
+        assert!(!plan.contains("SCAN"), "{plan}");
+    }
 }

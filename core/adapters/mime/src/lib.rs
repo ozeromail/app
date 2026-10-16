@@ -4,7 +4,7 @@ mod build;
 
 pub use build::MimeBuilder;
 
-use mail_parser::PartType;
+use mail_parser::{Message, PartType};
 use ozero_domain::{Address, Body, Category, MessageParser, NewMessage, RawMessage, Signals};
 
 #[derive(Debug, Default)]
@@ -28,6 +28,7 @@ impl MessageParser for MimeParser {
         NewMessage {
             remote_id: raw.remote_id,
             message_id: header.and_then(|h| h.message_id()).map(str::to_owned),
+            references: header.map(references).unwrap_or_default(),
             from: Address {
                 name: from.and_then(|a| a.name()).map(str::to_owned),
                 email: email.to_owned(),
@@ -62,6 +63,25 @@ impl MessageParser for MimeParser {
     }
 }
 
+/// How many `Message-ID`s of a long `References` chain are kept: the root and the newest.
+const MAX_REFERENCES: usize = 20;
+
+/// The `References` chain, then `In-Reply-To` if it is not already its end; no duplicates.
+fn references(header: &Message<'_>) -> Vec<String> {
+    let mut ids: Vec<String> = Vec::new();
+    let chain = header.references().as_text_list().unwrap_or_default();
+    let answers = header.in_reply_to().as_text_list().unwrap_or_default();
+    for id in chain.iter().chain(answers) {
+        if !id.is_empty() && !ids.iter().any(|known| known == id) {
+            ids.push(id.to_string());
+        }
+    }
+    if ids.len() > MAX_REFERENCES {
+        ids.drain(1..ids.len() - (MAX_REFERENCES - 1));
+    }
+    ids
+}
+
 #[cfg(test)]
 mod tests {
     use ozero_domain::Flags;
@@ -89,6 +109,22 @@ mod tests {
         assert_eq!(m.subject, "Привет");
         assert_eq!(m.message_id.as_deref(), Some("1@example.com"));
         assert_eq!(m.date, 100);
+    }
+
+    #[test]
+    fn keeps_the_references_once() {
+        let m = parse(
+            b"From: anna@example.com\r\n\
+              References: <1@example.com>\r\n <2@example.com>\r\n\
+              In-Reply-To: <2@example.com>\r\n\r\n",
+        );
+        assert_eq!(m.references, ["1@example.com", "2@example.com"]);
+
+        let chain: String = (1..=30).map(|i| format!("<{i}@x> ")).collect();
+        let m = parse(format!("References: {chain}\r\nIn-Reply-To: <31@x>\r\n\r\n").as_bytes());
+        assert_eq!(m.references.len(), MAX_REFERENCES);
+        assert_eq!(m.references[0], "1@x");
+        assert_eq!(m.references.last().map(String::as_str), Some("31@x"));
     }
 
     #[test]
