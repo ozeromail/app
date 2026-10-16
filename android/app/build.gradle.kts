@@ -15,8 +15,13 @@ android {
         applicationId = "com.ozeromail.app"
         minSdk = 33
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        // A release tag v1.2.3 names the version; its code, 10203, grows with every release
+        // as Play needs.
+        val version = env("VERSION_NAME") ?: "0.1.0"
+        val parts = Regex("""(\d{1,2})\.(\d{1,2})\.(\d{1,2})""").matchEntire(version)?.destructured
+            ?: error("Version $version is not X.Y.Z with each part below 100")
+        versionName = version
+        versionCode = parts.toList().fold(0) { code, part -> code * 100 + part.toInt() }
     }
 
     compileOptions {
@@ -30,7 +35,18 @@ android {
 
     buildTypes {
         release {
-            proguardFiles("proguard-rules.pro")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // The upload key, from CI secrets. Without it the release build is unsigned.
+            signingConfig = env("UPLOAD_KEYSTORE")?.let { keystore ->
+                signingConfigs.create("upload") {
+                    storeFile = file(keystore)
+                    storePassword = env("UPLOAD_KEYSTORE_PASSWORD")
+                    keyAlias = env("UPLOAD_KEY_ALIAS")
+                    keyPassword = env("UPLOAD_KEY_PASSWORD")
+                }
+            }
         }
     }
 }
@@ -38,6 +54,8 @@ android {
 kotlin {
     jvmToolchain(17)
 }
+
+fun env(name: String): String? = providers.environmentVariable(name).orNull
 
 // Generated sources: Rust core .so per ABI, Kotlin bindings read from it, strings.xml from i18n/.
 // Registered through the variant API so every task that reads them depends on their tasks.

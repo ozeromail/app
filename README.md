@@ -33,6 +33,8 @@ cd android && ./gradlew :app:assembleDebug
 
 Android CI uploads the debug APK as the `ozero-mail-debug` artifact. It is signed with the debug key from the `ANDROID_DEBUG_KEYSTORE` secret (a base64 keystore), so each build installs over the last.
 
+A tag like `v0.1.0` also builds the release: a bundle for Play and an APK, signed with the upload key, as the `ozero-mail-v0.1.0` artifact. The tag names the version: `vX.Y.Z`, each part below 100, gives version code `X*10000 + Y*100 + Z`. The key comes from four secrets: `ANDROID_UPLOAD_KEYSTORE` (a base64 keystore), `ANDROID_UPLOAD_KEYSTORE_PASSWORD`, `ANDROID_UPLOAD_KEY_ALIAS` and `ANDROID_UPLOAD_KEY_PASSWORD`. Play signs the app for users with its own key; the upload key only proves an upload is ours.
+
 The iOS app needs Xcode 16 and the core built as an XCFramework first:
 
 ```sh
