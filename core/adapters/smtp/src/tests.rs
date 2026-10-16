@@ -184,29 +184,22 @@ async fn run(script: Script, to: &str, message: &[u8]) -> (Result<(), ProviderEr
     }
     .await;
     // A failed client leaves the server waiting for a line that never comes.
-    server.abort();
+    if result.is_err() {
+        server.abort();
+    }
     let seen = server.await.unwrap_or_default();
     (result, seen)
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn sends_after_starttls_with_auth_plain() {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let server = tokio::spawn(serve(listener, SERVER));
-    let mut smtp = SmtpSession::open("localhost", port, false, client_tls(), "anna", "pa ss")
-        .await
-        .unwrap();
-    smtp.send(
-        "anna@example.com",
-        &["bob@example.org".into()],
+    let (result, seen) = run(
+        SERVER,
+        "bob@example.org",
         b"Subject: Hi\r\n\r\n.dot\r\nend\r\n",
     )
-    .await
-    .unwrap();
-    smtp.quit().await.unwrap();
-    let seen = server.await.unwrap();
-
+    .await;
+    result.unwrap();
     assert!(seen[0].starts_with("EHLO [127.0.0.1]"), "{seen:?}");
     assert_eq!(seen[1], "STARTTLS");
     // "\0anna\0pa ss"
@@ -234,14 +227,8 @@ async fn uses_implicit_tls_and_auth_login() {
         auth: "AUTH LOGIN XOAUTH2",
         ..SERVER
     };
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let server = tokio::spawn(serve(listener, script));
-    let smtp = SmtpSession::open("localhost", port, true, client_tls(), "anna", "pa ss")
-        .await
-        .unwrap();
-    smtp.quit().await.unwrap();
-    let seen = server.await.unwrap();
+    let (result, seen) = run(script, "bob@example.org", b"x").await;
+    result.unwrap();
     assert_eq!(seen[1..4], ["AUTH LOGIN", "YW5uYQ==", "cGEgc3M="]);
 }
 
@@ -276,7 +263,7 @@ async fn refuses_a_server_without_tls() {
 async fn a_refused_recipient_is_permanent() {
     let (result, _) = run(SERVER, "nobody@example.org", b"x").await;
     match result {
-        Err(ProviderError::Protocol(text)) => assert!(text.contains("550"), "{text}"),
+        Err(ProviderError::Rejected(text)) => assert!(text.contains("550"), "{text}"),
         other => panic!("{other:?}"),
     }
 }

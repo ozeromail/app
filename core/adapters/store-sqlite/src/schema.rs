@@ -98,5 +98,6 @@ pub const MIGRATIONS: &[&str] = &[
         not_before  INTEGER NOT NULL,
         failed      TEXT
     );
+    CREATE INDEX outbox_due ON outbox(account_id, not_before) WHERE failed IS NULL;
     ",
 ];

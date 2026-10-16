@@ -34,7 +34,7 @@ struct InboxView: View {
             .listStyle(.plain)
             .navigationTitle("inbox_title")
             .navigationDestination(for: MessageItem.self) { message in
-                MessageView(mail: mail, message: message) { composing = message.replyDraft }
+                MessageView(mail: mail, message: message) { composing = .reply(to: message) }
             }
             .refreshable { await sync() }
             .safeAreaInset(edge: .bottom) {
@@ -60,7 +60,7 @@ struct InboxView: View {
                         }
                         .pickerStyle(.segmented)
                         Button("compose_new") {
-                            composing = Composing(draft: DraftItem(accountId: 0, to: "", subject: "", text: "", replyTo: nil))
+                            composing = .new
                         }
                     }
                     .padding(.horizontal)
@@ -99,7 +99,7 @@ struct InboxView: View {
                 case .archive(let id):
                     if try mail.undo(id) { await load() }
                 case .send(let id, let sent):
-                    if let draft = try mail.undoSend(id) {
+                    if let draft = try await mail.undoSend(id) {
                         var again = sent
                         again.draft = draft
                         composing = again

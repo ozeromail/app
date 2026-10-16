@@ -53,10 +53,16 @@ pub fn suggested_smtp_host(email: String) -> Option<String> {
     ozero_domain::guess_smtp_host(&email)
 }
 
-/// The subject of an answer: `Re: ` once.
+/// An answer to `message`: from the account that got it, to its sender, `Re: ` once.
 #[uniffi::export]
-pub fn reply_subject(subject: String) -> String {
-    ozero_domain::reply_subject(&subject)
+pub fn reply_draft(message: MessageItem) -> DraftItem {
+    DraftItem {
+        account_id: message.account_id,
+        to: message.from_email,
+        subject: ozero_domain::reply_subject(&message.subject),
+        text: String::new(),
+        reply_to: Some(message.id),
+    }
 }
 
 /// The mail core of one app install: the encrypted database and the network.
@@ -229,20 +235,13 @@ impl Core {
         if known.iter().any(|a| a.email.eq_ignore_ascii_case(&email)) {
             return Err(CoreError::AccountExists);
         }
-        let server = Server {
-            host: imap.host,
-            port: imap.port,
-            user: email.clone(),
-        };
-        let smtp = Server {
-            host: smtp.host,
-            port: smtp.port,
-            user: email.clone(),
-        };
-        let imap = self.login(&server, &password).await?;
-        // The login worked; a failed goodbye changes nothing.
-        let _ = imap.logout().await;
-        let _ = self.send_login(&smtp, &password).await?.quit().await;
+        let server = imap.server(&email);
+        let smtp = smtp.server(&email);
+        // Both at once; a working login needs no goodbye, the server cleans up.
+        tokio::try_join!(
+            self.login(&server, &password),
+            self.send_login(&smtp, &password)
+        )?;
         let account = NewAccount {
             kind: AccountKind::Imap,
             email,
@@ -256,21 +255,20 @@ impl Core {
     /// Sends the account's queued actions, waiting for held ones to come due; without any
     /// it does not connect. After a failure they stay queued for the next push or sync.
     pub async fn push_actions(&self, account: i64, password: String) -> Result<(), CoreError> {
-        let account = AccountId(account);
+        let account = self.account(AccountId(account))?;
         let mut waiter = None;
         loop {
             let wait = {
-                let lock = self.busy(account);
+                let lock = self.busy(account.id);
                 let _busy = lock.lock().await;
                 // Read under the lock: a push that waited finds what the one before it sent gone.
                 let step = async {
                     let mut imap = None;
-                    self.push_due(&self.account(account)?, &password, &mut imap)
-                        .await?;
+                    self.push_due(&account, &password, &mut imap).await?;
                     if let Some(imap) = imap {
                         let _ = imap.logout().await;
                     }
-                    Ok::<_, CoreError>(self.store.next_send(account)?)
+                    Ok::<_, CoreError>(self.store.next_send(account.id)?)
                 }
                 .await;
                 // The waiter is taken and given up under the lock, so a push that finds it
@@ -287,7 +285,7 @@ impl Core {
                     return Ok(());
                 };
                 if waiter.is_none() {
-                    waiter = Waiter::claim(&self.waiting, account);
+                    waiter = Waiter::claim(&self.waiting, account.id);
                     if waiter.is_none() {
                         return Ok(());
                     }
@@ -305,7 +303,7 @@ impl Core {
         let account = self.account(AccountId(account))?;
         let lock = self.busy(account.id);
         let _busy = lock.lock().await;
-        let mut slot = Some(self.connect(&account, &password).await?);
+        let mut slot = None;
         self.push_due(&account, &password, &mut slot).await?;
         let imap = self.imap(&mut slot, &account, &password).await?;
         sync_inbox(&self.store, imap, &self.parser, account.id, SYNC_LIMIT).await?;
@@ -367,12 +365,10 @@ impl Core {
         account: &Account,
         password: &str,
     ) -> Result<&'a mut ImapSession, CoreError> {
-        if slot.is_none() {
-            *slot = Some(self.connect(account, password).await?);
+        match slot {
+            Some(imap) => Ok(imap),
+            None => Ok(slot.insert(self.connect(account, password).await?)),
         }
-        slot.as_mut().ok_or_else(|| CoreError::Storage {
-            detail: "no IMAP session".into(),
-        })
     }
 
     /// Sends what is due: actions over IMAP, then mail over SMTP with a copy into Sent.
@@ -549,6 +545,16 @@ pub struct Endpoint {
     pub port: u16,
 }
 
+impl Endpoint {
+    fn server(self, user: &str) -> Server {
+        Server {
+            host: self.host,
+            port: self.port,
+            user: user.to_owned(),
+        }
+    }
+}
+
 /// A message being written, as compose shows it.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct DraftItem {
@@ -711,7 +717,9 @@ impl From<ProviderError> for CoreError {
         match e {
             ProviderError::Auth => Self::Auth,
             ProviderError::Network(detail) => Self::Network { detail },
-            ProviderError::Protocol(detail) => Self::Server { detail },
+            ProviderError::Protocol(detail) | ProviderError::Rejected(detail) => {
+                Self::Server { detail }
+            }
             ProviderError::Gone => Self::Gone,
         }
     }

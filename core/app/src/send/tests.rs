@@ -1,4 +1,4 @@
-use ozero_domain::{AccountId, OutboxId};
+use ozero_domain::OutboxId;
 
 use super::*;
 use crate::fakes::{Builder, Memory, Postman, Server, run};
@@ -6,7 +6,6 @@ use crate::fakes::{Builder, Memory, Postman, Server, run};
 fn outgoing(id: i64, to: &str) -> Outgoing {
     Outgoing {
         id: OutboxId(id),
-        account_id: AccountId(1),
         to: vec![to.into()],
         subject: format!("Message {id}"),
         text: String::new(),
@@ -75,7 +74,7 @@ fn a_refusal_stays_and_a_network_failure_stops() {
     let store = Memory::default();
     let mut postman = Postman {
         refuse: vec![
-            ProviderError::Protocol("550 no such user".into()),
+            ProviderError::Rejected("550 no such user".into()),
             ProviderError::Network("reset".into()),
         ],
         ..Postman::default()

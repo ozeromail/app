@@ -20,7 +20,6 @@ pub struct Draft {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outgoing {
     pub id: OutboxId,
-    pub account_id: AccountId,
     pub to: Vec<String>,
     pub subject: String,
     pub text: String,
@@ -44,7 +43,7 @@ pub fn parse_recipients(field: &str) -> Option<Vec<String>> {
 }
 
 /// One `@` with something on both sides, and nothing that could break a header or command.
-fn is_address(address: &str) -> bool {
+pub fn is_address(address: &str) -> bool {
     let Some((local, domain)) = address.rsplit_once('@') else {
         return false;
     };

@@ -52,9 +52,10 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit) {
     var error by remember { mutableStateOf<Int?>(null) }
     val scope = rememberCoroutineScope()
 
-    val suggested = suggestedImapHost(email)
+    val suggested = remember(email) { suggestedImapHost(email) }
+    val suggestedSmtp = remember(email) { suggestedSmtpHost(email) }
     val host = (server ?: suggested ?: "").trim()
-    val smtpHost = (smtpServer ?: suggestedSmtpHost(email) ?: "").trim()
+    val smtpHost = (smtpServer ?: suggestedSmtp ?: "").trim()
     val imap = endpoint(host, port)
     val smtp = endpoint(smtpHost, smtpPort)
     val ready = !busy && suggested != null && password.isNotEmpty() && imap != null && smtp != null

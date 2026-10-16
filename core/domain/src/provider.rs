@@ -101,6 +101,8 @@ pub enum ProviderError {
     Network(String),
     /// The server answered something we cannot use.
     Protocol(String),
+    /// The server refused this for good; trying again gets the same answer.
+    Rejected(String),
     /// The message is no longer on the server under this id.
     Gone,
 }
@@ -111,6 +113,7 @@ impl fmt::Display for ProviderError {
             Self::Auth => write!(f, "the server refused the login"),
             Self::Network(e) => write!(f, "network error: {e}"),
             Self::Protocol(e) => write!(f, "protocol error: {e}"),
+            Self::Rejected(e) => write!(f, "refused: {e}"),
             Self::Gone => write!(f, "the message is gone from the server"),
         }
     }
