@@ -33,9 +33,16 @@ enum BackgroundCheck {
     /// More at once is noise; the newest are shown.
     private static let maxShown = 5
 
-    /// One notification per message, grouped in one thread; a tap opens the app.
+    /// One notification per message, grouped in one thread, and one more line when there are
+    /// more than shown; a tap opens the app.
     private static func notify(_ messages: [MessageItem]) async {
         let center = UNUserNotificationCenter.current()
+        if messages.count > maxShown {
+            let content = UNMutableNotificationContent()
+            content.body = String(localized: "notify_more")
+            content.threadIdentifier = "new_mail"
+            try? await center.add(UNNotificationRequest(identifier: "more", content: content, trigger: nil))
+        }
         for message in messages.prefix(maxShown) {
             let content = UNMutableNotificationContent()
             content.title = message.sender

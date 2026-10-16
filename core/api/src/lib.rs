@@ -25,6 +25,8 @@ uniffi::setup_scaffolding!();
 
 /// How many of the newest inbox messages one sync brings in.
 const SYNC_LIMIT: u32 = 200;
+/// Mail older than this many seconds is not announced: a day.
+const NEWS_AGE: i64 = 86_400;
 /// Milliseconds an archived or sent message waits before the server hears of it.
 const HOLD: i64 = 5_000;
 
@@ -138,12 +140,13 @@ impl Core {
         Ok(rows.into_iter().map(MessageItem::from).collect())
     }
 
-    /// Unread mail in People that arrived since this or `forget_new_mail` was last called,
-    /// newest first: what a notification shows.
+    /// Unread mail in People from the last day that arrived since this or `forget_new_mail`
+    /// was last called, newest first: what a notification shows. Older mail that comes back,
+    /// say after a mailbox reset, is not news.
     pub fn take_new_mail(&self) -> Result<Vec<MessageItem>, CoreError> {
         Ok(self
             .store
-            .take_fresh()?
+            .take_fresh(now() / 1_000 - NEWS_AGE)?
             .into_iter()
             .map(MessageItem::from)
             .collect())

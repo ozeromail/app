@@ -24,7 +24,8 @@ import uniffi.ozero_api.MessageItem
 /** Checks every account for new mail while the app is closed and tells about mail from people. */
 class MailWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
-        val mail = (applicationContext as OzeroApp).mail
+        val app = applicationContext as OzeroApp
+        val mail = app.mail
         try {
             mail.refresh()
         } catch (e: CoreException) {
@@ -32,7 +33,8 @@ class MailWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             Log.w("Ozero", "background sync failed", e)
         }
         try {
-            notify(applicationContext, mail.newMail())
+            // With the app open, the inbox shows the mail; a notification would only repeat it.
+            if (app.inForeground) mail.forgetNewMail() else notify(applicationContext, mail.newMail())
         } catch (e: CoreException) {
             Log.w("Ozero", "new mail not read", e)
         }
@@ -41,6 +43,9 @@ class MailWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
 
     companion object {
         private const val NAME = "check-mail"
+
+        /** Removes the notifications: the inbox on screen shows that mail now. */
+        fun clearNotifications(context: Context) = NotificationManagerCompat.from(context).cancelAll()
 
         /** Every 15 minutes, the shortest Android allows, with a network and enough battery. */
         fun schedule(context: Context) {
@@ -92,6 +97,7 @@ private fun notify(context: Context, messages: List<MessageItem>) {
                 .build(),
         )
     }
-    val summary = NotificationCompat.InboxStyle().apply { shown.forEach { addLine("${it.sender}  ${subject(it)}") } }
-    manager.notify(SUMMARY_ID, builder().setGroupSummary(true).setNumber(messages.size).setStyle(summary).build())
+    // Counts what earlier runs left in the shade too, and what this one did not show.
+    val showing = manager.activeNotifications.count { it.notification.group == GROUP && it.id != SUMMARY_ID }
+    manager.notify(SUMMARY_ID, builder().setGroupSummary(true).setNumber(showing + messages.size - shown.size).build())
 }

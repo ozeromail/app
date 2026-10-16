@@ -290,12 +290,12 @@ impl Store for SqliteStore {
         rows.map_err(storage)
     }
 
-    fn take_fresh(&self) -> Result<Vec<MessageRow>, StoreError> {
+    fn take_fresh(&self, since: i64) -> Result<Vec<MessageRow>, StoreError> {
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(storage)?;
         let rows = tx
             .prepare_cached(FRESH_PEOPLE)
-            .and_then(|mut s| s.query_map([], message_row)?.collect())
+            .and_then(|mut s| s.query_map([since], message_row)?.collect())
             .map_err(storage)?;
         tx.execute(CLEAR_FRESH, []).map_err(storage)?;
         tx.commit().map_err(storage)?;
@@ -762,7 +762,7 @@ const CLEAR_FRESH: &str = "UPDATE message SET fresh = 0 WHERE fresh = 1";
 // `1` is `SEEN`.
 const FRESH_PEOPLE: &str = concat!(
     message_select!(),
-    "m.fresh = 1 AND f.role = 'inbox' AND m.category = 'people' AND m.flags & 1 = 0 AND ",
+    "m.fresh = 1 AND m.date > ?1 AND f.role = 'inbox' AND m.category = 'people' AND m.flags & 1 = 0 AND ",
     not_archiving!(),
     " ORDER BY m.date DESC, m.id DESC"
 );

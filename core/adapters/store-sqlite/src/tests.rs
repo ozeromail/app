@@ -646,14 +646,17 @@ fn new_people_mail_is_taken_once() {
         .unwrap();
 
     let subjects = |rows: Vec<MessageRow>| rows.into_iter().map(|r| r.subject).collect::<Vec<_>>();
-    assert_eq!(subjects(store.take_fresh().unwrap()), ["Subject 1"]);
+    assert_eq!(subjects(store.take_fresh(0).unwrap()), ["Subject 1"]);
     // A resync of known mail brings nothing new; a new message does.
     store
         .save_messages(folder, &[message(1, 100), message(4, 400)])
         .unwrap();
-    assert_eq!(subjects(store.take_fresh().unwrap()), ["Subject 4"]);
-    assert!(store.take_fresh().unwrap().is_empty());
+    assert_eq!(subjects(store.take_fresh(0).unwrap()), ["Subject 4"]);
+    assert!(store.take_fresh(0).unwrap().is_empty());
+    // Old mail that comes back, say after a mailbox reset, is not news.
+    store.save_messages(folder, &[message(6, 600)]).unwrap();
+    assert!(store.take_fresh(600).unwrap().is_empty());
     store.save_messages(folder, &[message(5, 500)]).unwrap();
     store.clear_fresh().unwrap();
-    assert!(store.take_fresh().unwrap().is_empty());
+    assert!(store.take_fresh(0).unwrap().is_empty());
 }

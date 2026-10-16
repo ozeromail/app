@@ -79,6 +79,7 @@ fun InboxScreen(mail: Mail) {
     var unsent by remember { mutableStateOf(emptyList<UnsentItem>()) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     val archived = stringResource(R.string.inbox_archived)
     val undo = stringResource(R.string.action_undo)
@@ -116,10 +117,16 @@ fun InboxScreen(mail: Mail) {
         error = null
         try {
             mail.refresh()
+        } catch (e: CoreException) {
+            error = e.text()
+        }
+        // Whatever synced is on screen now, also when one account failed: no notification later.
+        try {
             mail.forgetNewMail()
         } catch (e: CoreException) {
             error = e.text()
         }
+        MailWorker.clearNotifications(context)
         try {
             load()
         } finally {
@@ -132,12 +139,13 @@ fun InboxScreen(mail: Mail) {
         listState.scrollToItem(0)
     }
     val askToNotify = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
-    val context = LocalContext.current
     LaunchedEffect(Unit) {
         // Asked once the inbox shows, so it is clear what the notifications are for.
         if (context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             askToNotify.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
+        // Only once there is an account: without one a check has nothing to do.
+        MailWorker.schedule(context)
         counts()
         sync()
     }
