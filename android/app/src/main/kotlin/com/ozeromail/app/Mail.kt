@@ -67,8 +67,11 @@ class Mail(private val context: Context) {
         core.messageBody(message.id, password(message.accountId).orEmpty())
     }
 
+    /** The message's conversation, oldest first. */
+    suspend fun thread(message: MessageItem): List<MessageItem> = io { core.thread(message.id) }
+
     /**
-     * Marks the message read on the device now, so the list shows it on return;
+     * Marks the message's conversation read on the device now, so the list shows it on return;
      * the server hears about it in the background.
      */
     suspend fun markRead(message: MessageItem) {
@@ -77,17 +80,17 @@ class Mail(private val context: Context) {
     }
 
     /**
-     * Takes the message out of the inbox now and returns the action for [undo].
+     * Takes the message's conversation out of the inbox now and returns the actions for [undo].
      * The server gets the move once the undo time is over.
      */
-    suspend fun archive(message: MessageItem): Long {
-        val action = io { core.archive(message.id) }
+    suspend fun archive(message: MessageItem): List<Long> {
+        val actions = io { core.archive(message.id) }
         push(message.accountId)
-        return action
+        return actions
     }
 
     /** Takes back an archive that has not gone to the server yet; false if too late. */
-    suspend fun undo(action: Long): Boolean = io { core.undo(action) }
+    suspend fun undo(actions: List<Long>): Boolean = io { core.undo(actions) }
 
     /**
      * Puts the message in the outbox and returns it for [undoSend].

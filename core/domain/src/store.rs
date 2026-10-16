@@ -23,13 +23,19 @@ pub trait Store: Send + Sync {
     fn checkpoint(&self, folder: FolderId) -> Result<(Checkpoint, Vec<String>), StoreError>;
     /// Saves a sync in one transaction. A new validity first drops the folder's messages:
     /// their `remote_id`s now name other messages. Messages are matched by `remote_id`,
-    /// and a queued action stays on top of what the server sent until it is sent.
+    /// and a queued action stays on top of what the server sent until it is sent. A new
+    /// message joins the conversations, in its account, of the messages it references, that
+    /// reference it, or that reference the same ones; conversations it joins become one.
     fn save_changes(
         &self,
         folder: FolderId,
         changes: &Changes<NewMessage>,
     ) -> Result<(), StoreError>;
+    /// One row per conversation in a folder and inbox tab: its newest message in the list.
     fn list(&self, query: &ListQuery) -> Result<Vec<MessageRow>, StoreError>;
+    /// The conversation of a message in its folder and inbox tab, oldest first, leaving out
+    /// what is being archived.
+    fn thread(&self, message: MessageId) -> Result<Vec<MessageRow>, StoreError>;
     /// Unread messages in each tab of the unified inbox, leaving out those being archived.
     /// A tab without any is missing.
     fn inbox_unread(&self) -> Result<Vec<(Category, u32)>, StoreError>;
@@ -44,18 +50,20 @@ pub trait Store: Send + Sync {
     fn save_body(&self, message: MessageId, body: &Body) -> Result<(), StoreError>;
     fn body(&self, message: MessageId) -> Result<Option<Body>, StoreError>;
 
-    /// Applies the action to the message now and queues it for the server from `not_before`.
-    /// It replaces a queued action of the same kind. Lists leave out a message being archived;
-    /// archiving fails with `NoArchive` if the account has no archive folder.
+    /// Applies the action to the message's conversation in its folder and inbox tab now, in one transaction,
+    /// and queues it for the server from `not_before`: the message itself, and the others
+    /// where it changes something. It replaces queued actions of the same kind. Lists leave
+    /// out a message being archived; archiving fails with `NoArchive` if the account has no
+    /// archive folder.
     fn queue(
         &self,
         message: MessageId,
         action: Action,
         not_before: i64,
-    ) -> Result<OpId, StoreError>;
-    /// Takes back an action that is still held (its `not_before` is after `now`), so the server
-    /// never sees it. Returns false if it may already be on its way.
-    fn undo(&self, op: OpId, now: i64) -> Result<bool, StoreError>;
+    ) -> Result<Vec<OpId>, StoreError>;
+    /// Takes back actions that are still held (their `not_before` is after `now`), so the
+    /// server never sees them: all of them, or none if any may already be on its way.
+    fn undo(&self, ops: &[OpId], now: i64) -> Result<bool, StoreError>;
     /// When the account's next held action or message may be sent, if one is held.
     fn next_send(&self, account: AccountId) -> Result<Option<i64>, StoreError>;
     /// The account's queued actions that may be sent at `now`, oldest first.

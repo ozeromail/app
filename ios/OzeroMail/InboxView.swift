@@ -47,7 +47,7 @@ struct InboxView: View {
             .listStyle(.plain)
             .navigationTitle("inbox_title")
             .navigationDestination(for: MessageItem.self) { message in
-                MessageView(mail: mail, message: message) { composing = .reply(to: message) }
+                MessageView(mail: mail, message: message) { composing = .reply(to: $0) }
             }
             .refreshable { await sync() }
             .safeAreaInset(edge: .bottom) {
@@ -117,8 +117,8 @@ struct InboxView: View {
         Task {
             do {
                 switch action {
-                case .archive(let id):
-                    if try mail.undo(id) { await load() }
+                case .archive(let ids):
+                    if try mail.undo(ids) { await load() }
                 case .send(let id, let sent):
                     if let draft = try await mail.undoSend(id) {
                         var again = sent
@@ -196,7 +196,7 @@ struct InboxView: View {
 
 /// An action the toast can still take back.
 private enum Undoable: Equatable {
-    case archive(Int64)
+    case archive([Int64])
     case send(Int64, Composing)
 
     var text: LocalizedStringKey {
@@ -228,15 +228,21 @@ private struct MessageRow: View {
     let message: MessageItem
 
     var body: some View {
+        let unread = message.threadUnread > 0
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             Circle()
-                .fill(message.seen ? AnyShapeStyle(.clear) : AnyShapeStyle(.tint))
+                .fill(unread ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear))
                 .frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(message.sender)
-                        .fontWeight(message.seen ? .regular : .semibold)
+                        .fontWeight(unread ? .semibold : .regular)
                         .lineLimit(1)
+                    if message.threadCount > 1 {
+                        Text(verbatim: "\(message.threadCount)")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer()
                     Text(shortDate(message.date))
                         .font(.footnote)
@@ -269,7 +275,7 @@ extension MessageItem {
 }
 
 /// Time for today, day and month for this year, the full date before that.
-private func shortDate(_ seconds: Int64) -> String {
+func shortDate(_ seconds: Int64) -> String {
     let date = Date(timeIntervalSince1970: TimeInterval(seconds))
     let calendar = Calendar.current
     if calendar.isDateInToday(date) {

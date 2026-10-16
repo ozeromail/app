@@ -78,24 +78,29 @@ final class Mail: Sendable {
         return try await core.messageBody(message: message.id, password: password)
     }
 
-    /// Marks the message read on the device now, so the list shows it on return;
+    /// The message's conversation, oldest first.
+    func thread(of message: MessageItem) throws -> [MessageItem] {
+        try core.thread(message: message.id)
+    }
+
+    /// Marks the message's conversation read on the device now, so the list shows it on return;
     /// the server hears about it in the background.
     func markRead(_ message: MessageItem) throws {
         try core.markRead(message: message.id, seen: true)
         push(account: message.accountId)
     }
 
-    /// Takes the message out of the inbox now and returns the action for `undo`.
+    /// Takes the message's conversation out of the inbox now and returns the actions for `undo`.
     /// The server gets the move once the undo time is over.
-    func archive(_ message: MessageItem) throws -> Int64 {
-        let action = try core.archive(message: message.id)
+    func archive(_ message: MessageItem) throws -> [Int64] {
+        let actions = try core.archive(message: message.id)
         push(account: message.accountId)
-        return action
+        return actions
     }
 
     /// Takes back an archive that has not gone to the server yet; false if too late.
-    func undo(_ action: Int64) throws -> Bool {
-        try core.undo(action: action)
+    func undo(_ actions: [Int64]) throws -> Bool {
+        try core.undo(actions: actions)
     }
 
     /// Puts the message in the outbox and returns it for `undoSend`.

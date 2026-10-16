@@ -25,6 +25,8 @@ pub struct NewMessage {
     pub remote_id: String,
     /// The `Message-ID` header, used for threading.
     pub message_id: Option<String>,
+    /// The `Message-ID`s this one answers: `In-Reply-To` and `References`, oldest first.
+    pub references: Vec<String>,
     pub from: Address,
     pub subject: String,
     pub snippet: String,
@@ -44,6 +46,12 @@ pub struct MessageRow {
     pub snippet: String,
     pub date: i64,
     pub flags: Flags,
+    /// In a list, the messages of its conversation in the same folder and inbox tab, this
+    /// one included;
+    /// elsewhere 1.
+    pub thread_count: u32,
+    /// How many of those are unread.
+    pub thread_unread: u32,
 }
 
 impl MessageRow {

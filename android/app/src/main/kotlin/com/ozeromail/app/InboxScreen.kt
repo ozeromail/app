@@ -206,7 +206,7 @@ fun InboxScreen(mail: Mail) {
                 open = null
                 scope.launch { load() }
             },
-            onReply = { composing = Composing(replyDraft(opened), opened) },
+            onReply = { message -> composing = Composing(replyDraft(message), message) },
         )
         return
     }
@@ -353,20 +353,31 @@ private fun MessageRow(message: MessageItem, onClick: () -> Unit) {
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 10.dp),
         verticalAlignment = Alignment.Top,
     ) {
+        val unread = message.threadUnread > 0u
         Box(Modifier.width(36.dp).padding(top = 7.dp), contentAlignment = Alignment.Center) {
-            if (!message.seen) {
+            if (unread) {
                 Box(Modifier.size(8.dp).background(colors.primary, CircleShape))
             }
         }
         Column(Modifier.weight(1f).padding(end = 20.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    message.sender,
-                    fontWeight = if (message.seen) FontWeight.Normal else FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
+                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        message.sender,
+                        fontWeight = if (unread) FontWeight.SemiBold else FontWeight.Normal,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    if (message.threadCount > 1u) {
+                        Text(
+                            message.threadCount.toString(),
+                            color = colors.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(start = 6.dp),
+                        )
+                    }
+                }
                 Spacer(Modifier.width(8.dp))
                 Text(shortDate(LocalContext.current, message.date), color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
@@ -397,7 +408,7 @@ val MessageItem.sender: String
 fun MessageItem.subjectText(): String = subject.ifBlank { stringResource(R.string.inbox_no_subject) }
 
 /** Time for today, otherwise the date; the year only when it is not this year. */
-private fun shortDate(context: Context, seconds: Long): String {
+fun shortDate(context: Context, seconds: Long): String {
     val millis = seconds * 1000
     val flags = if (DateUtils.isToday(millis)) {
         DateUtils.FORMAT_SHOW_TIME

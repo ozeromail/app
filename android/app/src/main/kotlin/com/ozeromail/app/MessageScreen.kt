@@ -2,12 +2,14 @@ package com.ozeromail.app
 
 import android.text.format.DateUtils
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.rememberScrollState
@@ -21,6 +23,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -29,24 +32,36 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
 
 /**
- * One message: its HTML when it has one, otherwise the text. Reply sits at the bottom;
- * system back returns to the list.
+ * A conversation, opened at its newest message: its HTML when it has one, otherwise the
+ * text. The older messages sit above it, short; a tap shows one. Reply answers the one
+ * shown and sits at the bottom; system back returns to the list.
  */
 @Composable
-fun MessageScreen(mail: Mail, message: MessageItem, onBack: () -> Unit, onReply: () -> Unit) {
+fun MessageScreen(mail: Mail, message: MessageItem, onBack: () -> Unit, onReply: (MessageItem) -> Unit) {
     BackHandler(onBack = onBack)
-    var body by remember(message.id) { mutableStateOf<MessageBody?>(null) }
+    var thread by remember(message.id) { mutableStateOf(listOf(message)) }
+    var shown by remember(message.id) { mutableStateOf(message) }
+    // With the id of its message, so a page is never shown under another message's header.
+    var body by remember(message.id) { mutableStateOf<Pair<Long, MessageBody>?>(null) }
     var error by remember(message.id) { mutableStateOf<Int?>(null) }
     LaunchedEffect(message.id) {
         try {
-            if (!message.seen) mail.markRead(message)
-            body = mail.body(message)
+            if (message.threadCount > 1u) thread = mail.thread(message)
+            if (message.threadUnread > 0u) mail.markRead(message)
+        } catch (e: CoreException) {
+            error = e.text()
+        }
+    }
+    LaunchedEffect(shown.id) {
+        try {
+            body = shown.id to mail.body(shown)
         } catch (e: CoreException) {
             error = e.text()
         }
@@ -54,25 +69,62 @@ fun MessageScreen(mail: Mail, message: MessageItem, onBack: () -> Unit, onReply:
 
     val colors = MaterialTheme.colorScheme
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-        Header(message, Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp))
+        Header(shown, Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp))
+        val older = thread.filter { it.id != shown.id }
+        if (older.isNotEmpty()) {
+            Column(Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState()).padding(top = 8.dp)) {
+                older.forEach { other ->
+                    Older(other, onClick = {
+                        error = null
+                        shown = other
+                    })
+                }
+            }
+        }
         HorizontalDivider(Modifier.padding(top = 12.dp), color = colors.outlineVariant)
-        val shown = body
-        val html = shown?.html
+        val loaded = body?.takeIf { it.first == shown.id }?.second
+        val html = loaded?.html
         val failed = error
         val content = Modifier.weight(1f).fillMaxWidth()
         when {
-            html != null -> HtmlView(html, content)
-            shown != null -> SelectionContainer(content.verticalScroll(rememberScrollState()).padding(20.dp)) {
-                Text(shown.text)
+            // A new web view per message: it loads its page only once.
+            html != null -> key(shown.id) { HtmlView(html, content) }
+            loaded != null -> SelectionContainer(content.verticalScroll(rememberScrollState()).padding(20.dp)) {
+                Text(loaded.text)
             }
-            failed != null -> Text(stringResource(failed), color = colors.onSurfaceVariant, modifier = Modifier.padding(20.dp))
-            else -> Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+            failed != null -> Text(stringResource(failed), color = colors.onSurfaceVariant, modifier = content.padding(20.dp))
+            else -> Box(content.padding(32.dp), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
         }
         HorizontalDivider(color = colors.outlineVariant)
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.End) {
-            Button(onClick = onReply) { Text(stringResource(R.string.message_reply)) }
+            Button(onClick = { onReply(shown) }) { Text(stringResource(R.string.message_reply)) }
+        }
+    }
+}
+
+/** Another message of the conversation, on two lines. */
+@Composable
+private fun Older(message: MessageItem, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Column(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 6.dp)) {
+        Row {
+            Text(
+                message.sender,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                shortDate(LocalContext.current, message.date),
+                color = colors.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        if (message.snippet.isNotBlank()) {
+            Text(message.snippet, color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
