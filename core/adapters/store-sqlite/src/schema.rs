@@ -100,4 +100,9 @@ pub const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX outbox_due ON outbox(account_id, not_before) WHERE failed IS NULL;
     ",
+    // 10: `fresh` marks a message saved since the last `take_fresh`; mail already here is not.
+    "
+    ALTER TABLE message ADD COLUMN fresh INTEGER NOT NULL DEFAULT 0;
+    CREATE INDEX message_fresh ON message(id) WHERE fresh = 1;
+    ",
 ];

@@ -138,6 +138,18 @@ impl Core {
         Ok(rows.into_iter().map(MessageItem::from).collect())
     }
 
+    /// Unread mail in People that arrived since the last call, newest first: what a
+    /// notification shows. The app calls it in the foreground too, so mail seen there is not
+    /// announced later.
+    pub fn take_new_mail(&self) -> Result<Vec<MessageItem>, CoreError> {
+        Ok(self
+            .store
+            .take_fresh()?
+            .into_iter()
+            .map(MessageItem::from)
+            .collect())
+    }
+
     /// The inbox tabs in order, each with its unread count.
     pub fn inbox_tabs(&self) -> Result<Vec<InboxTab>, CoreError> {
         let unread = self.store.inbox_unread()?;

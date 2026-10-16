@@ -290,6 +290,19 @@ impl Store for SqliteStore {
         rows.map_err(storage)
     }
 
+    fn take_fresh(&self) -> Result<Vec<MessageRow>, StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        let rows = tx
+            .prepare_cached(FRESH_PEOPLE)
+            .and_then(|mut s| s.query_map([], message_row)?.collect())
+            .map_err(storage)?;
+        tx.execute("UPDATE message SET fresh = 0 WHERE fresh = 1", [])
+            .map_err(storage)?;
+        tx.commit().map_err(storage)?;
+        Ok(rows)
+    }
+
     fn location(&self, message: MessageId) -> Result<MessageLocation, StoreError> {
         self.conn()
             .prepare_cached(
@@ -685,8 +698,8 @@ macro_rules! merged_flags {
 
 const SAVE_MESSAGE: &str = concat!(
     "INSERT INTO message (folder_id, remote_id, message_id, from_name, from_email,
-                          subject, snippet, date, flags, category)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                          subject, snippet, date, flags, category, fresh)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1)
      ON CONFLICT (folder_id, remote_id) DO UPDATE SET
          message_id = excluded.message_id, from_name = excluded.from_name,
          from_email = excluded.from_email, subject = excluded.subject,
@@ -730,6 +743,15 @@ const LIST_FOLDER: &str = list_sql!("m.folder_id = ?1");
 // Walks the tab's date index; the `+` keeps SQLite from starting at the folder instead.
 const LIST_INBOX_TAB: &str =
     list_sql!("m.category = ?1 AND +m.folder_id IN (SELECT id FROM folder WHERE role = 'inbox')");
+
+// `1` is `SEEN`.
+const FRESH_PEOPLE: &str = concat!(
+    "SELECT m.id, f.account_id, m.from_name, m.from_email, m.subject, m.snippet, m.date, m.flags
+     FROM message m JOIN folder f ON f.id = m.folder_id
+     WHERE m.fresh = 1 AND f.role = 'inbox' AND m.category = 'people' AND m.flags & 1 = 0 AND ",
+    not_archiving!(),
+    " ORDER BY m.date DESC, m.id DESC"
+);
 
 // `1` is `SEEN`.
 const INBOX_UNREAD: &str = concat!(
