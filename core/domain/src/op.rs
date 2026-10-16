@@ -19,6 +19,6 @@ pub struct Op {
     pub id: OpId,
     pub action: Action,
     pub location: MessageLocation,
-    /// The folder a move goes to: the account's archive for `Archive`, if it has one.
+    /// The folder a move goes to, chosen when it was queued; None if that folder is gone.
     pub to: Option<String>,
 }

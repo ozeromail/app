@@ -1,6 +1,6 @@
 //! Facade the Android and iOS apps call through UniFFI.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -21,8 +21,14 @@ uniffi::setup_scaffolding!();
 
 /// How many of the newest inbox messages one sync brings in.
 const SYNC_LIMIT: u32 = 200;
-/// Seconds an archived message waits before the server hears of it; the undo toast is shorter.
+/// Seconds an archived message waits before the server hears of it.
 const ARCHIVE_HOLD: i64 = 5;
+
+/// How long the apps offer undo after archiving: shorter than the hold, so a tap is never late.
+#[uniffi::export]
+pub fn undo_seconds() -> u32 {
+    4
+}
 
 /// Version of the core, shown in About and in manual crash reports.
 #[uniffi::export]
@@ -44,6 +50,29 @@ pub struct Core {
     tls: OnceLock<Arc<ClientConfig>>,
     /// One push or sync per account at a time, so a sync never saves flags from before a push.
     busy: Mutex<HashMap<AccountId, Arc<tokio::sync::Mutex<()>>>>,
+    /// Accounts with a push waiting for held actions to come due.
+    waiting: Mutex<HashSet<AccountId>>,
+}
+
+/// Marks an account as having a waiting push until dropped.
+struct Waiter<'a> {
+    waiting: &'a Mutex<HashSet<AccountId>>,
+    account: AccountId,
+}
+
+impl<'a> Waiter<'a> {
+    /// None if another push already waits for the account.
+    fn claim(waiting: &'a Mutex<HashSet<AccountId>>, account: AccountId) -> Option<Self> {
+        let mut set = waiting.lock().unwrap_or_else(|p| p.into_inner());
+        set.insert(account).then_some(Self { waiting, account })
+    }
+}
+
+impl Drop for Waiter<'_> {
+    fn drop(&mut self) {
+        let mut set = self.waiting.lock().unwrap_or_else(|p| p.into_inner());
+        set.remove(&self.account);
+    }
 }
 
 impl fmt::Debug for Core {
@@ -63,6 +92,7 @@ impl Core {
             parser: MimeParser::default(),
             tls: OnceLock::new(),
             busy: Mutex::default(),
+            waiting: Mutex::default(),
         }))
     }
 
@@ -94,16 +124,11 @@ impl Core {
 
     /// Takes the message out of the lists at once and holds the move to the archive for
     /// `ARCHIVE_HOLD` seconds, so `undo` can take it back. Returns the action for `undo`.
+    /// Fails with `NoArchive` if the account has no archive folder.
     pub fn archive(&self, message: i64) -> Result<i64, CoreError> {
-        let message = MessageId(message);
-        let account = self.store.location(message)?.account_id;
-        let folders = self.store.folders(account)?;
-        if !folders.iter().any(|f| f.role == FolderRole::Archive) {
-            return Err(CoreError::NoArchive);
-        }
         let op = self
             .store
-            .queue(message, Action::Archive, now() + ARCHIVE_HOLD)?;
+            .queue(MessageId(message), Action::Archive, now() + ARCHIVE_HOLD)?;
         Ok(op.0)
     }
 
@@ -150,6 +175,7 @@ impl Core {
     /// it does not connect. After a failure they stay queued for the next push or sync.
     pub async fn push_actions(&self, account: i64, password: String) -> Result<(), CoreError> {
         let account = AccountId(account);
+        let mut waiter = None;
         loop {
             {
                 let lock = self.busy(account);
@@ -162,14 +188,19 @@ impl Core {
                     let _ = imap.logout().await;
                 }
             }
-            // Wait without the lock, so a sync can run meanwhile.
-            match self.store.next_send(account)? {
-                Some(at) if at > now() => {
-                    let wait = u64::try_from(at - now()).unwrap_or(0);
-                    tokio::time::sleep(Duration::from_secs(wait)).await;
+            let wait = self.store.next_send(account)?.map_or(0, |at| at - now());
+            let Ok(wait @ 1..) = u64::try_from(wait) else {
+                return Ok(());
+            };
+            // One push per account waits for held actions; it sends all of them in turn.
+            if waiter.is_none() {
+                waiter = Waiter::claim(&self.waiting, account);
+                if waiter.is_none() {
+                    return Ok(());
                 }
-                _ => return Ok(()),
             }
+            // Without the lock, so a sync can run meanwhile.
+            tokio::time::sleep(Duration::from_secs(wait)).await;
         }
     }
 
@@ -431,6 +462,7 @@ impl From<StoreError> for CoreError {
         match e {
             StoreError::WrongKey => Self::WrongKey,
             StoreError::TooNew { .. } => Self::TooNew,
+            StoreError::NoArchive => Self::NoArchive,
             other => Self::Storage {
                 detail: other.to_string(),
             },

@@ -495,11 +495,14 @@ fn a_refused_archive_shows_the_message_again() {
     let folder = inbox(&store, account);
     store.save_messages(folder, &[message(1, 100)]).unwrap();
     let id = list(&store, ListScope::Folder(folder), 10, None)[0].id;
+    assert_eq!(
+        store.queue(id, Action::Archive, 0).unwrap_err(),
+        StoreError::NoArchive
+    );
 
+    archive_folder(&store, account);
     store.queue(id, Action::Archive, 0).unwrap();
     let due = store.due(account, 0).unwrap();
-    // No archive folder on this account.
-    assert_eq!(due[0].to, None);
     store.revert(&due).unwrap();
     assert_eq!(list(&store, ListScope::Folder(folder), 10, None).len(), 1);
     assert!(store.due(account, 0).unwrap().is_empty());
