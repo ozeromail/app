@@ -9,8 +9,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use ozero_app::ops::push_ops;
 use ozero_app::sync::{SyncError, download_body, sync_inbox};
 use ozero_domain::{
-    Account, AccountId, AccountKind, Action, Body, FolderRole, ListQuery, ListScope, MessageId,
-    MessageRow, NewAccount, OpId, ProviderError, Server, Store, StoreError,
+    Account, AccountId, AccountKind, Action, Body, Category, FolderRole, ListQuery, ListScope,
+    MessageId, MessageRow, NewAccount, OpId, ProviderError, Server, Store, StoreError,
 };
 use ozero_imap::ImapSession;
 use ozero_imap::rustls::ClientConfig;
@@ -106,14 +106,22 @@ impl Core {
             .collect())
     }
 
-    /// The newest messages of all inboxes, newest first.
-    pub fn unified_inbox(&self, limit: u32) -> Result<Vec<MessageItem>, CoreError> {
+    /// The newest messages of one tab across all inboxes, newest first.
+    pub fn unified_inbox(&self, tab: Tab, limit: u32) -> Result<Vec<MessageItem>, CoreError> {
         let rows = self.store.list(&ListQuery {
             scope: ListScope::Unified(FolderRole::Inbox),
             limit,
             after: None,
+            category: Some(tab.into()),
         })?;
         Ok(rows.into_iter().map(MessageItem::from).collect())
+    }
+
+    /// Unread messages of one tab across all inboxes.
+    pub fn unread(&self, tab: Tab) -> Result<u32, CoreError> {
+        Ok(self
+            .store
+            .unread(ListScope::Unified(FolderRole::Inbox), tab.into())?)
     }
 
     /// Marks a message read or unread on the device at once; `push_actions` tells the server.
@@ -336,6 +344,24 @@ mod android {
             Ok::<_, jni::errors::Error>(())
         })
         .resolve::<ThrowRuntimeExAndDefault>();
+    }
+}
+
+/// Inbox tab, sorted by rules on the device.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum Tab {
+    People,
+    Notifications,
+    Newsletters,
+}
+
+impl From<Tab> for Category {
+    fn from(tab: Tab) -> Self {
+        match tab {
+            Tab::People => Self::People,
+            Tab::Notifications => Self::Notifications,
+            Tab::Newsletters => Self::Newsletters,
+        }
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::{AccountId, FolderId};
+use crate::{AccountId, Category, FolderId};
 
 /// Local id of a message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -31,6 +31,7 @@ pub struct NewMessage {
     /// Seconds since the Unix epoch.
     pub date: i64,
     pub flags: Flags,
+    pub category: Category,
 }
 
 /// One row of a message list, ready for the screen.
@@ -127,6 +128,8 @@ pub struct ListQuery {
     pub limit: u32,
     /// Show messages older than this; `None` starts from the newest.
     pub after: Option<Cursor>,
+    /// Only this inbox tab; `None` shows every message.
+    pub category: Option<Category>,
 }
 
 #[cfg(test)]

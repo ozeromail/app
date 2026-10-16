@@ -1,8 +1,8 @@
 use std::fmt;
 
 use crate::{
-    Account, AccountId, Action, Body, Folder, FolderId, ListQuery, MessageId, MessageLocation,
-    MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId,
+    Account, AccountId, Action, Body, Category, Folder, FolderId, ListQuery, ListScope, MessageId,
+    MessageLocation, MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId,
 };
 
 /// Local database port. The UI reads only from here; sync writes here.
@@ -26,6 +26,8 @@ pub trait Store: Send + Sync {
     /// A queued action stays on top of what the server sent until it is sent.
     fn save_messages(&self, folder: FolderId, messages: &[NewMessage]) -> Result<(), StoreError>;
     fn list(&self, query: &ListQuery) -> Result<Vec<MessageRow>, StoreError>;
+    /// Unread messages of one tab in the scope, leaving out those being archived.
+    fn unread(&self, scope: ListScope, category: Category) -> Result<u32, StoreError>;
 
     fn location(&self, message: MessageId) -> Result<MessageLocation, StoreError>;
     /// Saves the body and sets the message's snippet from it.

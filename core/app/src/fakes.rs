@@ -6,9 +6,9 @@ use std::sync::Mutex;
 use std::task::{Context, Poll, Waker};
 
 use ozero_domain::{
-    Account, AccountId, Action, Address, Body, Flags, Folder, FolderId, ListQuery, MailProvider,
-    MessageId, MessageLocation, MessageParser, MessageRow, NewAccount, NewFolder, NewMessage, Op,
-    OpId, ProviderError, RawMessage, Recent, Store, StoreError,
+    Account, AccountId, Action, Address, Body, Category, Flags, Folder, FolderId, ListQuery,
+    ListScope, MailProvider, MessageId, MessageLocation, MessageParser, MessageRow, NewAccount,
+    NewFolder, NewMessage, Op, OpId, ProviderError, RawMessage, Recent, Store, StoreError,
 };
 
 /// Fakes answer at once, so one poll finishes the future.
@@ -120,6 +120,7 @@ impl MessageParser for Parser {
             snippet: String::new(),
             date: raw.received,
             flags: raw.flags,
+            category: Category::People,
         }
     }
 
@@ -181,6 +182,10 @@ impl Store for Memory {
     fn save_messages(&self, folder: FolderId, messages: &[NewMessage]) -> Result<(), StoreError> {
         self.saved.lock().unwrap().push((folder, messages.to_vec()));
         Ok(())
+    }
+
+    fn unread(&self, _: ListScope, _: Category) -> Result<u32, StoreError> {
+        Ok(0)
     }
 
     fn list(&self, _: &ListQuery) -> Result<Vec<MessageRow>, StoreError> {

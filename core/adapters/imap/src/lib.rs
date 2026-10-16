@@ -34,8 +34,17 @@ const MAX_RESPONSE: u32 = 16 * 1024 * 1024;
 const MAX_BODY: NonZeroU32 = NonZeroU32::MIN.saturating_add(4 * 1024 * 1024 - 1);
 /// UIDs per STORE or MOVE command.
 const UID_CHUNK: usize = 500;
-/// Headers the message list needs.
-const HEADER_FIELDS: [&str; 4] = ["FROM", "SUBJECT", "DATE", "MESSAGE-ID"];
+/// Headers the message list and the inbox tabs need.
+const HEADER_FIELDS: [&str; 8] = [
+    "FROM",
+    "SUBJECT",
+    "DATE",
+    "MESSAGE-ID",
+    "LIST-ID",
+    "LIST-UNSUBSCRIBE",
+    "PRECEDENCE",
+    "AUTO-SUBMITTED",
+];
 
 type Stream = TlsStream<TcpStream>;
 

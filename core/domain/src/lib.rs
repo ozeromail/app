@@ -16,5 +16,5 @@ pub use message::{
 };
 pub use op::{Action, Op, OpId};
 pub use provider::{MailProvider, MessageParser, ProviderError, RawMessage, Recent};
-pub use sort::Category;
+pub use sort::{Category, Signals};
 pub use store::{Store, StoreError};
