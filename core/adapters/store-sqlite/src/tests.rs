@@ -653,4 +653,7 @@ fn new_people_mail_is_taken_once() {
         .unwrap();
     assert_eq!(subjects(store.take_fresh().unwrap()), ["Subject 4"]);
     assert!(store.take_fresh().unwrap().is_empty());
+    store.save_messages(folder, &[message(5, 500)]).unwrap();
+    store.clear_fresh().unwrap();
+    assert!(store.take_fresh().unwrap().is_empty());
 }

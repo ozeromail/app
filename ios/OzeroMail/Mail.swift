@@ -17,10 +17,10 @@ final class Mail: Sendable {
 
     /// The one instance the screens and background checks share, opened on first use.
     static func shared() async throws -> Mail {
-        try await opened.mail()
+        try await opener.mail()
     }
 
-    private static let opened = Opener()
+    private static let opener = Opener()
 
     fileprivate static func open() throws -> Mail {
         var dir = try FileManager.default
@@ -48,10 +48,14 @@ final class Mail: Sendable {
         try core.unifiedInbox(tab: tab, limit: Self.inboxSize)
     }
 
-    /// Unread mail in People that came since the last call, for a notification. The inbox calls
-    /// it too, so mail already seen there is not announced later.
+    /// Unread mail in People that came since the last call, for a notification.
     func newMail() async throws -> [MessageItem] {
         try core.takeNewMail()
+    }
+
+    /// The mail synced so far is on screen, so it is not announced later.
+    func forgetNewMail() async throws {
+        try core.forgetNewMail()
     }
 
     /// The inbox tabs in order, with their unread counts.

@@ -39,7 +39,8 @@ enum BackgroundCheck {
         for message in messages.prefix(maxShown) {
             let content = UNMutableNotificationContent()
             content.title = message.sender
-            content.subtitle = message.subject
+            content.subtitle =
+                message.subject.isEmpty ? String(localized: "inbox_no_subject") : message.subject
             content.body = message.snippet
             content.sound = .default
             content.threadIdentifier = "new_mail"

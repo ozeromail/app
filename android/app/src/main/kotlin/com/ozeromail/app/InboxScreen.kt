@@ -116,8 +116,7 @@ fun InboxScreen(mail: Mail) {
         error = null
         try {
             mail.refresh()
-            // On screen now, so no notification later.
-            mail.newMail()
+            mail.forgetNewMail()
         } catch (e: CoreException) {
             error = e.text()
         }

@@ -42,10 +42,10 @@ class MailWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
     companion object {
         private const val NAME = "check-mail"
 
-        /** Every 15 minutes, the shortest Android allows, whenever there is a network. */
+        /** Every 15 minutes, the shortest Android allows, with a network and enough battery. */
         fun schedule(context: Context) {
             val request = PeriodicWorkRequestBuilder<MailWorker>(15, TimeUnit.MINUTES)
-                .setConstraints(Constraints(requiredNetworkType = NetworkType.CONNECTED))
+                .setConstraints(Constraints(requiredNetworkType = NetworkType.CONNECTED, requiresBatteryNotLow = true))
                 .build()
             WorkManager.getInstance(context)
                 .enqueueUniquePeriodicWork(NAME, ExistingPeriodicWorkPolicy.KEEP, request)
@@ -78,30 +78,20 @@ private fun notify(context: Context, messages: List<MessageItem>) {
         .setContentIntent(open)
         .setAutoCancel(true)
         .setGroup(GROUP)
-    try {
-        messages.take(MAX_SHOWN).forEach { message ->
-            val text = message.snippet.ifBlank { message.subject }
-            manager.notify(
-                message.id.toInt(),
-                builder()
-                    .setContentTitle(message.sender)
-                    .setContentText(message.subject)
-                    .setStyle(NotificationCompat.BigTextStyle().bigText("${message.subject}\n$text"))
-                    .setWhen(message.date * 1000)
-                    .setShowWhen(true)
-                    .build(),
-            )
-        }
+    val shown = messages.take(MAX_SHOWN)
+    val subject = { m: MessageItem -> m.subject.ifBlank { context.getString(R.string.inbox_no_subject) } }
+    shown.forEach { message ->
         manager.notify(
-            SUMMARY_ID,
+            message.id.toInt(),
             builder()
-                .setGroupSummary(true)
-                .setNumber(messages.size)
-                .setStyle(NotificationCompat.InboxStyle().also { style -> messages.take(MAX_SHOWN).forEach { style.addLine("${it.sender}  ${it.subject}") } })
+                .setContentTitle(message.sender)
+                .setContentText(subject(message))
+                .setStyle(NotificationCompat.BigTextStyle().bigText(listOf(subject(message), message.snippet).filter { it.isNotBlank() }.joinToString("\n")))
+                .setWhen(message.date * 1000)
+                .setShowWhen(true)
                 .build(),
         )
-    } catch (e: SecurityException) {
-        // The permission was taken back between the check and the post.
-        Log.w("Ozero", "notifications not allowed", e)
     }
+    val summary = NotificationCompat.InboxStyle().apply { shown.forEach { addLine("${it.sender}  ${subject(it)}") } }
+    manager.notify(SUMMARY_ID, builder().setGroupSummary(true).setNumber(messages.size).setStyle(summary).build())
 }

@@ -297,10 +297,16 @@ impl Store for SqliteStore {
             .prepare_cached(FRESH_PEOPLE)
             .and_then(|mut s| s.query_map([], message_row)?.collect())
             .map_err(storage)?;
-        tx.execute("UPDATE message SET fresh = 0 WHERE fresh = 1", [])
-            .map_err(storage)?;
+        tx.execute(CLEAR_FRESH, []).map_err(storage)?;
         tx.commit().map_err(storage)?;
         Ok(rows)
+    }
+
+    fn clear_fresh(&self) -> Result<(), StoreError> {
+        self.conn()
+            .execute(CLEAR_FRESH, [])
+            .map(|_| ())
+            .map_err(storage)
     }
 
     fn location(&self, message: MessageId) -> Result<MessageLocation, StoreError> {
@@ -721,13 +727,20 @@ macro_rules! not_archiving {
     };
 }
 
+/// The columns `message_row` reads, in its order.
+macro_rules! message_select {
+    () => {
+        "SELECT m.id, f.account_id, m.from_name, m.from_email, m.subject, m.snippet, m.date, m.flags
+         FROM message m JOIN folder f ON f.id = m.folder_id
+         WHERE "
+    };
+}
+
 /// Newest first, keyset-paged by (date, id) so deep pages cost the same as the first.
 macro_rules! list_sql {
     ($scope:literal) => {
         concat!(
-            "SELECT m.id, f.account_id, m.from_name, m.from_email, m.subject, m.snippet, m.date, m.flags
-             FROM message m JOIN folder f ON f.id = m.folder_id
-             WHERE ",
+            message_select!(),
             $scope,
             " AND (m.date, m.id) < (?2, ?3)
              AND ",
@@ -744,11 +757,12 @@ const LIST_FOLDER: &str = list_sql!("m.folder_id = ?1");
 const LIST_INBOX_TAB: &str =
     list_sql!("m.category = ?1 AND +m.folder_id IN (SELECT id FROM folder WHERE role = 'inbox')");
 
+const CLEAR_FRESH: &str = "UPDATE message SET fresh = 0 WHERE fresh = 1";
+
 // `1` is `SEEN`.
 const FRESH_PEOPLE: &str = concat!(
-    "SELECT m.id, f.account_id, m.from_name, m.from_email, m.subject, m.snippet, m.date, m.flags
-     FROM message m JOIN folder f ON f.id = m.folder_id
-     WHERE m.fresh = 1 AND f.role = 'inbox' AND m.category = 'people' AND m.flags & 1 = 0 AND ",
+    message_select!(),
+    "m.fresh = 1 AND f.role = 'inbox' AND m.category = 'people' AND m.flags & 1 = 0 AND ",
     not_archiving!(),
     " ORDER BY m.date DESC, m.id DESC"
 );
