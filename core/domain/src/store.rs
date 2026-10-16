@@ -2,7 +2,7 @@ use std::fmt;
 
 use crate::{
     Account, AccountId, Action, Body, Folder, FolderId, ListQuery, MessageId, MessageLocation,
-    MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId,
+    MessageRow, NewAccount, NewFolder, NewMessage, Op,
 };
 
 /// Local database port. The UI reads only from here; sync writes here.
@@ -33,14 +33,15 @@ pub trait Store: Send + Sync {
     fn body(&self, message: MessageId) -> Result<Option<Body>, StoreError>;
 
     /// Applies the action to the message now and queues it for the server from `not_before`.
-    /// It replaces a queued action of the same kind; one that undoes it leaves nothing queued.
+    /// It replaces a queued action of the same kind.
     fn queue(&self, message: MessageId, action: Action, not_before: i64) -> Result<(), StoreError>;
     /// The account's queued actions that may be sent at `now`, oldest first.
     fn due(&self, account: AccountId, now: i64) -> Result<Vec<Op>, StoreError>;
-    /// The server has the actions: forget them.
-    fn finish(&self, ops: &[OpId]) -> Result<(), StoreError>;
+    /// The server has the actions: forget them, unless the user changed one since `due`.
+    fn finish(&self, ops: &[Op]) -> Result<(), StoreError>;
     /// The server refused the actions for good: undo them on the device and forget them.
-    fn revert(&self, ops: &[OpId]) -> Result<(), StoreError>;
+    /// Ops gone or changed since `due` are left alone.
+    fn revert(&self, ops: &[Op]) -> Result<(), StoreError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

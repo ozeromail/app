@@ -50,18 +50,18 @@ class Mail(private val context: Context) {
     }
 
     /**
-     * Marks the message read on the device, then tells its server, both in the background
-     * so the screen does not wait.
+     * Marks the message read on the device now, so the list shows it on return;
+     * the server hears about it in the background.
      */
-    fun markRead(message: MessageItem) {
+    suspend fun markRead(message: MessageItem) {
+        io { core.markRead(message.id, true) }
         background.launch {
             try {
-                core.markRead(message.id, true)
                 val password = password(message.accountId) ?: return@launch
                 core.pushActions(message.accountId, password)
-            } catch (e: CoreException) {
-                // Still queued if it was saved: the next push or sync sends it.
-                Log.w("Ozero", "mark read failed", e)
+            } catch (e: Exception) {
+                // Still queued: the next push or sync sends it. Nothing here may crash the app.
+                Log.w("Ozero", "push failed", e)
             }
         }
     }

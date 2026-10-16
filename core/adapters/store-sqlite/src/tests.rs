@@ -378,7 +378,7 @@ fn queued_read_state_shows_at_once_and_survives_a_sync() {
     assert_eq!(due[0].action, Action::Seen(true));
     assert_eq!(due[0].location, store.location(id).unwrap());
 
-    store.finish(&[due[0].id]).unwrap();
+    store.finish(&due).unwrap();
     assert!(store.due(account, 50).unwrap().is_empty());
     // Now the server decides again.
     store.save_messages(folder, &[message(1, 100)]).unwrap();
@@ -386,7 +386,7 @@ fn queued_read_state_shows_at_once_and_survives_a_sync() {
 }
 
 #[test]
-fn an_action_and_its_opposite_leave_nothing_queued() {
+fn a_change_made_while_sending_stays_queued() {
     let store = store();
     let account = account(&store, "a@example.com");
     let folder = inbox(&store, account);
@@ -395,9 +395,15 @@ fn an_action_and_its_opposite_leave_nothing_queued() {
 
     store.queue(id, Action::Seen(true), 0).unwrap();
     store.queue(id, Action::Seen(true), 0).unwrap();
-    assert_eq!(store.due(account, 0).unwrap().len(), 1);
+    let sending = store.due(account, 0).unwrap();
+    assert_eq!(sending.len(), 1);
+    // The user marks it unread again while the push runs.
     store.queue(id, Action::Seen(false), 0).unwrap();
-    assert!(store.due(account, 0).unwrap().is_empty());
+    store.finish(&sending).unwrap();
+    store.revert(&sending).unwrap();
+    let left = store.due(account, 0).unwrap();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].action, Action::Seen(false));
     assert_eq!(seen(&store, folder), [false]);
 
     assert_eq!(
@@ -417,9 +423,10 @@ fn revert_restores_the_state_before_the_first_action() {
     let id = list(&store, ListScope::Folder(folder), 10, None)[0].id;
 
     store.queue(id, Action::Seen(true), 0).unwrap();
-    let op = store.due(account, 0).unwrap()[0].id;
-    store.revert(&[op]).unwrap();
+    let ops = store.due(account, 0).unwrap();
+    store.revert(&ops).unwrap();
     assert_eq!(seen(&store, folder), [false]);
     assert!(store.due(account, 0).unwrap().is_empty());
-    assert_eq!(store.revert(&[op]).unwrap_err(), StoreError::NotFound);
+    // Already gone: nothing to do.
+    store.revert(&ops).unwrap();
 }
