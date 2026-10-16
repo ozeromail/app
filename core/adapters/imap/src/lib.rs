@@ -409,6 +409,13 @@ impl MailProvider for ImapSession {
         })
         .await
     }
+
+    async fn append(&mut self, folder: &str, message: &[u8]) -> Result<(), ProviderError> {
+        let mailbox = Mailbox::try_from(folder).map_err(|_| protocol("bad folder name"))?;
+        let append = CommandBody::append(mailbox, vec![Flag::Seen], None, message.to_vec())
+            .map_err(|_| protocol("bad APPEND"))?;
+        self.run(append).await.map(|_| ())
+    }
 }
 
 impl ImapSession {

@@ -6,9 +6,9 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
 use ozero_domain::{
-    Account, AccountId, AccountKind, Action, Address, Body, Category, Flags, Folder, FolderId,
-    FolderRole, ListQuery, ListScope, MessageId, MessageLocation, MessageRow, NewAccount,
-    NewFolder, NewMessage, Op, OpId, Server, Store, StoreError,
+    Account, AccountId, AccountKind, Action, Address, Body, Category, Draft, Flags, Folder,
+    FolderId, FolderRole, ListQuery, ListScope, MessageId, MessageLocation, MessageRow, NewAccount,
+    NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing, Server, Store, StoreError,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{Connection, ErrorCode, OptionalExtension, Row, Transaction, params};
@@ -102,10 +102,11 @@ fn migrate(conn: &Connection) -> Result<(), StoreError> {
 impl Store for SqliteStore {
     fn add_account(&self, account: &NewAccount) -> Result<AccountId, StoreError> {
         let conn = self.conn();
-        let server = account.server.as_ref();
+        let (server, smtp) = (account.server.as_ref(), account.smtp.as_ref());
         conn.execute(
-            "INSERT INTO account (kind, email, display_name, server_host, server_port, server_user)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO account (kind, email, display_name, server_host, server_port, server_user,
+                                  smtp_host, smtp_port, smtp_user)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 kind_str(account.kind),
                 account.email,
@@ -113,6 +114,9 @@ impl Store for SqliteStore {
                 server.map(|s| &s.host),
                 server.map(|s| s.port),
                 server.map(|s| &s.user),
+                smtp.map(|s| &s.host),
+                smtp.map(|s| s.port),
+                smtp.map(|s| &s.user),
             ],
         )
         .map_err(storage)?;
@@ -123,21 +127,25 @@ impl Store for SqliteStore {
         let conn = self.conn();
         let mut stmt = conn
             .prepare_cached(
-                "SELECT id, kind, email, display_name, server_host, server_port, server_user
+                "SELECT id, kind, email, display_name, server_host, server_port, server_user,
+                        smtp_host, smtp_port, smtp_user
                  FROM account ORDER BY id",
             )
             .map_err(storage)?;
         let rows = stmt.query_map([], |r| {
-            let server = match (r.get(4)?, r.get(5)?, r.get(6)?) {
-                (Some(host), Some(port), Some(user)) => Some(Server { host, port, user }),
-                _ => None,
+            let server = |at: usize| -> rusqlite::Result<Option<Server>> {
+                Ok(match (r.get(at)?, r.get(at + 1)?, r.get(at + 2)?) {
+                    (Some(host), Some(port), Some(user)) => Some(Server { host, port, user }),
+                    _ => None,
+                })
             };
             Ok(Account {
                 id: AccountId(r.get(0)?),
                 kind: r.get::<_, Kind>(1)?.0,
                 email: r.get(2)?,
                 display_name: r.get(3)?,
-                server,
+                server: server(4)?,
+                smtp: server(7)?,
             })
         });
         rows.and_then(|rows| rows.collect()).map_err(storage)
@@ -403,11 +411,129 @@ impl Store for SqliteStore {
     fn next_send(&self, account: AccountId) -> Result<Option<i64>, StoreError> {
         self.conn()
             .prepare_cached(
-                "SELECT min(o.not_before)
-                 FROM op o JOIN message m ON m.id = o.message_id JOIN folder f ON f.id = m.folder_id
-                 WHERE f.account_id = ?1",
+                "SELECT min(at) FROM (
+                     SELECT min(o.not_before) AS at
+                     FROM op o JOIN message m ON m.id = o.message_id
+                     JOIN folder f ON f.id = m.folder_id
+                     WHERE f.account_id = ?1
+                     UNION ALL
+                     SELECT min(not_before) FROM outbox WHERE account_id = ?1 AND failed IS NULL
+                 )",
             )
             .and_then(|mut s| s.query_row([account.0], |r| r.get(0)))
+            .map_err(storage)
+    }
+
+    fn queue_send(
+        &self,
+        draft: &Draft,
+        message_id: &str,
+        date: i64,
+        not_before: i64,
+    ) -> Result<OutboxId, StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        require(
+            &tx,
+            "SELECT 1 FROM account WHERE id = ?1",
+            draft.account_id.0,
+        )?;
+        let in_reply_to: Option<Option<String>> = match draft.reply_to {
+            None => None,
+            Some(parent) => Some(
+                tx.query_row(
+                    "SELECT message_id FROM message WHERE id = ?1",
+                    [parent.0],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(storage)?
+                .ok_or(StoreError::NotFound)?,
+            ),
+        };
+        let id = tx
+            .query_row(
+                "INSERT INTO outbox (account_id, recipients, subject, text, reply_to, in_reply_to,
+                                     message_id, date, not_before)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) RETURNING id",
+                params![
+                    draft.account_id.0,
+                    draft.to.join("\n"),
+                    draft.subject,
+                    draft.text,
+                    draft.reply_to.map(|m| m.0),
+                    in_reply_to.flatten(),
+                    message_id,
+                    date,
+                    not_before,
+                ],
+                |r| r.get(0),
+            )
+            .map_err(storage)?;
+        tx.commit().map_err(storage)?;
+        Ok(OutboxId(id))
+    }
+
+    fn undo_send(&self, id: OutboxId, now: i64) -> Result<Option<Draft>, StoreError> {
+        self.conn()
+            .prepare_cached(
+                "DELETE FROM outbox WHERE id = ?1 AND not_before > ?2 AND failed IS NULL
+                 RETURNING account_id, recipients, subject, text, reply_to",
+            )
+            .and_then(|mut s| {
+                s.query_row(params![id.0, now], |r| {
+                    Ok(Draft {
+                        account_id: AccountId(r.get(0)?),
+                        to: recipients(&r.get::<_, String>(1)?),
+                        subject: r.get(2)?,
+                        text: r.get(3)?,
+                        reply_to: r.get::<_, Option<i64>>(4)?.map(MessageId),
+                    })
+                })
+                .optional()
+            })
+            .map_err(storage)
+    }
+
+    fn due_sends(&self, account: AccountId, now: i64) -> Result<Vec<Outgoing>, StoreError> {
+        let conn = self.conn();
+        let rows = conn
+            .prepare_cached(
+                "SELECT id, recipients, subject, text, message_id, in_reply_to, date FROM outbox
+                 WHERE account_id = ?1 AND not_before <= ?2 AND failed IS NULL ORDER BY id",
+            )
+            .and_then(|mut s| {
+                s.query_map(params![account.0, now], |r| {
+                    Ok(Outgoing {
+                        id: OutboxId(r.get(0)?),
+                        account_id: account,
+                        to: recipients(&r.get::<_, String>(1)?),
+                        subject: r.get(2)?,
+                        text: r.get(3)?,
+                        message_id: r.get(4)?,
+                        in_reply_to: r.get(5)?,
+                        date: r.get(6)?,
+                    })
+                })?
+                .collect()
+            });
+        rows.map_err(storage)
+    }
+
+    fn sent(&self, id: OutboxId) -> Result<(), StoreError> {
+        self.conn()
+            .execute("DELETE FROM outbox WHERE id = ?1", [id.0])
+            .map(|_| ())
+            .map_err(storage)
+    }
+
+    fn refused(&self, id: OutboxId, reason: &str) -> Result<(), StoreError> {
+        self.conn()
+            .execute(
+                "UPDATE outbox SET failed = ?2 WHERE id = ?1",
+                params![id.0, reason],
+            )
+            .map(|_| ())
             .map_err(storage)
     }
 
@@ -616,6 +742,11 @@ fn category_ref(category: Category) -> &'static &'static str {
         Category::Notifications => &"notifications",
         Category::Newsletters => &"newsletters",
     }
+}
+
+/// The addresses of `outbox.recipients`, one per line.
+fn recipients(stored: &str) -> Vec<String> {
+    stored.lines().map(str::to_owned).collect()
 }
 
 fn role_ref(role: FolderRole) -> &'static &'static str {

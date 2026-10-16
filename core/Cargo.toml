@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["domain", "app", "api", "api/bindgen", "adapters/store-sqlite", "adapters/mime", "adapters/imap"]
+members = ["domain", "app", "api", "api/bindgen", "adapters/store-sqlite", "adapters/mime", "adapters/imap", "adapters/smtp"]
 
 [workspace.package]
 version = "0.1.0"
@@ -14,6 +14,7 @@ ozero-domain = { path = "domain" }
 ozero-app = { path = "app" }
 ozero-imap = { path = "adapters/imap" }
 ozero-mime = { path = "adapters/mime" }
+ozero-smtp = { path = "adapters/smtp" }
 ozero-store-sqlite = { path = "adapters/store-sqlite" }
 rustls-platform-verifier = "0.7"
 uniffi = { version = "0.32", default-features = false }

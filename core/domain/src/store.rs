@@ -1,8 +1,8 @@
 use std::fmt;
 
 use crate::{
-    Account, AccountId, Action, Body, Category, Folder, FolderId, ListQuery, MessageId,
-    MessageLocation, MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId,
+    Account, AccountId, Action, Body, Category, Draft, Folder, FolderId, ListQuery, MessageId,
+    MessageLocation, MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing,
 };
 
 /// Local database port. The UI reads only from here; sync writes here.
@@ -47,13 +47,31 @@ pub trait Store: Send + Sync {
     /// Takes back an action that is still held (its `not_before` is after `now`), so the server
     /// never sees it. Returns false if it may already be on its way.
     fn undo(&self, op: OpId, now: i64) -> Result<bool, StoreError>;
-    /// When the account's next held action may be sent, if one is held.
+    /// When the account's next held action or message may be sent, if one is held.
     fn next_send(&self, account: AccountId) -> Result<Option<i64>, StoreError>;
     /// The account's queued actions that may be sent at `now`, oldest first.
     fn due(&self, account: AccountId, now: i64) -> Result<Vec<Op>, StoreError>;
     /// The server has the actions: forget them, unless the user changed one since `due`.
     /// An archived message is dropped: it now lives in a folder that is synced on its own.
     fn finish(&self, ops: &[Op]) -> Result<(), StoreError>;
+    /// Queues a message to be sent from `not_before`. Fails with `NotFound` if the account or
+    /// the message it answers is gone.
+    fn queue_send(
+        &self,
+        draft: &Draft,
+        message_id: &str,
+        date: i64,
+        not_before: i64,
+    ) -> Result<OutboxId, StoreError>;
+    /// Takes back a message that is still held, so it can be edited. None once it may be on
+    /// its way.
+    fn undo_send(&self, id: OutboxId, now: i64) -> Result<Option<Draft>, StoreError>;
+    /// The account's messages that may be sent at `now`, oldest first; refused ones stay out.
+    fn due_sends(&self, account: AccountId, now: i64) -> Result<Vec<Outgoing>, StoreError>;
+    /// The server took the message.
+    fn sent(&self, id: OutboxId) -> Result<(), StoreError>;
+    /// The server refused the message for good. It stays in the outbox, not sent again.
+    fn refused(&self, id: OutboxId, reason: &str) -> Result<(), StoreError>;
     /// The server refused the actions for good: undo them on the device and forget them.
     /// Ops gone or changed since `due` are left alone.
     fn revert(&self, ops: &[Op]) -> Result<(), StoreError>;

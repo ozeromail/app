@@ -39,6 +39,11 @@ fn account(store: &SqliteStore, email: &str) -> AccountId {
                 port: 993,
                 user: email.into(),
             }),
+            smtp: Some(Server {
+                host: "smtp.example.com".into(),
+                port: 465,
+                user: email.into(),
+            }),
         })
         .unwrap()
 }
@@ -535,4 +540,88 @@ fn tabs_list_and_count_their_own_messages() {
     store.save_messages(folder, &[news]).unwrap();
     assert_eq!(tab(Category::Notifications), ["Subject 2"]);
     assert!(tab(Category::Newsletters).is_empty());
+}
+
+fn draft(account: AccountId) -> Draft {
+    Draft {
+        account_id: account,
+        to: vec!["bob@example.org".into(), "cat@example.net".into()],
+        subject: "Hi".into(),
+        text: "Hello".into(),
+        reply_to: None,
+    }
+}
+
+#[test]
+fn a_held_message_can_be_taken_back_until_it_is_due() {
+    let store = store();
+    let a = account(&store, "a@example.com");
+    let id = store
+        .queue_send(&draft(a), "1@example.com", 100, 105)
+        .unwrap();
+    assert_eq!(store.next_send(a).unwrap(), Some(105));
+    assert!(store.due_sends(a, 104).unwrap().is_empty());
+
+    assert_eq!(store.undo_send(id, 104).unwrap(), Some(draft(a)));
+    assert_eq!(store.undo_send(id, 104).unwrap(), None);
+    assert_eq!(store.next_send(a).unwrap(), None);
+
+    let id = store
+        .queue_send(&draft(a), "2@example.com", 100, 105)
+        .unwrap();
+    assert_eq!(store.undo_send(id, 105).unwrap(), None, "too late");
+    let due = store.due_sends(a, 105).unwrap();
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].to, draft(a).to);
+    assert_eq!(due[0].message_id, "2@example.com");
+    assert_eq!(due[0].date, 100);
+    store.sent(id).unwrap();
+    assert!(store.due_sends(a, 200).unwrap().is_empty());
+}
+
+#[test]
+fn a_refused_message_is_not_sent_again() {
+    let store = store();
+    let a = account(&store, "a@example.com");
+    let id = store
+        .queue_send(&draft(a), "1@example.com", 100, 100)
+        .unwrap();
+    store.refused(id, "550 no such user").unwrap();
+    assert!(store.due_sends(a, 200).unwrap().is_empty());
+    assert_eq!(store.next_send(a).unwrap(), None);
+    assert_eq!(store.undo_send(id, 0).unwrap(), None);
+}
+
+#[test]
+fn a_reply_answers_the_message_id() {
+    let store = store();
+    let a = account(&store, "a@example.com");
+    store
+        .save_messages(inbox(&store, a), &[message(1, 100)])
+        .unwrap();
+    let parent = list(&store, ListScope::Folder(inbox(&store, a)), 10, None)[0].id;
+    let reply = Draft {
+        reply_to: Some(parent),
+        ..draft(a)
+    };
+    store.queue_send(&reply, "2@example.com", 100, 100).unwrap();
+    let due = store.due_sends(a, 100).unwrap();
+    assert_eq!(due[0].in_reply_to.as_deref(), Some("<1@example.com>"));
+
+    let gone = Draft {
+        reply_to: Some(MessageId(999)),
+        ..draft(a)
+    };
+    assert_eq!(
+        store.queue_send(&gone, "3@example.com", 100, 100),
+        Err(StoreError::NotFound)
+    );
+}
+
+#[test]
+fn accounts_keep_their_smtp_server() {
+    let store = store();
+    account(&store, "a@example.com");
+    let smtp = store.accounts().unwrap()[0].smtp.clone().unwrap();
+    assert_eq!((smtp.host.as_str(), smtp.port), ("smtp.example.com", 465));
 }

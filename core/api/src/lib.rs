@@ -2,33 +2,37 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::hash::{BuildHasher, RandomState};
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ozero_app::ops::push_ops;
+use ozero_app::send::{SentCopy, push_sends};
 use ozero_app::sync::{SyncError, download_body, sync_inbox};
 use ozero_domain::{
-    Account, AccountId, AccountKind, Action, Body, Category, ListQuery, ListScope, MessageId,
-    MessageRow, NewAccount, OpId, ProviderError, Server, Store, StoreError,
+    Account, AccountId, AccountKind, Action, Address, Body, Category, Draft, FolderRole, ListQuery,
+    ListScope, MessageId, MessageRow, NewAccount, OpId, OutboxId, ProviderError, Server, Store,
+    StoreError, parse_recipients, saves_sent_itself,
 };
 use ozero_imap::ImapSession;
 use ozero_imap::rustls::ClientConfig;
-use ozero_mime::MimeParser;
+use ozero_mime::{MimeBuilder, MimeParser};
+use ozero_smtp::SmtpSession;
 use ozero_store_sqlite::SqliteStore;
 
 uniffi::setup_scaffolding!();
 
 /// How many of the newest inbox messages one sync brings in.
 const SYNC_LIMIT: u32 = 200;
-/// Milliseconds an archived message waits before the server hears of it.
-const ARCHIVE_HOLD: i64 = 5_000;
+/// Milliseconds an archived or sent message waits before the server hears of it.
+const HOLD: i64 = 5_000;
 
-/// How long the apps offer undo after archiving: a second shorter than the hold, so a tap
-/// is never late.
+/// How long the apps offer undo after archiving or sending: a second shorter than the hold,
+/// so a tap is never late.
 #[uniffi::export]
 pub fn undo_seconds() -> u32 {
-    u32::try_from(ARCHIVE_HOLD / 1_000 - 1).unwrap_or(0)
+    u32::try_from(HOLD / 1_000 - 1).unwrap_or(0)
 }
 
 /// Version of the core, shown in About and in manual crash reports.
@@ -41,6 +45,18 @@ pub fn core_version() -> String {
 #[uniffi::export]
 pub fn suggested_imap_host(email: String) -> Option<String> {
     ozero_domain::guess_imap_host(&email)
+}
+
+/// The SMTP server sign-in suggests, like `suggested_imap_host`.
+#[uniffi::export]
+pub fn suggested_smtp_host(email: String) -> Option<String> {
+    ozero_domain::guess_smtp_host(&email)
+}
+
+/// The subject of an answer: `Re: ` once.
+#[uniffi::export]
+pub fn reply_subject(subject: String) -> String {
+    ozero_domain::reply_subject(&subject)
 }
 
 /// The mail core of one app install: the encrypted database and the network.
@@ -139,12 +155,12 @@ impl Core {
     }
 
     /// Takes the message out of the lists at once and holds the move to the archive for
-    /// `ARCHIVE_HOLD`, so `undo` can take it back. Returns the action for `undo`.
+    /// `HOLD`, so `undo` can take it back. Returns the action for `undo`.
     /// Fails with `NoArchive` if the account has no archive folder.
     pub fn archive(&self, message: i64) -> Result<i64, CoreError> {
         let op = self
             .store
-            .queue(MessageId(message), Action::Archive, now() + ARCHIVE_HOLD)?;
+            .queue(MessageId(message), Action::Archive, now() + HOLD)?;
         Ok(op.0)
     }
 
@@ -152,17 +168,56 @@ impl Core {
     pub fn undo(&self, action: i64) -> Result<bool, CoreError> {
         Ok(self.store.undo(OpId(action), now())?)
     }
+
+    /// Puts a message in the outbox, held for `HOLD` so `undo_send` can take it back;
+    /// `push_actions` sends it. `to` is addresses split by commas or spaces; `reply_to` the
+    /// message it answers. Returns the id for `undo_send`.
+    pub fn send(
+        &self,
+        account: i64,
+        to: String,
+        subject: String,
+        text: String,
+        reply_to: Option<i64>,
+    ) -> Result<i64, CoreError> {
+        let to = parse_recipients(&to).ok_or(CoreError::BadRecipients)?;
+        let from = self.account(AccountId(account))?;
+        let draft = Draft {
+            account_id: from.id,
+            to,
+            subject,
+            text,
+            reply_to: reply_to.map(MessageId),
+        };
+        let now = now();
+        let id = self.store.queue_send(
+            &draft,
+            &message_id(&from.email, now),
+            now / 1_000,
+            now + HOLD,
+        )?;
+        Ok(id.0)
+    }
+
+    /// Takes back a held message to edit it again. None once it may be on its way.
+    pub fn undo_send(&self, id: i64) -> Result<Option<DraftItem>, CoreError> {
+        Ok(self
+            .store
+            .undo_send(OutboxId(id), now())?
+            .map(DraftItem::from))
+    }
 }
 
 #[uniffi::export(async_runtime = "tokio")]
 impl Core {
-    /// Saves an IMAP account once the server has accepted the login; `email` is the login name.
+    /// Saves an IMAP account once both servers have accepted the login; `email` is the login
+    /// name on both.
     pub async fn add_imap_account(
         &self,
         email: String,
         display_name: String,
-        host: String,
-        port: u16,
+        imap: Endpoint,
+        smtp: Endpoint,
         password: String,
     ) -> Result<i64, CoreError> {
         // Checked before going online, so a repeat sign-in costs no login.
@@ -171,18 +226,25 @@ impl Core {
             return Err(CoreError::AccountExists);
         }
         let server = Server {
-            host,
-            port,
+            host: imap.host,
+            port: imap.port,
+            user: email.clone(),
+        };
+        let smtp = Server {
+            host: smtp.host,
+            port: smtp.port,
             user: email.clone(),
         };
         let imap = self.login(&server, &password).await?;
         // The login worked; a failed goodbye changes nothing.
         let _ = imap.logout().await;
+        let _ = self.send_login(&smtp, &password).await?.quit().await;
         let account = NewAccount {
             kind: AccountKind::Imap,
             email,
             display_name,
             server: Some(server),
+            smtp: Some(smtp),
         };
         Ok(self.store.add_account(&account)?.0)
     }
@@ -198,10 +260,10 @@ impl Core {
                 let _busy = lock.lock().await;
                 // Read under the lock: a push that waited finds what the one before it sent gone.
                 let step = async {
-                    let ops = self.store.due(account, now())?;
-                    if !ops.is_empty() {
-                        let mut imap = self.connect(account, &password).await?;
-                        push_ops(&self.store, &mut imap, ops).await?;
+                    let mut imap = None;
+                    self.push_due(&self.account(account)?, &password, &mut imap)
+                        .await?;
+                    if let Some(imap) = imap {
                         let _ = imap.logout().await;
                     }
                     Ok::<_, CoreError>(self.store.next_send(account)?)
@@ -233,16 +295,19 @@ impl Core {
         }
     }
 
-    /// Sends the account's queued actions, then brings its folders and newest inbox
+    /// Sends the account's queued actions and mail, then brings its folders and newest inbox
     /// messages into the database.
     pub async fn sync_imap(&self, account: i64, password: String) -> Result<(), CoreError> {
-        let account = AccountId(account);
-        let lock = self.busy(account);
+        let account = self.account(AccountId(account))?;
+        let lock = self.busy(account.id);
         let _busy = lock.lock().await;
-        let mut imap = self.connect(account, &password).await?;
-        push_ops(&self.store, &mut imap, self.store.due(account, now())?).await?;
-        sync_inbox(&self.store, &mut imap, &self.parser, account, SYNC_LIMIT).await?;
-        let _ = imap.logout().await;
+        let mut slot = Some(self.connect(&account, &password).await?);
+        self.push_due(&account, &password, &mut slot).await?;
+        let imap = self.imap(&mut slot, &account, &password).await?;
+        sync_inbox(&self.store, imap, &self.parser, account.id, SYNC_LIMIT).await?;
+        if let Some(imap) = slot {
+            let _ = imap.logout().await;
+        }
         Ok(())
     }
 
@@ -258,7 +323,8 @@ impl Core {
             return Ok(body.into());
         }
         let location = self.store.location(message)?;
-        let mut imap = self.connect(location.account_id, &password).await?;
+        let account = self.account(location.account_id)?;
+        let mut imap = self.connect(&account, &password).await?;
         let body = download_body(&self.store, &mut imap, &self.parser, &location).await?;
         // Closing without LOGOUT saves the reader a round trip; the server cleans up.
         drop(imap);
@@ -272,18 +338,94 @@ impl Core {
         locks.entry(account).or_default().clone()
     }
 
-    /// Logs in to a saved IMAP account.
-    async fn connect(&self, account: AccountId, password: &str) -> Result<ImapSession, CoreError> {
-        let server = self
-            .store
+    fn account(&self, id: AccountId) -> Result<Account, CoreError> {
+        self.store
             .accounts()?
             .into_iter()
-            .find(|a| a.id == account && a.kind == AccountKind::Imap)
-            .and_then(|a| a.server)
+            .find(|a| a.id == id && a.kind == AccountKind::Imap)
             .ok_or_else(|| CoreError::Storage {
                 detail: "no such IMAP account".into(),
-            })?;
-        self.login(&server, password).await
+            })
+    }
+
+    /// Logs in to a saved IMAP account.
+    async fn connect(&self, account: &Account, password: &str) -> Result<ImapSession, CoreError> {
+        let server = account.server.as_ref().ok_or_else(|| CoreError::Storage {
+            detail: "no IMAP server".into(),
+        })?;
+        self.login(server, password).await
+    }
+
+    /// The IMAP session in `slot`, logged in on first use.
+    async fn imap<'a>(
+        &self,
+        slot: &'a mut Option<ImapSession>,
+        account: &Account,
+        password: &str,
+    ) -> Result<&'a mut ImapSession, CoreError> {
+        if slot.is_none() {
+            *slot = Some(self.connect(account, password).await?);
+        }
+        slot.as_mut().ok_or_else(|| CoreError::Storage {
+            detail: "no IMAP session".into(),
+        })
+    }
+
+    /// Sends what is due: actions over IMAP, then mail over SMTP with a copy into Sent.
+    /// Connects to IMAP only when it is needed and leaves the session in `slot`.
+    async fn push_due(
+        &self,
+        account: &Account,
+        password: &str,
+        slot: &mut Option<ImapSession>,
+    ) -> Result<(), CoreError> {
+        let ops = self.store.due(account.id, now())?;
+        if !ops.is_empty() {
+            let imap = self.imap(slot, account, password).await?;
+            push_ops(&self.store, imap, ops).await?;
+        }
+        let mail = self.store.due_sends(account.id, now())?;
+        if mail.is_empty() {
+            return Ok(());
+        }
+        let server = account.smtp.as_ref().ok_or(CoreError::NoSmtp)?;
+        let mut smtp = self.send_login(server, password).await?;
+        let sent = if saves_sent_itself(&server.host) {
+            None
+        } else {
+            let folders = self.store.folders(account.id)?;
+            folders.into_iter().find(|f| f.role == FolderRole::Sent)
+        };
+        // Without IMAP the mail still goes; only its copy in Sent is missing.
+        let copy = match &sent {
+            Some(folder) => self
+                .imap(slot, account, password)
+                .await
+                .ok()
+                .map(|provider| SentCopy {
+                    provider,
+                    folder: &folder.remote_id,
+                }),
+            None => None,
+        };
+        let from = Address {
+            name: Some(account.display_name.clone()).filter(|n| *n != account.email),
+            email: account.email.clone(),
+        };
+        push_sends(&self.store, &mut smtp, &MimeBuilder, &from, copy, mail).await?;
+        let _ = smtp.quit().await;
+        Ok(())
+    }
+
+    async fn send_login(&self, server: &Server, password: &str) -> Result<SmtpSession, CoreError> {
+        Ok(SmtpSession::connect(
+            &server.host,
+            server.port,
+            self.tls()?,
+            &server.user,
+            password,
+        )
+        .await?)
     }
 
     async fn login(&self, server: &Server, password: &str) -> Result<ImapSession, CoreError> {
@@ -305,6 +447,17 @@ impl Core {
         let tls = tls_config()?;
         Ok(self.tls.get_or_init(|| tls).clone())
     }
+}
+
+/// A `Message-ID` (without brackets) no other message has: the time and 64 random bits.
+fn message_id(email: &str, now: i64) -> String {
+    let random = RandomState::new().hash_one(now);
+    let domain = email
+        .rsplit_once('@')
+        .map(|(_, d)| d)
+        .filter(|d| !d.is_empty() && d.is_ascii())
+        .unwrap_or("localhost");
+    format!("{now:x}.{random:016x}@{domain}")
 }
 
 /// Milliseconds since the Unix epoch.
@@ -381,6 +534,36 @@ impl From<Account> for AccountItem {
             id: a.id.0,
             email: a.email,
             display_name: a.display_name,
+        }
+    }
+}
+
+/// A server address as sign-in asks for it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct Endpoint {
+    pub host: String,
+    pub port: u16,
+}
+
+/// A message being written, as compose shows it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct DraftItem {
+    pub account_id: i64,
+    /// Addresses joined by ", ".
+    pub to: String,
+    pub subject: String,
+    pub text: String,
+    pub reply_to: Option<i64>,
+}
+
+impl From<Draft> for DraftItem {
+    fn from(d: Draft) -> Self {
+        Self {
+            account_id: d.account_id.0,
+            to: d.to.join(", "),
+            subject: d.subject,
+            text: d.text,
+            reply_to: d.reply_to.map(|m| m.0),
         }
     }
 }
@@ -476,6 +659,10 @@ pub enum CoreError {
     Gone,
     /// The account has no folder marked as its archive.
     NoArchive,
+    /// A recipient is not an email address, or there is none.
+    BadRecipients,
+    /// The account has no SMTP server to send through.
+    NoSmtp,
     Storage {
         detail: String,
     },
@@ -493,6 +680,8 @@ impl fmt::Display for CoreError {
             Self::Server { detail } => write!(f, "server error: {detail}"),
             Self::Gone => write!(f, "the message is gone from the server"),
             Self::NoArchive => write!(f, "the account has no archive folder"),
+            Self::BadRecipients => write!(f, "a recipient is not an email address"),
+            Self::NoSmtp => write!(f, "the account has no SMTP server"),
             Self::Storage { detail } => write!(f, "storage error: {detail}"),
         }
     }

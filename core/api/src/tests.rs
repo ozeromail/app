@@ -2,6 +2,8 @@ use ozero_imap::rustls::RootCertStore;
 use ozero_imap::rustls::pki_types::CertificateDer;
 use ozero_imap::rustls::pki_types::pem::PemObject;
 
+use ozero_domain::MailProvider;
+
 use super::*;
 
 /// A database path whose files are removed when the test ends.
@@ -73,8 +75,14 @@ fn syncs_an_imap_inbox_into_the_list() {
         runtime.block_on(core.add_imap_account(
             "test@example.com".into(),
             "Test".into(),
-            "localhost".into(),
-            31993,
+            Endpoint {
+                host: "localhost".into(),
+                port: 31993,
+            },
+            Endpoint {
+                host: "localhost".into(),
+                port: 31587,
+            },
             password.into(),
         ))
     };
@@ -126,4 +134,51 @@ fn syncs_an_imap_inbox_into_the_list() {
             seen
         );
     }
+
+    // Undo gives the draft back; sent again, it reaches the SMTP server and Sent.
+    let send = || {
+        core.send(
+            account,
+            "bob@example.org".into(),
+            "Ответ из Ozero".into(),
+            "Привет!".into(),
+            Some(first),
+        )
+        .unwrap()
+    };
+    let draft = core.undo_send(send()).unwrap().unwrap();
+    assert_eq!(draft.to, "bob@example.org");
+    assert_eq!(draft.reply_to, Some(first));
+    send();
+    runtime
+        .block_on(core.push_actions(account, "pass".into()))
+        .unwrap();
+    let received = mailpit_messages();
+    assert!(received.contains("bob@example.org"), "{received}");
+    assert!(received.contains("Ответ из Ozero"), "{received}");
+    let sent = runtime.block_on(async {
+        let account = core.account(AccountId(account))?;
+        let mut imap = core.connect(&account, "pass").await?;
+        Ok::<_, CoreError>(imap.recent("Sent", 50).await?.messages)
+    });
+    let headers: Vec<_> = sent
+        .unwrap()
+        .iter()
+        .map(|m| String::from_utf8_lossy(&m.header).into_owned())
+        .collect();
+    assert!(
+        headers.iter().any(|h| h.contains("Message-ID: <")),
+        "{headers:?}"
+    );
+}
+
+/// The message list of the Mailpit test server, as JSON.
+fn mailpit_messages() -> String {
+    use std::io::{Read, Write};
+    let mut http = std::net::TcpStream::connect("localhost:31825").unwrap();
+    http.write_all(b"GET /api/v1/messages HTTP/1.0\r\nHost: localhost\r\n\r\n")
+        .unwrap();
+    let mut response = String::new();
+    http.read_to_string(&mut response).unwrap();
+    response
 }

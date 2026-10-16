@@ -151,3 +151,22 @@ async fn rejects_an_untrusted_certificate() {
     let err = connect(RootCertStore::empty(), PASSWORD).await.unwrap_err();
     assert!(matches!(err, ProviderError::Network(_)), "{err:?}");
 }
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "needs tools/dovecot-test.sh"]
+async fn appends_a_sent_copy_marked_read() {
+    let mut imap = session().await;
+    imap.append(
+        "Sent",
+        b"From: anna@example.com\r\nSubject: Sent copy\r\n\r\nHello\r\n",
+    )
+    .await
+    .unwrap();
+    // The api test also sends into Sent.
+    let sent = imap.recent("Sent", 10).await.unwrap().messages;
+    let copy = sent
+        .iter()
+        .find(|m| String::from_utf8_lossy(&m.header).contains("Subject: Sent copy"))
+        .unwrap();
+    assert!(copy.flags.seen);
+}
