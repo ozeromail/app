@@ -1009,3 +1009,13 @@ fn search_finds_words_in_subject_sender_and_body() {
     store.queue(id(3), Action::Archive, 0).unwrap();
     assert_eq!(found("anna"), "Subject 1");
 }
+
+#[test]
+fn each_new_account_gets_the_next_color() {
+    let store = store();
+    for email in ["a@example.com", "b@example.com", "c@example.com"] {
+        account(&store, email);
+    }
+    let colors: Vec<_> = store.accounts().unwrap().iter().map(|a| a.color).collect();
+    assert_eq!(colors, [0, 1, 2]);
+}

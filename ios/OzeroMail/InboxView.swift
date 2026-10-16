@@ -8,6 +8,8 @@ struct InboxView: View {
     /// Nil until the saved mail has been read once.
     @State private var messages: [MessageItem]?
     @State private var syncing = false
+    /// A sync asked for while one runs, say for a new account, runs right after it.
+    @State private var syncAgain = false
     @State private var error: LocalizedStringKey?
     /// The last archive or send, while its toast can still take it back.
     @State private var undoable: Undoable?
@@ -17,6 +19,7 @@ struct InboxView: View {
     @State private var unsent: [UnsentItem] = []
     @State private var path: [MessageItem] = []
     @State private var query = ""
+    @State private var addingAccount = false
     /// With the query they answer, so "No messages" never shows for a query still waiting.
     @State private var found: (query: String, messages: [MessageItem])?
     @State private var searchError: LocalizedStringKey?
@@ -35,6 +38,7 @@ struct InboxView: View {
                     }
                     ForEach(results, id: \.id) { message in
                         NavigationLink(value: message) { MessageRow(message: message) }
+                            .listRowBackground(AccountStrip(account: message.account))
                     }
                 } else {
                     ForEach(unsent, id: \.id) { failed in
@@ -52,6 +56,7 @@ struct InboxView: View {
                     }
                     ForEach(messages ?? [], id: \.id) { message in
                         NavigationLink(value: message) { MessageRow(message: message) }
+                            .listRowBackground(AccountStrip(account: message.account))
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                 Button("action_done") { archive(message) }
                                     .tint(.accentColor)
@@ -62,6 +67,17 @@ struct InboxView: View {
             .listStyle(.plain)
             .navigationTitle("inbox_title")
             .searchable(text: $query, prompt: Text("search_prompt"))
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("inbox_add_account") { addingAccount = true }
+                }
+            }
+            .sheet(isPresented: $addingAccount) {
+                SignInView(mail: mail, onCancel: { addingAccount = false }) {
+                    addingAccount = false
+                    Task { await sync() }
+                }
+            }
             .task(id: query) {
                 searchError = nil
                 guard results != nil else { return }
@@ -203,7 +219,10 @@ struct InboxView: View {
     }
 
     private func sync() async {
-        guard !syncing else { return }
+        guard !syncing else {
+            syncAgain = true
+            return
+        }
         syncing = true
         error = nil
         defer { syncing = false }
@@ -220,6 +239,10 @@ struct InboxView: View {
         }
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
         await load()
+        if syncAgain {
+            syncAgain = false
+            Task { await sync() }
+        }
     }
 }
 
@@ -253,6 +276,19 @@ private struct UndoToast: View {
     }
 }
 
+/// A strip of the account's colour along the row's leading edge, when there is one.
+private struct AccountStrip: View {
+    let account: AccountMark?
+
+    var body: some View {
+        Rectangle()
+            .fill(account?.tint ?? .clear)
+            .frame(width: 3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// A row of the list; with several accounts, the account's name in its colour marks it.
 private struct MessageRow: View {
     let message: MessageItem
 
@@ -286,8 +322,24 @@ private struct MessageRow: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
+                if let account = message.account {
+                    Text(verbatim: account.name)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
         }
+    }
+}
+
+extension AccountMark {
+    /// The account's colour, from the core.
+    var tint: Color {
+        Color(
+            red: Double((color >> 16) & 0xFF) / 255,
+            green: Double((color >> 8) & 0xFF) / 255,
+            blue: Double(color & 0xFF) / 255)
     }
 }
 

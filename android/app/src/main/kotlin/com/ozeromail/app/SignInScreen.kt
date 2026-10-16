@@ -1,5 +1,6 @@
 package com.ozeromail.app
 
+import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -16,6 +17,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -23,6 +25,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -37,9 +40,13 @@ import uniffi.ozero_api.Endpoint
 import uniffi.ozero_api.suggestedImapHost
 import uniffi.ozero_api.suggestedSmtpHost
 
-/** Adds an IMAP account with its SMTP server. The fields sit in the lower half, in reach of the thumb. */
+/**
+ * Adds an IMAP account with its SMTP server. The fields sit in the lower half, in reach of the thumb.
+ * With [onCancel], for a further account, system back and Cancel leave it.
+ */
 @Composable
-fun SignInScreen(mail: Mail, onSignedIn: () -> Unit) {
+fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = null) {
+
     var email by rememberSaveable { mutableStateOf("") }
     // Not saveable: the saved state is written outside the app's sandbox.
     var password by remember { mutableStateOf("") }
@@ -51,6 +58,8 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<Int?>(null) }
     val scope = rememberCoroutineScope()
+    // Not while signing in: leaving would cut it off halfway.
+    if (onCancel != null) BackHandler(enabled = !busy, onBack = onCancel)
 
     val suggested = remember(email) { suggestedImapHost(email) }
     val suggestedSmtp = remember(email) { suggestedSmtpHost(email) }
@@ -84,11 +93,17 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit) {
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(
-            stringResource(R.string.signin_title),
-            style = MaterialTheme.typography.headlineLarge,
-            fontWeight = FontWeight.Bold,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                stringResource(R.string.signin_title),
+                style = MaterialTheme.typography.headlineLarge,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+            )
+            if (onCancel != null) {
+                TextButton(onClick = onCancel, enabled = !busy) { Text(stringResource(R.string.action_cancel)) }
+            }
+        }
         Spacer(Modifier.weight(1f))
         Field(email, { email = it }, R.string.signin_email, KeyboardType.Email)
         Field(password, { password = it }, R.string.signin_password, KeyboardType.Password)

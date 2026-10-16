@@ -37,5 +37,6 @@
   "inbox_not_sent": "Not sent. Tap to fix.",
   "notify_channel": "New mail",
   "notify_more": "More new mail is waiting in the inbox.",
-  "search_prompt": "Search mail"
+  "search_prompt": "Search mail",
+  "inbox_add_account": "Add account"
 }

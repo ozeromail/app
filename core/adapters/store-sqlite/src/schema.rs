@@ -168,4 +168,9 @@ pub const MIGRATIONS: &[&str] = &[
             SELECT * FROM message_search_source WHERE id = new.message_id;
     END;
     ",
+    // 14: which colour marks an account's mail, kept so it stays when others come and go.
+    "
+    ALTER TABLE account ADD COLUMN color INTEGER NOT NULL DEFAULT 0;
+    UPDATE account SET color = (SELECT count(*) FROM account a WHERE a.id < account.id);
+    ",
 ];

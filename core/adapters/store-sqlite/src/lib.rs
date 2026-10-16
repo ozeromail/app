@@ -106,8 +106,9 @@ impl Store for SqliteStore {
         let (server, smtp) = (account.server.as_ref(), account.smtp.as_ref());
         conn.execute(
             "INSERT INTO account (kind, email, display_name, server_host, server_port, server_user,
-                                  smtp_host, smtp_port, smtp_user)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                                  smtp_host, smtp_port, smtp_user, color)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
+                     coalesce((SELECT max(color) + 1 FROM account), 0))",
             params![
                 kind_str(account.kind),
                 account.email,
@@ -129,7 +130,7 @@ impl Store for SqliteStore {
         let mut stmt = conn
             .prepare_cached(
                 "SELECT id, kind, email, display_name, server_host, server_port, server_user,
-                        smtp_host, smtp_port, smtp_user
+                        smtp_host, smtp_port, smtp_user, color
                  FROM account ORDER BY id",
             )
             .map_err(storage)?;
@@ -147,6 +148,7 @@ impl Store for SqliteStore {
                 display_name: r.get(3)?,
                 server: server(4)?,
                 smtp: server(7)?,
+                color: r.get(10)?,
             })
         });
         rows.and_then(|rows| rows.collect()).map_err(storage)

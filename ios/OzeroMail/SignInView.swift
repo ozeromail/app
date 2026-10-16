@@ -1,8 +1,10 @@
 import SwiftUI
 
 /// Adds an IMAP account with its SMTP server. The fields sit in the lower half, in reach of the thumb.
+/// With `onCancel`, for a further account, Cancel leaves it.
 struct SignInView: View {
     let mail: Mail
+    var onCancel: (() -> Void)?
     let onSignedIn: () -> Void
 
     @State private var email = ""
@@ -36,7 +38,13 @@ struct SignInView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("signin_title").font(.largeTitle.bold())
+            HStack {
+                Text("signin_title").font(.largeTitle.bold())
+                Spacer()
+                if let onCancel {
+                    Button("action_cancel", action: onCancel).disabled(busy)
+                }
+            }
             Spacer()
             TextField("signin_email", text: $email)
                 .textContentType(.emailAddress)
@@ -63,6 +71,8 @@ struct SignInView: View {
         .textFieldStyle(.roundedBorder)
         .padding(24)
         .onSubmit(submit)
+        // Not while signing in: leaving would cut it off halfway.
+        .interactiveDismissDisabled(busy)
     }
 
     private func submit() {

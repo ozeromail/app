@@ -37,6 +37,8 @@ pub struct Account {
     pub display_name: String,
     pub server: Option<Server>,
     pub smtp: Option<Server>,
+    /// Which of the account colours marks its mail; the next one when it was added.
+    pub color: u32,
 }
 
 /// The usual IMAP host for an email address (`imap.<domain>`), for sign-in to suggest.
