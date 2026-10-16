@@ -23,9 +23,10 @@ pub fn run<F: Future>(f: F) -> F::Output {
 pub struct Server {
     pub folders: Vec<NewFolder>,
     pub asked: Vec<(String, u32)>,
-    /// Each `apply` call; `apply` fails with the first of `refuse` while any remain.
+    /// Each `set_seen` and `move_to` call; they fail with the first of `refuse` while any remain.
     pub applied: Vec<(String, u32, Vec<String>, Action)>,
     pub refuse: Vec<ProviderError>,
+    pub moved_to: Vec<String>,
 }
 
 impl MailProvider for Server {
@@ -64,20 +65,43 @@ impl MailProvider for Server {
         })
     }
 
+    fn set_seen(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_ids: &[String],
+        seen: bool,
+    ) -> impl Future<Output = Result<(), ProviderError>> + Send {
+        ready(self.apply(folder, validity, remote_ids, Action::Seen(seen)))
+    }
+
+    fn move_to(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_ids: &[String],
+        to: &str,
+    ) -> impl Future<Output = Result<(), ProviderError>> + Send {
+        self.moved_to.push(to.into());
+        ready(self.apply(folder, validity, remote_ids, Action::Archive))
+    }
+}
+
+impl Server {
     fn apply(
         &mut self,
         folder: &str,
         validity: u32,
         remote_ids: &[String],
         action: Action,
-    ) -> impl Future<Output = Result<(), ProviderError>> + Send {
+    ) -> Result<(), ProviderError> {
         self.applied
             .push((folder.into(), validity, remote_ids.to_vec(), action));
-        ready(if self.refuse.is_empty() {
+        if self.refuse.is_empty() {
             Ok(())
         } else {
             Err(self.refuse.remove(0))
-        })
+        }
     }
 }
 
@@ -176,8 +200,16 @@ impl Store for Memory {
         Ok(None)
     }
 
-    fn queue(&self, _: MessageId, _: Action, _: i64) -> Result<(), StoreError> {
-        Ok(())
+    fn queue(&self, _: MessageId, _: Action, _: i64) -> Result<OpId, StoreError> {
+        Ok(OpId(1))
+    }
+
+    fn undo(&self, _: OpId, _: i64) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    fn next_send(&self, _: AccountId) -> Result<Option<i64>, StoreError> {
+        Ok(None)
     }
 
     fn due(&self, _: AccountId, _: i64) -> Result<Vec<Op>, StoreError> {

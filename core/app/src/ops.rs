@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use ozero_domain::{MailProvider, Op, ProviderError, Store};
+use ozero_domain::{Action, MailProvider, Op, ProviderError, Store};
 
 use crate::sync::SyncError;
 
@@ -19,12 +19,19 @@ pub async fn push_ops(
             op.location.folder_remote_id.clone(),
             op.location.validity,
             op.action,
+            op.to.clone(),
         );
         batches.entry(key).or_default().push(op);
     }
-    for ((folder, validity, action), ops) in batches {
-        let remote_ids: Vec<_> = ops.iter().map(|o| o.location.remote_id.clone()).collect();
-        match provider.apply(&folder, validity, &remote_ids, action).await {
+    // Read state goes before archiving, so it is set while the messages are still here.
+    for ((folder, validity, action, to), ops) in batches {
+        let ids: Vec<_> = ops.iter().map(|o| o.location.remote_id.clone()).collect();
+        let sent = match (action, to) {
+            (Action::Seen(seen), _) => provider.set_seen(&folder, validity, &ids, seen).await,
+            (Action::Archive, Some(to)) => provider.move_to(&folder, validity, &ids, &to).await,
+            (Action::Archive, None) => Err(ProviderError::Protocol("no archive folder".into())),
+        };
+        match sent {
             // Gone: the messages are no longer there, and the next sync drops them.
             Ok(()) | Err(ProviderError::Gone) => store.finish(&ops)?,
             Err(ProviderError::Protocol(_)) => store.revert(&ops)?,

@@ -14,6 +14,7 @@ fn op(id: i64, folder: &str, uid: &str, action: Action) -> Op {
             validity: 9,
             remote_id: uid.into(),
         },
+        to: (action == Action::Archive).then(|| "Archive".into()),
     }
 }
 
@@ -86,4 +87,28 @@ fn a_network_failure_keeps_the_rest_queued() {
     assert_eq!(server.applied.len(), 1);
     assert!(store.finished.lock().unwrap().is_empty());
     assert!(store.reverted.lock().unwrap().is_empty());
+}
+
+#[test]
+fn archives_after_setting_read_state() {
+    let store = store(vec![
+        op(1, "INBOX", "5", Action::Archive),
+        op(2, "INBOX", "5", Action::Seen(true)),
+    ]);
+    let mut server = Server::default();
+    run(push_ops(&store, &mut server, store.ops.clone())).unwrap();
+    let actions: Vec<_> = server.applied.iter().map(|a| a.3).collect();
+    assert_eq!(actions, [Action::Seen(true), Action::Archive]);
+    assert_eq!(server.moved_to, ["Archive"]);
+}
+
+#[test]
+fn archiving_without_an_archive_folder_is_reverted() {
+    let mut no_folder = op(1, "INBOX", "5", Action::Archive);
+    no_folder.to = None;
+    let store = store(vec![no_folder]);
+    let mut server = Server::default();
+    run(push_ops(&store, &mut server, store.ops.clone())).unwrap();
+    assert!(server.applied.is_empty());
+    assert_eq!(*store.reverted.lock().unwrap(), [OpId(1)]);
 }

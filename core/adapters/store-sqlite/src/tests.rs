@@ -430,3 +430,77 @@ fn revert_restores_the_state_before_the_first_action() {
     // Already gone: nothing to do.
     store.revert(&ops).unwrap();
 }
+
+fn archive_folder(store: &SqliteStore, account: AccountId) {
+    store
+        .save_folders(
+            account,
+            &[
+                NewFolder {
+                    remote_id: "INBOX".into(),
+                    name: "Inbox".into(),
+                    role: FolderRole::Inbox,
+                },
+                NewFolder {
+                    remote_id: "Archive".into(),
+                    name: "Archive".into(),
+                    role: FolderRole::Archive,
+                },
+            ],
+        )
+        .unwrap();
+}
+
+#[test]
+fn archiving_hides_the_message_until_undo_or_the_server_has_it() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let folder = inbox(&store, account);
+    archive_folder(&store, account);
+    store
+        .save_messages(folder, &[message(1, 100), message(2, 200)])
+        .unwrap();
+    let rows = list(&store, ListScope::Folder(folder), 10, None);
+    let (newer, older) = (rows[0].id, rows[1].id);
+
+    // Held until 50: undo before then takes it back, after then it may be sent.
+    let op = store.queue(newer, Action::Archive, 50).unwrap();
+    assert_eq!(list(&store, ListScope::Folder(folder), 10, None).len(), 1);
+    // A sync does not bring it back while it waits.
+    store.save_messages(folder, &[message(2, 200)]).unwrap();
+    assert_eq!(
+        list(&store, ListScope::Unified(FolderRole::Inbox), 10, None).len(),
+        1
+    );
+    assert!(store.due(account, 49).unwrap().is_empty());
+    assert_eq!(store.next_send(account).unwrap(), Some(50));
+    assert!(!store.undo(op, 50).unwrap());
+    assert!(store.undo(op, 49).unwrap());
+    assert_eq!(list(&store, ListScope::Folder(folder), 10, None).len(), 2);
+    assert_eq!(store.next_send(account).unwrap(), None);
+
+    store.queue(older, Action::Archive, 0).unwrap();
+    let due = store.due(account, 0).unwrap();
+    assert_eq!(due[0].to.as_deref(), Some("Archive"));
+    store.finish(&due).unwrap();
+    assert_eq!(store.location(older).unwrap_err(), StoreError::NotFound);
+    let rows = list(&store, ListScope::Folder(folder), 10, None);
+    assert_eq!(rows.iter().map(|m| m.id).collect::<Vec<_>>(), [newer]);
+}
+
+#[test]
+fn a_refused_archive_shows_the_message_again() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let folder = inbox(&store, account);
+    store.save_messages(folder, &[message(1, 100)]).unwrap();
+    let id = list(&store, ListScope::Folder(folder), 10, None)[0].id;
+
+    store.queue(id, Action::Archive, 0).unwrap();
+    let due = store.due(account, 0).unwrap();
+    // No archive folder on this account.
+    assert_eq!(due[0].to, None);
+    store.revert(&due).unwrap();
+    assert_eq!(list(&store, ListScope::Folder(folder), 10, None).len(), 1);
+    assert!(store.due(account, 0).unwrap().is_empty());
+}

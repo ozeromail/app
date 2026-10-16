@@ -18,9 +18,7 @@ use imap_codec::imap_types::response::{
     Code, Data, GreetingKind, Response, Status, StatusBody, StatusKind,
 };
 use imap_codec::{CommandCodec, GreetingCodec, ResponseCodec};
-use ozero_domain::{
-    Action, Flags, FolderRole, MailProvider, NewFolder, ProviderError, RawMessage, Recent,
-};
+use ozero_domain::{Flags, FolderRole, MailProvider, NewFolder, ProviderError, RawMessage, Recent};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
@@ -34,8 +32,8 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RESPONSE: u32 = 16 * 1024 * 1024;
 /// How much of one message `body` downloads; text parts come first, big attachments last.
 const MAX_BODY: NonZeroU32 = NonZeroU32::MIN.saturating_add(4 * 1024 * 1024 - 1);
-/// UIDs per STORE command.
-const STORE_CHUNK: usize = 500;
+/// UIDs per STORE or MOVE command.
+const UID_CHUNK: usize = 500;
 /// Headers the message list needs.
 const HEADER_FIELDS: [&str; 4] = ["FROM", "SUBJECT", "DATE", "MESSAGE-ID"];
 
@@ -364,12 +362,54 @@ impl MailProvider for ImapSession {
             .ok_or(ProviderError::Gone)
     }
 
-    async fn apply(
+    async fn set_seen(
         &mut self,
         folder: &str,
         validity: u32,
         remote_ids: &[String],
-        action: Action,
+        seen: bool,
+    ) -> Result<(), ProviderError> {
+        let kind = if seen {
+            StoreType::Add
+        } else {
+            StoreType::Remove
+        };
+        self.each_chunk(folder, validity, remote_ids, |uids| {
+            CommandBody::store(uids, kind, StoreResponse::Silent, vec![Flag::Seen], true)
+                .map_err(|_| protocol("bad STORE"))
+        })
+        .await
+    }
+
+    async fn move_to(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_ids: &[String],
+        to: &str,
+    ) -> Result<(), ProviderError> {
+        let to = Mailbox::try_from(to).map_err(|_| protocol("bad folder name"))?;
+        // RFC 6851 MOVE; every server we target has it.
+        self.each_chunk(folder, validity, remote_ids, |uids| {
+            Ok(CommandBody::Move {
+                sequence_set: uids.try_into().map_err(|_| protocol("bad UID set"))?,
+                mailbox: to.clone(),
+                uid: true,
+            })
+        })
+        .await
+    }
+}
+
+impl ImapSession {
+    /// Opens `folder` for writing and runs one command per chunk of its UIDs.
+    /// A UID that was expunged meanwhile is skipped by the server.
+    async fn each_chunk<'a>(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_ids: &[String],
+        command: impl Fn(&[NonZeroU32]) -> Result<CommandBody<'a>, ProviderError>,
     ) -> Result<(), ProviderError> {
         let uids = remote_ids
             .iter()
@@ -382,19 +422,9 @@ impl MailProvider for ImapSession {
         if self.open(folder, true).await?.0 != validity {
             return Err(ProviderError::Gone);
         }
-        let Action::Seen(seen) = action;
-        let kind = if seen {
-            StoreType::Add
-        } else {
-            StoreType::Remove
-        };
         // Chunks keep each command line well under server limits.
-        for chunk in uids.chunks(STORE_CHUNK) {
-            // A UID that was expunged meanwhile is skipped by the server.
-            let store =
-                CommandBody::store(chunk, kind, StoreResponse::Silent, vec![Flag::Seen], true)
-                    .map_err(|_| protocol("bad STORE"))?;
-            self.run(store).await?;
+        for chunk in uids.chunks(UID_CHUNK) {
+            self.run(command(chunk)?).await?;
         }
         Ok(())
     }
