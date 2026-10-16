@@ -13,10 +13,22 @@ struct InboxView: View {
     @State private var composing: Composing?
     @State private var tab = Category.people
     @State private var tabs: [InboxTab] = []
+    @State private var unsent: [UnsentItem] = []
+    @State private var path: [MessageItem] = []
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             List {
+                ForEach(unsent, id: \.id) { failed in
+                    Button { fix(failed) } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("inbox_not_sent").fontWeight(.semibold).foregroundStyle(.red)
+                            (failed.subject.isEmpty ? Text("inbox_no_subject") : Text(verbatim: failed.subject))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                }
                 if messages?.isEmpty == true && !syncing && error == nil {
                     Text("inbox_empty")
                         .foregroundStyle(.secondary)
@@ -75,6 +87,8 @@ struct InboxView: View {
         .fullScreenCover(item: $composing) { composing in
             ComposeView(mail: mail, composing: composing) { id, sent in
                 self.composing = nil
+                // Back to the list, where the toast is.
+                path = []
                 undoable = .send(id, sent)
             }
         }
@@ -111,6 +125,20 @@ struct InboxView: View {
         }
     }
 
+    /// A refused message, taken back to fix it.
+    private func fix(_ failed: UnsentItem) {
+        Task {
+            do {
+                if let draft = try await mail.undoSend(failed.id) {
+                    composing = Composing(draft: draft)
+                }
+            } catch {
+                self.error = error.text()
+            }
+            await counts()
+        }
+    }
+
     private func loadList() async {
         let shown = tab
         do {
@@ -127,6 +155,7 @@ struct InboxView: View {
     private func counts() async {
         do {
             tabs = try await mail.tabs()
+            unsent = try await mail.unsent()
         } catch {
             self.error = error.text()
         }

@@ -3,6 +3,7 @@ use std::fmt;
 use crate::{
     Account, AccountId, Action, Body, Category, Draft, Folder, FolderId, ListQuery, MessageId,
     MessageLocation, MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing,
+    Unsent,
 };
 
 /// Local database port. The UI reads only from here; sync writes here.
@@ -63,9 +64,11 @@ pub trait Store: Send + Sync {
         date: i64,
         not_before: i64,
     ) -> Result<OutboxId, StoreError>;
-    /// Takes back a message that is still held, so it can be edited. None once it may be on
-    /// its way.
+    /// Takes back a message that is still held or was refused, so it can be edited. None once
+    /// it may be on its way.
     fn undo_send(&self, id: OutboxId, now: i64) -> Result<Option<Draft>, StoreError>;
+    /// The messages the server refused, newest first.
+    fn unsent(&self) -> Result<Vec<Unsent>, StoreError>;
     /// The account's messages that may be sent at `now`, oldest first; refused ones stay out.
     fn due_sends(&self, account: AccountId, now: i64) -> Result<Vec<Outgoing>, StoreError>;
     /// The server took the message.

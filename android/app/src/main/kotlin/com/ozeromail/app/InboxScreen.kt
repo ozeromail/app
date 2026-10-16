@@ -57,6 +57,7 @@ import uniffi.ozero_api.Category
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.InboxTab
 import uniffi.ozero_api.MessageItem
+import uniffi.ozero_api.UnsentItem
 import uniffi.ozero_api.replyDraft
 import uniffi.ozero_api.undoSeconds
 
@@ -71,6 +72,7 @@ fun InboxScreen(mail: Mail) {
     var composing by remember { mutableStateOf<Composing?>(null) }
     var tab by rememberSaveable { mutableStateOf(Category.PEOPLE) }
     var tabs by remember { mutableStateOf(emptyList<InboxTab>()) }
+    var unsent by remember { mutableStateOf(emptyList<UnsentItem>()) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -94,6 +96,7 @@ fun InboxScreen(mail: Mail) {
     suspend fun counts() {
         try {
             tabs = mail.tabs()
+            unsent = mail.unsent()
         } catch (e: CoreException) {
             error = e.text()
         }
@@ -139,9 +142,10 @@ fun InboxScreen(mail: Mail) {
         return result == SnackbarResult.ActionPerformed
     }
 
-    /** Sent: the toast can bring the message back to edit it. */
+    /** Sent: back to the list, where the toast can bring the message back to edit it. */
     fun sent(id: Long, message: Composing) {
         composing = null
+        open = null
         scope.launch {
             if (!offerUndo(sending)) return@launch
             mail.undoSend(id)?.let { composing = message.copy(draft = it) }
@@ -201,6 +205,19 @@ fun InboxScreen(mail: Mail) {
             modifier = Modifier.weight(1f),
         ) {
             LazyColumn(Modifier.fillMaxSize(), state = listState) {
+                items(unsent, key = { "unsent-${it.id}" }) { failed ->
+                    UnsentRow(failed, onClick = {
+                        scope.launch {
+                            try {
+                                mail.undoSend(failed.id)?.let { composing = Composing(it) }
+                            } catch (e: CoreException) {
+                                error = e.text()
+                            }
+                            counts()
+                        }
+                    })
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                }
                 if (messages.isEmpty() && !syncing && error == null) {
                     item { Empty() }
                 }
@@ -286,6 +303,20 @@ private fun SwipeToDone(onDone: (reset: () -> Unit) -> Unit, content: @Composabl
         },
     ) {
         Box(Modifier.background(colors.background)) { content() }
+    }
+}
+
+/** A message the server refused; a tap opens it to fix. */
+@Composable
+private fun UnsentRow(unsent: UnsentItem, onClick: () -> Unit) {
+    Column(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(start = 36.dp, end = 20.dp, top = 10.dp, bottom = 10.dp)) {
+        Text(stringResource(R.string.inbox_not_sent), color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold)
+        Text(
+            unsent.subject.ifBlank { stringResource(R.string.inbox_no_subject) },
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

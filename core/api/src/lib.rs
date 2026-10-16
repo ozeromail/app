@@ -209,7 +209,21 @@ impl Core {
         Ok(id.0)
     }
 
-    /// Takes back a held message to edit it again. None once it may be on its way.
+    /// The messages the server refused, newest first; `undo_send` takes one back to fix it.
+    pub fn unsent(&self) -> Result<Vec<UnsentItem>, CoreError> {
+        Ok(self
+            .store
+            .unsent()?
+            .into_iter()
+            .map(|u| UnsentItem {
+                id: u.id.0,
+                subject: u.subject,
+                reason: u.reason,
+            })
+            .collect())
+    }
+
+    /// Takes back a held or refused message to edit it again. None once it may be on its way.
     pub fn undo_send(&self, id: i64) -> Result<Option<DraftItem>, CoreError> {
         Ok(self
             .store
@@ -304,13 +318,14 @@ impl Core {
         let lock = self.busy(account.id);
         let _busy = lock.lock().await;
         let mut slot = None;
-        self.push_due(&account, &password, &mut slot).await?;
+        // A send that fails, say on a broken SMTP server, must not stop new mail coming in.
+        let pushed = self.push_due(&account, &password, &mut slot).await;
         let imap = self.imap(&mut slot, &account, &password).await?;
         sync_inbox(&self.store, imap, &self.parser, account.id, SYNC_LIMIT).await?;
         if let Some(imap) = slot {
             let _ = imap.logout().await;
         }
-        Ok(())
+        pushed
     }
 
     /// The message body: the saved one, or downloaded once and saved with its snippet.
@@ -553,6 +568,15 @@ impl Endpoint {
             user: user.to_owned(),
         }
     }
+}
+
+/// A message the server refused.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct UnsentItem {
+    pub id: i64,
+    pub subject: String,
+    /// The server's answer.
+    pub reason: String,
 }
 
 /// A message being written, as compose shows it.

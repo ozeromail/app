@@ -91,6 +91,11 @@ final class Mail: Sendable {
         return id
     }
 
+    /// The messages the server refused, newest first; `undoSend` takes one back to fix it.
+    func unsent() async throws -> [UnsentItem] {
+        try core.unsent()
+    }
+
     /// Takes back a message that has not gone out yet, to edit it again; nil if too late.
     func undoSend(_ id: Int64) async throws -> DraftItem? {
         try core.undoSend(id: id)

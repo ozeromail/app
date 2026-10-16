@@ -21,7 +21,7 @@ pub use message::{
     NewMessage,
 };
 pub use op::{Action, Op, OpId};
-pub use outbox::{Draft, OutboxId, Outgoing, is_address, parse_recipients, reply_subject};
+pub use outbox::{Draft, OutboxId, Outgoing, Unsent, is_address, parse_recipients, reply_subject};
 pub use provider::{
     MailProvider, MailSender, MessageBuilder, MessageParser, ProviderError, RawMessage, Recent,
 };

@@ -21,6 +21,7 @@ import uniffi.ozero_api.Endpoint
 import uniffi.ozero_api.InboxTab
 import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
+import uniffi.ozero_api.UnsentItem
 
 /** What the screens need from the core; every call runs off the main thread. */
 class Mail(private val context: Context) {
@@ -91,6 +92,9 @@ class Mail(private val context: Context) {
         push(draft.accountId)
         return id
     }
+
+    /** The messages the server refused, newest first; [undoSend] takes one back to fix it. */
+    suspend fun unsent(): List<UnsentItem> = io { core.unsent() }
 
     /** Takes back a message that has not gone out yet, to edit it again; null if too late. */
     suspend fun undoSend(id: Long): DraftItem? = io { core.undoSend(id) }

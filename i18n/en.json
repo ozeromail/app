@@ -33,5 +33,6 @@
   "message_reply": "Reply",
   "inbox_sending": "Sending",
   "error_bad_recipients": "Check the addresses in To.",
-  "error_no_smtp": "This account has no SMTP server, so it can’t send mail yet."
+  "error_no_smtp": "This account has no SMTP server, so it can’t send mail yet.",
+  "inbox_not_sent": "Not sent. Tap to fix."
 }

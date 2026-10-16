@@ -8,7 +8,7 @@ use std::sync::{Mutex, MutexGuard};
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Body, Category, Draft, Flags, Folder,
     FolderId, FolderRole, ListQuery, ListScope, MessageId, MessageLocation, MessageRow, NewAccount,
-    NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing, Server, Store, StoreError,
+    NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing, Server, Store, StoreError, Unsent,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{Connection, ErrorCode, OptionalExtension, Row, Transaction, params};
@@ -476,7 +476,7 @@ impl Store for SqliteStore {
     fn undo_send(&self, id: OutboxId, now: i64) -> Result<Option<Draft>, StoreError> {
         self.conn()
             .prepare_cached(
-                "DELETE FROM outbox WHERE id = ?1 AND not_before > ?2 AND failed IS NULL
+                "DELETE FROM outbox WHERE id = ?1 AND (not_before > ?2 OR failed IS NOT NULL)
                  RETURNING account_id, recipients, subject, text, reply_to",
             )
             .and_then(|mut s| {
@@ -492,6 +492,25 @@ impl Store for SqliteStore {
                 .optional()
             })
             .map_err(storage)
+    }
+
+    fn unsent(&self) -> Result<Vec<Unsent>, StoreError> {
+        let conn = self.conn();
+        let rows = conn
+            .prepare_cached(
+                "SELECT id, subject, failed FROM outbox WHERE failed IS NOT NULL ORDER BY id DESC",
+            )
+            .and_then(|mut s| {
+                s.query_map([], |r| {
+                    Ok(Unsent {
+                        id: OutboxId(r.get(0)?),
+                        subject: r.get(1)?,
+                        reason: r.get(2)?,
+                    })
+                })?
+                .collect()
+            });
+        rows.map_err(storage)
     }
 
     fn due_sends(&self, account: AccountId, now: i64) -> Result<Vec<Outgoing>, StoreError> {
