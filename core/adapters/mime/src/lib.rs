@@ -17,6 +17,7 @@ impl MessageParser for MimeParser {
             from: email,
             list_id: raw_header("List-Id"),
             list_unsubscribe: raw_header("List-Unsubscribe"),
+            list_unsubscribe_post: raw_header("List-Unsubscribe-Post"),
             precedence: raw_header("Precedence"),
             auto_submitted: raw_header("Auto-Submitted"),
         });
@@ -104,7 +105,7 @@ mod tests {
             Category::Notifications
         );
         assert_eq!(
-            category(b"From: digest@blog.example\r\nLIST-ID: <digest.blog.example>\r\n\r\n"),
+            category(b"From: digest@blog.example\r\nLIST-ID: <digest.blog.example>\r\nPrecedence: Bulk\r\n\r\n"),
             Category::Newsletters
         );
     }

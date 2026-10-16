@@ -73,5 +73,7 @@ pub const MIGRATIONS: &[&str] = &[
     "
     ALTER TABLE message ADD COLUMN category TEXT NOT NULL DEFAULT 'people';
     CREATE INDEX message_tab ON message(category, date DESC, id DESC);
+    -- Tab counts read only unread rows; `1` is the seen bit.
+    CREATE INDEX message_unread ON message(folder_id, category) WHERE flags & 1 = 0;
     ",
 ];

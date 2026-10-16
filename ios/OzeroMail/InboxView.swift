@@ -33,8 +33,6 @@ struct InboxView: View {
             .listStyle(.plain)
             .navigationTitle("inbox_title")
             .navigationDestination(for: MessageItem.self) { MessageView(mail: mail, message: $0) }
-            // Back from a message, which now has a snippet.
-            .onAppear { if messages != nil { Task { await load() } } }
             .refreshable { await sync() }
             .safeAreaInset(edge: .bottom) {
                 VStack {
@@ -50,9 +48,10 @@ struct InboxView: View {
                         Text(error).font(.footnote).foregroundStyle(.secondary).padding()
                     }
                     Picker("inbox_title", selection: $tab) {
-                        ForEach(tabs, id: \.category) { item in
-                            (Text(item.category.label) + Text(item.unread > 0 ? " \(item.unread)" : ""))
-                                .tag(item.category)
+                        ForEach(Category.all, id: \.self) { category in
+                            let unread = tabs.first { $0.category == category }?.unread ?? 0
+                            (Text(category.label) + Text(unread > 0 ? " \(unread)" : ""))
+                                .tag(category)
                         }
                     }
                     .pickerStyle(.segmented)
@@ -61,12 +60,10 @@ struct InboxView: View {
                 }
                 .background(.bar)
             }
-            .task(id: tab) { await loadList() }
+            // Also runs on the way back from a message, which now has a snippet.
+            .task(id: tab) { await load() }
         }
-        .task {
-            await counts()
-            await sync()
-        }
+        .task { await sync() }
     }
 
     /// Done: the message leaves the list at once; the toast can take it back for a moment.
@@ -98,6 +95,8 @@ struct InboxView: View {
             // A tab picked meanwhile loads its own list.
             if tab == shown { messages = found }
         } catch {
+            // Never leave the last tab's messages under the new one.
+            if tab == shown { messages = [] }
             self.error = error.text()
         }
     }

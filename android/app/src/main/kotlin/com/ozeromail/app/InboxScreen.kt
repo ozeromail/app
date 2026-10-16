@@ -81,6 +81,8 @@ fun InboxScreen(mail: Mail) {
             // A tab picked meanwhile loads its own list.
             if (tab == shown) messages = found
         } catch (e: CoreException) {
+            // Never leave the last tab's messages under the new one.
+            if (tab == shown) messages = emptyList()
             error = e.text()
         }
     }
@@ -117,7 +119,10 @@ fun InboxScreen(mail: Mail) {
         loadList()
         listState.scrollToItem(0)
     }
-    LaunchedEffect(Unit) { sync() }
+    LaunchedEffect(Unit) {
+        counts()
+        sync()
+    }
 
     /** Done: the message leaves the list at once; the toast can take it back for a moment. */
     fun archive(message: MessageItem, reset: () -> Unit) {
@@ -198,15 +203,17 @@ fun InboxScreen(mail: Mail) {
 @Composable
 private fun Tabs(tab: Category, tabs: List<InboxTab>, onPick: (Category) -> Unit) {
     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-        tabs.forEachIndexed { index, item ->
-            val name = stringResource(item.category.label())
+        // Every tab shows at once; the counts come when the core has them.
+        Category.entries.forEachIndexed { index, category ->
+            val name = stringResource(category.label())
+            val unread = tabs.find { it.category == category }?.unread ?: 0u
             SegmentedButton(
-                selected = item.category == tab,
-                onClick = { onPick(item.category) },
-                shape = SegmentedButtonDefaults.itemShape(index, tabs.size),
+                selected = category == tab,
+                onClick = { onPick(category) },
+                shape = SegmentedButtonDefaults.itemShape(index, Category.entries.size),
                 icon = {},
             ) {
-                Text(if (item.unread > 0u) "$name ${item.unread}" else name, maxLines = 1)
+                Text(if (unread > 0u) "$name $unread" else name, maxLines = 1)
             }
         }
     }
