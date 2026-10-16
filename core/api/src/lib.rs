@@ -4,13 +4,13 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ozero_app::ops::push_ops;
 use ozero_app::sync::{SyncError, download_body, sync_inbox};
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Body, FolderRole, ListQuery, ListScope, MessageId,
-    MessageRow, NewAccount, ProviderError, Server, Store, StoreError,
+    MessageRow, NewAccount, OpId, ProviderError, Server, Store, StoreError,
 };
 use ozero_imap::ImapSession;
 use ozero_imap::rustls::ClientConfig;
@@ -21,6 +21,8 @@ uniffi::setup_scaffolding!();
 
 /// How many of the newest inbox messages one sync brings in.
 const SYNC_LIMIT: u32 = 200;
+/// Seconds an archived message waits before the server hears of it; the undo toast is shorter.
+const ARCHIVE_HOLD: i64 = 5;
 
 /// Version of the core, shown in About and in manual crash reports.
 #[uniffi::export]
@@ -85,9 +87,29 @@ impl Core {
 
     /// Marks a message read or unread on the device at once; `push_actions` tells the server.
     pub fn mark_read(&self, message: i64, seen: bool) -> Result<(), CoreError> {
-        Ok(self
+        self.store
+            .queue(MessageId(message), Action::Seen(seen), now())?;
+        Ok(())
+    }
+
+    /// Takes the message out of the lists at once and holds the move to the archive for
+    /// `ARCHIVE_HOLD` seconds, so `undo` can take it back. Returns the action for `undo`.
+    pub fn archive(&self, message: i64) -> Result<i64, CoreError> {
+        let message = MessageId(message);
+        let account = self.store.location(message)?.account_id;
+        let folders = self.store.folders(account)?;
+        if !folders.iter().any(|f| f.role == FolderRole::Archive) {
+            return Err(CoreError::NoArchive);
+        }
+        let op = self
             .store
-            .queue(MessageId(message), Action::Seen(seen), now())?)
+            .queue(message, Action::Archive, now() + ARCHIVE_HOLD)?;
+        Ok(op.0)
+    }
+
+    /// Takes back a held action. False once it may be on its way to the server.
+    pub fn undo(&self, action: i64) -> Result<bool, CoreError> {
+        Ok(self.store.undo(OpId(action), now())?)
     }
 }
 
@@ -124,21 +146,31 @@ impl Core {
         Ok(self.store.add_account(&account)?.0)
     }
 
-    /// Sends the account's queued actions; without any it does not connect.
-    /// After a failure they stay queued, and the next push or sync sends them.
+    /// Sends the account's queued actions, waiting for held ones to come due; without any
+    /// it does not connect. After a failure they stay queued for the next push or sync.
     pub async fn push_actions(&self, account: i64, password: String) -> Result<(), CoreError> {
         let account = AccountId(account);
-        let lock = self.busy(account);
-        let _busy = lock.lock().await;
-        // Read under the lock: a push that waited finds what the one before it sent gone.
-        let ops = self.store.due(account, now())?;
-        if ops.is_empty() {
-            return Ok(());
+        loop {
+            {
+                let lock = self.busy(account);
+                let _busy = lock.lock().await;
+                // Read under the lock: a push that waited finds what the one before it sent gone.
+                let ops = self.store.due(account, now())?;
+                if !ops.is_empty() {
+                    let mut imap = self.connect(account, &password).await?;
+                    push_ops(&self.store, &mut imap, ops).await?;
+                    let _ = imap.logout().await;
+                }
+            }
+            // Wait without the lock, so a sync can run meanwhile.
+            match self.store.next_send(account)? {
+                Some(at) if at > now() => {
+                    let wait = u64::try_from(at - now()).unwrap_or(0);
+                    tokio::time::sleep(Duration::from_secs(wait)).await;
+                }
+                _ => return Ok(()),
+            }
         }
-        let mut imap = self.connect(account, &password).await?;
-        push_ops(&self.store, &mut imap, ops).await?;
-        let _ = imap.logout().await;
-        Ok(())
     }
 
     /// Sends the account's queued actions, then brings its folders and newest inbox
@@ -368,6 +400,8 @@ pub enum CoreError {
     },
     /// The message is no longer on the server; a sync will drop it.
     Gone,
+    /// The account has no folder marked as its archive.
+    NoArchive,
     Storage {
         detail: String,
     },
@@ -384,6 +418,7 @@ impl fmt::Display for CoreError {
             Self::Tls { detail } => write!(f, "TLS setup failed: {detail}"),
             Self::Server { detail } => write!(f, "server error: {detail}"),
             Self::Gone => write!(f, "the message is gone from the server"),
+            Self::NoArchive => write!(f, "the account has no archive folder"),
             Self::Storage { detail } => write!(f, "storage error: {detail}"),
         }
     }

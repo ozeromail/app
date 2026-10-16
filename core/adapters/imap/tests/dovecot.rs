@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use ozero_domain::{Action, FolderRole, MailProvider, ProviderError};
+use ozero_domain::{FolderRole, MailProvider, ProviderError};
 use ozero_imap::ImapSession;
 use tokio_rustls::rustls::pki_types::CertificateDer;
 use tokio_rustls::rustls::pki_types::pem::PemObject;
@@ -47,8 +47,10 @@ async fn lists_folders_with_roles_and_names() {
         got,
         [
             ("&BB4EQgRHBFEEQgRL-", "Отчёты", FolderRole::Custom),
+            ("Archive", "Archive", FolderRole::Archive),
             ("Empty", "Empty", FolderRole::Custom),
             ("INBOX", "INBOX", FolderRole::Inbox),
+            ("Moves", "Moves", FolderRole::Custom),
             ("Sent", "Sent", FolderRole::Sent),
         ]
     );
@@ -107,17 +109,31 @@ async fn marks_messages_read_and_unread() {
     // UID 1 only, so other tests see the flags they expect; 99 does not exist.
     let ids = ["1".to_string(), "99".to_string()];
     for seen in [true, false] {
-        imap.apply("INBOX", validity, &ids, Action::Seen(seen))
-            .await
-            .unwrap();
+        imap.set_seen("INBOX", validity, &ids, seen).await.unwrap();
         let first = &imap.recent("INBOX", 3).await.unwrap().messages[0];
         assert_eq!((first.remote_id.as_str(), first.flags.seen), ("1", seen));
     }
     let err = imap
-        .apply("INBOX", validity + 1, &ids, Action::Seen(true))
+        .set_seen("INBOX", validity + 1, &ids, true)
         .await
         .unwrap_err();
     assert_eq!(err, ProviderError::Gone);
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "needs tools/dovecot-test.sh"]
+async fn moves_messages_to_another_folder() {
+    // Its own folders, so other tests keep their messages.
+    let mut imap = session().await;
+    let validity = imap.recent("Moves", 1).await.unwrap().validity;
+    imap.move_to("Moves", validity, &["1".into()], "Archive")
+        .await
+        .unwrap();
+    assert!(imap.recent("Moves", 10).await.unwrap().messages.is_empty());
+    let archived = imap.recent("Archive", 10).await.unwrap().messages;
+    assert_eq!(archived.len(), 1);
+    let header = String::from_utf8_lossy(&archived[0].header);
+    assert!(header.contains("Subject: Move me"), "{header}");
 }
 
 #[tokio::test(flavor = "current_thread")]

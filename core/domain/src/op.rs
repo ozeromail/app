@@ -5,6 +5,8 @@ use crate::MessageLocation;
 pub enum Action {
     /// Marks the message read (`true`) or unread.
     Seen(bool),
+    /// Moves the message out of its folder into the account's archive.
+    Archive,
 }
 
 /// Local id of a queued action.
@@ -17,4 +19,6 @@ pub struct Op {
     pub id: OpId,
     pub action: Action,
     pub location: MessageLocation,
+    /// The folder a move goes to: the account's archive for `Archive`, if it has one.
+    pub to: Option<String>,
 }

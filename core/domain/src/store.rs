@@ -2,7 +2,7 @@ use std::fmt;
 
 use crate::{
     Account, AccountId, Action, Body, Folder, FolderId, ListQuery, MessageId, MessageLocation,
-    MessageRow, NewAccount, NewFolder, NewMessage, Op,
+    MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId,
 };
 
 /// Local database port. The UI reads only from here; sync writes here.
@@ -33,11 +33,22 @@ pub trait Store: Send + Sync {
     fn body(&self, message: MessageId) -> Result<Option<Body>, StoreError>;
 
     /// Applies the action to the message now and queues it for the server from `not_before`.
-    /// It replaces a queued action of the same kind.
-    fn queue(&self, message: MessageId, action: Action, not_before: i64) -> Result<(), StoreError>;
+    /// It replaces a queued action of the same kind. Lists leave out a message being archived.
+    fn queue(
+        &self,
+        message: MessageId,
+        action: Action,
+        not_before: i64,
+    ) -> Result<OpId, StoreError>;
+    /// Takes back an action that is still held (its `not_before` is after `now`), so the server
+    /// never sees it. Returns false if it may already be on its way.
+    fn undo(&self, op: OpId, now: i64) -> Result<bool, StoreError>;
+    /// When the account's next held action may be sent, if one is held.
+    fn next_send(&self, account: AccountId) -> Result<Option<i64>, StoreError>;
     /// The account's queued actions that may be sent at `now`, oldest first.
     fn due(&self, account: AccountId, now: i64) -> Result<Vec<Op>, StoreError>;
     /// The server has the actions: forget them, unless the user changed one since `due`.
+    /// An archived message is dropped: it now lives in a folder that is synced on its own.
     fn finish(&self, ops: &[Op]) -> Result<(), StoreError>;
     /// The server refused the actions for good: undo them on the device and forget them.
     /// Ops gone or changed since `due` are left alone.
