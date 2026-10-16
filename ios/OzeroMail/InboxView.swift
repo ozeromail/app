@@ -86,8 +86,10 @@ struct InboxView: View {
         }
         .task { await sync() }
         .task {
+            // Only once there is an account: without one a check has nothing to do.
+            BackgroundCheck.schedule()
             // Asked once the inbox shows, so it is clear what the notifications are for.
-            _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
+            _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
         }
         .fullScreenCover(item: $composing) { composing in
             ComposeView(mail: mail, composing: composing) { id, sent in
@@ -178,10 +180,16 @@ struct InboxView: View {
         defer { syncing = false }
         do {
             try await mail.refresh()
+        } catch {
+            self.error = error.text()
+        }
+        // Whatever synced is on screen now, also when one account failed: no notification later.
+        do {
             try await mail.forgetNewMail()
         } catch {
             self.error = error.text()
         }
+        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
         await load()
     }
 }

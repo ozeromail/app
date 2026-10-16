@@ -233,7 +233,7 @@ impl Store for Memory {
         Ok(vec![])
     }
 
-    fn take_fresh(&self) -> Result<Vec<MessageRow>, StoreError> {
+    fn take_fresh(&self, _: i64) -> Result<Vec<MessageRow>, StoreError> {
         Ok(vec![])
     }
 
