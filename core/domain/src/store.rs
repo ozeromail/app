@@ -37,10 +37,10 @@ pub trait Store: Send + Sync {
     fn queue(&self, message: MessageId, action: Action, not_before: i64) -> Result<(), StoreError>;
     /// The account's queued actions that may be sent at `now`, oldest first.
     fn due(&self, account: AccountId, now: i64) -> Result<Vec<Op>, StoreError>;
-    /// The server has the action: forget it.
-    fn finish(&self, op: OpId) -> Result<(), StoreError>;
-    /// The server refused the action for good: undo it on the device and forget it.
-    fn revert(&self, op: OpId) -> Result<(), StoreError>;
+    /// The server has the actions: forget them.
+    fn finish(&self, ops: &[OpId]) -> Result<(), StoreError>;
+    /// The server refused the actions for good: undo them on the device and forget them.
+    fn revert(&self, ops: &[OpId]) -> Result<(), StoreError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

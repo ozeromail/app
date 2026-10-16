@@ -112,7 +112,7 @@ pub struct Memory {
     pub validity: Mutex<Vec<(FolderId, u32)>>,
     pub saved: Mutex<Vec<(FolderId, Vec<NewMessage>)>>,
     pub bodies: Mutex<Vec<(MessageId, Body)>>,
-    /// What `due` returns, and which of those were finished or reverted.
+    /// What `due` returns, and which ops were finished or reverted.
     pub ops: Vec<Op>,
     pub finished: Mutex<Vec<OpId>>,
     pub reverted: Mutex<Vec<OpId>>,
@@ -184,13 +184,13 @@ impl Store for Memory {
         Ok(self.ops.clone())
     }
 
-    fn finish(&self, op: OpId) -> Result<(), StoreError> {
-        self.finished.lock().unwrap().push(op);
+    fn finish(&self, ops: &[OpId]) -> Result<(), StoreError> {
+        self.finished.lock().unwrap().extend_from_slice(ops);
         Ok(())
     }
 
-    fn revert(&self, op: OpId) -> Result<(), StoreError> {
-        self.reverted.lock().unwrap().push(op);
+    fn revert(&self, ops: &[OpId]) -> Result<(), StoreError> {
+        self.reverted.lock().unwrap().extend_from_slice(ops);
         Ok(())
     }
 }

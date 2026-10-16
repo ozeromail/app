@@ -124,11 +124,12 @@ impl Core {
     /// After a failure they stay queued, and the next push or sync sends them.
     pub async fn push_actions(&self, account: i64, password: String) -> Result<(), CoreError> {
         let account = AccountId(account);
-        if self.store.due(account, now())?.is_empty() {
+        let ops = self.store.due(account, now())?;
+        if ops.is_empty() {
             return Ok(());
         }
         let mut imap = self.connect(account, &password).await?;
-        push_ops(&self.store, &mut imap, account, now()).await?;
+        push_ops(&self.store, &mut imap, ops).await?;
         let _ = imap.logout().await;
         Ok(())
     }
@@ -138,7 +139,7 @@ impl Core {
     pub async fn sync_imap(&self, account: i64, password: String) -> Result<(), CoreError> {
         let account = AccountId(account);
         let mut imap = self.connect(account, &password).await?;
-        push_ops(&self.store, &mut imap, account, now()).await?;
+        push_ops(&self.store, &mut imap, self.store.due(account, now())?).await?;
         sync_inbox(&self.store, &mut imap, &self.parser, account, SYNC_LIMIT).await?;
         let _ = imap.logout().await;
         Ok(())

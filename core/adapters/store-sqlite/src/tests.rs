@@ -378,7 +378,7 @@ fn queued_read_state_shows_at_once_and_survives_a_sync() {
     assert_eq!(due[0].action, Action::Seen(true));
     assert_eq!(due[0].location, store.location(id).unwrap());
 
-    store.finish(due[0].id).unwrap();
+    store.finish(&[due[0].id]).unwrap();
     assert!(store.due(account, 50).unwrap().is_empty());
     // Now the server decides again.
     store.save_messages(folder, &[message(1, 100)]).unwrap();
@@ -418,8 +418,8 @@ fn revert_restores_the_state_before_the_first_action() {
 
     store.queue(id, Action::Seen(true), 0).unwrap();
     let op = store.due(account, 0).unwrap()[0].id;
-    store.revert(op).unwrap();
+    store.revert(&[op]).unwrap();
     assert_eq!(seen(&store, folder), [false]);
     assert!(store.due(account, 0).unwrap().is_empty());
-    assert_eq!(store.revert(op).unwrap_err(), StoreError::NotFound);
+    assert_eq!(store.revert(&[op]).unwrap_err(), StoreError::NotFound);
 }
