@@ -580,7 +580,7 @@ fn a_held_message_can_be_taken_back_until_it_is_due() {
 }
 
 #[test]
-fn a_refused_message_is_not_sent_again() {
+fn a_refused_message_waits_to_be_fixed() {
     let store = store();
     let a = account(&store, "a@example.com");
     let id = store
@@ -589,7 +589,14 @@ fn a_refused_message_is_not_sent_again() {
     store.refused(id, "550 no such user").unwrap();
     assert!(store.due_sends(a, 200).unwrap().is_empty());
     assert_eq!(store.next_send(a).unwrap(), None);
-    assert_eq!(store.undo_send(id, 0).unwrap(), None);
+    let unsent = store.unsent().unwrap();
+    assert_eq!(
+        (unsent[0].id, unsent[0].reason.as_str()),
+        (id, "550 no such user")
+    );
+    // Taken back to edit, it is gone from the outbox.
+    assert_eq!(store.undo_send(id, 0).unwrap(), Some(draft(a)));
+    assert!(store.unsent().unwrap().is_empty());
 }
 
 #[test]

@@ -134,7 +134,10 @@ async fn session<S: AsyncRead + AsyncWrite + Unpin>(
                 "535 5.7.8 bad\r\n"
             }
             .into()
-        } else if line.starts_with("MAIL FROM") || line.starts_with("RCPT TO:<bob") {
+        } else if line.starts_with("MAIL FROM")
+            || line.starts_with("RCPT TO:<bob")
+            || line == "RSET"
+        {
             "250 ok\r\n".into()
         } else if line.starts_with("RCPT TO") {
             "550 5.1.1 no such user\r\n".into()
@@ -165,6 +168,15 @@ async fn read<S: AsyncRead + Unpin>(conn: &mut BufReader<S>) -> String {
 }
 
 async fn run(script: Script, to: &str, message: &[u8]) -> (Result<(), ProviderError>, Vec<String>) {
+    run_all(script, &[to], message).await
+}
+
+/// Sends one message to each address in turn; the result is the first failure, if any.
+async fn run_all(
+    script: Script,
+    to: &[&str],
+    message: &[u8],
+) -> (Result<(), ProviderError>, Vec<String>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let server = tokio::spawn(serve(listener, script));
@@ -178,13 +190,19 @@ async fn run(script: Script, to: &str, message: &[u8]) -> (Result<(), ProviderEr
             "pa ss",
         )
         .await?;
-        smtp.send("anna@example.com", &[to.to_owned()], message)
-            .await?;
-        smtp.quit().await
+        let mut first = Ok(());
+        for to in to {
+            let sent = smtp
+                .send("anna@example.com", &[(*to).to_owned()], message)
+                .await;
+            first = first.and(sent);
+        }
+        smtp.quit().await?;
+        first
     }
     .await;
     // A failed client leaves the server waiting for a line that never comes.
-    if result.is_err() {
+    if matches!(result, Err(ref e) if !matches!(e, ProviderError::Rejected(_))) {
         server.abort();
     }
     let seen = server.await.unwrap_or_default();
@@ -266,4 +284,16 @@ async fn a_refused_recipient_is_permanent() {
         Err(ProviderError::Rejected(text)) => assert!(text.contains("550"), "{text}"),
         other => panic!("{other:?}"),
     }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_refused_message_does_not_block_the_next() {
+    let (result, seen) = run_all(SERVER, &["nobody@example.org", "bob@example.org"], b"x").await;
+    assert!(
+        matches!(result, Err(ProviderError::Rejected(_))),
+        "{result:?}"
+    );
+    let rset = seen.iter().position(|l| l == "RSET").unwrap();
+    assert_eq!(seen[rset + 1], "MAIL FROM:<anna@example.com>");
+    assert!(seen.iter().any(|l| l == "DATA"), "{seen:?}");
 }

@@ -16,7 +16,8 @@ impl MessageBuilder for MimeBuilder {
         };
         header("Date", &rfc5322_date(message.date));
         header("From", &mailbox(from));
-        header("To", &message.to.join(", "));
+        // One address per line keeps each line short (RFC 5322 folding).
+        header("To", &message.to.join(",\r\n "));
         header("Subject", &encoded_words(&message.subject));
         header("Message-ID", &format!("<{}>", message.message_id));
         if let Some(parent) = &message.in_reply_to {

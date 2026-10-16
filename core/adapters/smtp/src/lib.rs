@@ -128,6 +128,22 @@ impl MailSender for SmtpSession {
         {
             return Err(protocol("bad address"));
         }
+        let sent = self.transaction(from, to, message).await;
+        if let Err(ProviderError::Rejected(_)) = sent {
+            // Clears the refused message, so the next one starts clean.
+            self.conn.command("RSET").await?.expect(250, "RSET")?;
+        }
+        sent
+    }
+}
+
+impl SmtpSession {
+    async fn transaction(
+        &mut self,
+        from: &str,
+        to: &[String],
+        message: &[u8],
+    ) -> Result<(), ProviderError> {
         self.conn
             .command(&format!("MAIL FROM:<{from}>"))
             .await?

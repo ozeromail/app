@@ -16,6 +16,15 @@ pub struct Draft {
     pub reply_to: Option<MessageId>,
 }
 
+/// A message the server refused, kept for the user to fix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unsent {
+    pub id: OutboxId,
+    pub subject: String,
+    /// The server's answer.
+    pub reason: String,
+}
+
 /// A queued message, with what sending it needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outgoing {
@@ -43,6 +52,7 @@ pub fn parse_recipients(field: &str) -> Option<Vec<String>> {
 }
 
 /// One `@` with something on both sides, and nothing that could break a header or command.
+/// ASCII only: sending to `пример.рф` needs SMTPUTF8, which we do not speak yet.
 pub fn is_address(address: &str) -> bool {
     let Some((local, domain)) = address.rsplit_once('@') else {
         return false;
@@ -51,7 +61,7 @@ pub fn is_address(address: &str) -> bool {
         && !domain.is_empty()
         && !local.contains('@')
         && address.chars().all(|c| {
-            !c.is_control() && !matches!(c, '<' | '>' | '"' | '(' | ')' | '[' | ']' | '\\')
+            c.is_ascii_graphic() && !matches!(c, '<' | '>' | '"' | '(' | ')' | '[' | ']' | '\\')
         })
 }
 
@@ -75,12 +85,12 @@ mod tests {
     #[test]
     fn splits_recipients() {
         assert_eq!(
-            parse_recipients(" anna@example.com, bob@example.org;\ncat@пример.рф ").as_deref(),
+            parse_recipients(" anna@example.com, bob@example.org;\ncat@example.net ").as_deref(),
             Some(
                 &[
                     "anna@example.com".to_owned(),
                     "bob@example.org".into(),
-                    "cat@пример.рф".into()
+                    "cat@example.net".into()
                 ][..]
             )
         );
@@ -97,6 +107,7 @@ mod tests {
             "a@b@c",
             "<a@b>",
             "a@b\r\nRCPT",
+            "cat@пример.рф",
         ] {
             assert_eq!(parse_recipients(field), None, "{field:?}");
         }

@@ -9,7 +9,7 @@ use ozero_domain::{
     Account, AccountId, Action, Address, Body, Category, Draft, Flags, Folder, FolderId, ListQuery,
     MailProvider, MailSender, MessageBuilder, MessageId, MessageLocation, MessageParser,
     MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing, ProviderError,
-    RawMessage, Recent, Store, StoreError,
+    RawMessage, Recent, Store, StoreError, Unsent,
 };
 
 /// Fakes answer at once, so one poll finishes the future.
@@ -280,6 +280,10 @@ impl Store for Memory {
 
     fn undo_send(&self, _: OutboxId, _: i64) -> Result<Option<Draft>, StoreError> {
         Ok(None)
+    }
+
+    fn unsent(&self) -> Result<Vec<Unsent>, StoreError> {
+        Ok(vec![])
     }
 
     fn due_sends(&self, _: AccountId, _: i64) -> Result<Vec<Outgoing>, StoreError> {
