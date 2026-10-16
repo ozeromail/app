@@ -33,6 +33,7 @@ struct MessageView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task(id: message.id) {
             do {
+                if !message.seen { try mail.markRead(message) }
                 content = try await mail.body(of: message)
             } catch {
                 self.error = error.text()

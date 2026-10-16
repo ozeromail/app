@@ -4,10 +4,13 @@ import android.content.Context
 import android.util.Log
 import androidx.annotation.StringRes
 import java.io.File
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import uniffi.ozero_api.Core
 import uniffi.ozero_api.CoreException
@@ -21,6 +24,9 @@ class Mail(private val context: Context) {
     private val core by lazy {
         Core.open(File(context.noBackupFilesDir, "mail.db").path, vault.databaseKey())
     }
+
+    /** Lives as long as the app, so an action still reaches the server after its screen closes. */
+    private val background = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     suspend fun hasAccounts(): Boolean = io { core.accounts().isNotEmpty() }
 
@@ -40,8 +46,21 @@ class Mail(private val context: Context) {
      * A missing password only matters for a download, which then fails to log in.
      */
     suspend fun body(message: MessageItem): MessageBody = io {
-        val account = core.accounts().firstOrNull { it.id == message.accountId }
-        core.messageBody(message.id, account?.let { vault.password(it.email) }.orEmpty())
+        core.messageBody(message.id, password(message.accountId).orEmpty())
+    }
+
+    /** Marks the message read on the device now; the server hears about it in the background. */
+    suspend fun markRead(message: MessageItem) {
+        io { core.markRead(message.id, true) }
+        background.launch {
+            try {
+                val password = password(message.accountId) ?: return@launch
+                core.pushActions(message.accountId, password)
+            } catch (e: CoreException) {
+                // Still queued: the next push or sync sends it.
+                Log.w("Ozero", "push failed", e)
+            }
+        }
     }
 
     /** Syncs all accounts at once; the first failure is thrown once every one has finished. */
@@ -61,6 +80,9 @@ class Mail(private val context: Context) {
         }
         failures.firstNotNullOfOrNull { it }?.let { throw it }
     }
+
+    private fun password(accountId: Long): String? =
+        core.accounts().firstOrNull { it.id == accountId }?.let { vault.password(it.email) }
 
     private suspend fun <T> io(block: suspend () -> T): T = withContext(Dispatchers.IO) { block() }
 

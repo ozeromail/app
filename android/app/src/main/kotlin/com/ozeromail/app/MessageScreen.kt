@@ -40,6 +40,7 @@ fun MessageScreen(mail: Mail, message: MessageItem, onBack: () -> Unit) {
     var error by remember(message.id) { mutableStateOf<Int?>(null) }
     LaunchedEffect(message.id) {
         try {
+            if (!message.seen) mail.markRead(message)
             body = mail.body(message)
         } catch (e: CoreException) {
             error = e.text()
