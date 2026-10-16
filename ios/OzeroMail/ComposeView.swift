@@ -20,6 +20,7 @@ struct ComposeView: View {
     @State private var text = ""
     @State private var accountId: Int64 = 0
     @State private var accounts: [AccountItem] = []
+    @State private var busy = false
     @State private var error: LocalizedStringKey?
 
     /// A new message starts from the first account.
@@ -61,7 +62,7 @@ struct ComposeView: View {
                 Spacer()
                 Button("compose_send", action: send)
                     .buttonStyle(.borderedProminent)
-                    .disabled(from == nil)
+                    .disabled(busy || from == nil)
             }
         }
         .padding(20)
@@ -81,18 +82,22 @@ struct ComposeView: View {
     }
 
     private func send() {
-        guard let from else { return }
+        guard !busy, let from else { return }
+        busy = true
         error = nil
         let draft = DraftItem(
             accountId: from.id, to: to, subject: subject, text: text,
             replyTo: composing.draft.replyTo)
-        do {
-            let id = try mail.send(draft)
-            var sent = composing
-            sent.draft = draft
-            onSent(id, sent)
-        } catch {
-            self.error = error.text()
+        Task {
+            defer { busy = false }
+            do {
+                let id = try await mail.send(draft)
+                var sent = composing
+                sent.draft = draft
+                onSent(id, sent)
+            } catch {
+                self.error = error.text()
+            }
         }
     }
 }
@@ -115,13 +120,14 @@ private struct Original: View {
     }
 }
 
-extension MessageItem {
-    /// A reply from the account that got the message, to its sender.
-    var replyDraft: Composing {
-        Composing(
-            draft: DraftItem(
-                accountId: accountId, to: fromEmail, subject: replySubject(subject: subject), text: "",
-                replyTo: id),
-            original: self)
+extension Composing {
+    /// A blank message; account 0 is none, so compose starts from the first account.
+    static var new: Composing {
+        Composing(draft: DraftItem(accountId: 0, to: "", subject: "", text: "", replyTo: nil))
+    }
+
+    /// An answer to `message`, shown above it.
+    static func reply(to message: MessageItem) -> Composing {
+        Composing(draft: replyDraft(message: message), original: message)
     }
 }

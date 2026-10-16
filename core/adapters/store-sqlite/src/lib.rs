@@ -438,10 +438,10 @@ impl Store for SqliteStore {
             "SELECT 1 FROM account WHERE id = ?1",
             draft.account_id.0,
         )?;
-        let in_reply_to: Option<Option<String>> = match draft.reply_to {
+        let in_reply_to: Option<String> = match draft.reply_to {
             None => None,
-            Some(parent) => Some(
-                tx.query_row(
+            Some(parent) => tx
+                .query_row(
                     "SELECT message_id FROM message WHERE id = ?1",
                     [parent.0],
                     |r| r.get(0),
@@ -449,7 +449,6 @@ impl Store for SqliteStore {
                 .optional()
                 .map_err(storage)?
                 .ok_or(StoreError::NotFound)?,
-            ),
         };
         let id = tx
             .query_row(
@@ -462,7 +461,7 @@ impl Store for SqliteStore {
                     draft.subject,
                     draft.text,
                     draft.reply_to.map(|m| m.0),
-                    in_reply_to.flatten(),
+                    in_reply_to,
                     message_id,
                     date,
                     not_before,
@@ -506,7 +505,6 @@ impl Store for SqliteStore {
                 s.query_map(params![account.0, now], |r| {
                     Ok(Outgoing {
                         id: OutboxId(r.get(0)?),
-                        account_id: account,
                         to: recipients(&r.get::<_, String>(1)?),
                         subject: r.get(2)?,
                         text: r.get(3)?,

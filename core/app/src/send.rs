@@ -35,7 +35,7 @@ pub async fn push_sends<P: MailProvider>(
                     let _ = copy.provider.append(copy.folder, &raw).await;
                 }
             }
-            Err(ProviderError::Protocol(reason)) => store.refused(message.id, &reason)?,
+            Err(ProviderError::Rejected(reason)) => store.refused(message.id, &reason)?,
             Err(e) => return Err(e.into()),
         }
     }

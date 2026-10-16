@@ -88,54 +88,36 @@ fn one_line(text: &str) -> String {
 
 /// Every line break as CRLF.
 fn crlf(text: &str) -> String {
-    text.replace("\r\n", "\n")
-        .replace('\r', "\n")
-        .replace('\n', "\r\n")
+    let mut out = String::with_capacity(text.len() + text.len() / 32);
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\r' => {
+                chars.next_if_eq(&'\n');
+                out.push_str("\r\n");
+            }
+            '\n' => out.push_str("\r\n"),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// `Thu, 16 Oct 2026 09:48:03 +0000` for seconds since the Unix epoch, in UTC.
 fn rfc5322_date(seconds: i64) -> String {
-    const DAYS: [&str; 7] = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
-    const MONTHS: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
-    let (days, time) = (seconds.div_euclid(86_400), seconds.rem_euclid(86_400));
-    let (year, month, day) = civil_from_days(days);
-    format!(
-        "{}, {day} {} {year} {:02}:{:02}:{:02} +0000",
-        DAYS[days.rem_euclid(7) as usize],
-        MONTHS[(month - 1) as usize],
-        time / 3600,
-        time / 60 % 60,
-        time % 60,
-    )
-}
-
-/// Year, month (1-12) and day for days since 1970-01-01; Howard Hinnant's algorithm.
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    (year, month, day)
+    mail_parser::DateTime::from_timestamp(seconds).to_rfc822()
 }
 
 #[cfg(test)]
 mod tests {
     use mail_parser::MessageParser;
-    use ozero_domain::{AccountId, OutboxId};
+    use ozero_domain::OutboxId;
 
     use super::*;
 
     fn outgoing(subject: &str, text: &str) -> Outgoing {
         Outgoing {
             id: OutboxId(1),
-            account_id: AccountId(1),
             to: vec!["bob@example.org".into(), "cat@example.net".into()],
             subject: subject.into(),
             text: text.into(),

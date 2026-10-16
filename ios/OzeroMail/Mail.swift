@@ -83,7 +83,7 @@ final class Mail: Sendable {
 
     /// Puts the message in the outbox and returns it for `undoSend`.
     /// It goes to the server once the undo time is over.
-    func send(_ draft: DraftItem) throws -> Int64 {
+    func send(_ draft: DraftItem) async throws -> Int64 {
         let id = try core.send(
             account: draft.accountId, to: draft.to, subject: draft.subject, text: draft.text,
             replyTo: draft.replyTo)
@@ -92,7 +92,7 @@ final class Mail: Sendable {
     }
 
     /// Takes back a message that has not gone out yet, to edit it again; nil if too late.
-    func undoSend(_ id: Int64) throws -> DraftItem? {
+    func undoSend(_ id: Int64) async throws -> DraftItem? {
         try core.undoSend(id: id)
     }
 

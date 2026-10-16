@@ -2,18 +2,17 @@
 //! STARTTLS on any other port; the password never goes over a plain connection.
 
 use std::net::IpAddr;
+use std::str::SplitWhitespace;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ozero_domain::{MailSender, ProviderError, base64};
+use ozero_domain::{MailSender, ProviderError, base64, is_address};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
 use tokio_rustls::rustls::ClientConfig;
 use tokio_rustls::rustls::pki_types::ServerName;
-
-pub use tokio_rustls::rustls;
 
 /// Any single read or write that takes longer means the connection is dead.
 const TIMEOUT: Duration = Duration::from_secs(30);
@@ -59,7 +58,9 @@ impl SmtpSession {
         };
         let tls = TlsConnector::from(tls);
         let mut conn = if implicit {
-            Conn::new(timed(tls.connect(name, tcp)).await?)
+            let mut conn = Conn::new(timed(tls.connect(name, tcp)).await?);
+            conn.reply().await?.expect(220, "greeting")?;
+            conn
         } else {
             let mut plain = Conn::new(tcp);
             plain.reply().await?.expect(220, "greeting")?;
@@ -75,9 +76,6 @@ impl SmtpSession {
             }
             Conn::new(timed(tls.connect(name, plain.stream)).await?)
         };
-        if implicit {
-            conn.reply().await?.expect(220, "greeting")?;
-        }
         let offers = conn.command(&hello).await?.expect(250, "EHLO")?;
         let mut session = Self { conn };
         session.login(&offers, user, password).await?;
@@ -124,9 +122,9 @@ impl MailSender for SmtpSession {
         message: &[u8],
     ) -> Result<(), ProviderError> {
         // Addresses come checked, but a line break here would be a second command.
-        if std::iter::once(from)
+        if !std::iter::once(from)
             .chain(to.iter().map(String::as_str))
-            .any(|a| a.chars().any(|c| c.is_control() || c == '<' || c == '>'))
+            .all(is_address)
         {
             return Err(protocol("bad address"));
         }
@@ -175,34 +173,37 @@ struct Reply {
 }
 
 impl Reply {
-    /// Ok if the server answered `code`; otherwise temporary (4xx) or permanent.
+    /// Ok if the server answered `code`; otherwise temporary (4xx), refused (5xx) or odd.
     fn expect(self, code: u16, what: &str) -> Result<Self, ProviderError> {
         if self.code == code {
             return Ok(self);
         }
         let text = format!("{what}: {} {}", self.code, self.lines.join(" "));
-        if (400..500).contains(&self.code) {
-            Err(ProviderError::Network(text))
-        } else {
-            Err(protocol(text))
-        }
+        Err(match self.code {
+            400..500 => ProviderError::Network(text),
+            500..600 => ProviderError::Rejected(text),
+            _ => protocol(text),
+        })
     }
 
-    /// An EHLO keyword, such as `STARTTLS`; the first line is the greeting.
-    fn has(&self, keyword: &str) -> bool {
-        self.lines.iter().skip(1).any(|l| {
-            l.split_whitespace()
+    /// The parameters of each EHLO line offering `keyword`; the first line is the greeting.
+    fn offer<'a>(&'a self, keyword: &'a str) -> impl Iterator<Item = SplitWhitespace<'a>> {
+        self.lines.iter().skip(1).filter_map(move |l| {
+            let mut words = l.split_whitespace();
+            words
                 .next()
                 .is_some_and(|k| k.eq_ignore_ascii_case(keyword))
+                .then_some(words)
         })
+    }
+
+    fn has(&self, keyword: &str) -> bool {
+        self.offer(keyword).next().is_some()
     }
 
     fn has_auth(&self, mechanism: &str) -> bool {
-        self.lines.iter().skip(1).any(|l| {
-            let mut words = l.split_whitespace();
-            words.next().is_some_and(|k| k.eq_ignore_ascii_case("AUTH"))
-                && words.any(|m| m.eq_ignore_ascii_case(mechanism))
-        })
+        self.offer("AUTH")
+            .any(|mut m| m.any(|m| m.eq_ignore_ascii_case(mechanism)))
     }
 }
 

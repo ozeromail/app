@@ -48,6 +48,9 @@ import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.DraftItem
 import uniffi.ozero_api.MessageItem
 
+/** A blank message; account 0 is none, so compose starts from the first account. */
+val NEW_DRAFT = DraftItem(0, "", "", "", null)
+
 /** A message being written, and the one it answers. */
 data class Composing(val draft: DraftItem, val original: MessageItem? = null)
 

@@ -55,10 +55,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import uniffi.ozero_api.Category
 import uniffi.ozero_api.CoreException
-import uniffi.ozero_api.DraftItem
 import uniffi.ozero_api.InboxTab
 import uniffi.ozero_api.MessageItem
-import uniffi.ozero_api.replySubject
+import uniffi.ozero_api.replyDraft
 import uniffi.ozero_api.undoSeconds
 
 /** The unified inbox: shows what is saved at once, then syncs; pull down to sync again. */
@@ -184,7 +183,7 @@ fun InboxScreen(mail: Mail) {
                 open = null
                 scope.launch { load() }
             },
-            onReply = { composing = Composing(opened.replyDraft(), opened) },
+            onReply = { composing = Composing(replyDraft(opened), opened) },
         )
         return
     }
@@ -226,7 +225,7 @@ fun InboxScreen(mail: Mail) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.weight(1f)) { Tabs(tab, tabs, onPick = { tab = it }) }
             TextButton(
-                onClick = { composing = Composing(DraftItem(0, "", "", "", null)) },
+                onClick = { composing = Composing(NEW_DRAFT) },
                 modifier = Modifier.padding(end = 8.dp),
             ) {
                 Text(stringResource(R.string.compose_new))
@@ -234,9 +233,6 @@ fun InboxScreen(mail: Mail) {
         }
     }
 }
-
-/** A reply from the account that got the message, to its sender. */
-private fun MessageItem.replyDraft() = DraftItem(accountId, fromEmail, replySubject(subject), "", id)
 
 /** The inbox tabs at the bottom, each with its unread count. */
 @OptIn(ExperimentalMaterial3Api::class)
