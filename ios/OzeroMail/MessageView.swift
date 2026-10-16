@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// One message: its HTML when it has one, otherwise the text.
+/// One message: its HTML when it has one, otherwise the text. Reply sits at the bottom.
 struct MessageView: View {
     let mail: Mail
     let message: MessageItem
+    let onReply: () -> Void
 
     @State private var content: MessageBody?
     @State private var error: LocalizedStringKey?
@@ -29,6 +30,15 @@ struct MessageView: View {
                     .padding(20)
                 }
             }
+        }
+        .safeAreaInset(edge: .bottom) {
+            HStack {
+                Spacer()
+                Button("message_reply", action: onReply).buttonStyle(.borderedProminent)
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+            .background(.bar)
         }
         .navigationBarTitleDisplayMode(.inline)
         .task(id: message.id) {

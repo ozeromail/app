@@ -30,6 +30,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -54,8 +55,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import uniffi.ozero_api.Category
 import uniffi.ozero_api.CoreException
+import uniffi.ozero_api.DraftItem
 import uniffi.ozero_api.InboxTab
 import uniffi.ozero_api.MessageItem
+import uniffi.ozero_api.replySubject
 import uniffi.ozero_api.undoSeconds
 
 /** The unified inbox: shows what is saved at once, then syncs; pull down to sync again. */
@@ -66,6 +69,7 @@ fun InboxScreen(mail: Mail) {
     var syncing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<Int?>(null) }
     var open by remember { mutableStateOf<MessageItem?>(null) }
+    var composing by remember { mutableStateOf<Composing?>(null) }
     var tab by rememberSaveable { mutableStateOf(Category.PEOPLE) }
     var tabs by remember { mutableStateOf(emptyList<InboxTab>()) }
     val listState = rememberLazyListState()
@@ -73,6 +77,7 @@ fun InboxScreen(mail: Mail) {
     val snackbar = remember { SnackbarHostState() }
     val archived = stringResource(R.string.inbox_archived)
     val undo = stringResource(R.string.action_undo)
+    val sending = stringResource(R.string.inbox_sending)
 
     suspend fun loadList() {
         val shown = tab
@@ -124,6 +129,26 @@ fun InboxScreen(mail: Mail) {
         sync()
     }
 
+    /** Shows a toast for [undoSeconds]; true if Undo was tapped. One toast at a time. */
+    suspend fun offerUndo(text: String): Boolean {
+        // The older toast is past undo anyway.
+        snackbar.currentSnackbarData?.dismiss()
+        // Closes before the core sends, so Undo is never too late.
+        val result = withTimeoutOrNull(undoSeconds().toLong() * 1000) {
+            snackbar.showSnackbar(text, undo, duration = SnackbarDuration.Indefinite)
+        }
+        return result == SnackbarResult.ActionPerformed
+    }
+
+    /** Sent: the toast can bring the message back to edit it. */
+    fun sent(id: Long, message: Composing) {
+        composing = null
+        scope.launch {
+            if (!offerUndo(sending)) return@launch
+            mail.undoSend(id)?.let { composing = message.copy(draft = it) }
+        }
+    }
+
     /** Done: the message leaves the list at once; the toast can take it back for a moment. */
     fun archive(message: MessageItem, reset: () -> Unit) {
         scope.launch {
@@ -139,24 +164,28 @@ fun InboxScreen(mail: Mail) {
             }
             // Also after success: a list read before the archive may bring the row back.
             reset()
-            if (action == null) return@launch
-            // One toast at a time, for the newest message: the older one is past undo anyway.
-            snackbar.currentSnackbarData?.dismiss()
-            // Closes before the core sends the move, so Undo is never too late.
-            val result = withTimeoutOrNull(undoSeconds().toLong() * 1000) {
-                snackbar.showSnackbar(archived, undo, duration = SnackbarDuration.Indefinite)
-            }
-            if (result == SnackbarResult.ActionPerformed && mail.undo(action)) load()
+            if (action != null && offerUndo(archived) && mail.undo(action)) load()
         }
+    }
+
+    val writing = composing
+    if (writing != null) {
+        ComposeScreen(mail, writing, onCancel = { composing = null }, onSent = ::sent)
+        return
     }
 
     val opened = open
     if (opened != null) {
         // Back reloads the list: the message now has a snippet.
-        MessageScreen(mail, opened, onBack = {
-            open = null
-            scope.launch { load() }
-        })
+        MessageScreen(
+            mail,
+            opened,
+            onBack = {
+                open = null
+                scope.launch { load() }
+            },
+            onReply = { composing = Composing(opened.replyDraft(), opened) },
+        )
         return
     }
 
@@ -194,9 +223,20 @@ fun InboxScreen(mail: Mail) {
         }
         // Low on the screen, in reach of the thumb that swiped.
         SnackbarHost(snackbar)
-        Tabs(tab, tabs, onPick = { tab = it })
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) { Tabs(tab, tabs, onPick = { tab = it }) }
+            TextButton(
+                onClick = { composing = Composing(DraftItem(0, "", "", "", null)) },
+                modifier = Modifier.padding(end = 8.dp),
+            ) {
+                Text(stringResource(R.string.compose_new))
+            }
+        }
     }
 }
+
+/** A reply from the account that got the message, to its sender. */
+private fun MessageItem.replyDraft() = DraftItem(accountId, fromEmail, replySubject(subject), "", id)
 
 /** The inbox tabs at the bottom, each with its unread count. */
 @OptIn(ExperimentalMaterial3Api::class)

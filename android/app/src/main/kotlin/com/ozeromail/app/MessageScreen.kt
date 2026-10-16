@@ -5,6 +5,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -32,9 +34,12 @@ import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
 
-/** One message: its HTML when it has one, otherwise the text. System back returns to the list. */
+/**
+ * One message: its HTML when it has one, otherwise the text. Reply sits at the bottom;
+ * system back returns to the list.
+ */
 @Composable
-fun MessageScreen(mail: Mail, message: MessageItem, onBack: () -> Unit) {
+fun MessageScreen(mail: Mail, message: MessageItem, onBack: () -> Unit, onReply: () -> Unit) {
     BackHandler(onBack = onBack)
     var body by remember(message.id) { mutableStateOf<MessageBody?>(null) }
     var error by remember(message.id) { mutableStateOf<Int?>(null) }
@@ -64,6 +69,10 @@ fun MessageScreen(mail: Mail, message: MessageItem, onBack: () -> Unit) {
             else -> Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
+        }
+        HorizontalDivider(color = colors.outlineVariant)
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.End) {
+            Button(onClick = onReply) { Text(stringResource(R.string.message_reply)) }
         }
     }
 }

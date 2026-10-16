@@ -12,9 +12,12 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import uniffi.ozero_api.AccountItem
 import uniffi.ozero_api.Category
 import uniffi.ozero_api.Core
 import uniffi.ozero_api.CoreException
+import uniffi.ozero_api.DraftItem
+import uniffi.ozero_api.Endpoint
 import uniffi.ozero_api.InboxTab
 import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
@@ -32,6 +35,9 @@ class Mail(private val context: Context) {
 
     suspend fun hasAccounts(): Boolean = io { core.accounts().isNotEmpty() }
 
+    /** The accounts mail can be sent from, in the order they were added. */
+    suspend fun accounts(): List<AccountItem> = io { core.accounts() }
+
     suspend fun inbox(tab: Category): List<MessageItem> = io { core.unifiedInbox(tab, INBOX_SIZE) }
 
     /** The inbox tabs in order, with their unread counts. */
@@ -41,9 +47,9 @@ class Mail(private val context: Context) {
      * The core saves the account only after the server has accepted the login.
      * The password goes first, so a saved account always has one.
      */
-    suspend fun signIn(email: String, password: String, host: String, port: Int) = io {
+    suspend fun signIn(email: String, password: String, imap: Endpoint, smtp: Endpoint) = io {
         vault.setPassword(email, password)
-        core.addImapAccount(email, email, host, port.toUShort(), password)
+        core.addImapAccount(email, email, imap, smtp, password)
     }
 
     /**
@@ -75,6 +81,19 @@ class Mail(private val context: Context) {
 
     /** Takes back an archive that has not gone to the server yet; false if too late. */
     suspend fun undo(action: Long): Boolean = io { core.undo(action) }
+
+    /**
+     * Puts the message in the outbox and returns it for [undoSend].
+     * It goes to the server once the undo time is over.
+     */
+    suspend fun send(draft: DraftItem): Long {
+        val id = io { core.send(draft.accountId, draft.to, draft.subject, draft.text, draft.replyTo) }
+        push(draft.accountId)
+        return id
+    }
+
+    /** Takes back a message that has not gone out yet, to edit it again; null if too late. */
+    suspend fun undoSend(id: Long): DraftItem? = io { core.undoSend(id) }
 
     /** Sends the account's queued actions in the background, waiting for held ones. */
     private fun push(accountId: Long) {
@@ -114,6 +133,7 @@ class Mail(private val context: Context) {
 
     companion object {
         const val IMAPS_PORT = 993
+        const val SMTPS_PORT = 465
         private const val INBOX_SIZE = 200u
     }
 }
@@ -130,6 +150,8 @@ fun CoreException.text(): Int {
         is CoreException.Server -> R.string.error_server
         is CoreException.Gone -> R.string.error_gone
         is CoreException.NoArchive -> R.string.error_no_archive
+        is CoreException.BadRecipients -> R.string.error_bad_recipients
+        is CoreException.NoSmtp -> R.string.error_no_smtp
         else -> R.string.error_storage
     }
 }

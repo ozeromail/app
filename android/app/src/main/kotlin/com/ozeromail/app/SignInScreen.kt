@@ -3,6 +3,7 @@ package com.ozeromail.app
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -32,9 +33,11 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import uniffi.ozero_api.CoreException
+import uniffi.ozero_api.Endpoint
 import uniffi.ozero_api.suggestedImapHost
+import uniffi.ozero_api.suggestedSmtpHost
 
-/** Adds an IMAP account. The fields sit in the lower half, in reach of the thumb. */
+/** Adds an IMAP account with its SMTP server. The fields sit in the lower half, in reach of the thumb. */
 @Composable
 fun SignInScreen(mail: Mail, onSignedIn: () -> Unit) {
     var email by rememberSaveable { mutableStateOf("") }
@@ -43,22 +46,26 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit) {
     // The server follows the email until the person types one of their own.
     var server by rememberSaveable { mutableStateOf<String?>(null) }
     var port by rememberSaveable { mutableStateOf(Mail.IMAPS_PORT.toString()) }
+    var smtpServer by rememberSaveable { mutableStateOf<String?>(null) }
+    var smtpPort by rememberSaveable { mutableStateOf(Mail.SMTPS_PORT.toString()) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<Int?>(null) }
     val scope = rememberCoroutineScope()
 
     val suggested = suggestedImapHost(email)
     val host = (server ?: suggested ?: "").trim()
-    val portNumber = port.toIntOrNull()?.takeIf { it in 1..65535 }
-    val ready = !busy && suggested != null && password.isNotEmpty() && host.isNotEmpty() && portNumber != null
+    val smtpHost = (smtpServer ?: suggestedSmtpHost(email) ?: "").trim()
+    val imap = endpoint(host, port)
+    val smtp = endpoint(smtpHost, smtpPort)
+    val ready = !busy && suggested != null && password.isNotEmpty() && imap != null && smtp != null
 
     fun submit() {
-        if (!ready || portNumber == null) return
+        if (!ready || imap == null || smtp == null) return
         busy = true
         error = null
         scope.launch {
             try {
-                mail.signIn(email.trim(), password, host, portNumber)
+                mail.signIn(email.trim(), password, imap, smtp)
                 onSignedIn()
             } catch (e: CoreException) {
                 error = e.text()
@@ -84,8 +91,8 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit) {
         Spacer(Modifier.weight(1f))
         Field(email, { email = it }, R.string.signin_email, KeyboardType.Email)
         Field(password, { password = it }, R.string.signin_password, KeyboardType.Password)
-        Field(host, { server = it }, R.string.signin_server, KeyboardType.Uri)
-        Field(port, { port = it }, R.string.signin_port, KeyboardType.Number, onDone = ::submit)
+        Server(host, { server = it }, R.string.signin_server, port, { port = it })
+        Server(smtpHost, { smtpServer = it }, R.string.signin_smtp_server, smtpPort, { smtpPort = it }, onDone = ::submit)
         error?.let { Text(stringResource(it), color = MaterialTheme.colorScheme.error) }
         Button(
             onClick = ::submit,
@@ -97,12 +104,34 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit) {
     }
 }
 
+private fun endpoint(host: String, port: String): Endpoint? {
+    val number = port.toIntOrNull()?.takeIf { it in 1..65535 } ?: return null
+    return if (host.isEmpty()) null else Endpoint(host, number.toUShort())
+}
+
+/** A server with its port on one line. */
+@Composable
+private fun Server(
+    host: String,
+    onHost: (String) -> Unit,
+    @StringRes label: Int,
+    port: String,
+    onPort: (String) -> Unit,
+    onDone: (() -> Unit)? = null,
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Field(host, onHost, label, KeyboardType.Uri, Modifier.weight(1f))
+        Field(port, onPort, R.string.signin_port, KeyboardType.Number, Modifier.weight(0.4f), onDone)
+    }
+}
+
 @Composable
 private fun Field(
     value: String,
     onChange: (String) -> Unit,
     @StringRes label: Int,
     keyboard: KeyboardType,
+    modifier: Modifier = Modifier.fillMaxWidth(),
     onDone: (() -> Unit)? = null,
 ) {
     OutlinedTextField(
@@ -117,6 +146,6 @@ private fun Field(
             autoCorrectEnabled = false,
         ),
         keyboardActions = KeyboardActions(onDone = { onDone?.invoke() }),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier,
     )
 }
