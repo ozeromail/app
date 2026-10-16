@@ -1,8 +1,8 @@
 use std::fmt;
 
 use crate::{
-    Account, AccountId, Body, Folder, FolderId, ListQuery, MessageId, MessageLocation, MessageRow,
-    NewAccount, NewFolder, NewMessage,
+    Account, AccountId, Action, Body, Folder, FolderId, ListQuery, MessageId, MessageLocation,
+    MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId,
 };
 
 /// Local database port. The UI reads only from here; sync writes here.
@@ -23,6 +23,7 @@ pub trait Store: Send + Sync {
     fn set_validity(&self, folder: FolderId, validity: u32) -> Result<(), StoreError>;
 
     /// Inserts new messages and updates known ones, matched by `remote_id`, in one transaction.
+    /// A queued action stays on top of what the server sent until it is sent.
     fn save_messages(&self, folder: FolderId, messages: &[NewMessage]) -> Result<(), StoreError>;
     fn list(&self, query: &ListQuery) -> Result<Vec<MessageRow>, StoreError>;
 
@@ -30,6 +31,16 @@ pub trait Store: Send + Sync {
     /// Saves the body and sets the message's snippet from it.
     fn save_body(&self, message: MessageId, body: &Body) -> Result<(), StoreError>;
     fn body(&self, message: MessageId) -> Result<Option<Body>, StoreError>;
+
+    /// Applies the action to the message now and queues it for the server from `not_before`.
+    /// It replaces a queued action of the same kind; one that undoes it leaves nothing queued.
+    fn queue(&self, message: MessageId, action: Action, not_before: i64) -> Result<(), StoreError>;
+    /// The account's queued actions that may be sent at `now`, oldest first.
+    fn due(&self, account: AccountId, now: i64) -> Result<Vec<Op>, StoreError>;
+    /// The server has the action: forget it.
+    fn finish(&self, op: OpId) -> Result<(), StoreError>;
+    /// The server refused the action for good: undo it on the device and forget it.
+    fn revert(&self, op: OpId) -> Result<(), StoreError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

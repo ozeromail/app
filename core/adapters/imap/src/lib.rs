@@ -12,13 +12,15 @@ use imap_codec::fragmentizer::Fragmentizer;
 use imap_codec::imap_types::command::{Command, CommandBody};
 use imap_codec::imap_types::core::{AString, LiteralMode, Vec1};
 use imap_codec::imap_types::fetch::{MessageDataItem, MessageDataItemName, Section};
-use imap_codec::imap_types::flag::{Flag, FlagFetch, FlagNameAttribute};
+use imap_codec::imap_types::flag::{Flag, FlagFetch, FlagNameAttribute, StoreResponse, StoreType};
 use imap_codec::imap_types::mailbox::Mailbox;
 use imap_codec::imap_types::response::{
     Code, Data, GreetingKind, Response, Status, StatusBody, StatusKind,
 };
 use imap_codec::{CommandCodec, GreetingCodec, ResponseCodec};
-use ozero_domain::{Flags, FolderRole, MailProvider, NewFolder, ProviderError, RawMessage, Recent};
+use ozero_domain::{
+    Action, Flags, FolderRole, MailProvider, NewFolder, ProviderError, RawMessage, Recent,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
@@ -224,10 +226,16 @@ impl ImapSession {
         timed(self.stream.write_all(data)).await
     }
 
-    /// Opens a folder read-only; returns its UIDVALIDITY and message count.
-    async fn examine(&mut self, folder: &str) -> Result<(u32, u32), ProviderError> {
-        let examine = CommandBody::examine(folder).map_err(|_| protocol("bad folder name"))?;
-        let reply = self.run(examine).await?;
+    /// Opens a folder, read-only unless `write`; returns its UIDVALIDITY and message count.
+    async fn open(&mut self, folder: &str, write: bool) -> Result<(u32, u32), ProviderError> {
+        let open = if write {
+            CommandBody::select(folder)
+        } else {
+            CommandBody::examine(folder)
+        };
+        let reply = self
+            .run(open.map_err(|_| protocol("bad folder name"))?)
+            .await?;
         let validity = reply
             .codes
             .iter()
@@ -235,7 +243,7 @@ impl ImapSession {
                 Code::UidValidity(v) => Some(v.get()),
                 _ => None,
             })
-            .ok_or_else(|| protocol("EXAMINE without UIDVALIDITY"))?;
+            .ok_or_else(|| protocol("no UIDVALIDITY for the folder"))?;
         // The last EXISTS is the newest count if mail arrived meanwhile.
         let exists = reply
             .data
@@ -245,7 +253,7 @@ impl ImapSession {
                 Data::Exists(n) => Some(*n),
                 _ => None,
             })
-            .ok_or_else(|| protocol("EXAMINE without EXISTS"))?;
+            .ok_or_else(|| protocol("no EXISTS for the folder"))?;
         Ok((validity, exists))
     }
 }
@@ -266,7 +274,7 @@ impl MailProvider for ImapSession {
     }
 
     async fn recent(&mut self, folder: &str, limit: u32) -> Result<Recent, ProviderError> {
-        let (validity, exists) = self.examine(folder).await?;
+        let (validity, exists) = self.open(folder, false).await?;
         if exists == 0 || limit == 0 {
             return Ok(Recent {
                 validity,
@@ -324,7 +332,7 @@ impl MailProvider for ImapSession {
             .parse()
             .map_err(|_| protocol(format!("bad UID {remote_id}")))?;
         // A new UIDVALIDITY means the UID may name another message now.
-        if self.examine(folder).await?.0 != validity {
+        if self.open(folder, false).await?.0 != validity {
             return Err(ProviderError::Gone);
         }
         let items = vec![
@@ -348,6 +356,42 @@ impl MailProvider for ImapSession {
                 _ => None,
             })
             .ok_or(ProviderError::Gone)
+    }
+
+    async fn apply(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_ids: &[String],
+        action: Action,
+    ) -> Result<(), ProviderError> {
+        let uids = remote_ids
+            .iter()
+            .map(|id| id.parse::<NonZeroU32>())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| protocol("bad UID"))?;
+        if uids.is_empty() {
+            return Ok(());
+        }
+        if self.open(folder, true).await?.0 != validity {
+            return Err(ProviderError::Gone);
+        }
+        let Action::Seen(seen) = action;
+        let kind = if seen {
+            StoreType::Add
+        } else {
+            StoreType::Remove
+        };
+        // A UID that was expunged meanwhile is skipped by the server.
+        let store = CommandBody::store(
+            uids.as_slice(),
+            kind,
+            StoreResponse::Silent,
+            vec![Flag::Seen],
+            true,
+        )
+        .map_err(|_| protocol("bad STORE"))?;
+        self.run(store).await.map(|_| ())
     }
 }
 

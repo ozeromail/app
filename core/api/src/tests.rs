@@ -105,4 +105,16 @@ fn syncs_an_imap_inbox_into_the_list() {
     // Saved now: no login, so a wrong password does not matter.
     assert_eq!(body("wrong").unwrap(), plain);
     assert_eq!(core.unified_inbox(50).unwrap()[1].snippet, "Hello 2");
+
+    // Read on the device at once, on the server after the push; then unread again.
+    let first = inbox[2].id;
+    for seen in [true, false] {
+        core.mark_read(first, seen).unwrap();
+        assert_eq!(core.unified_inbox(50).unwrap()[2].seen, seen);
+        runtime
+            .block_on(core.push_actions(account, "pass".into()))
+            .unwrap();
+        sync().unwrap();
+        assert_eq!(core.unified_inbox(50).unwrap()[2].seen, seen);
+    }
 }

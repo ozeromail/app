@@ -6,9 +6,9 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
 use ozero_domain::{
-    Account, AccountId, AccountKind, Address, Body, Flags, Folder, FolderId, FolderRole, ListQuery,
-    ListScope, MessageId, MessageLocation, MessageRow, NewAccount, NewFolder, NewMessage, Server,
-    Store, StoreError,
+    Account, AccountId, AccountKind, Action, Address, Body, Flags, Folder, FolderId, FolderRole,
+    ListQuery, ListScope, MessageId, MessageLocation, MessageRow, NewAccount, NewFolder,
+    NewMessage, Op, OpId, Server, Store, StoreError,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{Connection, ErrorCode, OptionalExtension, Row, Transaction, params};
@@ -232,22 +232,7 @@ impl Store for SqliteStore {
         {
             // Rewrites a known row only when something changed, so a resync does not grow the WAL.
             // An empty snippet keeps the one taken from a saved body.
-            let mut upsert = tx
-                .prepare_cached(
-                    "INSERT INTO message (folder_id, remote_id, message_id, from_name, from_email,
-                                          subject, snippet, date, flags)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-                     ON CONFLICT (folder_id, remote_id) DO UPDATE SET
-                         message_id = excluded.message_id, from_name = excluded.from_name,
-                         from_email = excluded.from_email, subject = excluded.subject,
-                         snippet = coalesce(nullif(excluded.snippet, ''), snippet),
-                         date = excluded.date, flags = excluded.flags
-                     WHERE (message_id, from_name, from_email, subject, snippet, date, flags)
-                         IS NOT (excluded.message_id, excluded.from_name, excluded.from_email,
-                                 excluded.subject, coalesce(nullif(excluded.snippet, ''), snippet),
-                                 excluded.date, excluded.flags)",
-                )
-                .map_err(storage)?;
+            let mut upsert = tx.prepare_cached(SAVE_MESSAGE).map_err(storage)?;
             for m in messages {
                 upsert
                     .execute(params![
@@ -340,7 +325,141 @@ impl Store for SqliteStore {
             })
             .map_err(storage)
     }
+
+    fn queue(&self, message: MessageId, action: Action, not_before: i64) -> Result<(), StoreError> {
+        let Action::Seen(seen) = action;
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        let flags: u8 = tx
+            .query_row(
+                "SELECT flags FROM message WHERE id = ?1",
+                [message.0],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(storage)?
+            .ok_or(StoreError::NotFound)?;
+        let queued: Option<bool> = tx
+            .query_row(
+                "SELECT undo FROM op WHERE message_id = ?1 AND kind = 'seen'",
+                [message.0],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(storage)?;
+        let undo = queued.unwrap_or(flags & SEEN != 0);
+        set_seen(&tx, message, seen)?;
+        if seen == undo {
+            // Back where the server is: nothing to send.
+            tx.execute(
+                "DELETE FROM op WHERE message_id = ?1 AND kind = 'seen'",
+                [message.0],
+            )
+            .map_err(storage)?;
+        } else {
+            tx.execute(
+                "INSERT INTO op (message_id, kind, value, undo, not_before)
+                 VALUES (?1, 'seen', ?2, ?3, ?4)
+                 ON CONFLICT (message_id, kind) DO UPDATE SET
+                     value = excluded.value, not_before = excluded.not_before",
+                params![message.0, seen, undo, not_before],
+            )
+            .map_err(storage)?;
+        }
+        tx.commit().map_err(storage)
+    }
+
+    fn due(&self, account: AccountId, now: i64) -> Result<Vec<Op>, StoreError> {
+        let conn = self.conn();
+        let rows = conn
+            .prepare_cached(
+                "SELECT o.id, o.kind, o.value, m.id, f.remote_id, f.validity, m.remote_id
+                 FROM op o JOIN message m ON m.id = o.message_id JOIN folder f ON f.id = m.folder_id
+                 WHERE f.account_id = ?1 AND o.not_before <= ?2
+                 ORDER BY o.id",
+            )
+            .and_then(|mut s| {
+                s.query_map(params![account.0, now], |r| {
+                    let ActionKind(kind) = r.get(1)?;
+                    Ok(Op {
+                        id: OpId(r.get(0)?),
+                        action: kind.with(r.get(2)?),
+                        location: MessageLocation {
+                            id: MessageId(r.get(3)?),
+                            account_id: account,
+                            folder_remote_id: r.get(4)?,
+                            validity: r.get(5)?,
+                            remote_id: r.get(6)?,
+                        },
+                    })
+                })?
+                .collect()
+            });
+        rows.map_err(storage)
+    }
+
+    fn finish(&self, op: OpId) -> Result<(), StoreError> {
+        self.conn()
+            .execute("DELETE FROM op WHERE id = ?1", [op.0])
+            .map_err(storage)
+            .map(|_| ())
+    }
+
+    fn revert(&self, op: OpId) -> Result<(), StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        let (message, ActionKind(kind), undo): (i64, ActionKind, i64) = tx
+            .query_row(
+                "SELECT message_id, kind, undo FROM op WHERE id = ?1",
+                [op.0],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()
+            .map_err(storage)?
+            .ok_or(StoreError::NotFound)?;
+        let Action::Seen(seen) = kind.with(undo);
+        set_seen(&tx, MessageId(message), seen)?;
+        tx.execute("DELETE FROM op WHERE id = ?1", [op.0])
+            .map_err(storage)?;
+        tx.commit().map_err(storage)
+    }
 }
+
+fn set_seen(tx: &Transaction<'_>, message: MessageId, seen: bool) -> Result<(), StoreError> {
+    let sql = if seen {
+        "UPDATE message SET flags = flags | 1 WHERE id = ?1"
+    } else {
+        "UPDATE message SET flags = flags & ~1 WHERE id = ?1"
+    };
+    tx.execute(sql, [message.0]).map_err(storage).map(|_| ())
+}
+
+/// The flags to keep for a known message: the server's, except the read state while a
+/// queued "seen" action has not reached the server. `1` is `SEEN`.
+macro_rules! merged_flags {
+    () => {
+        "CASE WHEN EXISTS (SELECT 1 FROM op WHERE op.message_id = message.id AND op.kind = 'seen')
+              THEN (excluded.flags & ~1) | (flags & 1) ELSE excluded.flags END"
+    };
+}
+
+const SAVE_MESSAGE: &str = concat!(
+    "INSERT INTO message (folder_id, remote_id, message_id, from_name, from_email,
+                          subject, snippet, date, flags)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+     ON CONFLICT (folder_id, remote_id) DO UPDATE SET
+         message_id = excluded.message_id, from_name = excluded.from_name,
+         from_email = excluded.from_email, subject = excluded.subject,
+         snippet = coalesce(nullif(excluded.snippet, ''), snippet),
+         date = excluded.date, flags = ",
+    merged_flags!(),
+    " WHERE (message_id, from_name, from_email, subject, snippet, date, flags)
+         IS NOT (excluded.message_id, excluded.from_name, excluded.from_email,
+                 excluded.subject, coalesce(nullif(excluded.snippet, ''), snippet),
+                 excluded.date, ",
+    merged_flags!(),
+    ")"
+);
 
 /// Newest first, keyset-paged by (date, id) so deep pages cost the same as the first.
 macro_rules! list_sql {
@@ -428,6 +547,30 @@ fn kind_str(kind: AccountKind) -> &'static str {
 /// Stored strings are read strictly: an unknown value is an error, never a silent default.
 struct Kind(AccountKind);
 struct Role(FolderRole);
+struct ActionKind(StoredAction);
+
+/// The kind column of `op`; the value column completes it.
+#[derive(Clone, Copy)]
+enum StoredAction {
+    Seen,
+}
+
+impl StoredAction {
+    fn with(self, value: i64) -> Action {
+        match self {
+            Self::Seen => Action::Seen(value != 0),
+        }
+    }
+}
+
+impl FromSql for ActionKind {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        match value.as_str()? {
+            "seen" => Ok(Self(StoredAction::Seen)),
+            _ => Err(FromSqlError::InvalidType),
+        }
+    }
+}
 
 impl FromSql for Kind {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
