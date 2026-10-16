@@ -186,3 +186,58 @@ fn mailpit_messages() -> String {
     http.read_to_string(&mut response).unwrap();
     response
 }
+
+#[test]
+fn rows_are_marked_only_with_several_accounts() {
+    let db = TempDb::new("marks");
+    let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
+    let add = |email: &str| {
+        core.store
+            .add_account(&NewAccount {
+                kind: AccountKind::Imap,
+                email: email.into(),
+                display_name: email.into(),
+                server: None,
+                smtp: None,
+            })
+            .unwrap()
+    };
+    let row = |account| MessageRow {
+        id: MessageId(1),
+        account_id: account,
+        from: Address {
+            name: None,
+            email: "anna@example.com".into(),
+        },
+        subject: "Hi".into(),
+        snippet: String::new(),
+        date: 0,
+        flags: Default::default(),
+        thread_count: 1,
+        thread_unread: 0,
+        sent: false,
+    };
+    let first = add("a@example.com");
+    assert_eq!(core.items(vec![row(first)]).unwrap()[0].account, None);
+
+    let second = add("b@example.com");
+    let marks: Vec<_> = core
+        .items(vec![row(first), row(second)])
+        .unwrap()
+        .into_iter()
+        .map(|m| m.account.unwrap())
+        .collect();
+    assert_eq!(
+        marks,
+        [
+            AccountMark {
+                name: "a@example.com".into(),
+                color: ACCOUNT_COLORS[0],
+            },
+            AccountMark {
+                name: "b@example.com".into(),
+                color: ACCOUNT_COLORS[1],
+            },
+        ]
+    );
+}

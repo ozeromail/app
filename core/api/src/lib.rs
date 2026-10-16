@@ -121,6 +121,7 @@ impl Core {
         }))
     }
 
+    /// The accounts in the order they were added.
     pub fn accounts(&self) -> Result<Vec<AccountItem>, CoreError> {
         Ok(self
             .store
@@ -138,7 +139,7 @@ impl Core {
             limit,
             after: None,
         })?;
-        Ok(rows.into_iter().map(MessageItem::from).collect())
+        self.items(rows)
     }
 
     /// Unread mail in People from the last day that arrived since this or `forget_new_mail`
@@ -177,7 +178,7 @@ impl Core {
     /// Messages matching every word of `text`, newest first.
     pub fn search(&self, text: String, limit: u32) -> Result<Vec<MessageItem>, CoreError> {
         let rows = self.store.search(&text, limit)?;
-        Ok(rows.into_iter().map(MessageItem::from).collect())
+        self.items(rows)
     }
 
     /// The conversation of a message, oldest first.
@@ -385,6 +386,29 @@ impl Core {
 }
 
 impl Core {
+    /// List rows, marked with their account when there is more than one.
+    fn items(&self, rows: Vec<MessageRow>) -> Result<Vec<MessageItem>, CoreError> {
+        let accounts = self.store.accounts()?;
+        let marks: HashMap<AccountId, AccountMark> = if accounts.len() > 1 {
+            accounts
+                .iter()
+                .map(|a| (a.id, AccountMark::from(a)))
+                .collect()
+        } else {
+            HashMap::new()
+        };
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                let account = marks.get(&row.account_id).cloned();
+                MessageItem {
+                    account,
+                    ..MessageItem::from(row)
+                }
+            })
+            .collect())
+    }
+
     fn busy(&self, account: AccountId) -> Arc<tokio::sync::Mutex<()>> {
         let mut locks = self.busy.lock().unwrap_or_else(|p| p.into_inner());
         locks.entry(account).or_default().clone()
@@ -588,6 +612,32 @@ impl From<Account> for AccountItem {
     }
 }
 
+/// The account a row is in, for lists that show mail of several accounts.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AccountMark {
+    pub name: String,
+    /// 0xRRGGBB.
+    pub color: u32,
+}
+
+impl From<&Account> for AccountMark {
+    fn from(a: &Account) -> Self {
+        Self {
+            name: a.display_name.clone(),
+            color: rgb(a.color),
+        }
+    }
+}
+
+/// Account colours in the order accounts get them. The blue accent stays for actions.
+const ACCOUNT_COLORS: [u32; 6] = [
+    0x2A_A1_98, 0x8E_5C_D9, 0xF0_8A_24, 0x43_A9_5A, 0xE0_56_9B, 0xC4_AD_7D,
+];
+
+fn rgb(color: u32) -> u32 {
+    ACCOUNT_COLORS[color as usize % ACCOUNT_COLORS.len()]
+}
+
 /// A server address as sign-in asks for it.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct Endpoint {
@@ -691,6 +741,8 @@ pub struct MessageItem {
     pub thread_unread: u32,
     /// The user wrote it: it is in the sent folder.
     pub sent: bool,
+    /// In mixed lists (the unified inbox, search), set when there is more than one account.
+    pub account: Option<AccountMark>,
 }
 
 impl From<MessageRow> for MessageItem {
@@ -708,6 +760,7 @@ impl From<MessageRow> for MessageItem {
             thread_count: row.thread_count,
             thread_unread: row.thread_unread,
             sent: row.sent,
+            account: None,
         }
     }
 }

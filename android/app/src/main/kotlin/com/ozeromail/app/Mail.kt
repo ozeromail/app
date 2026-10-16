@@ -52,9 +52,10 @@ class Mail(private val context: Context) {
 
     /**
      * The core saves the account only after the server has accepted the login.
-     * The password goes first, so a saved account always has one.
+     * The password goes first, so a saved account always has one; never over a saved account's.
      */
     suspend fun signIn(email: String, password: String, imap: Endpoint, smtp: Endpoint) = io {
+        if (core.accounts().any { it.email.equals(email, ignoreCase = true) }) throw CoreException.AccountExists()
         vault.setPassword(email, password)
         core.addImapAccount(email, email, imap, smtp, password)
     }

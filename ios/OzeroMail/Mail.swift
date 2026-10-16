@@ -65,8 +65,11 @@ final class Mail: Sendable {
     }
 
     /// The core saves the account only after the server has accepted the login.
-    /// The password goes first, so a saved account always has one.
+    /// The password goes first, so a saved account always has one; never over a saved account's.
     func signIn(email: String, password: String, imap: Endpoint, smtp: Endpoint) async throws {
+        if try core.accounts().contains(where: { $0.email.lowercased() == email.lowercased() }) {
+            throw CoreError.AccountExists
+        }
         try vault.setPassword(password, email: email)
         _ = try await core.addImapAccount(
             email: email, displayName: email, imap: imap, smtp: smtp, password: password)

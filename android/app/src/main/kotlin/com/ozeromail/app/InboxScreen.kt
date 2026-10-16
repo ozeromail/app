@@ -52,6 +52,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -59,6 +62,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import uniffi.ozero_api.AccountMark
 import uniffi.ozero_api.Category
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.InboxTab
@@ -73,6 +77,8 @@ import uniffi.ozero_api.undoSeconds
 fun InboxScreen(mail: Mail) {
     var messages by remember { mutableStateOf(emptyList<MessageItem>()) }
     var syncing by remember { mutableStateOf(false) }
+    // A sync asked for while one runs, say for a new account, runs right after it.
+    var syncAgain by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<Int?>(null) }
     var open by remember { mutableStateOf<MessageItem?>(null) }
     var composing by remember { mutableStateOf<Composing?>(null) }
@@ -80,6 +86,7 @@ fun InboxScreen(mail: Mail) {
     var tabs by remember { mutableStateOf(emptyList<InboxTab>()) }
     var unsent by remember { mutableStateOf(emptyList<UnsentItem>()) }
     var searching by rememberSaveable { mutableStateOf(false) }
+    var addingAccount by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -117,6 +124,10 @@ fun InboxScreen(mail: Mail) {
     }
 
     suspend fun sync() {
+        if (syncing) {
+            syncAgain = true
+            return
+        }
         syncing = true
         error = null
         try {
@@ -135,6 +146,10 @@ fun InboxScreen(mail: Mail) {
             load()
         } finally {
             syncing = false
+        }
+        if (syncAgain) {
+            syncAgain = false
+            sync()
         }
     }
 
@@ -215,6 +230,18 @@ fun InboxScreen(mail: Mail) {
         return
     }
 
+    if (addingAccount) {
+        SignInScreen(
+            mail,
+            onSignedIn = {
+                addingAccount = false
+                scope.launch { sync() }
+            },
+            onCancel = { addingAccount = false },
+        )
+        return
+    }
+
     if (searching) {
         SearchScreen(
             mail,
@@ -230,15 +257,18 @@ fun InboxScreen(mail: Mail) {
     }
 
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-        Text(
-            stringResource(R.string.inbox_title),
-            style = MaterialTheme.typography.headlineLarge,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-        )
+        Row(Modifier.padding(start = 20.dp, end = 8.dp, top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                stringResource(R.string.inbox_title),
+                style = MaterialTheme.typography.headlineLarge,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = { addingAccount = true }) { Text(stringResource(R.string.inbox_add_account)) }
+        }
         PullToRefreshBox(
             isRefreshing = syncing,
-            onRefresh = { if (!syncing) scope.launch { sync() } },
+            onRefresh = { scope.launch { sync() } },
             modifier = Modifier.weight(1f),
         ) {
             LazyColumn(Modifier.fillMaxSize(), state = listState) {
@@ -375,11 +405,21 @@ internal fun Empty() {
     }
 }
 
+/** The account's colour, from the core. */
+val AccountMark.tint: Color
+    get() = Color(0xFF000000 or color.toLong())
+
+/** A row of a list; with several accounts, a strip of the account's colour and its name mark it. */
 @Composable
 internal fun MessageRow(message: MessageItem, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
+    val account = message.account
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 10.dp),
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .then(if (account == null) Modifier else Modifier.drawBehind { drawRect(account.tint, size = Size(3.dp.toPx(), size.height)) })
+            .padding(vertical = 10.dp),
         verticalAlignment = Alignment.Top,
     ) {
         val unread = message.threadUnread > 0u
@@ -424,6 +464,9 @@ internal fun MessageRow(message: MessageItem, onClick: () -> Unit) {
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+            account?.let {
+                Text(it.name, color = colors.onSurfaceVariant, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
