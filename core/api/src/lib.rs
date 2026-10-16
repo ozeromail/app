@@ -182,6 +182,10 @@ impl Core {
     ) -> Result<i64, CoreError> {
         let to = parse_recipients(&to).ok_or(CoreError::BadRecipients)?;
         let from = self.account(AccountId(account))?;
+        // Would wait in the outbox forever.
+        if from.smtp.is_none() {
+            return Err(CoreError::NoSmtp);
+        }
         let draft = Draft {
             account_id: from.id,
             to,

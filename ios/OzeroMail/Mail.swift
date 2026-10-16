@@ -5,6 +5,7 @@ import os
 /// What the screens need from the core. The async calls run off the main actor.
 final class Mail: Sendable {
     static let imapsPort: UInt16 = 993
+    static let smtpsPort: UInt16 = 465
     private static let inboxSize: UInt32 = 200
 
     private let core: Core
@@ -31,6 +32,11 @@ final class Mail: Sendable {
         try !core.accounts().isEmpty
     }
 
+    /// The accounts mail can be sent from, in the order they were added.
+    func accounts() async throws -> [AccountItem] {
+        try core.accounts()
+    }
+
     func inbox(_ tab: Category) async throws -> [MessageItem] {
         try core.unifiedInbox(tab: tab, limit: Self.inboxSize)
     }
@@ -42,10 +48,10 @@ final class Mail: Sendable {
 
     /// The core saves the account only after the server has accepted the login.
     /// The password goes first, so a saved account always has one.
-    func signIn(email: String, password: String, host: String, port: UInt16) async throws {
+    func signIn(email: String, password: String, imap: Endpoint, smtp: Endpoint) async throws {
         try vault.setPassword(password, email: email)
         _ = try await core.addImapAccount(
-            email: email, displayName: email, host: host, port: port, password: password)
+            email: email, displayName: email, imap: imap, smtp: smtp, password: password)
     }
 
     /// The message body, downloaded once by the core.
@@ -73,6 +79,21 @@ final class Mail: Sendable {
     /// Takes back an archive that has not gone to the server yet; false if too late.
     func undo(_ action: Int64) throws -> Bool {
         try core.undo(action: action)
+    }
+
+    /// Puts the message in the outbox and returns it for `undoSend`.
+    /// It goes to the server once the undo time is over.
+    func send(_ draft: DraftItem) throws -> Int64 {
+        let id = try core.send(
+            account: draft.accountId, to: draft.to, subject: draft.subject, text: draft.text,
+            replyTo: draft.replyTo)
+        push(account: draft.accountId)
+        return id
+    }
+
+    /// Takes back a message that has not gone out yet, to edit it again; nil if too late.
+    func undoSend(_ id: Int64) throws -> DraftItem? {
+        try core.undoSend(id: id)
     }
 
     /// Sends the account's queued actions, waiting for held ones, in a task no screen owns.
@@ -133,6 +154,8 @@ extension Error {
         case .Server?: return "error_server"
         case .Gone?: return "error_gone"
         case .NoArchive?: return "error_no_archive"
+        case .BadRecipients?: return "error_bad_recipients"
+        case .NoSmtp?: return "error_no_smtp"
         default: return "error_storage"
         }
     }

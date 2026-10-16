@@ -8,8 +8,9 @@ struct InboxView: View {
     @State private var messages: [MessageItem]?
     @State private var syncing = false
     @State private var error: LocalizedStringKey?
-    /// The last archive, while its toast can still take it back.
-    @State private var undoable: Int64?
+    /// The last archive or send, while its toast can still take it back.
+    @State private var undoable: Undoable?
+    @State private var composing: Composing?
     @State private var tab = Category.people
     @State private var tabs: [InboxTab] = []
 
@@ -32,14 +33,16 @@ struct InboxView: View {
             }
             .listStyle(.plain)
             .navigationTitle("inbox_title")
-            .navigationDestination(for: MessageItem.self) { MessageView(mail: mail, message: $0) }
+            .navigationDestination(for: MessageItem.self) { message in
+                MessageView(mail: mail, message: message) { composing = message.replyDraft }
+            }
             .refreshable { await sync() }
             .safeAreaInset(edge: .bottom) {
                 VStack {
                     if let undoable {
-                        UndoToast { undo(undoable) }
+                        UndoToast(text: undoable.text) { undo(undoable) }
                             .task(id: undoable) {
-                                // Closes before the core sends the move, so a tap is never too late.
+                                // Closes before the core sends, so a tap is never too late.
                                 try? await Task.sleep(for: .seconds(Int(undoSeconds())))
                                 if self.undoable == undoable { self.undoable = nil }
                             }
@@ -47,14 +50,19 @@ struct InboxView: View {
                     if let error {
                         Text(error).font(.footnote).foregroundStyle(.secondary).padding()
                     }
-                    Picker("inbox_title", selection: $tab) {
-                        ForEach(Category.all, id: \.self) { category in
-                            let unread = tabs.first { $0.category == category }?.unread ?? 0
-                            (Text(category.label) + Text(unread > 0 ? " \(unread)" : ""))
-                                .tag(category)
+                    HStack {
+                        Picker("inbox_title", selection: $tab) {
+                            ForEach(Category.all, id: \.self) { category in
+                                let unread = tabs.first { $0.category == category }?.unread ?? 0
+                                (Text(category.label) + Text(unread > 0 ? " \(unread)" : ""))
+                                    .tag(category)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        Button("compose_new") {
+                            composing = Composing(draft: DraftItem(accountId: 0, to: "", subject: "", text: "", replyTo: nil))
                         }
                     }
-                    .pickerStyle(.segmented)
                     .padding(.horizontal)
                     .padding(.bottom, 8)
                 }
@@ -64,12 +72,18 @@ struct InboxView: View {
             .task(id: tab) { await load() }
         }
         .task { await sync() }
+        .fullScreenCover(item: $composing) { composing in
+            ComposeView(mail: mail, composing: composing) { id, sent in
+                self.composing = nil
+                undoable = .send(id, sent)
+            }
+        }
     }
 
     /// Done: the message leaves the list at once; the toast can take it back for a moment.
     private func archive(_ message: MessageItem) {
         do {
-            undoable = try mail.archive(message)
+            undoable = .archive(try mail.archive(message))
             messages?.removeAll { $0.id == message.id }
             Task { await counts() }
         } catch {
@@ -77,11 +91,20 @@ struct InboxView: View {
         }
     }
 
-    private func undo(_ action: Int64) {
+    private func undo(_ action: Undoable) {
         undoable = nil
         Task {
             do {
-                if try mail.undo(action) { await load() }
+                switch action {
+                case .archive(let id):
+                    if try mail.undo(id) { await load() }
+                case .send(let id, let sent):
+                    if let draft = try mail.undoSend(id) {
+                        var again = sent
+                        again.draft = draft
+                        composing = again
+                    }
+                }
             } catch {
                 self.error = error.text()
             }
@@ -128,12 +151,26 @@ struct InboxView: View {
     }
 }
 
+/// An action the toast can still take back.
+private enum Undoable: Equatable {
+    case archive(Int64)
+    case send(Int64, Composing)
+
+    var text: LocalizedStringKey {
+        switch self {
+        case .archive: "inbox_archived"
+        case .send: "inbox_sending"
+        }
+    }
+}
+
 private struct UndoToast: View {
+    let text: LocalizedStringKey
     let undo: () -> Void
 
     var body: some View {
         HStack {
-            Text("inbox_archived")
+            Text(text)
             Spacer()
             Button("action_undo", action: undo).fontWeight(.semibold)
         }
