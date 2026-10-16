@@ -184,13 +184,19 @@ impl Store for Memory {
         Ok(self.ops.clone())
     }
 
-    fn finish(&self, ops: &[OpId]) -> Result<(), StoreError> {
-        self.finished.lock().unwrap().extend_from_slice(ops);
+    fn finish(&self, ops: &[Op]) -> Result<(), StoreError> {
+        self.finished
+            .lock()
+            .unwrap()
+            .extend(ops.iter().map(|o| o.id));
         Ok(())
     }
 
-    fn revert(&self, ops: &[OpId]) -> Result<(), StoreError> {
-        self.reverted.lock().unwrap().extend_from_slice(ops);
+    fn revert(&self, ops: &[Op]) -> Result<(), StoreError> {
+        self.reverted
+            .lock()
+            .unwrap()
+            .extend(ops.iter().map(|o| o.id));
         Ok(())
     }
 }

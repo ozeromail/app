@@ -343,20 +343,15 @@ impl Store for SqliteStore {
             .ok_or(StoreError::NotFound)?;
         let undo = queued.unwrap_or(flags & SEEN != 0);
         set_seen(&tx, message.0, seen)?;
-        let written = if seen == undo {
-            // Back where the server is: nothing to send.
-            tx.prepare_cached("DELETE FROM op WHERE message_id = ?1 AND kind = 'seen'")
-                .and_then(|mut s| s.execute([message.0]))
-        } else {
-            tx.prepare_cached(
-                "INSERT INTO op (message_id, kind, value, undo, not_before)
-                 VALUES (?1, 'seen', ?2, ?3, ?4)
-                 ON CONFLICT (message_id, kind) DO UPDATE SET
-                     value = excluded.value, not_before = excluded.not_before",
-            )
-            .and_then(|mut s| s.execute(params![message.0, seen, undo, not_before]))
-        };
-        written.map_err(storage)?;
+        // Kept even when it undoes itself: a push may be sending the older value right now.
+        tx.prepare_cached(
+            "INSERT INTO op (message_id, kind, value, undo, not_before)
+             VALUES (?1, 'seen', ?2, ?3, ?4)
+             ON CONFLICT (message_id, kind) DO UPDATE SET
+                 value = excluded.value, not_before = excluded.not_before",
+        )
+        .and_then(|mut s| s.execute(params![message.0, seen, undo, not_before]))
+        .map_err(storage)?;
         tx.commit().map_err(storage)
     }
 
@@ -389,39 +384,49 @@ impl Store for SqliteStore {
         rows.map_err(storage)
     }
 
-    fn finish(&self, ops: &[OpId]) -> Result<(), StoreError> {
+    fn finish(&self, ops: &[Op]) -> Result<(), StoreError> {
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(storage)?;
         {
+            // An op the user changed since it was read stays queued with the new value.
             let mut delete = tx
-                .prepare_cached("DELETE FROM op WHERE id = ?1")
+                .prepare_cached("DELETE FROM op WHERE id = ?1 AND value = ?2")
                 .map_err(storage)?;
             for op in ops {
-                delete.execute([op.0]).map_err(storage)?;
+                delete
+                    .execute(params![op.id.0, stored_value(op.action)])
+                    .map_err(storage)?;
             }
         }
         tx.commit().map_err(storage)
     }
 
-    fn revert(&self, ops: &[OpId]) -> Result<(), StoreError> {
+    fn revert(&self, ops: &[Op]) -> Result<(), StoreError> {
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(storage)?;
         {
-            let mut find = tx
-                .prepare_cached("SELECT message_id, kind, undo FROM op WHERE id = ?1")
+            let mut undo = tx
+                .prepare_cached(
+                    "SELECT message_id, kind, undo FROM op WHERE id = ?1 AND value = ?2",
+                )
                 .map_err(storage)?;
             let mut delete = tx
                 .prepare_cached("DELETE FROM op WHERE id = ?1")
                 .map_err(storage)?;
             for op in ops {
-                let found: Option<(i64, StoredAction, i64)> = find
-                    .query_row([op.0], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                // Gone or changed since it was read: nothing of this op to undo.
+                let found: Option<(i64, StoredAction, i64)> = undo
+                    .query_row(params![op.id.0, stored_value(op.action)], |r| {
+                        Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                    })
                     .optional()
                     .map_err(storage)?;
-                let (message, kind, undo) = found.ok_or(StoreError::NotFound)?;
-                let Action::Seen(seen) = kind.with(undo);
+                let Some((message, kind, value)) = found else {
+                    continue;
+                };
+                let Action::Seen(seen) = kind.with(value);
                 set_seen(&tx, message, seen)?;
-                delete.execute([op.0]).map_err(storage)?;
+                delete.execute([op.id.0]).map_err(storage)?;
             }
         }
         tx.commit().map_err(storage)
@@ -553,6 +558,13 @@ struct Role(FolderRole);
 #[derive(Clone, Copy)]
 enum StoredAction {
     Seen,
+}
+
+/// The value column of `op` for an action.
+fn stored_value(action: Action) -> i64 {
+    match action {
+        Action::Seen(seen) => i64::from(seen),
+    }
 }
 
 impl StoredAction {

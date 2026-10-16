@@ -50,17 +50,17 @@ final class Mail: Sendable {
         return try await core.messageBody(message: message.id, password: password)
     }
 
-    /// Marks the message read on the device, then tells its server, both off the main
-    /// thread and not tied to the screen, so leaving it does not stop the push.
-    func markRead(_ message: MessageItem) {
+    /// Marks the message read on the device now, so the list shows it on return;
+    /// the server hears about it in a task the screen does not own.
+    func markRead(_ message: MessageItem) throws {
+        try core.markRead(message: message.id, seen: true)
         Task.detached {
             do {
-                try self.core.markRead(message: message.id, seen: true)
                 guard let password = try self.password(of: message.accountId) else { return }
                 try await self.core.pushActions(account: message.accountId, password: password)
             } catch {
-                // Still queued if it was saved: the next push or sync sends it.
-                log.error("mark read failed: \(String(describing: error), privacy: .public)")
+                // Still queued: the next push or sync sends it.
+                log.error("push failed: \(String(describing: error), privacy: .public)")
             }
         }
     }

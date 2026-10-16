@@ -34,6 +34,8 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RESPONSE: u32 = 16 * 1024 * 1024;
 /// How much of one message `body` downloads; text parts come first, big attachments last.
 const MAX_BODY: NonZeroU32 = NonZeroU32::MIN.saturating_add(4 * 1024 * 1024 - 1);
+/// UIDs per STORE command.
+const STORE_CHUNK: usize = 500;
 /// Headers the message list needs.
 const HEADER_FIELDS: [&str; 4] = ["FROM", "SUBJECT", "DATE", "MESSAGE-ID"];
 
@@ -131,8 +133,12 @@ impl ImapSession {
     async fn run(&mut self, body: CommandBody<'_>) -> Result<Reply, ProviderError> {
         let name = body.name();
         let reply = self.send(body).await?;
-        match reply.kind {
-            StatusKind::Ok => Ok(reply),
+        match (reply.kind, &reply.code) {
+            (StatusKind::Ok, _) => Ok(reply),
+            // Busy or locked: worth trying again later, unlike a refusal.
+            (StatusKind::No, Some(code)) if is_temporary(code) => {
+                Err(ProviderError::Network(format!("{name}: {}", reply.text)))
+            }
             _ => Err(protocol(format!("{name}: {}", reply.text))),
         }
     }
@@ -382,16 +388,15 @@ impl MailProvider for ImapSession {
         } else {
             StoreType::Remove
         };
-        // A UID that was expunged meanwhile is skipped by the server.
-        let store = CommandBody::store(
-            uids.as_slice(),
-            kind,
-            StoreResponse::Silent,
-            vec![Flag::Seen],
-            true,
-        )
-        .map_err(|_| protocol("bad STORE"))?;
-        self.run(store).await.map(|_| ())
+        // Chunks keep each command line well under server limits.
+        for chunk in uids.chunks(STORE_CHUNK) {
+            // A UID that was expunged meanwhile is skipped by the server.
+            let store =
+                CommandBody::store(chunk, kind, StoreResponse::Silent, vec![Flag::Seen], true)
+                    .map_err(|_| protocol("bad STORE"))?;
+            self.run(store).await?;
+        }
+        Ok(())
     }
 }
 

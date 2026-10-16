@@ -1,8 +1,9 @@
 //! Facade the Android and iOS apps call through UniFFI.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ozero_app::ops::push_ops;
@@ -39,6 +40,8 @@ pub struct Core {
     store: SqliteStore,
     parser: MimeParser,
     tls: OnceLock<Arc<ClientConfig>>,
+    /// One push or sync per account at a time, so a sync never saves flags from before a push.
+    busy: Mutex<HashMap<AccountId, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl fmt::Debug for Core {
@@ -57,6 +60,7 @@ impl Core {
             store: SqliteStore::open(Path::new(&path), &key)?,
             parser: MimeParser::default(),
             tls: OnceLock::new(),
+            busy: Mutex::default(),
         }))
     }
 
@@ -124,6 +128,9 @@ impl Core {
     /// After a failure they stay queued, and the next push or sync sends them.
     pub async fn push_actions(&self, account: i64, password: String) -> Result<(), CoreError> {
         let account = AccountId(account);
+        let lock = self.busy(account);
+        let _busy = lock.lock().await;
+        // Read under the lock: a push that waited finds what the one before it sent gone.
         let ops = self.store.due(account, now())?;
         if ops.is_empty() {
             return Ok(());
@@ -138,6 +145,8 @@ impl Core {
     /// messages into the database.
     pub async fn sync_imap(&self, account: i64, password: String) -> Result<(), CoreError> {
         let account = AccountId(account);
+        let lock = self.busy(account);
+        let _busy = lock.lock().await;
         let mut imap = self.connect(account, &password).await?;
         push_ops(&self.store, &mut imap, self.store.due(account, now())?).await?;
         sync_inbox(&self.store, &mut imap, &self.parser, account, SYNC_LIMIT).await?;
@@ -166,6 +175,11 @@ impl Core {
 }
 
 impl Core {
+    fn busy(&self, account: AccountId) -> Arc<tokio::sync::Mutex<()>> {
+        let mut locks = self.busy.lock().unwrap_or_else(|p| p.into_inner());
+        locks.entry(account).or_default().clone()
+    }
+
     /// Logs in to a saved IMAP account.
     async fn connect(&self, account: AccountId, password: &str) -> Result<ImapSession, CoreError> {
         let server = self
