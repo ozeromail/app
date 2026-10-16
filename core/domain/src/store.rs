@@ -33,7 +33,8 @@ pub trait Store: Send + Sync {
     fn body(&self, message: MessageId) -> Result<Option<Body>, StoreError>;
 
     /// Applies the action to the message now and queues it for the server from `not_before`.
-    /// It replaces a queued action of the same kind. Lists leave out a message being archived.
+    /// It replaces a queued action of the same kind. Lists leave out a message being archived;
+    /// archiving fails with `NoArchive` if the account has no archive folder.
     fn queue(
         &self,
         message: MessageId,
@@ -64,6 +65,8 @@ pub enum StoreError {
         version: u32,
     },
     NotFound,
+    /// The message's account has no folder with the archive role.
+    NoArchive,
     /// Anything else from the storage engine, without message contents.
     Storage(String),
 }
@@ -76,6 +79,7 @@ impl fmt::Display for StoreError {
                 write!(f, "database schema {version} is newer than this app")
             }
             Self::NotFound => write!(f, "not found"),
+            Self::NoArchive => write!(f, "the account has no archive folder"),
             Self::Storage(e) => write!(f, "storage error: {e}"),
         }
     }

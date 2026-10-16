@@ -346,24 +346,30 @@ impl Store for SqliteStore {
             })
             .map_err(storage)?
             .ok_or(StoreError::NotFound)?;
-        // What to restore on revert or undo; archiving is undone by dropping the op.
-        let undo = queued.unwrap_or(i64::from(flags & SEEN != 0));
-        if let Action::Seen(seen) = action {
-            set_seen(&tx, message.0, seen)?;
-        }
+        // What to restore on revert or undo, and where a move goes.
+        let (undo, target) = match action {
+            Action::Seen(seen) => {
+                set_seen(&tx, message.0, seen)?;
+                (queued.unwrap_or(i64::from(flags & SEEN != 0)), None)
+            }
+            // Undone by dropping the op, which shows the message again.
+            Action::Archive => (0, Some(archive_folder(&tx, message)?)),
+        };
         // Kept even when it undoes itself: a push may be sending the older value right now.
         let id = tx
             .prepare_cached(
-                "INSERT INTO op (message_id, kind, value, undo, not_before)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
+                "INSERT INTO op (message_id, kind, value, undo, not_before, target)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                  ON CONFLICT (message_id, kind) DO UPDATE SET
-                     value = excluded.value, not_before = excluded.not_before
+                     value = excluded.value, not_before = excluded.not_before,
+                     target = excluded.target
                  RETURNING id",
             )
             .and_then(|mut s| {
-                s.query_row(params![message.0, kind, value, undo, not_before], |r| {
-                    r.get(0)
-                })
+                s.query_row(
+                    params![message.0, kind, value, undo, not_before, target],
+                    |r| r.get(0),
+                )
             })
             .map_err(storage)?;
         tx.commit().map_err(storage)?;
@@ -373,13 +379,12 @@ impl Store for SqliteStore {
     fn undo(&self, op: OpId, now: i64) -> Result<bool, StoreError> {
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(storage)?;
-        let held = tx
-            .prepare_cached("SELECT 1 FROM op WHERE id = ?1 AND not_before > ?2")
-            .and_then(|mut s| s.exists(params![op.0, now]))
-            .map_err(storage)?;
-        if held {
-            take_back(&tx, op)?;
-        }
+        let held = take_back(
+            &tx,
+            "DELETE FROM op WHERE id = ?1 AND not_before > ?2 RETURNING message_id, kind, undo",
+            op,
+            now,
+        )?;
         tx.commit().map_err(storage)?;
         Ok(held)
     }
@@ -399,13 +404,9 @@ impl Store for SqliteStore {
         let conn = self.conn();
         let rows = conn
             .prepare_cached(
-                "SELECT o.id, o.kind, o.value, m.id, f.remote_id, f.validity, m.remote_id,
-                        CASE o.kind WHEN 'archive' THEN
-                            (SELECT a.remote_id FROM folder a
-                             WHERE a.account_id = f.account_id AND a.role = 'archive'
-                             ORDER BY a.id LIMIT 1)
-                        END
+                "SELECT o.id, o.kind, o.value, m.id, f.remote_id, f.validity, m.remote_id, t.remote_id
                  FROM op o JOIN message m ON m.id = o.message_id JOIN folder f ON f.id = m.folder_id
+                 LEFT JOIN folder t ON t.id = o.target
                  WHERE f.account_id = ?1 AND o.not_before <= ?2
                  ORDER BY o.id",
             )
@@ -458,33 +459,58 @@ impl Store for SqliteStore {
     fn revert(&self, ops: &[Op]) -> Result<(), StoreError> {
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(storage)?;
-        {
-            let mut unchanged = tx
-                .prepare_cached("SELECT 1 FROM op WHERE id = ?1 AND value = ?2")
-                .map_err(storage)?;
-            for op in ops {
-                // Gone or changed since it was read: nothing of this op to undo.
-                let (_, value) = stored(op.action);
-                if unchanged.exists(params![op.id.0, value]).map_err(storage)? {
-                    take_back(&tx, op.id)?;
-                }
-            }
+        for op in ops {
+            // Gone or changed since it was read: nothing of this op to undo.
+            let (_, value) = stored(op.action);
+            take_back(
+                &tx,
+                "DELETE FROM op WHERE id = ?1 AND value = ?2 RETURNING message_id, kind, undo",
+                op.id,
+                value,
+            )?;
         }
         tx.commit().map_err(storage)
     }
 }
 
-/// Restores what the op changed on the device and drops the op.
-fn take_back(tx: &Transaction<'_>, op: OpId) -> Result<(), StoreError> {
-    let (message, kind, undo): (i64, StoredAction, i64) = tx
-        .prepare_cached("DELETE FROM op WHERE id = ?1 RETURNING message_id, kind, undo")
-        .and_then(|mut s| s.query_row([op.0], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))))
+/// The folder of the message's account that has the archive role.
+fn archive_folder(tx: &Transaction<'_>, message: MessageId) -> Result<i64, StoreError> {
+    tx.prepare_cached(
+        "SELECT a.id FROM message m JOIN folder f ON f.id = m.folder_id
+         JOIN folder a ON a.account_id = f.account_id AND a.role = ?2
+         WHERE m.id = ?1 ORDER BY a.id LIMIT 1",
+    )
+    .and_then(|mut s| {
+        s.query_row(params![message.0, role_str(FolderRole::Archive)], |r| {
+            r.get(0)
+        })
+        .optional()
+    })
+    .map_err(storage)?
+    .ok_or(StoreError::NoArchive)
+}
+
+/// Drops the op if `sql`, a `DELETE ... RETURNING message_id, kind, undo` with the op id
+/// as `?1` and `arg` as `?2`, finds it, and restores what it changed on the device.
+fn take_back(tx: &Transaction<'_>, sql: &str, op: OpId, arg: i64) -> Result<bool, StoreError> {
+    let found: Option<(i64, StoredAction, i64)> = tx
+        .prepare_cached(sql)
+        .and_then(|mut s| {
+            s.query_row(params![op.0, arg], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
+            .optional()
+        })
         .map_err(storage)?;
+    let Some((message, kind, undo)) = found else {
+        return Ok(false);
+    };
     match kind.with(undo) {
-        Action::Seen(seen) => set_seen(tx, message, seen),
+        Action::Seen(seen) => set_seen(tx, message, seen)?,
         // Without its op the message shows in its folder again.
-        Action::Archive => Ok(()),
+        Action::Archive => {}
     }
+    Ok(true)
 }
 
 fn set_seen(tx: &Transaction<'_>, message: i64, seen: bool) -> Result<(), StoreError> {

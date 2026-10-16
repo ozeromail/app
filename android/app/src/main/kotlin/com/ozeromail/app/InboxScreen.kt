@@ -46,8 +46,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.MessageItem
+import uniffi.ozero_api.undoSeconds
 
 /** The unified inbox: shows what is saved at once, then syncs; pull down to sync again. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -101,8 +103,11 @@ fun InboxScreen(mail: Mail) {
                 onFailed()
                 return@launch
             }
-            load()
-            val result = snackbar.showSnackbar(archived, undo, duration = SnackbarDuration.Short)
+            messages = messages.filterNot { it.id == message.id }
+            // Closes before the core sends the move, so Undo is never too late.
+            val result = withTimeoutOrNull(undoSeconds().toLong() * 1000) {
+                snackbar.showSnackbar(archived, undo, duration = SnackbarDuration.Indefinite)
+            }
             if (result == SnackbarResult.ActionPerformed && mail.undo(action)) load()
         }
     }

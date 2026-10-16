@@ -39,8 +39,8 @@ struct InboxView: View {
                     if let undoable {
                         UndoToast { undo(undoable) }
                             .task(id: undoable) {
-                                // Shorter than the core's hold, so a tap is never too late.
-                                try? await Task.sleep(for: .seconds(4))
+                                // Closes before the core sends the move, so a tap is never too late.
+                                try? await Task.sleep(for: .seconds(Int(undoSeconds())))
                                 if self.undoable == undoable { self.undoable = nil }
                             }
                     }

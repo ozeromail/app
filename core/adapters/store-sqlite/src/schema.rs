@@ -67,4 +67,6 @@ pub const MIGRATIONS: &[&str] = &[
         UNIQUE (message_id, kind)
     );
     ",
+    // 7: the folder a move goes to, chosen when it is queued.
+    "ALTER TABLE op ADD COLUMN target INTEGER REFERENCES folder(id) ON DELETE SET NULL;",
 ];
