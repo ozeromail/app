@@ -67,6 +67,9 @@ class Mail(private val context: Context) {
         core.messageBody(message.id, password(message.accountId).orEmpty())
     }
 
+    /** Messages matching every word of [text], newest first. */
+    suspend fun search(text: String): List<MessageItem> = io { core.search(text, SEARCH_SIZE) }
+
     /** The message's conversation, oldest first. */
     suspend fun thread(message: MessageItem): List<MessageItem> = io { core.thread(message.id) }
 
@@ -148,6 +151,7 @@ class Mail(private val context: Context) {
         const val IMAPS_PORT = 993
         const val SMTPS_PORT = 465
         private const val INBOX_SIZE = 200u
+        private const val SEARCH_SIZE = 100u
     }
 }
 

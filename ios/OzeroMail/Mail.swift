@@ -7,6 +7,7 @@ final class Mail: Sendable {
     static let imapsPort: UInt16 = 993
     static let smtpsPort: UInt16 = 465
     private static let inboxSize: UInt32 = 200
+    private static let searchSize: UInt32 = 100
 
     private let core: Core
     private let vault = Vault()
@@ -76,6 +77,11 @@ final class Mail: Sendable {
     func body(of message: MessageItem) async throws -> MessageBody {
         let password = try password(of: message.accountId) ?? ""
         return try await core.messageBody(message: message.id, password: password)
+    }
+
+    /// Messages matching every word of `text`, newest first.
+    func search(_ text: String) async throws -> [MessageItem] {
+        try core.search(text: text, limit: Self.searchSize)
     }
 
     /// The message's conversation, oldest first.

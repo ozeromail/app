@@ -16,36 +16,65 @@ struct InboxView: View {
     @State private var tabs: [InboxTab] = []
     @State private var unsent: [UnsentItem] = []
     @State private var path: [MessageItem] = []
+    @State private var query = ""
+    /// With the query they answer, so "No messages" never shows for a query still waiting.
+    @State private var found: (query: String, messages: [MessageItem])?
+    @State private var searchError: LocalizedStringKey?
+
+    /// Search results while there is a query, otherwise nil: the inbox shows.
+    private var results: [MessageItem]? {
+        query.trimmingCharacters(in: .whitespaces).isEmpty ? nil : found?.messages ?? []
+    }
 
     var body: some View {
         NavigationStack(path: $path) {
             List {
-                ForEach(unsent, id: \.id) { failed in
-                    Button { fix(failed) } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("inbox_not_sent").fontWeight(.semibold).foregroundStyle(.red)
-                            (failed.subject.isEmpty ? Text("inbox_no_subject") : Text(verbatim: failed.subject))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                if let results {
+                    if found?.query == query && results.isEmpty {
+                        EmptyRow()
+                    }
+                    ForEach(results, id: \.id) { message in
+                        NavigationLink(value: message) { MessageRow(message: message) }
+                    }
+                } else {
+                    ForEach(unsent, id: \.id) { failed in
+                        Button { fix(failed) } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("inbox_not_sent").fontWeight(.semibold).foregroundStyle(.red)
+                                (failed.subject.isEmpty ? Text("inbox_no_subject") : Text(verbatim: failed.subject))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
                         }
                     }
-                }
-                if messages?.isEmpty == true && !syncing && error == nil {
-                    Text("inbox_empty")
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity)
-                        .listRowSeparator(.hidden)
-                }
-                ForEach(messages ?? [], id: \.id) { message in
-                    NavigationLink(value: message) { MessageRow(message: message) }
-                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                            Button("action_done") { archive(message) }
-                                .tint(.accentColor)
-                        }
+                    if messages?.isEmpty == true && !syncing && error == nil {
+                        EmptyRow()
+                    }
+                    ForEach(messages ?? [], id: \.id) { message in
+                        NavigationLink(value: message) { MessageRow(message: message) }
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button("action_done") { archive(message) }
+                                    .tint(.accentColor)
+                            }
+                    }
                 }
             }
             .listStyle(.plain)
             .navigationTitle("inbox_title")
+            .searchable(text: $query, prompt: Text("search_prompt"))
+            .task(id: query) {
+                searchError = nil
+                guard results != nil else { return }
+                do {
+                    // A pause in typing starts a search, so each key does not.
+                    try await Task.sleep(for: .milliseconds(150))
+                    found = (query, try await mail.search(query))
+                } catch is CancellationError {
+                    // The query changed meanwhile.
+                } catch {
+                    searchError = error.text()
+                }
+            }
             .navigationDestination(for: MessageItem.self) { message in
                 MessageView(mail: mail, message: message) { composing = .reply(to: $0) }
             }
@@ -60,8 +89,8 @@ struct InboxView: View {
                                 if self.undoable == undoable { self.undoable = nil }
                             }
                     }
-                    if let error {
-                        Text(error).font(.footnote).foregroundStyle(.secondary).padding()
+                    if let shown = results == nil ? error : searchError {
+                        Text(shown).font(.footnote).foregroundStyle(.secondary).padding()
                     }
                     HStack {
                         Picker("inbox_title", selection: $tab) {
@@ -285,4 +314,14 @@ func shortDate(_ seconds: Int64) -> String {
         return date.formatted(.dateTime.day().month(.abbreviated))
     }
     return date.formatted(date: .numeric, time: .omitted)
+}
+
+/// "No messages", as a row of a list.
+private struct EmptyRow: View {
+    var body: some View {
+        Text("inbox_empty")
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .listRowSeparator(.hidden)
+    }
 }

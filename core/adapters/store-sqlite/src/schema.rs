@@ -122,4 +122,50 @@ pub const MIGRATIONS: &[&str] = &[
     CREATE INDEX message_ref_ref ON message_ref(ref);
     UPDATE folder SET next_id = 0;
     ",
+    // 13: full-text search over subject, sender and body, or the snippet until the body is
+    // saved. `message_search_source` says what is indexed; triggers reindex a message from
+    // it. `remove_diacritics 2` lets "e" find "é"; ё is folded by hand, the tokenizer keeps
+    // it. The prefix indexes keep searches of the first letters typed quick.
+    "
+    CREATE VIRTUAL TABLE message_search USING fts5(
+        subject, sender, text, tokenize = 'unicode61 remove_diacritics 2', prefix = '1 2 3'
+    );
+    CREATE VIEW message_search_source (id, subject, sender, text) AS
+        SELECT m.id,
+               replace(replace(m.subject, 'ё', 'е'), 'Ё', 'Е'),
+               replace(replace(coalesce(m.from_name || ' ', '') || m.from_email, 'ё', 'е'), 'Ё', 'Е'),
+               replace(replace(coalesce(b.text, m.snippet), 'ё', 'е'), 'Ё', 'Е')
+        FROM message m LEFT JOIN message_body b ON b.message_id = m.id;
+    INSERT INTO message_search (rowid, subject, sender, text)
+        SELECT * FROM message_search_source;
+    CREATE TRIGGER message_search_insert AFTER INSERT ON message BEGIN
+        INSERT INTO message_search (rowid, subject, sender, text)
+            SELECT * FROM message_search_source WHERE id = new.id;
+    END;
+    -- A sync rewrites these with each flag change; only a real change costs a reindex.
+    CREATE TRIGGER message_search_update AFTER UPDATE OF subject, from_name, from_email, snippet
+        ON message
+        WHEN old.subject IS NOT new.subject OR old.from_name IS NOT new.from_name
+            OR old.from_email IS NOT new.from_email OR old.snippet IS NOT new.snippet
+    BEGIN
+        DELETE FROM message_search WHERE rowid = new.id;
+        INSERT INTO message_search (rowid, subject, sender, text)
+            SELECT * FROM message_search_source WHERE id = new.id;
+    END;
+    CREATE TRIGGER message_search_delete AFTER DELETE ON message BEGIN
+        DELETE FROM message_search WHERE rowid = old.id;
+    END;
+    CREATE TRIGGER message_search_body AFTER INSERT ON message_body BEGIN
+        DELETE FROM message_search WHERE rowid = new.message_id;
+        INSERT INTO message_search (rowid, subject, sender, text)
+            SELECT * FROM message_search_source WHERE id = new.message_id;
+    END;
+    CREATE TRIGGER message_search_body_update AFTER UPDATE OF text ON message_body
+        WHEN old.text IS NOT new.text
+    BEGIN
+        DELETE FROM message_search WHERE rowid = new.message_id;
+        INSERT INTO message_search (rowid, subject, sender, text)
+            SELECT * FROM message_search_source WHERE id = new.message_id;
+    END;
+    ",
 ];

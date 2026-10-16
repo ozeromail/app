@@ -39,6 +39,10 @@ pub trait Store: Send + Sync {
     /// Unread messages in each tab of the unified inbox, leaving out those being archived.
     /// A tab without any is missing.
     fn inbox_unread(&self) -> Result<Vec<(Category, u32)>, StoreError>;
+    /// Messages, newest first, whose subject, sender or body has every word of `text`, each
+    /// as a word or the start of one, case and accents aside. Trash, junk and what is being
+    /// archived are left out; empty `text` finds nothing.
+    fn search(&self, text: &str, limit: u32) -> Result<Vec<MessageRow>, StoreError>;
     /// Unread People mail in an inbox saved since the last call and dated after `since`
     /// (seconds), newest first, for a notification. Everything saved stops being new.
     fn take_fresh(&self, since: i64) -> Result<Vec<MessageRow>, StoreError>;
