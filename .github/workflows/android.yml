@@ -6,6 +6,8 @@ on:
   push:
     branches: [main]
     paths: ["android/**", "core/**", "i18n/**", "tools/gen-strings.py", ".github/workflows/android.yml"]
+    # A tag like v0.1.0 also builds the signed release.
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -52,7 +54,40 @@ jobs:
           fi
       - name: Build and lint
         working-directory: android
-        run: ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME" ./gradlew :app:assembleDebug :app:lintDebug
+        # The release build checks that R8 keeps what the core bindings need; a tag builds it
+        # signed below.
+        env:
+          RELEASE: ${{ !startsWith(github.ref, 'refs/tags/v') && ':app:assembleRelease' || '' }}
+        run: ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME" ./gradlew :app:assembleDebug :app:lintDebug $RELEASE
+      - name: Build the signed release
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        working-directory: android
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_UPLOAD_KEYSTORE }}
+          UPLOAD_KEYSTORE: ${{ runner.temp }}/upload.jks
+          UPLOAD_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
+          UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+          UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
+          VERSION_NAME: ${{ github.ref_name }}
+        run: |
+          if [ -z "$KEYSTORE" ] || [ -z "$UPLOAD_KEYSTORE_PASSWORD" ] || [ -z "$UPLOAD_KEY_ALIAS" ] || [ -z "$UPLOAD_KEY_PASSWORD" ]; then
+            echo "::error::Set all four ANDROID_UPLOAD_* secrets"
+            exit 1
+          fi
+          echo "$KEYSTORE" | base64 -d > "$UPLOAD_KEYSTORE"
+          VERSION_NAME="${VERSION_NAME#v}" ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME" \
+            ./gradlew :app:bundleRelease :app:assembleRelease
+      - name: Upload the release
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ozero-mail-${{ github.ref_name }}
+          path: |
+            android/app/build/outputs/bundle/release/app-release.aab
+            android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
       - name: Upload debug APK
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
