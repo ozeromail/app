@@ -34,6 +34,11 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: tools/build-xcframework.sh
       - name: Build the app for the simulator
-        run: >
-          xcodebuild build -project ios/OzeroMail.xcodeproj -target OzeroMail
-          -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO
+        # Compiler errors also become annotations, readable without the job log.
+        run: |
+          set -o pipefail
+          xcodebuild build -project ios/OzeroMail.xcodeproj -target OzeroMail \
+            -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO 2>&1 | tee build.log || {
+            grep -E "error:" build.log | sort -u | head -10 | sed 's/%/%25/g; s/^/::error::/'
+            exit 1
+          }
