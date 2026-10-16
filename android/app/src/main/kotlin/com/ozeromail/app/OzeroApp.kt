@@ -14,5 +14,6 @@ class OzeroApp : Application() {
             // The core then refuses secure connections with a TLS error instead of crashing here.
             Log.e("Ozero", "certificate checks are not set up", e)
         }
+        MailWorker.schedule(this)
     }
 }
