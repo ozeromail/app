@@ -24,7 +24,8 @@ enum BackgroundCheck {
             let mail = try await Mail.shared()
             // Other accounts may still have synced; the next run tries again.
             try? await mail.refresh()
-            await notify(try await mail.newMail())
+            let new = try await mail.newMail()
+            await notify(new)
         } catch {
             log.error("background check failed: \(String(describing: error), privacy: .public)")
         }
