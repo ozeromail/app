@@ -30,6 +30,9 @@ pub trait Store: Send + Sync {
     /// Unread messages in each tab of the unified inbox, leaving out those being archived.
     /// A tab without any is missing.
     fn inbox_unread(&self) -> Result<Vec<(Category, u32)>, StoreError>;
+    /// Unread People mail in an inbox saved since the last call, newest first, for a
+    /// notification. Everything saved before this call stops being new.
+    fn take_fresh(&self) -> Result<Vec<MessageRow>, StoreError>;
 
     fn location(&self, message: MessageId) -> Result<MessageLocation, StoreError>;
     /// Saves the body and sets the message's snippet from it.

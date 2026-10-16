@@ -632,3 +632,25 @@ fn accounts_keep_their_smtp_server() {
     let smtp = store.accounts().unwrap()[0].smtp.clone().unwrap();
     assert_eq!((smtp.host.as_str(), smtp.port), ("smtp.example.com", 465));
 }
+
+#[test]
+fn new_people_mail_is_taken_once() {
+    let store = store();
+    let folder = inbox(&store, account(&store, "a@example.com"));
+    let mut news = message(2, 200);
+    news.category = Category::Newsletters;
+    let mut read = message(3, 300);
+    read.flags.seen = true;
+    store
+        .save_messages(folder, &[message(1, 100), news, read])
+        .unwrap();
+
+    let subjects = |rows: Vec<MessageRow>| rows.into_iter().map(|r| r.subject).collect::<Vec<_>>();
+    assert_eq!(subjects(store.take_fresh().unwrap()), ["Subject 1"]);
+    // A resync of known mail brings nothing new; a new message does.
+    store
+        .save_messages(folder, &[message(1, 100), message(4, 400)])
+        .unwrap();
+    assert_eq!(subjects(store.take_fresh().unwrap()), ["Subject 4"]);
+    assert!(store.take_fresh().unwrap().is_empty());
+}

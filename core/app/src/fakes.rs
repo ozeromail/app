@@ -233,6 +233,10 @@ impl Store for Memory {
         Ok(vec![])
     }
 
+    fn take_fresh(&self) -> Result<Vec<MessageRow>, StoreError> {
+        Ok(vec![])
+    }
+
     fn list(&self, _: &ListQuery) -> Result<Vec<MessageRow>, StoreError> {
         Ok(vec![])
     }
