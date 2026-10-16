@@ -16,6 +16,7 @@ import uniffi.ozero_api.Core
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
+import uniffi.ozero_api.Tab
 
 /** What the screens need from the core; every call runs off the main thread. */
 class Mail(private val context: Context) {
@@ -30,7 +31,10 @@ class Mail(private val context: Context) {
 
     suspend fun hasAccounts(): Boolean = io { core.accounts().isNotEmpty() }
 
-    suspend fun inbox(): List<MessageItem> = io { core.unifiedInbox(INBOX_SIZE) }
+    suspend fun inbox(tab: Tab): List<MessageItem> = io { core.unifiedInbox(tab, INBOX_SIZE) }
+
+    /** Unread messages of every tab. */
+    suspend fun unread(): Map<Tab, UInt> = io { Tab.entries.associateWith { core.unread(it) } }
 
     /**
      * The core saves the account only after the server has accepted the login.

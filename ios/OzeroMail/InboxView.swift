@@ -10,6 +10,8 @@ struct InboxView: View {
     @State private var error: LocalizedStringKey?
     /// The last archive, while its toast can still take it back.
     @State private var undoable: Int64?
+    @State private var tab = Tab.people
+    @State private var unread: [Tab: UInt32] = [:]
 
     var body: some View {
         NavigationStack {
@@ -47,8 +49,19 @@ struct InboxView: View {
                     if let error {
                         Text(error).font(.footnote).foregroundStyle(.secondary).padding()
                     }
+                    Picker("inbox_title", selection: $tab) {
+                        ForEach(Tab.all, id: \.self) { item in
+                            let count = unread[item] ?? 0
+                            (Text(item.label) + Text(count > 0 ? " \(count)" : "")).tag(item)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
                 }
+                .background(.bar)
             }
+            .onChange(of: tab) { Task { await load() } }
         }
         .task {
             await load()
@@ -61,6 +74,7 @@ struct InboxView: View {
         do {
             undoable = try mail.archive(message)
             messages?.removeAll { $0.id == message.id }
+            Task { await load() }
         } catch {
             self.error = error.text()
         }
@@ -78,8 +92,12 @@ struct InboxView: View {
     }
 
     private func load() async {
+        let shown = tab
         do {
-            messages = try await mail.inbox()
+            let list = try await mail.inbox(shown)
+            unread = try await mail.unread()
+            // A tab picked meanwhile loads its own list.
+            if tab == shown { messages = list }
         } catch {
             self.error = error.text()
         }

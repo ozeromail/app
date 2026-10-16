@@ -19,5 +19,8 @@
   "error_account_exists": "Этот аккаунт уже добавлен.",
   "error_gone": "Этого письма больше нет на сервере. Обновите входящие.",
   "error_no_archive": "У этого аккаунта нет папки «Архив».",
-  "inbox_archived": "Перенесено в архив"
+  "inbox_archived": "Перенесено в архив",
+  "tab_people": "Люди",
+  "tab_notifications": "Уведомления",
+  "tab_newsletters": "Рассылки"
 }
