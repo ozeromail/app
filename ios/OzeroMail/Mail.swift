@@ -164,13 +164,13 @@ final class Mail: Sendable {
 
 /// Opens the database once, however many callers ask at the same time.
 private actor Opener {
-    private var mail: Mail?
+    private var opened: Mail?
 
     func mail() throws -> Mail {
-        if let mail { return mail }
-        let opened = try Mail.open()
-        mail = opened
-        return opened
+        if let opened { return opened }
+        let mail = try Mail.open()
+        opened = mail
+        return mail
     }
 }
 
