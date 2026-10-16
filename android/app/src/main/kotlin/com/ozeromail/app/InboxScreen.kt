@@ -22,8 +22,15 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -52,6 +59,9 @@ fun InboxScreen(mail: Mail) {
     var open by remember { mutableStateOf<MessageItem?>(null) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
+    val archived = stringResource(R.string.inbox_archived)
+    val undo = stringResource(R.string.action_undo)
 
     suspend fun load() {
         try {
@@ -81,6 +91,22 @@ fun InboxScreen(mail: Mail) {
         sync()
     }
 
+    /** Done: the message leaves the list at once; the toast can take it back for a moment. */
+    fun archive(message: MessageItem, onFailed: () -> Unit) {
+        scope.launch {
+            val action = try {
+                mail.archive(message)
+            } catch (e: CoreException) {
+                error = e.text()
+                onFailed()
+                return@launch
+            }
+            load()
+            val result = snackbar.showSnackbar(archived, undo, duration = SnackbarDuration.Short)
+            if (result == SnackbarResult.ActionPerformed && mail.undo(action)) load()
+        }
+    }
+
     val opened = open
     if (opened != null) {
         // Back reloads the list: the message now has a snippet.
@@ -108,7 +134,9 @@ fun InboxScreen(mail: Mail) {
                     item { Empty() }
                 }
                 items(messages, key = { it.id }) { message ->
-                    MessageRow(message, onClick = { open = message })
+                    SwipeToDone(onDone = { reset -> archive(message, reset) }) {
+                        MessageRow(message, onClick = { open = message })
+                    }
                     HorizontalDivider(Modifier.padding(start = 36.dp), color = MaterialTheme.colorScheme.outlineVariant)
                 }
             }
@@ -121,6 +149,35 @@ fun InboxScreen(mail: Mail) {
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
             )
         }
+        // Low on the screen, in reach of the thumb that swiped.
+        SnackbarHost(snackbar)
+    }
+}
+
+/** A swipe to the left marks the row done; [onDone] gets a way to bring the row back. */
+@Composable
+private fun SwipeToDone(onDone: (reset: () -> Unit) -> Unit, content: @Composable () -> Unit) {
+    val scope = rememberCoroutineScope()
+    val state = rememberSwipeToDismissBoxState()
+    LaunchedEffect(state.currentValue) {
+        if (state.currentValue == SwipeToDismissBoxValue.EndToStart) {
+            onDone { scope.launch { state.reset() } }
+        }
+    }
+    val colors = MaterialTheme.colorScheme
+    SwipeToDismissBox(
+        state = state,
+        enableDismissFromStartToEnd = false,
+        backgroundContent = {
+            Box(
+                Modifier.fillMaxSize().background(colors.primary).padding(horizontal = 20.dp),
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                Text(stringResource(R.string.action_done), color = colors.onPrimary, fontWeight = FontWeight.SemiBold)
+            }
+        },
+    ) {
+        Box(Modifier.background(colors.background)) { content() }
     }
 }
 

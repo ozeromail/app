@@ -8,6 +8,8 @@ struct InboxView: View {
     @State private var messages: [MessageItem]?
     @State private var syncing = false
     @State private var error: LocalizedStringKey?
+    /// The last archive, while its toast can still take it back.
+    @State private var undoable: Int64?
 
     var body: some View {
         NavigationStack {
@@ -20,6 +22,10 @@ struct InboxView: View {
                 }
                 ForEach(messages ?? [], id: \.id) { message in
                     NavigationLink(value: message) { MessageRow(message: message) }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button("action_done") { archive(message) }
+                                .tint(.accentColor)
+                        }
                 }
             }
             .listStyle(.plain)
@@ -29,14 +35,45 @@ struct InboxView: View {
             .onAppear { if messages != nil { Task { await load() } } }
             .refreshable { await sync() }
             .safeAreaInset(edge: .bottom) {
-                if let error {
-                    Text(error).font(.footnote).foregroundStyle(.secondary).padding()
+                VStack {
+                    if let undoable {
+                        UndoToast { undo(undoable) }
+                            .task(id: undoable) {
+                                // Shorter than the core's hold, so a tap is never too late.
+                                try? await Task.sleep(for: .seconds(4))
+                                if self.undoable == undoable { self.undoable = nil }
+                            }
+                    }
+                    if let error {
+                        Text(error).font(.footnote).foregroundStyle(.secondary).padding()
+                    }
                 }
             }
         }
         .task {
             await load()
             await sync()
+        }
+    }
+
+    /// Done: the message leaves the list at once; the toast can take it back for a moment.
+    private func archive(_ message: MessageItem) {
+        do {
+            undoable = try mail.archive(message)
+            messages?.removeAll { $0.id == message.id }
+        } catch {
+            self.error = error.text()
+        }
+    }
+
+    private func undo(_ action: Int64) {
+        undoable = nil
+        Task {
+            do {
+                if try mail.undo(action) { await load() }
+            } catch {
+                self.error = error.text()
+            }
         }
     }
 
@@ -59,6 +96,22 @@ struct InboxView: View {
             self.error = error.text()
         }
         await load()
+    }
+}
+
+private struct UndoToast: View {
+    let undo: () -> Void
+
+    var body: some View {
+        HStack {
+            Text("inbox_archived")
+            Spacer()
+            Button("action_undo", action: undo).fontWeight(.semibold)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(.regularMaterial, in: .rect(cornerRadius: 12))
+        .padding(.horizontal)
     }
 }
 

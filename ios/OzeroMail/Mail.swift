@@ -51,13 +51,31 @@ final class Mail: Sendable {
     }
 
     /// Marks the message read on the device now, so the list shows it on return;
-    /// the server hears about it in a task the screen does not own.
+    /// the server hears about it in the background.
     func markRead(_ message: MessageItem) throws {
         try core.markRead(message: message.id, seen: true)
+        push(account: message.accountId)
+    }
+
+    /// Takes the message out of the inbox now and returns the action for `undo`.
+    /// The server gets the move once the undo time is over.
+    func archive(_ message: MessageItem) throws -> Int64 {
+        let action = try core.archive(message: message.id)
+        push(account: message.accountId)
+        return action
+    }
+
+    /// Takes back an archive that has not gone to the server yet; false if too late.
+    func undo(_ action: Int64) throws -> Bool {
+        try core.undo(action: action)
+    }
+
+    /// Sends the account's queued actions, waiting for held ones, in a task no screen owns.
+    private func push(account: Int64) {
         Task.detached {
             do {
-                guard let password = try self.password(of: message.accountId) else { return }
-                try await self.core.pushActions(account: message.accountId, password: password)
+                guard let password = try self.password(of: account) else { return }
+                try await self.core.pushActions(account: account, password: password)
             } catch {
                 // Still queued: the next push or sync sends it.
                 log.error("push failed: \(String(describing: error), privacy: .public)")
@@ -109,6 +127,7 @@ extension Error {
         case .Tls?: return "error_tls"
         case .Server?: return "error_server"
         case .Gone?: return "error_gone"
+        case .NoArchive?: return "error_no_archive"
         default: return "error_storage"
         }
     }
