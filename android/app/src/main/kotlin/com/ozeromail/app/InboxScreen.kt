@@ -37,6 +37,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -94,16 +95,20 @@ fun InboxScreen(mail: Mail) {
     }
 
     /** Done: the message leaves the list at once; the toast can take it back for a moment. */
-    fun archive(message: MessageItem, onFailed: () -> Unit) {
+    fun archive(message: MessageItem, reset: () -> Unit) {
         scope.launch {
             val action = try {
                 mail.archive(message)
             } catch (e: CoreException) {
                 error = e.text()
-                onFailed()
-                return@launch
+                null
             }
-            messages = messages.filterNot { it.id == message.id }
+            if (action != null) messages = messages.filterNot { it.id == message.id }
+            // Also after success: a list read before the archive may bring the row back.
+            reset()
+            if (action == null) return@launch
+            // One toast at a time, for the newest message: the older one is past undo anyway.
+            snackbar.currentSnackbarData?.dismiss()
             // Closes before the core sends the move, so Undo is never too late.
             val result = withTimeoutOrNull(undoSeconds().toLong() * 1000) {
                 snackbar.showSnackbar(archived, undo, duration = SnackbarDuration.Indefinite)
@@ -164,9 +169,10 @@ fun InboxScreen(mail: Mail) {
 private fun SwipeToDone(onDone: (reset: () -> Unit) -> Unit, content: @Composable () -> Unit) {
     val scope = rememberCoroutineScope()
     val state = rememberSwipeToDismissBoxState()
+    val done by rememberUpdatedState(onDone)
     LaunchedEffect(state.currentValue) {
         if (state.currentValue == SwipeToDismissBoxValue.EndToStart) {
-            onDone { scope.launch { state.reset() } }
+            done { scope.launch { state.reset() } }
         }
     }
     val colors = MaterialTheme.colorScheme

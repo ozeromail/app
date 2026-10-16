@@ -21,13 +21,14 @@ uniffi::setup_scaffolding!();
 
 /// How many of the newest inbox messages one sync brings in.
 const SYNC_LIMIT: u32 = 200;
-/// Seconds an archived message waits before the server hears of it.
-const ARCHIVE_HOLD: i64 = 5;
+/// Milliseconds an archived message waits before the server hears of it.
+const ARCHIVE_HOLD: i64 = 5_000;
 
-/// How long the apps offer undo after archiving: shorter than the hold, so a tap is never late.
+/// How long the apps offer undo after archiving: a second shorter than the hold, so a tap
+/// is never late.
 #[uniffi::export]
 pub fn undo_seconds() -> u32 {
-    4
+    u32::try_from(ARCHIVE_HOLD / 1_000 - 1).unwrap_or(0)
 }
 
 /// Version of the core, shown in About and in manual crash reports.
@@ -123,7 +124,7 @@ impl Core {
     }
 
     /// Takes the message out of the lists at once and holds the move to the archive for
-    /// `ARCHIVE_HOLD` seconds, so `undo` can take it back. Returns the action for `undo`.
+    /// `ARCHIVE_HOLD`, so `undo` can take it back. Returns the action for `undo`.
     /// Fails with `NoArchive` if the account has no archive folder.
     pub fn archive(&self, message: i64) -> Result<i64, CoreError> {
         let op = self
@@ -177,30 +178,43 @@ impl Core {
         let account = AccountId(account);
         let mut waiter = None;
         loop {
-            {
+            let wait = {
                 let lock = self.busy(account);
                 let _busy = lock.lock().await;
                 // Read under the lock: a push that waited finds what the one before it sent gone.
-                let ops = self.store.due(account, now())?;
-                if !ops.is_empty() {
-                    let mut imap = self.connect(account, &password).await?;
-                    push_ops(&self.store, &mut imap, ops).await?;
-                    let _ = imap.logout().await;
+                let step = async {
+                    let ops = self.store.due(account, now())?;
+                    if !ops.is_empty() {
+                        let mut imap = self.connect(account, &password).await?;
+                        push_ops(&self.store, &mut imap, ops).await?;
+                        let _ = imap.logout().await;
+                    }
+                    Ok::<_, CoreError>(self.store.next_send(account)?)
                 }
-            }
-            let wait = self.store.next_send(account)?.map_or(0, |at| at - now());
-            let Ok(wait @ 1..) = u64::try_from(wait) else {
-                return Ok(());
-            };
-            // One push per account waits for held actions; it sends all of them in turn.
-            if waiter.is_none() {
-                waiter = Waiter::claim(&self.waiting, account);
-                if waiter.is_none() {
+                .await;
+                // The waiter is taken and given up under the lock, so a push that finds it
+                // taken can leave its held action to the waiting push.
+                let wait = match step {
+                    Ok(next) => next.map_or(0, |at| at - now()),
+                    Err(e) => {
+                        drop(waiter.take());
+                        return Err(e);
+                    }
+                };
+                let Ok(wait @ 1..) = u64::try_from(wait) else {
+                    drop(waiter.take());
                     return Ok(());
+                };
+                if waiter.is_none() {
+                    waiter = Waiter::claim(&self.waiting, account);
+                    if waiter.is_none() {
+                        return Ok(());
+                    }
                 }
-            }
+                wait
+            };
             // Without the lock, so a sync can run meanwhile.
-            tokio::time::sleep(Duration::from_secs(wait)).await;
+            tokio::time::sleep(Duration::from_millis(wait)).await;
         }
     }
 
@@ -278,11 +292,11 @@ impl Core {
     }
 }
 
-/// Seconds since the Unix epoch.
+/// Milliseconds since the Unix epoch.
 fn now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
 fn tls_config() -> Result<Arc<ClientConfig>, CoreError> {
