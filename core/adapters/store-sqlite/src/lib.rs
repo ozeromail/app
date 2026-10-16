@@ -330,42 +330,33 @@ impl Store for SqliteStore {
         let Action::Seen(seen) = action;
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(storage)?;
-        let flags: u8 = tx
-            .query_row(
-                "SELECT flags FROM message WHERE id = ?1",
-                [message.0],
-                |r| r.get(0),
+        let (flags, queued): (u8, Option<bool>) = tx
+            .prepare_cached(
+                "SELECT m.flags, o.undo FROM message m
+                 LEFT JOIN op o ON o.message_id = m.id AND o.kind = 'seen' WHERE m.id = ?1",
             )
-            .optional()
+            .and_then(|mut s| {
+                s.query_row([message.0], |r| Ok((r.get(0)?, r.get(1)?)))
+                    .optional()
+            })
             .map_err(storage)?
             .ok_or(StoreError::NotFound)?;
-        let queued: Option<bool> = tx
-            .query_row(
-                "SELECT undo FROM op WHERE message_id = ?1 AND kind = 'seen'",
-                [message.0],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(storage)?;
         let undo = queued.unwrap_or(flags & SEEN != 0);
-        set_seen(&tx, message, seen)?;
-        if seen == undo {
+        set_seen(&tx, message.0, seen)?;
+        let written = if seen == undo {
             // Back where the server is: nothing to send.
-            tx.execute(
-                "DELETE FROM op WHERE message_id = ?1 AND kind = 'seen'",
-                [message.0],
-            )
-            .map_err(storage)?;
+            tx.prepare_cached("DELETE FROM op WHERE message_id = ?1 AND kind = 'seen'")
+                .and_then(|mut s| s.execute([message.0]))
         } else {
-            tx.execute(
+            tx.prepare_cached(
                 "INSERT INTO op (message_id, kind, value, undo, not_before)
                  VALUES (?1, 'seen', ?2, ?3, ?4)
                  ON CONFLICT (message_id, kind) DO UPDATE SET
                      value = excluded.value, not_before = excluded.not_before",
-                params![message.0, seen, undo, not_before],
             )
-            .map_err(storage)?;
-        }
+            .and_then(|mut s| s.execute(params![message.0, seen, undo, not_before]))
+        };
+        written.map_err(storage)?;
         tx.commit().map_err(storage)
     }
 
@@ -380,7 +371,7 @@ impl Store for SqliteStore {
             )
             .and_then(|mut s| {
                 s.query_map(params![account.0, now], |r| {
-                    let ActionKind(kind) = r.get(1)?;
+                    let kind: StoredAction = r.get(1)?;
                     Ok(Op {
                         id: OpId(r.get(0)?),
                         action: kind.with(r.get(2)?),
@@ -398,40 +389,50 @@ impl Store for SqliteStore {
         rows.map_err(storage)
     }
 
-    fn finish(&self, op: OpId) -> Result<(), StoreError> {
-        self.conn()
-            .execute("DELETE FROM op WHERE id = ?1", [op.0])
-            .map_err(storage)
-            .map(|_| ())
-    }
-
-    fn revert(&self, op: OpId) -> Result<(), StoreError> {
+    fn finish(&self, ops: &[OpId]) -> Result<(), StoreError> {
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(storage)?;
-        let (message, ActionKind(kind), undo): (i64, ActionKind, i64) = tx
-            .query_row(
-                "SELECT message_id, kind, undo FROM op WHERE id = ?1",
-                [op.0],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )
-            .optional()
-            .map_err(storage)?
-            .ok_or(StoreError::NotFound)?;
-        let Action::Seen(seen) = kind.with(undo);
-        set_seen(&tx, MessageId(message), seen)?;
-        tx.execute("DELETE FROM op WHERE id = ?1", [op.0])
-            .map_err(storage)?;
+        {
+            let mut delete = tx
+                .prepare_cached("DELETE FROM op WHERE id = ?1")
+                .map_err(storage)?;
+            for op in ops {
+                delete.execute([op.0]).map_err(storage)?;
+            }
+        }
+        tx.commit().map_err(storage)
+    }
+
+    fn revert(&self, ops: &[OpId]) -> Result<(), StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        {
+            let mut find = tx
+                .prepare_cached("SELECT message_id, kind, undo FROM op WHERE id = ?1")
+                .map_err(storage)?;
+            let mut delete = tx
+                .prepare_cached("DELETE FROM op WHERE id = ?1")
+                .map_err(storage)?;
+            for op in ops {
+                let found: Option<(i64, StoredAction, i64)> = find
+                    .query_row([op.0], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                    .optional()
+                    .map_err(storage)?;
+                let (message, kind, undo) = found.ok_or(StoreError::NotFound)?;
+                let Action::Seen(seen) = kind.with(undo);
+                set_seen(&tx, message, seen)?;
+                delete.execute([op.0]).map_err(storage)?;
+            }
+        }
         tx.commit().map_err(storage)
     }
 }
 
-fn set_seen(tx: &Transaction<'_>, message: MessageId, seen: bool) -> Result<(), StoreError> {
-    let sql = if seen {
-        "UPDATE message SET flags = flags | 1 WHERE id = ?1"
-    } else {
-        "UPDATE message SET flags = flags & ~1 WHERE id = ?1"
-    };
-    tx.execute(sql, [message.0]).map_err(storage).map(|_| ())
+fn set_seen(tx: &Transaction<'_>, message: i64, seen: bool) -> Result<(), StoreError> {
+    tx.prepare_cached("UPDATE message SET flags = (flags & ~?2) | ?3 WHERE id = ?1")
+        .and_then(|mut s| s.execute(params![message, SEEN, if seen { SEEN } else { 0 }]))
+        .map_err(storage)
+        .map(|_| ())
 }
 
 /// The flags to keep for a known message: the server's, except the read state while a
@@ -547,7 +548,6 @@ fn kind_str(kind: AccountKind) -> &'static str {
 /// Stored strings are read strictly: an unknown value is an error, never a silent default.
 struct Kind(AccountKind);
 struct Role(FolderRole);
-struct ActionKind(StoredAction);
 
 /// The kind column of `op`; the value column completes it.
 #[derive(Clone, Copy)]
@@ -563,10 +563,10 @@ impl StoredAction {
     }
 }
 
-impl FromSql for ActionKind {
+impl FromSql for StoredAction {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         match value.as_str()? {
-            "seen" => Ok(Self(StoredAction::Seen)),
+            "seen" => Ok(Self::Seen),
             _ => Err(FromSqlError::InvalidType),
         }
     }

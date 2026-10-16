@@ -1,4 +1,4 @@
-use ozero_domain::{Action, MessageId, MessageLocation, OpId};
+use ozero_domain::{AccountId, Action, MessageId, MessageLocation, OpId};
 
 use super::*;
 use crate::fakes::{Memory, Server, run};
@@ -33,7 +33,7 @@ fn sends_one_request_per_folder_and_action() {
         op(4, "INBOX", "7", Action::Seen(false)),
     ]);
     let mut server = Server::default();
-    run(push_ops(&store, &mut server, AccountId(1), 100)).unwrap();
+    run(push_ops(&store, &mut server, store.ops.clone())).unwrap();
 
     let calls: Vec<_> = server
         .applied
@@ -63,7 +63,7 @@ fn a_refusal_reverts_and_a_gone_folder_finishes() {
         refuse: vec![ProviderError::Protocol("NO".into()), ProviderError::Gone],
         ..Server::default()
     };
-    run(push_ops(&store, &mut server, AccountId(1), 100)).unwrap();
+    run(push_ops(&store, &mut server, store.ops.clone())).unwrap();
     assert_eq!(*store.reverted.lock().unwrap(), [OpId(1)]);
     assert_eq!(*store.finished.lock().unwrap(), [OpId(2)]);
 }
@@ -78,7 +78,7 @@ fn a_network_failure_keeps_the_rest_queued() {
         refuse: vec![ProviderError::Network("down".into())],
         ..Server::default()
     };
-    let err = run(push_ops(&store, &mut server, AccountId(1), 100)).unwrap_err();
+    let err = run(push_ops(&store, &mut server, store.ops.clone())).unwrap_err();
     assert_eq!(
         err,
         SyncError::Provider(ProviderError::Network("down".into()))
