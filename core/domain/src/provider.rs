@@ -14,26 +14,55 @@ pub struct RawMessage {
     pub header: Vec<u8>,
 }
 
-/// The newest messages of a folder.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Recent {
+/// Where the last sync of a folder stopped. The default means it was never synced.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Checkpoint {
     /// When this changes, earlier `remote_id`s of the folder name other messages.
     /// IMAP sends it as UIDVALIDITY; providers with stable ids always return 0.
     pub validity: u32,
-    /// Oldest first.
-    pub messages: Vec<RawMessage>,
+    /// Where new messages start, as the provider counts: IMAP UIDNEXT. 0 when unknown.
+    pub next: u64,
+}
+
+/// What changed in a folder since a checkpoint. `M` is the message as sent or as parsed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Changes<M = RawMessage> {
+    /// Where this sync stopped. A new `validity` makes every saved message of the folder stale.
+    pub checkpoint: Checkpoint,
+    /// New messages, oldest first.
+    pub new: Vec<M>,
+    /// The current flags of known messages still in the folder.
+    pub flags: Vec<(String, Flags)>,
+    /// Known messages no longer in the folder.
+    pub gone: Vec<String>,
+}
+
+impl<M> Changes<M> {
+    pub fn map<N>(self, f: impl FnMut(M) -> N) -> Changes<N> {
+        Changes {
+            checkpoint: self.checkpoint,
+            new: self.new.into_iter().map(f).collect(),
+            flags: self.flags,
+            gone: self.gone,
+        }
+    }
 }
 
 /// A mail server: IMAP, Gmail API or Microsoft Graph.
 pub trait MailProvider: Send {
     fn folders(&mut self) -> impl Future<Output = Result<Vec<NewFolder>, ProviderError>> + Send;
 
-    /// The newest `limit` messages of a folder.
-    fn recent(
+    /// What changed in a folder since `since`, for the messages saved with `known` ids.
+    /// After a validity change, or without a checkpoint, `new` holds the newest `limit`
+    /// messages and nothing else is returned. Otherwise `new` holds at most the newest
+    /// `limit` messages that arrived since.
+    fn changes(
         &mut self,
         folder: &str,
+        since: Checkpoint,
+        known: &[String],
         limit: u32,
-    ) -> impl Future<Output = Result<Recent, ProviderError>> + Send;
+    ) -> impl Future<Output = Result<Changes, ProviderError>> + Send;
 
     /// The raw message with `remote_id` in a folder, without marking it read; may be cut at a
     /// size limit. Fails with `Gone` if the folder's validity is no longer `validity`.

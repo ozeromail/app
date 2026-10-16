@@ -7,7 +7,8 @@ use ozero_domain::{
     Store, StoreError,
 };
 
-/// Saves the account's folders, then the newest `limit` messages of its inbox.
+/// Saves the account's folders, then what changed in its inbox since the last sync:
+/// up to `limit` new messages, new flags and removed messages.
 pub async fn sync_inbox(
     store: &dyn Store,
     provider: &mut impl MailProvider,
@@ -21,14 +22,11 @@ pub async fn sync_inbox(
         .iter()
         .find(|f| f.role == FolderRole::Inbox)
         .ok_or(SyncError::NoInbox)?;
-    let recent = provider.recent(&inbox.remote_id, limit).await?;
-    store.set_validity(inbox.id, recent.validity)?;
-    let messages: Vec<_> = recent
-        .messages
-        .into_iter()
-        .map(|m| parser.parse(m))
-        .collect();
-    store.save_messages(inbox.id, &messages)?;
+    let (since, known) = store.checkpoint(inbox.id)?;
+    let changes = provider
+        .changes(&inbox.remote_id, since, &known, limit)
+        .await?;
+    store.save_changes(inbox.id, &changes.map(|m| parser.parse(m)))?;
     Ok(())
 }
 

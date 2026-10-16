@@ -331,8 +331,8 @@ impl Core {
         }
     }
 
-    /// Sends the account's queued actions and mail, then brings its folders and newest inbox
-    /// messages into the database.
+    /// Sends the account's queued actions and mail, then brings its folders and what changed
+    /// in its inbox into the database.
     pub async fn sync_imap(&self, account: i64, password: String) -> Result<(), CoreError> {
         let account = self.account(AccountId(account))?;
         let lock = self.busy(account.id);

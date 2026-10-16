@@ -6,10 +6,10 @@ use std::sync::Mutex;
 use std::task::{Context, Poll, Waker};
 
 use ozero_domain::{
-    Account, AccountId, Action, Address, Body, Category, Draft, Flags, Folder, FolderId, ListQuery,
-    MailProvider, MailSender, MessageBuilder, MessageId, MessageLocation, MessageParser,
-    MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing, ProviderError,
-    RawMessage, Recent, Store, StoreError, Unsent,
+    Account, AccountId, Action, Address, Body, Category, Changes, Checkpoint, Draft, Flags, Folder,
+    FolderId, ListQuery, MailProvider, MailSender, MessageBuilder, MessageId, MessageLocation,
+    MessageParser, MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing,
+    ProviderError, RawMessage, Store, StoreError, Unsent,
 };
 
 /// Fakes answer at once, so one poll finishes the future.
@@ -24,6 +24,8 @@ pub fn run<F: Future>(f: F) -> F::Output {
 pub struct Server {
     pub folders: Vec<NewFolder>,
     pub asked: Vec<(String, u32)>,
+    /// Each `changes` call: the folder, checkpoint, known ids and limit.
+    pub synced: Vec<(String, Checkpoint, Vec<String>, u32)>,
     /// Each `set_seen` and `move_to` call; they fail with the first of `refuse` while any remain.
     pub applied: Vec<(String, u32, Vec<String>, Action)>,
     pub refuse: Vec<ProviderError>,
@@ -36,20 +38,28 @@ impl MailProvider for Server {
         ready(Ok(self.folders.clone()))
     }
 
-    fn recent(
+    fn changes(
         &mut self,
         folder: &str,
+        since: Checkpoint,
+        known: &[String],
         limit: u32,
-    ) -> impl Future<Output = Result<Recent, ProviderError>> + Send {
-        self.asked.push((folder.into(), limit));
-        ready(Ok(Recent {
-            validity: 9,
-            messages: vec![RawMessage {
+    ) -> impl Future<Output = Result<Changes, ProviderError>> + Send {
+        self.synced
+            .push((folder.into(), since, known.to_vec(), limit));
+        ready(Ok(Changes {
+            checkpoint: Checkpoint {
+                validity: 9,
+                next: 8,
+            },
+            new: vec![RawMessage {
                 remote_id: "7".into(),
                 flags: Flags::default(),
                 received: 100,
                 header: b"Hi".to_vec(),
             }],
+            flags: vec![("5".into(), Flags::default())],
+            gone: vec!["6".into()],
         }))
     }
 
@@ -177,8 +187,9 @@ impl MessageParser for Parser {
 
 #[derive(Default)]
 pub struct Memory {
-    pub validity: Mutex<Vec<(FolderId, u32)>>,
-    pub saved: Mutex<Vec<(FolderId, Vec<NewMessage>)>>,
+    /// What `checkpoint` returns, and each `save_changes`.
+    pub checkpoint: (Checkpoint, Vec<String>),
+    pub changes: Mutex<Vec<(FolderId, Changes<NewMessage>)>>,
     pub bodies: Mutex<Vec<(MessageId, Body)>>,
     /// What `due` returns, and which ops were finished or reverted.
     pub ops: Vec<Op>,
@@ -219,13 +230,16 @@ impl Store for Memory {
         Ok(vec![])
     }
 
-    fn set_validity(&self, folder: FolderId, validity: u32) -> Result<(), StoreError> {
-        self.validity.lock().unwrap().push((folder, validity));
-        Ok(())
+    fn checkpoint(&self, _: FolderId) -> Result<(Checkpoint, Vec<String>), StoreError> {
+        Ok(self.checkpoint.clone())
     }
 
-    fn save_messages(&self, folder: FolderId, messages: &[NewMessage]) -> Result<(), StoreError> {
-        self.saved.lock().unwrap().push((folder, messages.to_vec()));
+    fn save_changes(
+        &self,
+        folder: FolderId,
+        changes: &Changes<NewMessage>,
+    ) -> Result<(), StoreError> {
+        self.changes.lock().unwrap().push((folder, changes.clone()));
         Ok(())
     }
 

@@ -2,6 +2,7 @@
 
 mod utf7;
 
+use std::collections::HashSet;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,8 +18,11 @@ use imap_codec::imap_types::mailbox::Mailbox;
 use imap_codec::imap_types::response::{
     Code, Data, GreetingKind, Response, Status, StatusBody, StatusKind,
 };
+use imap_codec::imap_types::sequence::SequenceSet;
 use imap_codec::{CommandCodec, GreetingCodec, ResponseCodec};
-use ozero_domain::{Flags, FolderRole, MailProvider, NewFolder, ProviderError, RawMessage, Recent};
+use ozero_domain::{
+    Changes, Checkpoint, Flags, FolderRole, MailProvider, NewFolder, ProviderError, RawMessage,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
@@ -240,8 +244,8 @@ impl ImapSession {
         timed(self.stream.write_all(data)).await
     }
 
-    /// Opens a folder, read-only unless `write`; returns its UIDVALIDITY and message count.
-    async fn open(&mut self, folder: &str, write: bool) -> Result<(u32, u32), ProviderError> {
+    /// Opens a folder, read-only unless `write`.
+    async fn open(&mut self, folder: &str, write: bool) -> Result<Opened, ProviderError> {
         let open = if write {
             CommandBody::select(folder)
         } else {
@@ -258,6 +262,14 @@ impl ImapSession {
                 _ => None,
             })
             .ok_or_else(|| protocol("no UIDVALIDITY for the folder"))?;
+        let next = reply
+            .codes
+            .iter()
+            .find_map(|c| match c {
+                Code::UidNext(n) => Some(n.get()),
+                _ => None,
+            })
+            .unwrap_or(0);
         // The last EXISTS is the newest count if mail arrived meanwhile.
         let exists = reply
             .data
@@ -268,34 +280,28 @@ impl ImapSession {
                 _ => None,
             })
             .ok_or_else(|| protocol("no EXISTS for the folder"))?;
-        Ok((validity, exists))
-    }
-}
-
-impl MailProvider for ImapSession {
-    async fn folders(&mut self) -> Result<Vec<NewFolder>, ProviderError> {
-        let list = CommandBody::list("", "*").map_err(|_| protocol("bad LIST"))?;
-        Ok(self
-            .run(list)
-            .await?
-            .data
-            .into_iter()
-            .filter_map(|d| match d {
-                Data::List { items, mailbox, .. } => folder(&items, &mailbox),
-                _ => None,
-            })
-            .collect())
+        Ok(Opened {
+            validity,
+            next,
+            exists,
+        })
     }
 
-    async fn recent(&mut self, folder: &str, limit: u32) -> Result<Recent, ProviderError> {
-        let (validity, exists) = self.open(folder, false).await?;
+    /// The newest `limit` of a folder's `exists` messages, oldest first.
+    async fn newest(&mut self, exists: u32, limit: u32) -> Result<Vec<RawMessage>, ProviderError> {
         if exists == 0 || limit == 0 {
-            return Ok(Recent {
-                validity,
-                messages: vec![],
-            });
+            return Ok(vec![]);
         }
+        let first = exists.saturating_sub(limit) + 1;
+        self.headers(first..=exists, false).await
+    }
 
+    /// Header fetch of the messages in `set`, oldest first.
+    async fn headers(
+        &mut self,
+        set: impl TryInto<SequenceSet>,
+        uid: bool,
+    ) -> Result<Vec<RawMessage>, ProviderError> {
         let fields = HEADER_FIELDS
             .iter()
             .map(|f| AString::try_from(*f))
@@ -313,27 +319,134 @@ impl MailProvider for ImapSession {
                 peek: true,
             },
         ];
-        let first = exists.saturating_sub(limit) + 1;
-        let fetch =
-            CommandBody::fetch(first..=exists, items, false).map_err(|_| protocol("bad FETCH"))?;
-
+        let fetch = CommandBody::fetch(set, items, uid).map_err(|_| protocol("bad FETCH"))?;
         let mut messages: Vec<_> = self
             .run(fetch)
             .await?
             .data
             .into_iter()
             .filter_map(|d| match d {
-                Data::Fetch { seq, items } => message(items).map(|m| (seq, m)),
+                Data::Fetch { items, .. } => message(items),
                 _ => None,
             })
             .collect();
-        // A server may answer one message twice; keep one.
-        messages.sort_by_key(|(seq, _)| *seq);
-        messages.dedup_by_key(|(seq, _)| *seq);
-        Ok(Recent {
-            validity,
-            messages: messages.into_iter().map(|(_, m)| m).collect(),
-        })
+        // A server may answer one message twice; keep one. UIDs grow with sequence numbers.
+        messages.sort_by_cached_key(|m| m.remote_id.parse::<u32>().unwrap_or(0));
+        messages.dedup_by(|a, b| a.remote_id == b.remote_id);
+        Ok(messages)
+    }
+
+    /// The UID and flags of every message from UID `from` on.
+    async fn flags_from(&mut self, from: NonZeroU32) -> Result<Vec<(u32, Flags)>, ProviderError> {
+        let items = vec![MessageDataItemName::Uid, MessageDataItemName::Flags];
+        let fetch = CommandBody::fetch(from.., items, true).map_err(|_| protocol("bad FETCH"))?;
+        Ok(self
+            .run(fetch)
+            .await?
+            .data
+            .into_iter()
+            .filter_map(|d| match d {
+                Data::Fetch { items, .. } => uid_flags(items),
+                _ => None,
+            })
+            .collect())
+    }
+}
+
+/// What EXAMINE or SELECT says about a folder.
+struct Opened {
+    validity: u32,
+    /// UIDNEXT, or 0 if the server left it out.
+    next: u32,
+    exists: u32,
+}
+
+impl MailProvider for ImapSession {
+    async fn folders(&mut self) -> Result<Vec<NewFolder>, ProviderError> {
+        let list = CommandBody::list("", "*").map_err(|_| protocol("bad LIST"))?;
+        Ok(self
+            .run(list)
+            .await?
+            .data
+            .into_iter()
+            .filter_map(|d| match d {
+                Data::List { items, mailbox, .. } => folder(&items, &mailbox),
+                _ => None,
+            })
+            .collect())
+    }
+
+    async fn changes(
+        &mut self,
+        folder: &str,
+        since: Checkpoint,
+        known: &[String],
+        limit: u32,
+    ) -> Result<Changes, ProviderError> {
+        let opened = self.open(folder, false).await?;
+        let mut known: HashSet<u32> = known.iter().filter_map(|id| id.parse().ok()).collect();
+        let mut changes = Changes {
+            checkpoint: Checkpoint {
+                validity: opened.validity,
+                next: opened.next.into(),
+            },
+            new: vec![],
+            flags: vec![],
+            gone: vec![],
+        };
+        // Nothing saved can be trusted, or nothing is saved yet: start from the newest.
+        if since.validity != opened.validity || (since.next == 0 && known.is_empty()) {
+            changes.new = self.newest(opened.exists, limit).await?;
+            if let Some(last) = changes.new.last() {
+                // Without UIDNEXT, mail after the newest one fetched is new.
+                let uid = last.remote_id.parse::<u64>().unwrap_or(0);
+                changes.checkpoint.next = changes.checkpoint.next.max(uid + 1);
+            }
+            return Ok(changes);
+        }
+        // Without a checkpoint, saved mail from before it was kept tells which mail is new.
+        // UIDs end at u32::MAX, so a checkpoint past it has no new mail left.
+        let next = NonZeroU32::new(u32::try_from(since.next).unwrap_or(u32::MAX))
+            .unwrap_or(NonZeroU32::MIN);
+        changes.checkpoint.next = changes.checkpoint.next.max(since.next);
+        if known.is_empty() && u64::from(opened.next) == since.next {
+            return Ok(changes);
+        }
+
+        // One FETCH of UIDs and flags from the oldest known message on tells what is still
+        // there, what changed and what is new: a few bytes per message instead of headers.
+        let from = known
+            .iter()
+            .filter_map(|uid| NonZeroU32::new(*uid))
+            .fold(next, NonZeroU32::min);
+        let mut fresh = vec![];
+        for (uid, flags) in self.flags_from(from).await? {
+            if known.remove(&uid) {
+                changes.flags.push((uid.to_string(), flags));
+            } else if uid >= next.get() {
+                fresh.push(uid);
+            }
+        }
+        // What is left of the known mail is no longer in the folder.
+        changes.gone = known.iter().map(u32::to_string).collect();
+
+        fresh.sort_unstable();
+        fresh.dedup();
+        let newest = &fresh[fresh.len().saturating_sub(limit as usize)..];
+        if let (Some(&first), Some(&last)) = (newest.first(), newest.last()) {
+            changes.new = self.headers(first..=last, true).await?;
+            let fetched: HashSet<&str> = changes.new.iter().map(|m| m.remote_id.as_str()).collect();
+            // Mail that arrived after EXAMINE was fetched too. Mail the server left out of
+            // the reply comes again next time.
+            changes.checkpoint.next = match newest
+                .iter()
+                .find(|uid| !fetched.contains(uid.to_string().as_str()))
+            {
+                Some(missed) => u64::from(*missed),
+                None => changes.checkpoint.next.max(u64::from(last) + 1),
+            };
+        }
+        Ok(changes)
     }
 
     async fn body(
@@ -346,7 +459,7 @@ impl MailProvider for ImapSession {
             .parse()
             .map_err(|_| protocol(format!("bad UID {remote_id}")))?;
         // A new UIDVALIDITY means the UID may name another message now.
-        if self.open(folder, false).await?.0 != validity {
+        if self.open(folder, false).await?.validity != validity {
             return Err(ProviderError::Gone);
         }
         let items = vec![
@@ -436,7 +549,7 @@ impl ImapSession {
         if uids.is_empty() {
             return Ok(());
         }
-        if self.open(folder, true).await?.0 != validity {
+        if self.open(folder, true).await?.validity != validity {
             return Err(ProviderError::Gone);
         }
         // Chunks keep each command line well under server limits.
@@ -498,7 +611,7 @@ fn folder(items: &[FlagNameAttribute<'_>], mailbox: &Mailbox<'_>) -> Option<NewF
     })
 }
 
-/// A FETCH reply with everything `recent` asked for, or `None` if the server left something out.
+/// A FETCH reply with everything `headers` asked for, or `None` if the server left something out.
 fn message<'a>(items: impl IntoIterator<Item = MessageDataItem<'a>>) -> Option<RawMessage> {
     let (mut uid, mut flags, mut received, mut header) = (None, None, None, None);
     for item in items {
@@ -522,6 +635,19 @@ fn message<'a>(items: impl IntoIterator<Item = MessageDataItem<'a>>) -> Option<R
         received: received?,
         header: header?,
     })
+}
+
+/// The UID and flags of a FETCH reply, if it has both.
+fn uid_flags<'a>(items: impl IntoIterator<Item = MessageDataItem<'a>>) -> Option<(u32, Flags)> {
+    let (mut uid, mut flags) = (None, None);
+    for item in items {
+        match item {
+            MessageDataItem::Uid(u) => uid = Some(u.get()),
+            MessageDataItem::Flags(f) => flags = Some(parse_flags(&f)),
+            _ => {}
+        }
+    }
+    uid.zip(flags)
 }
 
 /// RFC 5530 codes for a refusal that is not about the credentials.
