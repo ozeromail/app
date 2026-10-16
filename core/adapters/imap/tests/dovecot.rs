@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use ozero_domain::{FolderRole, MailProvider, ProviderError};
+use ozero_domain::{Action, FolderRole, MailProvider, ProviderError};
 use ozero_imap::ImapSession;
 use tokio_rustls::rustls::pki_types::CertificateDer;
 use tokio_rustls::rustls::pki_types::pem::PemObject;
@@ -97,6 +97,27 @@ async fn fetches_a_body_without_marking_it_read() {
         let err = imap.body("INBOX", validity, uid).await.unwrap_err();
         assert_eq!(err, ProviderError::Gone, "{uid}");
     }
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "needs tools/dovecot-test.sh"]
+async fn marks_messages_read_and_unread() {
+    let mut imap = session().await;
+    let validity = imap.recent("INBOX", 1).await.unwrap().validity;
+    // UID 1 only, so other tests see the flags they expect; 99 does not exist.
+    let ids = ["1".to_string(), "99".to_string()];
+    for seen in [true, false] {
+        imap.apply("INBOX", validity, &ids, Action::Seen(seen))
+            .await
+            .unwrap();
+        let first = &imap.recent("INBOX", 3).await.unwrap().messages[0];
+        assert_eq!((first.remote_id.as_str(), first.flags.seen), ("1", seen));
+    }
+    let err = imap
+        .apply("INBOX", validity + 1, &ids, Action::Seen(true))
+        .await
+        .unwrap_err();
+    assert_eq!(err, ProviderError::Gone);
 }
 
 #[tokio::test(flavor = "current_thread")]

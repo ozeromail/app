@@ -348,3 +348,78 @@ fn body_is_saved_with_its_snippet() {
         StoreError::NotFound
     );
 }
+
+fn seen(store: &SqliteStore, folder: FolderId) -> Vec<bool> {
+    list(store, ListScope::Folder(folder), 10, None)
+        .iter()
+        .map(|m| m.flags.seen)
+        .collect()
+}
+
+#[test]
+fn queued_read_state_shows_at_once_and_survives_a_sync() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let folder = inbox(&store, account);
+    store.save_messages(folder, &[message(1, 100)]).unwrap();
+    let id = list(&store, ListScope::Folder(folder), 10, None)[0].id;
+
+    store.queue(id, Action::Seen(true), 50).unwrap();
+    assert_eq!(seen(&store, folder), [true]);
+    // The server has not got it yet and still says unread.
+    store.save_messages(folder, &[message(1, 100)]).unwrap();
+    assert_eq!(seen(&store, folder), [true]);
+
+    assert!(store.due(account, 49).unwrap().is_empty());
+    let other = self::account(&store, "b@example.com");
+    assert!(store.due(other, 50).unwrap().is_empty());
+    let due = store.due(account, 50).unwrap();
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].action, Action::Seen(true));
+    assert_eq!(due[0].location, store.location(id).unwrap());
+
+    store.finish(due[0].id).unwrap();
+    assert!(store.due(account, 50).unwrap().is_empty());
+    // Now the server decides again.
+    store.save_messages(folder, &[message(1, 100)]).unwrap();
+    assert_eq!(seen(&store, folder), [false]);
+}
+
+#[test]
+fn an_action_and_its_opposite_leave_nothing_queued() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let folder = inbox(&store, account);
+    store.save_messages(folder, &[message(1, 100)]).unwrap();
+    let id = list(&store, ListScope::Folder(folder), 10, None)[0].id;
+
+    store.queue(id, Action::Seen(true), 0).unwrap();
+    store.queue(id, Action::Seen(true), 0).unwrap();
+    assert_eq!(store.due(account, 0).unwrap().len(), 1);
+    store.queue(id, Action::Seen(false), 0).unwrap();
+    assert!(store.due(account, 0).unwrap().is_empty());
+    assert_eq!(seen(&store, folder), [false]);
+
+    assert_eq!(
+        store
+            .queue(MessageId(99), Action::Seen(true), 0)
+            .unwrap_err(),
+        StoreError::NotFound
+    );
+}
+
+#[test]
+fn revert_restores_the_state_before_the_first_action() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let folder = inbox(&store, account);
+    store.save_messages(folder, &[message(1, 100)]).unwrap();
+    let id = list(&store, ListScope::Folder(folder), 10, None)[0].id;
+
+    store.queue(id, Action::Seen(true), 0).unwrap();
+    let op = store.due(account, 0).unwrap()[0].id;
+    store.revert(op).unwrap();
+    assert_eq!(seen(&store, folder), [false]);
+    assert!(store.due(account, 0).unwrap().is_empty());
+    assert_eq!(store.revert(op).unwrap_err(), StoreError::NotFound);
+}

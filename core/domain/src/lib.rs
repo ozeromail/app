@@ -3,6 +3,7 @@
 mod account;
 mod folder;
 mod message;
+mod op;
 mod provider;
 mod sort;
 mod store;
@@ -13,6 +14,7 @@ pub use message::{
     Address, Body, Cursor, Flags, ListQuery, ListScope, MessageId, MessageLocation, MessageRow,
     NewMessage,
 };
+pub use op::{Action, Op, OpId};
 pub use provider::{MailProvider, MessageParser, ProviderError, RawMessage, Recent};
 pub use sort::Category;
 pub use store::{Store, StoreError};

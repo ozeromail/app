@@ -55,4 +55,16 @@ pub const MIGRATIONS: &[&str] = &[
     DELETE FROM message_body;
     ALTER TABLE message_body ADD COLUMN html TEXT;
     ",
+    // 6: actions waiting for the server. `undo` is the value before the first queued change.
+    "
+    CREATE TABLE op (
+        id         INTEGER PRIMARY KEY,
+        message_id INTEGER NOT NULL REFERENCES message(id) ON DELETE CASCADE,
+        kind       TEXT NOT NULL,
+        value      INTEGER NOT NULL,
+        undo       INTEGER NOT NULL,
+        not_before INTEGER NOT NULL,
+        UNIQUE (message_id, kind)
+    );
+    ",
 ];

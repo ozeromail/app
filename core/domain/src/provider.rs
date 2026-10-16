@@ -1,7 +1,7 @@
 use std::fmt;
 use std::future::Future;
 
-use crate::{Body, Flags, NewFolder, NewMessage};
+use crate::{Action, Body, Flags, NewFolder, NewMessage};
 
 /// A message as the server returns it, before MIME parsing.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,6 +43,16 @@ pub trait MailProvider: Send {
         validity: u32,
         remote_id: &str,
     ) -> impl Future<Output = Result<Vec<u8>, ProviderError>> + Send;
+
+    /// Applies one action to messages of a folder. Messages no longer there are skipped;
+    /// fails with `Gone` if the folder's validity is no longer `validity`.
+    fn apply(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_ids: &[String],
+        action: Action,
+    ) -> impl Future<Output = Result<(), ProviderError>> + Send;
 }
 
 /// Turns what a provider returned into what the store keeps.

@@ -3,11 +3,13 @@
 use std::fmt;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use ozero_app::ops::push_ops;
 use ozero_app::sync::{SyncError, download_body, sync_inbox};
 use ozero_domain::{
-    Account, AccountId, AccountKind, Body, FolderRole, ListQuery, ListScope, MessageId, MessageRow,
-    NewAccount, ProviderError, Server, Store, StoreError,
+    Account, AccountId, AccountKind, Action, Body, FolderRole, ListQuery, ListScope, MessageId,
+    MessageRow, NewAccount, ProviderError, Server, Store, StoreError,
 };
 use ozero_imap::ImapSession;
 use ozero_imap::rustls::ClientConfig;
@@ -76,6 +78,13 @@ impl Core {
         })?;
         Ok(rows.into_iter().map(MessageItem::from).collect())
     }
+
+    /// Marks a message read or unread on the device at once; `push_actions` tells the server.
+    pub fn mark_read(&self, message: i64, seen: bool) -> Result<(), CoreError> {
+        Ok(self
+            .store
+            .queue(MessageId(message), Action::Seen(seen), now())?)
+    }
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -111,10 +120,25 @@ impl Core {
         Ok(self.store.add_account(&account)?.0)
     }
 
-    /// Brings the account's folders and newest inbox messages into the database.
+    /// Sends the account's queued actions; without any it does not connect.
+    /// After a failure they stay queued, and the next push or sync sends them.
+    pub async fn push_actions(&self, account: i64, password: String) -> Result<(), CoreError> {
+        let account = AccountId(account);
+        if self.store.due(account, now())?.is_empty() {
+            return Ok(());
+        }
+        let mut imap = self.connect(account, &password).await?;
+        push_ops(&self.store, &mut imap, account, now()).await?;
+        let _ = imap.logout().await;
+        Ok(())
+    }
+
+    /// Sends the account's queued actions, then brings its folders and newest inbox
+    /// messages into the database.
     pub async fn sync_imap(&self, account: i64, password: String) -> Result<(), CoreError> {
         let account = AccountId(account);
         let mut imap = self.connect(account, &password).await?;
+        push_ops(&self.store, &mut imap, account, now()).await?;
         sync_inbox(&self.store, &mut imap, &self.parser, account, SYNC_LIMIT).await?;
         let _ = imap.logout().await;
         Ok(())
@@ -174,6 +198,13 @@ impl Core {
         let tls = tls_config()?;
         Ok(self.tls.get_or_init(|| tls).clone())
     }
+}
+
+/// Seconds since the Unix epoch.
+fn now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
 }
 
 fn tls_config() -> Result<Arc<ClientConfig>, CoreError> {
