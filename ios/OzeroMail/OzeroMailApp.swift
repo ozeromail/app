@@ -6,6 +6,7 @@ struct OzeroMailApp: App {
         WindowGroup {
             RootView().tint(.ozeroAccent)
         }
+        .backgroundTask(.appRefresh(BackgroundCheck.id)) { await BackgroundCheck.run() }
     }
 }
 
@@ -34,7 +35,8 @@ private struct RootView: View {
         }
         .task {
             do {
-                let mail = try await Mail.open()
+                let mail = try await Mail.shared()
+                BackgroundCheck.schedule()
                 start = try await mail.hasAccounts() ? .inbox(mail) : .signIn(mail)
             } catch {
                 start = .failed(error.text())

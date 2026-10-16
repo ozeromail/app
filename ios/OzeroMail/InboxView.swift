@@ -1,4 +1,5 @@
 import SwiftUI
+import UserNotifications
 
 /// The unified inbox: shows what is saved at once, then syncs; pull down to sync again.
 struct InboxView: View {
@@ -83,7 +84,11 @@ struct InboxView: View {
             // Also runs on the way back from a message, which now has a snippet.
             .task(id: tab) { await load() }
         }
-        .task { await sync() }
+        .task {
+            // Asked once the inbox shows, so it is clear what the notifications are for.
+            _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
+            await sync()
+        }
         .fullScreenCover(item: $composing) { composing in
             ComposeView(mail: mail, composing: composing) { id, sent in
                 self.composing = nil
@@ -173,6 +178,8 @@ struct InboxView: View {
         defer { syncing = false }
         do {
             try await mail.refresh()
+            // On screen now, so no notification later.
+            _ = try await mail.newMail()
         } catch {
             self.error = error.text()
         }

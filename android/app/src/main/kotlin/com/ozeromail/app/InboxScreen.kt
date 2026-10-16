@@ -1,7 +1,11 @@
 package com.ozeromail.app
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.text.format.DateUtils
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -112,6 +116,8 @@ fun InboxScreen(mail: Mail) {
         error = null
         try {
             mail.refresh()
+            // On screen now, so no notification later.
+            mail.newMail()
         } catch (e: CoreException) {
             error = e.text()
         }
@@ -126,7 +132,13 @@ fun InboxScreen(mail: Mail) {
         loadList()
         listState.scrollToItem(0)
     }
+    val askToNotify = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    val context = LocalContext.current
     LaunchedEffect(Unit) {
+        // Asked once the inbox shows, so it is clear what the notifications are for.
+        if (context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            askToNotify.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
         counts()
         sync()
     }

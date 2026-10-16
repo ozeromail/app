@@ -15,7 +15,14 @@ final class Mail: Sendable {
         self.core = core
     }
 
-    static func open() async throws -> Mail {
+    /// The one instance the screens and background checks share, opened on first use.
+    static func shared() async throws -> Mail {
+        try await opened.mail()
+    }
+
+    private static let opened = Opener()
+
+    fileprivate static func open() throws -> Mail {
         var dir = try FileManager.default
             .url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             .appending(path: "Mail", directoryHint: .isDirectory)
@@ -39,6 +46,12 @@ final class Mail: Sendable {
 
     func inbox(_ tab: Category) async throws -> [MessageItem] {
         try core.unifiedInbox(tab: tab, limit: Self.inboxSize)
+    }
+
+    /// Unread mail in People that came since the last call, for a notification. The inbox calls
+    /// it too, so mail already seen there is not announced later.
+    func newMail() async throws -> [MessageItem] {
+        try core.takeNewMail()
     }
 
     /// The inbox tabs in order, with their unread counts.
@@ -142,6 +155,18 @@ final class Mail: Sendable {
             return first
         }
         if let failure { throw failure }
+    }
+}
+
+/// Opens the database once, however many callers ask at the same time.
+private actor Opener {
+    private var mail: Mail?
+
+    func mail() throws -> Mail {
+        if let mail { return mail }
+        let opened = try Mail.open()
+        mail = opened
+        return opened
     }
 }
 
