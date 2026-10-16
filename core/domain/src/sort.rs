@@ -1,7 +1,6 @@
 /// Inbox tab a message is sorted into by on-device rules (no AI).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Category {
-    #[default]
     People,
     Notifications,
     Newsletters,
@@ -34,21 +33,25 @@ const ROBOTS: [&str; 12] = [
 ];
 
 impl Category {
+    /// The tabs in the order the apps show them.
+    pub const ALL: [Self; 3] = [Self::People, Self::Notifications, Self::Newsletters];
+
     /// Machines first: services often send through mailing lists too.
     pub fn of(s: &Signals<'_>) -> Self {
         let local = s.from.rsplit_once('@').map_or(s.from, |(local, _)| local);
-        let robot = ROBOTS
-            .iter()
-            .any(|r| local.eq_ignore_ascii_case(r) || starts_with(local, r));
+        let robot = ROBOTS.iter().any(|r| is_robot(local, r));
         let auto = s
             .auto_submitted
             .is_some_and(|v| !v.trim().eq_ignore_ascii_case("no"));
-        let precedence = s.precedence.map(|v| v.trim().to_ascii_lowercase());
-        if robot || auto || precedence.as_deref() == Some("auto_reply") {
+        let precedence = |values: &[&str]| {
+            s.precedence
+                .is_some_and(|p| values.iter().any(|v| p.trim().eq_ignore_ascii_case(v)))
+        };
+        if robot || auto || precedence(&["auto_reply"]) {
             Self::Notifications
         } else if s.list_id.is_some()
             || s.list_unsubscribe.is_some()
-            || matches!(precedence.as_deref(), Some("bulk" | "list" | "junk"))
+            || precedence(&["bulk", "list", "junk"])
         {
             Self::Newsletters
         } else {
@@ -57,12 +60,15 @@ impl Category {
     }
 }
 
-/// `noreply+abc` and `noreply.billing` count as `noreply`.
-fn starts_with(local: &str, robot: &str) -> bool {
-    local.len() > robot.len()
-        && local.is_char_boundary(robot.len())
-        && local[..robot.len()].eq_ignore_ascii_case(robot)
-        && matches!(local.as_bytes()[robot.len()], b'+' | b'.' | b'-' | b'_')
+/// `noreply`, and also `noreply+abc` or `noreply.billing`.
+fn is_robot(local: &str, robot: &str) -> bool {
+    local
+        .get(..robot.len())
+        .is_some_and(|start| start.eq_ignore_ascii_case(robot))
+        && local
+            .as_bytes()
+            .get(robot.len())
+            .is_none_or(|b| matches!(b, b'+' | b'.' | b'-' | b'_'))
 }
 
 #[cfg(test)]

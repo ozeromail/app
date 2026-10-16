@@ -52,9 +52,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import uniffi.ozero_api.Category
 import uniffi.ozero_api.CoreException
+import uniffi.ozero_api.InboxTab
 import uniffi.ozero_api.MessageItem
-import uniffi.ozero_api.Tab
 import uniffi.ozero_api.undoSeconds
 
 /** The unified inbox: shows what is saved at once, then syncs; pull down to sync again. */
@@ -65,24 +66,36 @@ fun InboxScreen(mail: Mail) {
     var syncing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<Int?>(null) }
     var open by remember { mutableStateOf<MessageItem?>(null) }
-    var tab by rememberSaveable { mutableStateOf(Tab.PEOPLE) }
-    var unread by remember { mutableStateOf(emptyMap<Tab, UInt>()) }
+    var tab by rememberSaveable { mutableStateOf(Category.PEOPLE) }
+    var tabs by remember { mutableStateOf(emptyList<InboxTab>()) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     val archived = stringResource(R.string.inbox_archived)
     val undo = stringResource(R.string.action_undo)
 
-    suspend fun load() {
+    suspend fun loadList() {
         val shown = tab
         try {
-            val list = mail.inbox(shown)
-            unread = mail.unread()
+            val found = mail.inbox(shown)
             // A tab picked meanwhile loads its own list.
-            if (tab == shown) messages = list
+            if (tab == shown) messages = found
         } catch (e: CoreException) {
             error = e.text()
         }
+    }
+
+    suspend fun counts() {
+        try {
+            tabs = mail.tabs()
+        } catch (e: CoreException) {
+            error = e.text()
+        }
+    }
+
+    suspend fun load() {
+        loadList()
+        counts()
     }
 
     suspend fun sync() {
@@ -101,7 +114,7 @@ fun InboxScreen(mail: Mail) {
     }
 
     LaunchedEffect(tab) {
-        load()
+        loadList()
         listState.scrollToItem(0)
     }
     LaunchedEffect(Unit) { sync() }
@@ -117,7 +130,7 @@ fun InboxScreen(mail: Mail) {
             }
             if (action != null) {
                 messages = messages.filterNot { it.id == message.id }
-                load()
+                counts()
             }
             // Also after success: a list read before the archive may bring the row back.
             reset()
@@ -176,34 +189,33 @@ fun InboxScreen(mail: Mail) {
         }
         // Low on the screen, in reach of the thumb that swiped.
         SnackbarHost(snackbar)
-        Tabs(tab, unread, onPick = { tab = it })
+        Tabs(tab, tabs, onPick = { tab = it })
     }
 }
 
 /** The inbox tabs at the bottom, each with its unread count. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun Tabs(tab: Tab, unread: Map<Tab, UInt>, onPick: (Tab) -> Unit) {
+private fun Tabs(tab: Category, tabs: List<InboxTab>, onPick: (Category) -> Unit) {
     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-        Tab.entries.forEachIndexed { index, item ->
-            val count = unread[item] ?: 0u
-            val name = stringResource(item.label())
+        tabs.forEachIndexed { index, item ->
+            val name = stringResource(item.category.label())
             SegmentedButton(
-                selected = item == tab,
-                onClick = { onPick(item) },
-                shape = SegmentedButtonDefaults.itemShape(index, Tab.entries.size),
+                selected = item.category == tab,
+                onClick = { onPick(item.category) },
+                shape = SegmentedButtonDefaults.itemShape(index, tabs.size),
                 icon = {},
             ) {
-                Text(if (count > 0u) "$name $count" else name, maxLines = 1)
+                Text(if (item.unread > 0u) "$name ${item.unread}" else name, maxLines = 1)
             }
         }
     }
 }
 
-private fun Tab.label(): Int = when (this) {
-    Tab.PEOPLE -> R.string.tab_people
-    Tab.NOTIFICATIONS -> R.string.tab_notifications
-    Tab.NEWSLETTERS -> R.string.tab_newsletters
+private fun Category.label(): Int = when (this) {
+    Category.PEOPLE -> R.string.tab_people
+    Category.NOTIFICATIONS -> R.string.tab_notifications
+    Category.NEWSLETTERS -> R.string.tab_newsletters
 }
 
 /** A swipe to the left marks the row done; [onDone] gets a way to bring the row back. */

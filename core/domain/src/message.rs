@@ -120,6 +120,8 @@ pub enum ListScope {
     Folder(FolderId),
     /// The folders with this role across all accounts, e.g. the unified inbox.
     Unified(crate::FolderRole),
+    /// One tab of the unified inbox.
+    Inbox(Category),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,8 +130,6 @@ pub struct ListQuery {
     pub limit: u32,
     /// Show messages older than this; `None` starts from the newest.
     pub after: Option<Cursor>,
-    /// Only this inbox tab; `None` shows every message.
-    pub category: Option<Category>,
 }
 
 #[cfg(test)]

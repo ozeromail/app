@@ -245,7 +245,7 @@ impl Store for SqliteStore {
                         m.snippet,
                         m.date,
                         flags_bits(m.flags),
-                        category_int(m.category),
+                        category_str(m.category),
                     ])
                     .map_err(storage)?;
             }
@@ -263,34 +263,23 @@ impl Store for SqliteStore {
                 (LIST_UNIFIED_BY_DATE, role_ref(*role))
             }
             ListScope::Unified(role) => (LIST_UNIFIED_BY_FOLDER, role_ref(*role)),
+            ListScope::Inbox(category) => (LIST_INBOX_TAB, category_ref(*category)),
         };
         let conn = self.conn();
         let rows = conn.prepare_cached(sql).and_then(|mut s| {
-            let category = query.category.map(category_int);
-            s.query_map(params![scope, date, id, query.limit, category], message_row)?
+            s.query_map(params![scope, date, id, query.limit], message_row)?
                 .collect()
         });
         rows.map_err(storage)
     }
 
-    fn unread(&self, scope: ListScope, category: Category) -> Result<u32, StoreError> {
-        let (folders, scope): (&str, &dyn rusqlite::ToSql) = match &scope {
-            ListScope::Folder(folder) => ("m.folder_id = ?1", &folder.0),
-            ListScope::Unified(role) => (
-                "m.folder_id IN (SELECT id FROM folder WHERE role = ?1)",
-                role_ref(*role),
-            ),
-        };
-        let sql = format!(
-            "SELECT count(*) FROM message m WHERE {folders} AND m.category = ?2 AND m.flags & ?3 = 0
-             AND NOT EXISTS (SELECT 1 FROM op WHERE op.message_id = m.id AND op.kind = 'archive')"
-        );
-        self.conn()
-            .prepare_cached(&sql)
-            .and_then(|mut s| {
-                s.query_row(params![scope, category_int(category), SEEN], |r| r.get(0))
-            })
-            .map_err(storage)
+    fn inbox_unread(&self) -> Result<Vec<(Category, u32)>, StoreError> {
+        let conn = self.conn();
+        let rows = conn.prepare_cached(INBOX_UNREAD).and_then(|mut s| {
+            s.query_map([], |r| Ok((r.get::<_, StoredCategory>(0)?.0, r.get(1)?)))?
+                .collect()
+        });
+        rows.map_err(storage)
     }
 
     fn location(&self, message: MessageId) -> Result<MessageLocation, StoreError> {
@@ -569,6 +558,13 @@ const SAVE_MESSAGE: &str = concat!(
     ")"
 );
 
+/// Lists leave out a message while its move to the archive is held.
+macro_rules! not_archiving {
+    () => {
+        "NOT EXISTS (SELECT 1 FROM op WHERE op.message_id = m.id AND op.kind = 'archive')"
+    };
+}
+
 /// Newest first, keyset-paged by (date, id) so deep pages cost the same as the first.
 macro_rules! list_sql {
     ($scope:literal) => {
@@ -578,8 +574,9 @@ macro_rules! list_sql {
              WHERE ",
             $scope,
             " AND (m.date, m.id) < (?2, ?3)
-             AND (?5 IS NULL OR m.category = ?5)
-             AND NOT EXISTS (SELECT 1 FROM op WHERE op.message_id = m.id AND op.kind = 'archive')
+             AND ",
+            not_archiving!(),
+            "
              ORDER BY m.date DESC, m.id DESC
              LIMIT ?4"
         )
@@ -587,6 +584,17 @@ macro_rules! list_sql {
 }
 
 const LIST_FOLDER: &str = list_sql!("m.folder_id = ?1");
+// Walks the tab's date index; the `+` keeps SQLite from starting at the folder instead.
+const LIST_INBOX_TAB: &str =
+    list_sql!("m.category = ?1 AND +m.folder_id IN (SELECT id FROM folder WHERE role = 'inbox')");
+
+// `1` is `SEEN`.
+const INBOX_UNREAD: &str = concat!(
+    "SELECT m.category, count(*) FROM message m
+     WHERE m.folder_id IN (SELECT id FROM folder WHERE role = 'inbox') AND m.flags & 1 = 0 AND ",
+    not_archiving!(),
+    " GROUP BY m.category"
+);
 // The unary `+` keeps SQLite on the date index: rows come out in order and the scan stops at LIMIT.
 // Right for roles that hold most messages; a sparse role would scan the whole table this way.
 const LIST_UNIFIED_BY_DATE: &str =
@@ -602,12 +610,16 @@ fn walks_by_date(role: FolderRole) -> bool {
     )
 }
 
-fn category_int(category: Category) -> i64 {
+fn category_ref(category: Category) -> &'static &'static str {
     match category {
-        Category::People => 0,
-        Category::Notifications => 1,
-        Category::Newsletters => 2,
+        Category::People => &"people",
+        Category::Notifications => &"notifications",
+        Category::Newsletters => &"newsletters",
     }
+}
+
+fn category_str(category: Category) -> &'static str {
+    category_ref(category)
 }
 
 fn role_ref(role: FolderRole) -> &'static &'static str {
@@ -708,6 +720,21 @@ impl FromSql for Kind {
             "graph" => Ok(Self(AccountKind::Graph)),
             _ => Err(FromSqlError::InvalidType),
         }
+    }
+}
+
+/// The category column of `message`.
+struct StoredCategory(Category);
+
+impl FromSql for StoredCategory {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        let category = match value.as_str()? {
+            "people" => Category::People,
+            "notifications" => Category::Notifications,
+            "newsletters" => Category::Newsletters,
+            _ => return Err(FromSqlError::InvalidType),
+        };
+        Ok(Self(category))
     }
 }
 

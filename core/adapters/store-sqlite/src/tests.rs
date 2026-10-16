@@ -84,7 +84,6 @@ fn list(
             scope,
             limit,
             after,
-            category: None,
         })
         .unwrap()
 }
@@ -276,10 +275,10 @@ fn unified_inbox_merges_accounts() {
 fn large_lists_read_an_index_in_order() {
     let store = store();
     let conn = store.conn();
-    for sql in [LIST_FOLDER, LIST_UNIFIED_BY_DATE] {
+    for sql in [LIST_FOLDER, LIST_UNIFIED_BY_DATE, LIST_INBOX_TAB] {
         let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
         let plan: Vec<String> = stmt
-            .query_map(params!["1", 0, 0, 30, 1], |r| r.get(3))
+            .query_map(params!["1", 0, 0, 30], |r| r.get(3))
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap();
@@ -521,30 +520,19 @@ fn tabs_list_and_count_their_own_messages() {
         .unwrap();
 
     let tab = |category| {
-        let rows = store
-            .list(&ListQuery {
-                scope: ListScope::Folder(folder),
-                limit: 10,
-                after: None,
-                category: Some(category),
-            })
-            .unwrap();
+        let rows = list(&store, ListScope::Inbox(category), 10, None);
         rows.iter().map(|r| r.subject.clone()).collect::<Vec<_>>()
     };
     assert_eq!(tab(Category::People), ["Subject 1"]);
     assert_eq!(tab(Category::Newsletters), ["Subject 2"]);
     assert!(tab(Category::Notifications).is_empty());
-    let unread = |category| {
-        store
-            .unread(ListScope::Unified(FolderRole::Inbox), category)
-            .unwrap()
-    };
-    assert_eq!(unread(Category::People), 1);
+    let mut unread = store.inbox_unread().unwrap();
+    unread.sort_by_key(|(c, _)| Category::ALL.iter().position(|a| a == c));
+    assert_eq!(unread, [(Category::People, 1), (Category::Newsletters, 1)]);
 
     // A resync sorts a known message again.
     news.category = Category::Notifications;
     store.save_messages(folder, &[news]).unwrap();
     assert_eq!(tab(Category::Notifications), ["Subject 2"]);
-    assert_eq!(unread(Category::Newsletters), 0);
-    assert_eq!(unread(Category::Notifications), 1);
+    assert!(tab(Category::Newsletters).is_empty());
 }
