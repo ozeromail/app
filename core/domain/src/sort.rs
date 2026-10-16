@@ -12,6 +12,7 @@ pub struct Signals<'a> {
     pub from: &'a str,
     pub list_id: Option<&'a str>,
     pub list_unsubscribe: Option<&'a str>,
+    pub list_unsubscribe_post: Option<&'a str>,
     pub precedence: Option<&'a str>,
     pub auto_submitted: Option<&'a str>,
 }
@@ -36,22 +37,28 @@ impl Category {
     /// The tabs in the order the apps show them.
     pub const ALL: [Self; 3] = [Self::People, Self::Notifications, Self::Newsletters];
 
-    /// Machines first: services often send through mailing lists too.
+    /// Machines first: services often send through mailing lists too. A discussion list
+    /// (a `List-Id` without bulk signs) is people talking, so it stays in People.
     pub fn of(s: &Signals<'_>) -> Self {
         let local = s.from.rsplit_once('@').map_or(s.from, |(local, _)| local);
         let robot = ROBOTS.iter().any(|r| is_robot(local, r));
-        let auto = s
-            .auto_submitted
-            .is_some_and(|v| !v.trim().eq_ignore_ascii_case("no"));
+        // `no (sent by hand)` is still `no`; RFC 3834 allows a comment after the keyword.
+        let auto = s.auto_submitted.is_some_and(|v| {
+            let keyword = v
+                .split(|c: char| c == '(' || c == ';' || c.is_whitespace())
+                .find(|k| !k.is_empty())
+                .unwrap_or("");
+            !keyword.is_empty() && !keyword.eq_ignore_ascii_case("no")
+        });
         let precedence = |values: &[&str]| {
             s.precedence
                 .is_some_and(|p| values.iter().any(|v| p.trim().eq_ignore_ascii_case(v)))
         };
         if robot || auto || precedence(&["auto_reply"]) {
             Self::Notifications
-        } else if s.list_id.is_some()
-            || s.list_unsubscribe.is_some()
-            || precedence(&["bulk", "list", "junk"])
+        } else if precedence(&["bulk", "junk"])
+            || s.list_unsubscribe_post.is_some()
+            || (s.list_unsubscribe.is_some() && s.list_id.is_none())
         {
             Self::Newsletters
         } else {
@@ -103,11 +110,13 @@ mod tests {
             ..Signals::default()
         };
         assert_eq!(Category::of(&auto), Category::Notifications);
-        let human = Signals {
-            auto_submitted: Some("no"),
-            ..auto
-        };
-        assert_eq!(Category::of(&human), Category::People);
+        for value in ["no", " No (sent by hand)", ""] {
+            let human = Signals {
+                auto_submitted: Some(value),
+                ..auto
+            };
+            assert_eq!(Category::of(&human), Category::People, "{value:?}");
+        }
     }
 
     #[test]
@@ -124,6 +133,22 @@ mod tests {
             ..Signals::default()
         };
         assert_eq!(Category::of(&bulk), Category::Newsletters);
+        let one_click = Signals {
+            from: "news@shop.example",
+            list_id: Some("<news.shop.example>"),
+            list_unsubscribe_post: Some("List-Unsubscribe=One-Click"),
+            ..Signals::default()
+        };
+        assert_eq!(Category::of(&one_click), Category::Newsletters);
+        // A colleague writing to a team list.
+        let discussion = Signals {
+            from: "anna@example.com",
+            list_id: Some("<team.example.com>"),
+            list_unsubscribe: Some("<mailto:team+unsubscribe@example.com>"),
+            precedence: Some("list"),
+            ..Signals::default()
+        };
+        assert_eq!(Category::of(&discussion), Category::People);
         // A service that sends through a list is still a notification.
         let service = Signals {
             from: "notifications@github.com",

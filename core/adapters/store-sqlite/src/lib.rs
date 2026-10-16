@@ -245,7 +245,7 @@ impl Store for SqliteStore {
                         m.snippet,
                         m.date,
                         flags_bits(m.flags),
-                        category_str(m.category),
+                        category_ref(m.category),
                     ])
                     .map_err(storage)?;
             }
@@ -618,10 +618,6 @@ fn category_ref(category: Category) -> &'static &'static str {
     }
 }
 
-fn category_str(category: Category) -> &'static str {
-    category_ref(category)
-}
-
 fn role_ref(role: FolderRole) -> &'static &'static str {
     match role {
         FolderRole::Inbox => &"inbox",
@@ -728,13 +724,12 @@ struct StoredCategory(Category);
 
 impl FromSql for StoredCategory {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
-        let category = match value.as_str()? {
-            "people" => Category::People,
-            "notifications" => Category::Notifications,
-            "newsletters" => Category::Newsletters,
-            _ => return Err(FromSqlError::InvalidType),
-        };
-        Ok(Self(category))
+        let stored = value.as_str()?;
+        Category::ALL
+            .into_iter()
+            .find(|c| *category_ref(*c) == stored)
+            .map(Self)
+            .ok_or(FromSqlError::InvalidType)
     }
 }
 
