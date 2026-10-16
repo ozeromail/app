@@ -3,13 +3,15 @@
 use std::fmt;
 
 use ozero_domain::{
-    AccountId, Body, FolderRole, MailProvider, MessageLocation, MessageParser, ProviderError,
-    Store, StoreError,
+    AccountId, Body, Folder, FolderRole, MailProvider, MessageLocation, MessageParser,
+    ProviderError, Store, StoreError,
 };
 
-/// Saves the account's folders, then what changed in its inbox since the last sync:
-/// up to `limit` new messages, new flags and removed messages.
-pub async fn sync_inbox(
+/// Saves the account's folders, then what changed in its inbox and its sent folder since
+/// the last sync: up to `limit` new messages in the inbox and fewer in sent, new flags and
+/// removed messages.
+/// The sent folder puts the user's own replies into conversations.
+pub async fn sync_mail(
     store: &dyn Store,
     provider: &mut impl MailProvider,
     parser: &dyn MessageParser,
@@ -22,11 +24,29 @@ pub async fn sync_inbox(
         .iter()
         .find(|f| f.role == FolderRole::Inbox)
         .ok_or(SyncError::NoInbox)?;
-    let (since, known) = store.checkpoint(inbox.id)?;
+    sync_folder(store, provider, parser, inbox, limit).await?;
+    // Only context for conversations: a broken sent folder must not stop the inbox.
+    if let Some(sent) = folders.iter().find(|f| f.role == FolderRole::Sent) {
+        let _ = sync_folder(store, provider, parser, sent, limit / SENT_SHARE).await;
+    }
+    Ok(())
+}
+
+/// The sent folder gets this fraction of the inbox's limit.
+const SENT_SHARE: u32 = 4;
+
+async fn sync_folder(
+    store: &dyn Store,
+    provider: &mut impl MailProvider,
+    parser: &dyn MessageParser,
+    folder: &Folder,
+    limit: u32,
+) -> Result<(), SyncError> {
+    let (since, known) = store.checkpoint(folder.id)?;
     let changes = provider
-        .changes(&inbox.remote_id, since, &known, limit)
+        .changes(&folder.remote_id, since, &known, limit)
         .await?;
-    store.save_changes(inbox.id, &changes.map(|m| parser.parse(m)))?;
+    store.save_changes(folder.id, &changes.map(|m| parser.parse(m)))?;
     Ok(())
 }
 

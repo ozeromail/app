@@ -52,6 +52,8 @@ pub struct MessageRow {
     pub thread_count: u32,
     /// How many of those are unread.
     pub thread_unread: u32,
+    /// In the sent folder: the user wrote it.
+    pub sent: bool,
 }
 
 impl MessageRow {

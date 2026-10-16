@@ -938,6 +938,7 @@ macro_rules! message_from {
             "SELECT m.id, f.account_id, m.from_name, m.from_email, m.subject, m.snippet, m.date,
                     m.flags, ",
             $thread,
+            ", f.role = 'sent'",
             " FROM message m JOIN folder f ON f.id = m.folder_id"
         )
     };
@@ -980,22 +981,31 @@ const LIST_FOLDER: &str = list_sql!("m.folder_id = ?1");
 const LIST_INBOX_TAB: &str =
     list_sql!("m.category = ?1 AND +m.folder_id IN (SELECT id FROM folder WHERE role = 'inbox')");
 
-/// The conversation of message `?1` in its folder and inbox tab, oldest first.
-macro_rules! thread_of {
-    ($select:expr) => {
-        concat!(
-            $select,
-            " JOIN message s ON s.thread_id = m.thread_id AND s.folder_id = m.folder_id
-                 AND s.category = m.category
-             WHERE s.id = ?1 AND ",
-            not_archiving!(),
-            " ORDER BY m.date, m.id"
-        )
-    };
-}
+/// The conversation of message `?1` in its folder and inbox tab, with the user's replies
+/// from the sent folder, oldest first. `f` is the folder `message_from!` joins.
+const THREAD: &str = concat!(
+    message_from!(),
+    " JOIN message s ON s.thread_id = m.thread_id
+     WHERE s.id = ?1
+       AND ((s.folder_id = m.folder_id AND s.category = m.category)
+            OR (f.role = 'sent' AND m.message_id NOT IN (
+                -- Mail to oneself, or a list that sends one's post back: shown once.
+                SELECT n.message_id FROM message n
+                WHERE n.thread_id = s.thread_id AND n.folder_id = s.folder_id
+                  AND n.message_id IS NOT NULL))) AND ",
+    not_archiving!(),
+    " ORDER BY m.date, m.id"
+);
 
-const THREAD: &str = thread_of!(message_from!());
-const THREAD_IDS: &str = thread_of!("SELECT m.id, m.flags FROM message m");
+/// What an action on message `?1` covers: its conversation in its folder and inbox tab.
+const THREAD_IDS: &str = concat!(
+    "SELECT m.id, m.flags FROM message m
+     JOIN message s ON s.thread_id = m.thread_id AND s.folder_id = m.folder_id
+         AND s.category = m.category
+     WHERE s.id = ?1 AND ",
+    not_archiving!(),
+    " ORDER BY m.date, m.id"
+);
 
 /// Conversations in account `?1` of messages, other than `?2`, with Message-ID `?3`
 /// or answering it.
@@ -1091,6 +1101,7 @@ fn message_row(r: &Row<'_>) -> rusqlite::Result<MessageRow> {
         flags: parse_flags(r.get(7)?),
         thread_count: r.get(8)?,
         thread_unread: r.get(9)?,
+        sent: r.get(10)?,
     })
 }
 

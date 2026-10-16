@@ -39,9 +39,10 @@ import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
 
 /**
- * A conversation, opened at its newest message: its HTML when it has one, otherwise the
- * text. The older messages sit above it, short; a tap shows one. Reply answers the one
- * shown and sits at the bottom; system back returns to the list.
+ * A conversation, opened at the list's message: its HTML when it has one, otherwise the
+ * text. The other messages, the user's replies among them, sit above it, short; a tap shows
+ * one. Reply answers the shown message, or the newest one not from the user, and sits at the
+ * bottom; system back returns to the list.
  */
 @Composable
 fun MessageScreen(mail: Mail, message: MessageItem, onBack: () -> Unit, onReply: (MessageItem) -> Unit) {
@@ -53,7 +54,7 @@ fun MessageScreen(mail: Mail, message: MessageItem, onBack: () -> Unit, onReply:
     var error by remember(message.id) { mutableStateOf<Int?>(null) }
     LaunchedEffect(message.id) {
         try {
-            if (message.threadCount > 1u) thread = mail.thread(message)
+            thread = mail.thread(message)
             if (message.threadUnread > 0u) mail.markRead(message)
         } catch (e: CoreException) {
             error = e.text()
@@ -99,7 +100,7 @@ fun MessageScreen(mail: Mail, message: MessageItem, onBack: () -> Unit, onReply:
         }
         HorizontalDivider(color = colors.outlineVariant)
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.End) {
-            Button(onClick = { onReply(shown) }) { Text(stringResource(R.string.message_reply)) }
+            Button(onClick = { onReply(if (shown.sent) thread.lastOrNull { !it.sent } ?: message else shown) }) { Text(stringResource(R.string.message_reply)) }
         }
     }
 }

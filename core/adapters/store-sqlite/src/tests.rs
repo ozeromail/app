@@ -895,3 +895,59 @@ fn a_conversation_reads_its_index() {
         assert!(!plan.contains("SCAN"), "{plan}");
     }
 }
+
+#[test]
+fn a_conversation_shows_the_users_replies() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let folders = store
+        .save_folders(
+            account,
+            &[
+                NewFolder {
+                    remote_id: "INBOX".into(),
+                    name: "Inbox".into(),
+                    role: FolderRole::Inbox,
+                },
+                NewFolder {
+                    remote_id: "Sent".into(),
+                    name: "Sent".into(),
+                    role: FolderRole::Sent,
+                },
+            ],
+        )
+        .unwrap();
+    let (inbox, sent) = (folders[0].id, folders[1].id);
+    store
+        .save_messages(inbox, &[message(1, 100), reply(3, 300, &[1, 2])])
+        .unwrap();
+    store.save_messages(sent, &[reply(2, 200, &[1])]).unwrap();
+
+    let rows = list(&store, ListScope::Folder(inbox), 10, None);
+    assert_eq!(
+        (subjects(&rows), rows[0].thread_count),
+        (vec!["Subject 3"], 2)
+    );
+    let thread = store.thread(rows[0].id).unwrap();
+    assert_eq!(subjects(&thread), ["Subject 1", "Subject 2", "Subject 3"]);
+    let sent_flags: Vec<_> = thread.iter().map(|m| m.sent).collect();
+    assert_eq!(sent_flags, [false, true, false]);
+    // A copy of an inbox message in sent shows once.
+    store
+        .save_messages(
+            sent,
+            &[NewMessage {
+                remote_id: "9".into(),
+                ..message(1, 100)
+            }],
+        )
+        .unwrap();
+    assert_eq!(store.thread(rows[0].id).unwrap().len(), 3);
+    // Reading the conversation leaves the sent folder alone.
+    store.queue(rows[0].id, Action::Seen(true), 0).unwrap();
+    assert!(
+        !list(&store, ListScope::Folder(sent), 10, None)[0]
+            .flags
+            .seen
+    );
+}

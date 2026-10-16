@@ -206,7 +206,7 @@ fun InboxScreen(mail: Mail) {
                 open = null
                 scope.launch { load() }
             },
-            onReply = { message -> composing = Composing(replyDraft(message), message) },
+            onReply = { to -> composing = Composing(replyDraft(to), to) },
         )
         return
     }
