@@ -196,7 +196,7 @@ private fun Sender(from: AccountItem, accounts: List<AccountItem>, onPick: (Acco
 
 /** A field with no frame: just the text, or its placeholder. */
 @Composable
-private fun Plain(
+internal fun Plain(
     value: String,
     onChange: (String) -> Unit,
     @StringRes placeholder: Int,

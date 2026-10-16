@@ -305,6 +305,16 @@ impl Store for SqliteStore {
             .map_err(storage)
     }
 
+    fn search(&self, text: &str, limit: u32) -> Result<Vec<MessageRow>, StoreError> {
+        let Some(query) = fts_query(text) else {
+            return Ok(vec![]);
+        };
+        let conn = self.conn();
+        conn.prepare_cached(SEARCH)
+            .and_then(|mut s| s.query_map(params![query, limit], message_row)?.collect())
+            .map_err(storage)
+    }
+
     fn take_fresh(&self, since: i64) -> Result<Vec<MessageRow>, StoreError> {
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(storage)?;
@@ -1016,6 +1026,34 @@ const FIND_THREADS: &str = "
     SELECT m.thread_id FROM message_ref r JOIN message m ON m.id = r.message_id
         JOIN folder f ON f.id = m.folder_id
     WHERE r.ref = ?3 AND f.account_id = ?1 AND m.id != ?2 AND m.thread_id IS NOT NULL";
+
+/// Copies of one message in several folders of an account show once: the newest copy.
+/// Sorting by date reads every match; fine for one person's mail.
+const SEARCH: &str = concat!(
+    message_from!(),
+    " JOIN message_search ON message_search.rowid = m.id
+     WHERE message_search MATCH ?1 AND f.role NOT IN ('trash', 'junk') AND ",
+    not_archiving!(),
+    " AND NOT EXISTS (
+         SELECT 1 FROM message d JOIN folder g ON g.id = d.folder_id
+         WHERE d.message_id = m.message_id AND d.id > m.id AND g.account_id = f.account_id
+           AND g.role NOT IN ('trash', 'junk') AND ",
+    not_archiving!("d"),
+    ")
+     ORDER BY m.date DESC, m.id DESC LIMIT ?2"
+);
+
+/// Each word of `text` as a quoted prefix, so FTS5 syntax in it stays plain text, with ё
+/// folded as in the index. `None` when there are no words.
+fn fts_query(text: &str) -> Option<String> {
+    let words: Vec<String> = text
+        .split_whitespace()
+        .map(|w| w.replace('"', "").replace('ё', "е").replace('Ё', "Е"))
+        .filter(|w| !w.is_empty())
+        .map(|w| format!("\"{w}\"*"))
+        .collect();
+    (!words.is_empty()).then(|| words.join(" "))
+}
 
 const CLEAR_FRESH: &str = "UPDATE message SET fresh = 0 WHERE fresh = 1";
 

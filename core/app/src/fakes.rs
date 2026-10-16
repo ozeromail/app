@@ -264,6 +264,10 @@ impl Store for Memory {
         Ok(vec![])
     }
 
+    fn search(&self, _: &str, _: u32) -> Result<Vec<MessageRow>, StoreError> {
+        Ok(vec![])
+    }
+
     fn location(&self, _: MessageId) -> Result<MessageLocation, StoreError> {
         Err(StoreError::NotFound)
     }

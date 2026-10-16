@@ -951,3 +951,61 @@ fn a_conversation_shows_the_users_replies() {
             .seen
     );
 }
+
+#[test]
+fn search_finds_words_in_subject_sender_and_body() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let folder = inbox(&store, account);
+    let mut ticket = message(2, 200);
+    ticket.subject = "Ваш билет на поезд, ёлка".into();
+    ticket.snippet = "Место 12".into();
+    ticket.from = Address {
+        name: Some("Rail Café".into()),
+        email: "tickets@rail.example".into(),
+    };
+    store
+        .save_messages(folder, &[message(1, 100), ticket, message(3, 300)])
+        .unwrap();
+    let id = |uid: usize| list(&store, ListScope::Folder(folder), 10, None)[3 - uid].id;
+    store
+        .save_body(
+            id(3),
+            &Body {
+                text: "The invoice is attached".into(),
+                html: None,
+            },
+        )
+        .unwrap();
+
+    let found = |text: &str| subjects(&store.search(text, 10).unwrap()).join(", ");
+    assert_eq!(found("БИЛЕТ поез"), "Ваш билет на поезд, ёлка");
+    assert_eq!(found("cafe"), "Ваш билет на поезд, ёлка");
+    assert_eq!(found("елка"), "Ваш билет на поезд, ёлка");
+    assert_eq!(found("Ёлка"), "Ваш билет на поезд, ёлка");
+    assert_eq!(found("rail.example"), "Ваш билет на поезд, ёлка");
+    assert_eq!(found("invoice"), "Subject 3");
+    assert_eq!(found("hello"), "Subject 1");
+    // A copy in another folder shows once.
+    let sent = store
+        .save_folders(
+            account,
+            &[NewFolder {
+                remote_id: "Sent".into(),
+                name: "Sent".into(),
+                role: FolderRole::Sent,
+            }],
+        )
+        .unwrap()[0]
+        .id;
+    store.save_messages(sent, &[message(1, 100)]).unwrap();
+    assert_eq!(found("hello"), "Subject 1");
+    assert_eq!(found("anna"), "Subject 3, Subject 1");
+    assert_eq!(found("anna invoice"), "Subject 3");
+    assert_eq!(found("\"anna\" OR NEAR("), "");
+    assert_eq!(found("  "), "");
+
+    archive_folder(&store, account);
+    store.queue(id(3), Action::Archive, 0).unwrap();
+    assert_eq!(found("anna"), "Subject 1");
+}

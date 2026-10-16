@@ -174,6 +174,12 @@ impl Core {
             .collect())
     }
 
+    /// Messages matching every word of `text`, newest first.
+    pub fn search(&self, text: String, limit: u32) -> Result<Vec<MessageItem>, CoreError> {
+        let rows = self.store.search(&text, limit)?;
+        Ok(rows.into_iter().map(MessageItem::from).collect())
+    }
+
     /// The conversation of a message, oldest first.
     pub fn thread(&self, message: i64) -> Result<Vec<MessageItem>, CoreError> {
         let rows = self.store.thread(MessageId(message))?;

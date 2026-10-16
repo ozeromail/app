@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -50,6 +51,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -77,6 +79,8 @@ fun InboxScreen(mail: Mail) {
     var tab by rememberSaveable { mutableStateOf(Category.PEOPLE) }
     var tabs by remember { mutableStateOf(emptyList<InboxTab>()) }
     var unsent by remember { mutableStateOf(emptyList<UnsentItem>()) }
+    var searching by rememberSaveable { mutableStateOf(false) }
+    var query by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -211,6 +215,20 @@ fun InboxScreen(mail: Mail) {
         return
     }
 
+    if (searching) {
+        SearchScreen(
+            mail,
+            query,
+            onQuery = { query = it },
+            onOpen = { open = it },
+            onBack = {
+                searching = false
+                query = ""
+            },
+        )
+        return
+    }
+
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
         Text(
             stringResource(R.string.inbox_title),
@@ -258,6 +276,17 @@ fun InboxScreen(mail: Mail) {
         }
         // Low on the screen, in reach of the thumb that swiped.
         SnackbarHost(snackbar)
+        Text(
+            stringResource(R.string.search_prompt),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, top = 8.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .clickable { searching = true }
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+        )
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.weight(1f)) { Tabs(tab, tabs, onPick = { tab = it }) }
             TextButton(
@@ -340,14 +369,14 @@ private fun UnsentRow(unsent: UnsentItem, onClick: () -> Unit) {
 }
 
 @Composable
-private fun Empty() {
+internal fun Empty() {
     Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
         Text(stringResource(R.string.inbox_empty), color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
 @Composable
-private fun MessageRow(message: MessageItem, onClick: () -> Unit) {
+internal fun MessageRow(message: MessageItem, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 10.dp),
