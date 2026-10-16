@@ -17,5 +17,7 @@
   "error_server": "The server replied with an error. Try again later.",
   "error_storage": "Can’t read the mail saved on this device.",
   "error_account_exists": "This account is already added.",
-  "error_gone": "This message is no longer on the server. Refresh the inbox."
+  "error_gone": "This message is no longer on the server. Refresh the inbox.",
+  "error_no_archive": "This account has no Archive folder.",
+  "inbox_archived": "Moved to Archive"
 }

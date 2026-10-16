@@ -55,10 +55,28 @@ class Mail(private val context: Context) {
      */
     suspend fun markRead(message: MessageItem) {
         io { core.markRead(message.id, true) }
+        push(message.accountId)
+    }
+
+    /**
+     * Takes the message out of the inbox now and returns the action for [undo].
+     * The server gets the move once the undo time is over.
+     */
+    suspend fun archive(message: MessageItem): Long {
+        val action = io { core.archive(message.id) }
+        push(message.accountId)
+        return action
+    }
+
+    /** Takes back an archive that has not gone to the server yet; false if too late. */
+    suspend fun undo(action: Long): Boolean = io { core.undo(action) }
+
+    /** Sends the account's queued actions in the background, waiting for held ones. */
+    private fun push(accountId: Long) {
         background.launch {
             try {
-                val password = password(message.accountId) ?: return@launch
-                core.pushActions(message.accountId, password)
+                val password = password(accountId) ?: return@launch
+                core.pushActions(accountId, password)
             } catch (e: Exception) {
                 // Still queued: the next push or sync sends it. Nothing here may crash the app.
                 Log.w("Ozero", "push failed", e)
@@ -106,6 +124,7 @@ fun CoreException.text(): Int {
         is CoreException.Tls -> R.string.error_tls
         is CoreException.Server -> R.string.error_server
         is CoreException.Gone -> R.string.error_gone
+        is CoreException.NoArchive -> R.string.error_no_archive
         else -> R.string.error_storage
     }
 }
