@@ -46,9 +46,28 @@ final class Mail: Sendable {
     /// The message body, downloaded once by the core.
     /// A missing password only matters for a download, which then fails to log in.
     func body(of message: MessageItem) async throws -> MessageBody {
-        let account = try core.accounts().first { $0.id == message.accountId }
-        let password = account.flatMap { try? vault.password(email: $0.email) } ?? ""
+        let password = try password(of: message.accountId) ?? ""
         return try await core.messageBody(message: message.id, password: password)
+    }
+
+    /// Marks the message read on the device now; the server hears about it in the background.
+    func markRead(_ message: MessageItem) throws {
+        try core.markRead(message: message.id, seen: true)
+        // Not tied to the screen, so leaving it does not stop the push.
+        Task.detached {
+            do {
+                guard let password = try self.password(of: message.accountId) else { return }
+                try await self.core.pushActions(account: message.accountId, password: password)
+            } catch {
+                // Still queued: the next push or sync sends it.
+                log.error("push failed: \(String(describing: error), privacy: .public)")
+            }
+        }
+    }
+
+    private func password(of account: Int64) throws -> String? {
+        let account = try core.accounts().first { $0.id == account }
+        return account.flatMap { try? vault.password(email: $0.email) }
     }
 
     /// Syncs all accounts at once; the first failure is thrown once every one has finished.
