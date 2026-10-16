@@ -1,4 +1,4 @@
-use ozero_domain::{FolderId, MessageId, NewFolder};
+use ozero_domain::{Checkpoint, FolderId, MessageId, NewFolder};
 
 use super::*;
 use crate::fakes::{Memory, Parser, Server, run};
@@ -12,8 +12,15 @@ fn folder(remote_id: &str, role: FolderRole) -> NewFolder {
 }
 
 #[test]
-fn saves_the_newest_inbox_messages() {
-    let store = Memory::default();
+fn saves_inbox_changes_since_the_checkpoint() {
+    let since = Checkpoint {
+        validity: 9,
+        next: 7,
+    };
+    let store = Memory {
+        checkpoint: (since, vec!["5".into(), "6".into()]),
+        ..Memory::default()
+    };
     let mut server = Server {
         folders: vec![
             folder("Sent", FolderRole::Sent),
@@ -23,12 +30,17 @@ fn saves_the_newest_inbox_messages() {
     };
     run(sync_inbox(&store, &mut server, &Parser, AccountId(1), 50)).unwrap();
 
-    assert_eq!(server.asked, [("INBOX".to_string(), 50)]);
-    assert_eq!(*store.validity.lock().unwrap(), [(FolderId(2), 9)]);
-    let saved = store.saved.lock().unwrap();
-    assert_eq!(saved.len(), 1);
-    assert_eq!(saved[0].0, FolderId(2));
-    assert_eq!(saved[0].1[0].subject, "Hi");
+    assert_eq!(
+        server.synced,
+        [("INBOX".to_string(), since, vec!["5".into(), "6".into()], 50)]
+    );
+    let changes = store.changes.lock().unwrap();
+    let (folder, saved) = &changes[0];
+    assert_eq!(*folder, FolderId(2));
+    assert_eq!(saved.checkpoint.next, 8);
+    assert_eq!(saved.new[0].subject, "Hi");
+    assert_eq!(saved.gone, ["6"]);
+    assert_eq!(saved.flags.len(), 1);
 }
 
 #[test]
@@ -47,7 +59,7 @@ fn fails_without_an_inbox() {
         )),
         Err(SyncError::NoInbox)
     );
-    assert!(server.asked.is_empty());
+    assert!(server.synced.is_empty());
 }
 
 fn location(remote_id: &str) -> MessageLocation {

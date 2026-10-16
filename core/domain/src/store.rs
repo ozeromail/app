@@ -1,9 +1,9 @@
 use std::fmt;
 
 use crate::{
-    Account, AccountId, Action, Body, Category, Draft, Folder, FolderId, ListQuery, MessageId,
-    MessageLocation, MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing,
-    Unsent,
+    Account, AccountId, Action, Body, Category, Changes, Checkpoint, Draft, Folder, FolderId,
+    ListQuery, MessageId, MessageLocation, MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId,
+    OutboxId, Outgoing, Unsent,
 };
 
 /// Local database port. The UI reads only from here; sync writes here.
@@ -19,13 +19,16 @@ pub trait Store: Send + Sync {
     ) -> Result<Vec<Folder>, StoreError>;
     fn folders(&self, account: AccountId) -> Result<Vec<Folder>, StoreError>;
 
-    /// Records the folder's `Recent::validity`. When it changed, drops the folder's
-    /// messages first: their `remote_id`s now name other messages.
-    fn set_validity(&self, folder: FolderId, validity: u32) -> Result<(), StoreError>;
-
-    /// Inserts new messages and updates known ones, matched by `remote_id`, in one transaction.
-    /// A queued action stays on top of what the server sent until it is sent.
-    fn save_messages(&self, folder: FolderId, messages: &[NewMessage]) -> Result<(), StoreError>;
+    /// Where the folder's last sync stopped, and the `remote_id`s of its saved messages.
+    fn checkpoint(&self, folder: FolderId) -> Result<(Checkpoint, Vec<String>), StoreError>;
+    /// Saves a sync in one transaction. A new validity first drops the folder's messages:
+    /// their `remote_id`s now name other messages. Messages are matched by `remote_id`,
+    /// and a queued action stays on top of what the server sent until it is sent.
+    fn save_changes(
+        &self,
+        folder: FolderId,
+        changes: &Changes<NewMessage>,
+    ) -> Result<(), StoreError>;
     fn list(&self, query: &ListQuery) -> Result<Vec<MessageRow>, StoreError>;
     /// Unread messages in each tab of the unified inbox, leaving out those being archived.
     /// A tab without any is missing.

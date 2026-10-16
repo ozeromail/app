@@ -101,7 +101,7 @@ pub struct MessageLocation {
     pub id: MessageId,
     pub account_id: AccountId,
     pub folder_remote_id: String,
-    /// The folder's validity when the message was saved; see `Recent::validity`.
+    /// The folder's validity when the message was saved; see `Checkpoint::validity`.
     pub validity: u32,
     pub remote_id: String,
 }

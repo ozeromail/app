@@ -6,9 +6,10 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
 use ozero_domain::{
-    Account, AccountId, AccountKind, Action, Address, Body, Category, Draft, Flags, Folder,
-    FolderId, FolderRole, ListQuery, ListScope, MessageId, MessageLocation, MessageRow, NewAccount,
-    NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing, Server, Store, StoreError, Unsent,
+    Account, AccountId, AccountKind, Action, Address, Body, Category, Changes, Checkpoint, Draft,
+    Flags, Folder, FolderId, FolderRole, ListQuery, ListScope, MessageId, MessageLocation,
+    MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing, Server, Store,
+    StoreError, Unsent,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{Connection, ErrorCode, OptionalExtension, Row, Transaction, params};
@@ -209,55 +210,62 @@ impl Store for SqliteStore {
         rows.and_then(|rows| rows.collect()).map_err(storage)
     }
 
-    fn set_validity(&self, folder: FolderId, validity: u32) -> Result<(), StoreError> {
-        let mut conn = self.conn();
-        let tx = conn.transaction().map_err(storage)?;
-        let current: u32 = tx
+    fn checkpoint(&self, folder: FolderId) -> Result<(Checkpoint, Vec<String>), StoreError> {
+        let conn = self.conn();
+        let checkpoint = conn
             .query_row(
-                "SELECT validity FROM folder WHERE id = ?1",
+                "SELECT validity, next_id FROM folder WHERE id = ?1",
                 [folder.0],
-                |r| r.get(0),
+                |r| {
+                    Ok(Checkpoint {
+                        validity: r.get(0)?,
+                        // SQLite has no u64; a cursor that does not fit starts over.
+                        next: u64::try_from(r.get::<_, i64>(1)?).unwrap_or(0),
+                    })
+                },
             )
             .optional()
             .map_err(storage)?
             .ok_or(StoreError::NotFound)?;
-        if current != validity {
-            tx.execute("DELETE FROM message WHERE folder_id = ?1", [folder.0])
-                .map_err(storage)?;
-            tx.execute(
-                "UPDATE folder SET validity = ?2 WHERE id = ?1",
-                params![folder.0, validity],
-            )
+        let known = conn
+            .prepare_cached("SELECT remote_id FROM message WHERE folder_id = ?1")
+            .and_then(|mut s| s.query_map([folder.0], |r| r.get(0))?.collect())
             .map_err(storage)?;
-        }
-        tx.commit().map_err(storage)
+        Ok((checkpoint, known))
     }
 
-    fn save_messages(&self, folder: FolderId, messages: &[NewMessage]) -> Result<(), StoreError> {
+    fn save_changes(
+        &self,
+        folder: FolderId,
+        changes: &Changes<NewMessage>,
+    ) -> Result<(), StoreError> {
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(storage)?;
-        require(&tx, "SELECT 1 FROM folder WHERE id = ?1", folder.0)?;
+        reset_if_new(&tx, folder, changes.checkpoint.validity)?;
         {
-            // Rewrites a known row only when something changed, so a resync does not grow the WAL.
-            // An empty snippet keeps the one taken from a saved body.
-            let mut upsert = tx.prepare_cached(SAVE_MESSAGE).map_err(storage)?;
-            for m in messages {
-                upsert
-                    .execute(params![
-                        folder.0,
-                        m.remote_id,
-                        m.message_id,
-                        m.from.name,
-                        m.from.email,
-                        m.subject,
-                        m.snippet,
-                        m.date,
-                        flags_bits(m.flags),
-                        category_ref(m.category),
-                    ])
+            let mut flags = tx.prepare_cached(SAVE_FLAGS).map_err(storage)?;
+            for (remote_id, f) in &changes.flags {
+                flags
+                    .execute(params![folder.0, remote_id, flags_bits(*f)])
+                    .map_err(storage)?;
+            }
+            let mut gone = tx
+                .prepare_cached("DELETE FROM message WHERE folder_id = ?1 AND remote_id = ?2")
+                .map_err(storage)?;
+            for remote_id in &changes.gone {
+                gone.execute(params![folder.0, remote_id])
                     .map_err(storage)?;
             }
         }
+        upsert_messages(&tx, folder, &changes.new)?;
+        tx.execute(
+            "UPDATE folder SET next_id = ?2 WHERE id = ?1 AND next_id IS NOT ?2",
+            params![
+                folder.0,
+                i64::try_from(changes.checkpoint.next).unwrap_or(0)
+            ],
+        )
+        .map_err(storage)?;
         tx.commit().map_err(storage)
     }
 
@@ -646,6 +654,56 @@ impl Store for SqliteStore {
     }
 }
 
+/// Records the folder's validity; when it changed, drops its messages and checkpoint.
+fn reset_if_new(tx: &Transaction<'_>, folder: FolderId, validity: u32) -> Result<(), StoreError> {
+    let current: u32 = tx
+        .query_row(
+            "SELECT validity FROM folder WHERE id = ?1",
+            [folder.0],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(storage)?
+        .ok_or(StoreError::NotFound)?;
+    if current != validity {
+        tx.execute("DELETE FROM message WHERE folder_id = ?1", [folder.0])
+            .map_err(storage)?;
+        tx.execute(
+            "UPDATE folder SET validity = ?2, next_id = 0 WHERE id = ?1",
+            params![folder.0, validity],
+        )
+        .map_err(storage)?;
+    }
+    Ok(())
+}
+
+/// Rewrites a known row only when something changed, so a resync does not grow the WAL.
+/// An empty snippet keeps the one taken from a saved body.
+fn upsert_messages(
+    tx: &Transaction<'_>,
+    folder: FolderId,
+    messages: &[NewMessage],
+) -> Result<(), StoreError> {
+    let mut upsert = tx.prepare_cached(SAVE_MESSAGE).map_err(storage)?;
+    for m in messages {
+        upsert
+            .execute(params![
+                folder.0,
+                m.remote_id,
+                m.message_id,
+                m.from.name,
+                m.from.email,
+                m.subject,
+                m.snippet,
+                m.date,
+                flags_bits(m.flags),
+                category_ref(m.category),
+            ])
+            .map_err(storage)?;
+    }
+    Ok(())
+}
+
 /// The folder of the message's account that has the archive role.
 fn archive_folder(tx: &Transaction<'_>, message: MessageId) -> Result<i64, StoreError> {
     tx.prepare_cached(
@@ -696,11 +754,21 @@ fn set_seen(tx: &Transaction<'_>, message: i64, seen: bool) -> Result<(), StoreE
 /// The flags to keep for a known message: the server's, except the read state while a
 /// queued "seen" action has not reached the server. `1` is `SEEN`.
 macro_rules! merged_flags {
-    () => {
-        "CASE WHEN EXISTS (SELECT 1 FROM op WHERE op.message_id = message.id AND op.kind = 'seen')
-              THEN (excluded.flags & ~1) | (flags & 1) ELSE excluded.flags END"
+    ($server:literal) => {
+        concat!(
+            "CASE WHEN EXISTS (SELECT 1 FROM op WHERE op.message_id = message.id AND op.kind = 'seen')
+              THEN (", $server, " & ~1) | (flags & 1) ELSE ", $server, " END"
+        )
     };
 }
+
+/// Sets the flags of a saved message from the server's, under a queued action.
+const SAVE_FLAGS: &str = concat!(
+    "UPDATE message SET flags = ",
+    merged_flags!("?3"),
+    " WHERE folder_id = ?1 AND remote_id = ?2 AND flags IS NOT ",
+    merged_flags!("?3")
+);
 
 const SAVE_MESSAGE: &str = concat!(
     "INSERT INTO message (folder_id, remote_id, message_id, from_name, from_email,
@@ -711,12 +779,12 @@ const SAVE_MESSAGE: &str = concat!(
          from_email = excluded.from_email, subject = excluded.subject,
          snippet = coalesce(nullif(excluded.snippet, ''), snippet),
          date = excluded.date, category = excluded.category, flags = ",
-    merged_flags!(),
+    merged_flags!("excluded.flags"),
     " WHERE (message_id, from_name, from_email, subject, snippet, date, category, flags)
          IS NOT (excluded.message_id, excluded.from_name, excluded.from_email,
                  excluded.subject, coalesce(nullif(excluded.snippet, ''), snippet),
                  excluded.date, excluded.category, ",
-    merged_flags!(),
+    merged_flags!("excluded.flags"),
     ")"
 );
 

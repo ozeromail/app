@@ -28,6 +28,36 @@ fn store() -> SqliteStore {
     SqliteStore::open_in_memory(&KEY).unwrap()
 }
 
+/// One step of a sync at a time, through `save_changes`.
+trait Steps {
+    fn set_validity(&self, folder: FolderId, validity: u32) -> Result<(), StoreError>;
+    fn save_messages(&self, folder: FolderId, messages: &[NewMessage]) -> Result<(), StoreError>;
+}
+
+impl Steps for SqliteStore {
+    fn set_validity(&self, folder: FolderId, validity: u32) -> Result<(), StoreError> {
+        let checkpoint = Checkpoint {
+            validity,
+            ..self.checkpoint(folder)?.0
+        };
+        self.save_changes(folder, &changes(checkpoint, vec![]))
+    }
+
+    fn save_messages(&self, folder: FolderId, messages: &[NewMessage]) -> Result<(), StoreError> {
+        let checkpoint = self.checkpoint(folder)?.0;
+        self.save_changes(folder, &changes(checkpoint, messages.to_vec()))
+    }
+}
+
+fn changes(checkpoint: Checkpoint, new: Vec<NewMessage>) -> Changes<NewMessage> {
+    Changes {
+        checkpoint,
+        new,
+        flags: vec![],
+        gone: vec![],
+    }
+}
+
 fn account(store: &SqliteStore, email: &str) -> AccountId {
     store
         .add_account(&NewAccount {
@@ -306,6 +336,84 @@ fn new_validity_drops_the_folder_messages() {
     assert!(list(&store, ListScope::Folder(folder), 10, None).is_empty());
     assert_eq!(
         store.set_validity(FolderId(42), 1).unwrap_err(),
+        StoreError::NotFound
+    );
+}
+
+#[test]
+fn saves_changes_since_the_checkpoint() {
+    let store = store();
+    let folder = inbox(&store, account(&store, "a@example.com"));
+    assert_eq!(
+        store.checkpoint(folder).unwrap(),
+        (Checkpoint::default(), vec![])
+    );
+    let checkpoint = Checkpoint {
+        validity: 5,
+        next: 4,
+    };
+    let first = Changes {
+        checkpoint,
+        new: vec![message(1, 100), message(2, 200), message(3, 300)],
+        flags: vec![],
+        gone: vec![],
+    };
+    store.save_changes(folder, &first).unwrap();
+    let (saved, mut known) = store.checkpoint(folder).unwrap();
+    known.sort();
+    assert_eq!(
+        (saved, known),
+        (checkpoint, vec!["1".into(), "2".into(), "3".into()])
+    );
+
+    // A queued "mark unread" stays on top of the server's flags until it is sent.
+    let one = list(&store, ListScope::Folder(folder), 10, None)[2].id;
+    store.queue(one, Action::Seen(false), 0).unwrap();
+    let read = Flags {
+        seen: true,
+        flagged: true,
+        ..Flags::default()
+    };
+    let second = Changes {
+        checkpoint: Checkpoint {
+            validity: 5,
+            next: 5,
+        },
+        new: vec![message(4, 400)],
+        flags: vec![("1".into(), read), ("3".into(), read)],
+        gone: vec!["2".into()],
+    };
+    store.save_changes(folder, &second).unwrap();
+    let rows = list(&store, ListScope::Folder(folder), 10, None);
+    let got: Vec<_> = rows
+        .iter()
+        .map(|r| (r.subject.as_str(), r.flags.seen, r.flags.flagged))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("Subject 4", false, false),
+            ("Subject 3", true, true),
+            ("Subject 1", false, true),
+        ]
+    );
+    assert_eq!(store.checkpoint(folder).unwrap().0.next, 5);
+
+    // A new validity starts over.
+    let reset = Changes {
+        checkpoint: Checkpoint {
+            validity: 6,
+            next: 2,
+        },
+        new: vec![message(1, 500)],
+        flags: vec![],
+        gone: vec![],
+    };
+    store.save_changes(folder, &reset).unwrap();
+    assert_eq!(list(&store, ListScope::Folder(folder), 10, None).len(), 1);
+    assert_eq!(store.checkpoint(folder).unwrap().0, reset.checkpoint);
+    assert_eq!(
+        store.save_changes(FolderId(42), &reset).unwrap_err(),
         StoreError::NotFound
     );
 }

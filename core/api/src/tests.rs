@@ -2,7 +2,7 @@ use ozero_imap::rustls::RootCertStore;
 use ozero_imap::rustls::pki_types::CertificateDer;
 use ozero_imap::rustls::pki_types::pem::PemObject;
 
-use ozero_domain::MailProvider;
+use ozero_domain::{Checkpoint, MailProvider};
 
 use super::*;
 
@@ -159,7 +159,11 @@ fn syncs_an_imap_inbox_into_the_list() {
     let sent = runtime.block_on(async {
         let account = core.account(AccountId(account))?;
         let mut imap = core.connect(&account, "pass").await?;
-        Ok::<_, CoreError>(imap.recent("Sent", 50).await?.messages)
+        Ok::<_, CoreError>(
+            imap.changes("Sent", Checkpoint::default(), &[], 50)
+                .await?
+                .new,
+        )
     });
     let headers: Vec<_> = sent
         .unwrap()

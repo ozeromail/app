@@ -23,7 +23,8 @@ pub use message::{
 pub use op::{Action, Op, OpId};
 pub use outbox::{Draft, OutboxId, Outgoing, Unsent, is_address, parse_recipients, reply_subject};
 pub use provider::{
-    MailProvider, MailSender, MessageBuilder, MessageParser, ProviderError, RawMessage, Recent,
+    Changes, Checkpoint, MailProvider, MailSender, MessageBuilder, MessageParser, ProviderError,
+    RawMessage,
 };
 pub use sort::{Category, Signals};
 pub use store::{Store, StoreError};

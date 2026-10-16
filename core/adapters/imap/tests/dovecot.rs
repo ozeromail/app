@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use ozero_domain::{FolderRole, MailProvider, ProviderError};
+use ozero_domain::{Changes, Checkpoint, FolderRole, MailProvider, ProviderError};
 use ozero_imap::ImapSession;
 use tokio_rustls::rustls::pki_types::CertificateDer;
 use tokio_rustls::rustls::pki_types::pem::PemObject;
@@ -33,6 +33,13 @@ async fn session() -> ImapSession {
     connect(test_ca(), PASSWORD).await.unwrap()
 }
 
+/// The newest `limit` messages of a folder, as a first sync gets them.
+async fn recent(imap: &mut ImapSession, folder: &str, limit: u32) -> Changes {
+    imap.changes(folder, Checkpoint::default(), &[], limit)
+        .await
+        .unwrap()
+}
+
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "needs tools/dovecot-test.sh"]
 async fn lists_folders_with_roles_and_names() {
@@ -48,7 +55,9 @@ async fn lists_folders_with_roles_and_names() {
         [
             ("&BB4EQgRHBFEEQgRL-", "Отчёты", FolderRole::Custom),
             ("Archive", "Archive", FolderRole::Archive),
+            ("Changes", "Changes", FolderRole::Custom),
             ("Empty", "Empty", FolderRole::Custom),
+            ("Gone", "Gone", FolderRole::Custom),
             ("INBOX", "INBOX", FolderRole::Inbox),
             ("Moves", "Moves", FolderRole::Custom),
             ("Sent", "Sent", FolderRole::Sent),
@@ -61,9 +70,9 @@ async fn lists_folders_with_roles_and_names() {
 #[ignore = "needs tools/dovecot-test.sh"]
 async fn fetches_the_newest_messages_oldest_first() {
     let mut imap = session().await;
-    let recent = imap.recent("INBOX", 2).await.unwrap();
-    assert!(recent.validity > 0);
-    let messages = recent.messages;
+    let newest = recent(&mut imap, "INBOX", 2).await;
+    assert!(newest.checkpoint.validity > 0);
+    let messages = newest.new;
     let uids: Vec<_> = messages.iter().map(|m| m.remote_id.as_str()).collect();
     assert_eq!(uids, ["2", "3"]);
 
@@ -75,15 +84,15 @@ async fn fetches_the_newest_messages_oldest_first() {
     assert!(header.contains("Subject: Message 3"), "{header}");
     assert!(!header.contains("Hello"), "body must not be fetched");
 
-    assert!(imap.recent("Empty", 50).await.unwrap().messages.is_empty());
-    assert_eq!(imap.recent("INBOX", 50).await.unwrap().messages.len(), 3);
+    assert!(recent(&mut imap, "Empty", 50).await.new.is_empty());
+    assert_eq!(recent(&mut imap, "INBOX", 50).await.new.len(), 3);
 }
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "needs tools/dovecot-test.sh"]
 async fn fetches_a_body_without_marking_it_read() {
     let mut imap = session().await;
-    let validity = imap.recent("INBOX", 1).await.unwrap().validity;
+    let validity = recent(&mut imap, "INBOX", 1).await.checkpoint.validity;
     let body = imap.body("INBOX", validity, "2").await.unwrap();
     let text = String::from_utf8_lossy(&body);
     assert!(
@@ -91,7 +100,7 @@ async fn fetches_a_body_without_marking_it_read() {
         "{text}"
     );
 
-    let second = &imap.recent("INBOX", 2).await.unwrap().messages[0];
+    let second = &recent(&mut imap, "INBOX", 2).await.new[0];
     assert_eq!(second.remote_id, "2");
     assert!(!second.flags.seen);
 
@@ -105,12 +114,12 @@ async fn fetches_a_body_without_marking_it_read() {
 #[ignore = "needs tools/dovecot-test.sh"]
 async fn marks_messages_read_and_unread() {
     let mut imap = session().await;
-    let validity = imap.recent("INBOX", 1).await.unwrap().validity;
+    let validity = recent(&mut imap, "INBOX", 1).await.checkpoint.validity;
     // UID 1 only, so other tests see the flags they expect; 99 does not exist.
     let ids = ["1".to_string(), "99".to_string()];
     for seen in [true, false] {
         imap.set_seen("INBOX", validity, &ids, seen).await.unwrap();
-        let first = &imap.recent("INBOX", 3).await.unwrap().messages[0];
+        let first = &recent(&mut imap, "INBOX", 3).await.new[0];
         assert_eq!((first.remote_id.as_str(), first.flags.seen), ("1", seen));
     }
     let err = imap
@@ -125,17 +134,85 @@ async fn marks_messages_read_and_unread() {
 async fn moves_messages_to_another_folder() {
     // Its own folders, so other tests keep their messages.
     let mut imap = session().await;
-    let validity = imap.recent("Moves", 1).await.unwrap().validity;
+    let validity = recent(&mut imap, "Moves", 1).await.checkpoint.validity;
     imap.move_to("Moves", validity, &["1".into()], "Archive")
         .await
         .unwrap();
-    assert!(imap.recent("Moves", 10).await.unwrap().messages.is_empty());
-    let archived = imap.recent("Archive", 10).await.unwrap().messages;
+    assert!(recent(&mut imap, "Moves", 10).await.new.is_empty());
+    let archived = recent(&mut imap, "Archive", 10).await.new;
     assert_eq!(archived.len(), 1);
     let header = String::from_utf8_lossy(&archived[0].header);
     assert!(header.contains("Subject: Move me"), "{header}");
     // The inbox tabs need the list headers.
     assert!(header.contains("List-Unsubscribe:"), "{header}");
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "needs tools/dovecot-test.sh"]
+async fn fetches_only_what_changed() {
+    // Its own folders, so other tests keep their messages.
+    let mut imap = session().await;
+    let first = imap
+        .changes("Changes", Checkpoint::default(), &[], 50)
+        .await
+        .unwrap();
+    let uids: Vec<_> = first.new.iter().map(|m| m.remote_id.as_str()).collect();
+    assert_eq!(uids, ["1", "2"]);
+    assert_eq!(first.checkpoint.next, 3);
+    let known = ["1".to_string(), "2".to_string()];
+
+    let same = imap
+        .changes("Changes", first.checkpoint, &known, 50)
+        .await
+        .unwrap();
+    assert!(same.new.is_empty() && same.gone.is_empty());
+    assert_eq!(same.flags.len(), 2);
+
+    let validity = first.checkpoint.validity;
+    imap.set_seen("Changes", validity, &["1".into()], true)
+        .await
+        .unwrap();
+    imap.move_to("Changes", validity, &["2".into()], "Gone")
+        .await
+        .unwrap();
+    imap.append(
+        "Changes",
+        b"From: anna@example.com\r\nSubject: Change 3\r\n\r\nHello\r\n",
+    )
+    .await
+    .unwrap();
+    let changed = imap
+        .changes("Changes", first.checkpoint, &known, 50)
+        .await
+        .unwrap();
+    let uids: Vec<_> = changed.new.iter().map(|m| m.remote_id.as_str()).collect();
+    assert_eq!(uids, ["3"]);
+    assert!(String::from_utf8_lossy(&changed.new[0].header).contains("Subject: Change 3"));
+    assert_eq!(changed.gone, ["2"]);
+    assert_eq!(changed.flags.len(), 1);
+    assert_eq!(changed.flags[0].0, "1");
+    assert!(changed.flags[0].1.seen);
+    assert_eq!(changed.checkpoint.next, 4);
+
+    // Mail saved before checkpoints existed tells what is new.
+    let upgraded = Checkpoint { validity, next: 0 };
+    let after = imap
+        .changes("Changes", upgraded, &["1".into()], 50)
+        .await
+        .unwrap();
+    let uids: Vec<_> = after.new.iter().map(|m| m.remote_id.as_str()).collect();
+    assert_eq!(uids, ["3"]);
+    assert_eq!((after.flags.len(), after.checkpoint.next), (1, 4));
+
+    // Another validity means nothing known is trusted: the newest messages come again.
+    let stale = Checkpoint {
+        validity: validity + 1,
+        next: 4,
+    };
+    let reset = imap.changes("Changes", stale, &known, 1).await.unwrap();
+    let uids: Vec<_> = reset.new.iter().map(|m| m.remote_id.as_str()).collect();
+    assert_eq!(uids, ["3"]);
+    assert!(reset.gone.is_empty() && reset.flags.is_empty());
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -163,7 +240,7 @@ async fn appends_a_sent_copy_marked_read() {
     .await
     .unwrap();
     // The api test also sends into Sent.
-    let sent = imap.recent("Sent", 10).await.unwrap().messages;
+    let sent = recent(&mut imap, "Sent", 10).await.new;
     let copy = sent
         .iter()
         .find(|m| String::from_utf8_lossy(&m.header).contains("Subject: Sent copy"))
