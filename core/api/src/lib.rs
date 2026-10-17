@@ -5,7 +5,7 @@ use std::fmt;
 use std::hash::{BuildHasher, RandomState};
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ozero_app::ops::push_ops;
 use ozero_app::send::{SentCopy, push_sends};
@@ -15,6 +15,7 @@ use ozero_domain::{
     ListScope, MessageId, MessageRow, NewAccount, OpId, OutboxId, ProviderError, Server, Store,
     StoreError, parse_recipients, saves_sent_itself,
 };
+use ozero_gmail::{GmailSession, oauth};
 use ozero_imap::ImapSession;
 use ozero_imap::rustls::ClientConfig;
 use ozero_mime::{MimeBuilder, MimeParser};
@@ -29,6 +30,13 @@ const SYNC_LIMIT: u32 = 200;
 const NEWS_AGE: i64 = 86_400;
 /// Milliseconds an archived or sent message waits before the server hears of it.
 const HOLD: i64 = 5_000;
+/// The app's Google OAuth client (Android type, so it has no secret).
+const GOOGLE_CLIENT_ID: &str =
+    "212695996222-1jq9p8or7u441h6spset2o15ghblbt1l.apps.googleusercontent.com";
+/// Where Google sends the browser back: the app's package name as a URI scheme.
+const GOOGLE_REDIRECT: &str = "com.ozeromail.app:/oauth2redirect";
+/// An access token is renewed this long before Google says it expires.
+const TOKEN_MARGIN: Duration = Duration::from_secs(60);
 
 /// How long the apps offer undo after archiving or sending: a second shorter than the hold,
 /// so a tap is never late.
@@ -55,6 +63,18 @@ pub fn suggested_smtp_host(email: String) -> Option<String> {
     ozero_domain::guess_smtp_host(&email)
 }
 
+/// Starts Google sign-in: the app opens `url` in the browser and keeps the rest for
+/// `google_account` when the browser comes back to `GOOGLE_REDIRECT`.
+#[uniffi::export]
+pub fn google_sign_in() -> Result<GoogleSignIn, CoreError> {
+    let start = oauth::sign_in(GOOGLE_CLIENT_ID, GOOGLE_REDIRECT)?;
+    Ok(GoogleSignIn {
+        url: start.url,
+        verifier: start.verifier,
+        state: start.state,
+    })
+}
+
 /// An answer to `message`: from the account that got it, to its sender, `Re: ` once.
 #[uniffi::export]
 pub fn reply_draft(message: MessageItem) -> DraftItem {
@@ -77,6 +97,8 @@ pub struct Core {
     busy: Mutex<HashMap<AccountId, Arc<tokio::sync::Mutex<()>>>>,
     /// Accounts with a push waiting for held actions to come due.
     waiting: Mutex<HashSet<AccountId>>,
+    /// Gmail access tokens and until when they work.
+    tokens: Mutex<HashMap<AccountId, (String, Instant)>>,
 }
 
 /// Marks an account as having a waiting push until dropped.
@@ -118,6 +140,7 @@ impl Core {
             tls: OnceLock::new(),
             busy: Mutex::default(),
             waiting: Mutex::default(),
+            tokens: Mutex::default(),
         }))
     }
 
@@ -129,6 +152,21 @@ impl Core {
             .into_iter()
             .map(AccountItem::from)
             .collect())
+    }
+
+    /// Saves the Gmail account `google_account` returned, once the app has kept its secret.
+    pub fn add_gmail_account(&self, email: String) -> Result<i64, CoreError> {
+        if self.exists(&email)? {
+            return Err(CoreError::AccountExists);
+        }
+        let account = NewAccount {
+            kind: AccountKind::Gmail,
+            display_name: email.clone(),
+            email,
+            server: None,
+            smtp: None,
+        };
+        Ok(self.store.add_account(&account)?.0)
     }
 
     /// The newest conversations of one tab across all inboxes, newest first: each row is the
@@ -225,7 +263,7 @@ impl Core {
         let to = parse_recipients(&to).ok_or(CoreError::BadRecipients)?;
         let from = self.account(AccountId(account))?;
         // Would wait in the outbox forever.
-        if from.smtp.is_none() {
+        if from.kind == AccountKind::Imap && from.smtp.is_none() {
             return Err(CoreError::NoSmtp);
         }
         let draft = Draft {
@@ -281,8 +319,7 @@ impl Core {
         password: String,
     ) -> Result<i64, CoreError> {
         // Checked before going online, so a repeat sign-in costs no login.
-        let known = self.store.accounts()?;
-        if known.iter().any(|a| a.email.eq_ignore_ascii_case(&email)) {
+        if self.exists(&email)? {
             return Err(CoreError::AccountExists);
         }
         let server = imap.server(&email);
@@ -302,9 +339,46 @@ impl Core {
         Ok(self.store.add_account(&account)?.0)
     }
 
+    /// Finishes Google sign-in with the address the browser came back to: the account's
+    /// address and the secret the app keeps for it. `add_gmail_account` then saves it.
+    pub async fn google_account(
+        &self,
+        sign_in: GoogleSignIn,
+        redirect: String,
+    ) -> Result<GoogleAccount, CoreError> {
+        let start = oauth::SignIn {
+            url: sign_in.url,
+            verifier: sign_in.verifier,
+            state: sign_in.state,
+        };
+        // Saying no on Google's page is a refused sign-in like a wrong password.
+        let code = oauth::code(&redirect, &start).map_err(|e| match e {
+            ProviderError::Rejected(_) => CoreError::Auth,
+            e => e.into(),
+        })?;
+        let tls = self.tls()?;
+        let tokens = oauth::exchange(
+            tls.clone(),
+            GOOGLE_CLIENT_ID,
+            GOOGLE_REDIRECT,
+            &code,
+            &start,
+        )
+        .await?;
+        let email = GmailSession::new(tls, &tokens.access).email().await?;
+        if self.exists(&email)? {
+            return Err(CoreError::AccountExists);
+        }
+        Ok(GoogleAccount {
+            email,
+            secret: tokens.refresh.unwrap_or_default(),
+        })
+    }
+
     /// Sends the account's queued actions, waiting for held ones to come due; without any
     /// it does not connect. After a failure they stay queued for the next push or sync.
-    pub async fn push_actions(&self, account: i64, password: String) -> Result<(), CoreError> {
+    /// `secret` is the account's password, or its Google secret.
+    pub async fn push_actions(&self, account: i64, secret: String) -> Result<(), CoreError> {
         let account = self.account(AccountId(account))?;
         let mut waiter = None;
         loop {
@@ -313,10 +387,10 @@ impl Core {
                 let _busy = lock.lock().await;
                 // Read under the lock: a push that waited finds what the one before it sent gone.
                 let step = async {
-                    let mut imap = None;
-                    self.push_due(&account, &password, &mut imap).await?;
-                    if let Some(imap) = imap {
-                        let _ = imap.logout().await;
+                    let mut remote = None;
+                    self.push_due(&account, &secret, &mut remote).await?;
+                    if let Some(remote) = remote {
+                        remote.close().await;
                     }
                     Ok::<_, CoreError>(self.store.next_send(account.id)?)
                 }
@@ -327,7 +401,7 @@ impl Core {
                     Ok(next) => next.map_or(0, |at| at - now()),
                     Err(e) => {
                         drop(waiter.take());
-                        return Err(e);
+                        return self.refused(&account, Err(e));
                     }
                 };
                 let Ok(wait @ 1..) = u64::try_from(wait) else {
@@ -348,28 +422,36 @@ impl Core {
     }
 
     /// Sends the account's queued actions and mail, then brings its folders and what changed
-    /// in its inbox and sent folder into the database.
-    pub async fn sync_imap(&self, account: i64, password: String) -> Result<(), CoreError> {
+    /// in its inbox and sent folder into the database. `secret` as for `push_actions`.
+    pub async fn sync(&self, account: i64, secret: String) -> Result<(), CoreError> {
         let account = self.account(AccountId(account))?;
         let lock = self.busy(account.id);
         let _busy = lock.lock().await;
         let mut slot = None;
         // A send that fails, say on a broken SMTP server, must not stop new mail coming in.
-        let pushed = self.push_due(&account, &password, &mut slot).await;
-        let imap = self.imap(&mut slot, &account, &password).await?;
-        sync_mail(&self.store, imap, &self.parser, account.id, SYNC_LIMIT).await?;
-        if let Some(imap) = slot {
-            let _ = imap.logout().await;
+        let pushed = self.refused(&account, self.push_due(&account, &secret, &mut slot).await);
+        let remote = self.remote(&mut slot, &account, &secret).await?;
+        let synced = match remote {
+            Remote::Imap(imap) => {
+                sync_mail(&self.store, imap, &self.parser, account.id, SYNC_LIMIT).await
+            }
+            Remote::Gmail(gmail) => {
+                sync_mail(&self.store, gmail, &self.parser, account.id, SYNC_LIMIT).await
+            }
+        };
+        self.refused(&account, synced)?;
+        if let Some(remote) = slot {
+            remote.close().await;
         }
         pushed
     }
 
     /// The message body: the saved one, or downloaded once and saved with its snippet.
-    /// `password` is the message's account's.
+    /// `secret` is the message's account's, as for `push_actions`.
     pub async fn message_body(
         &self,
         message: i64,
-        password: String,
+        secret: String,
     ) -> Result<MessageBody, CoreError> {
         let message = MessageId(message);
         if let Some(body) = self.store.body(message)? {
@@ -377,11 +459,16 @@ impl Core {
         }
         let location = self.store.location(message)?;
         let account = self.account(location.account_id)?;
-        let mut imap = self.connect(&account, &password).await?;
-        let body = download_body(&self.store, &mut imap, &self.parser, &location).await?;
+        let mut slot = None;
+        let body = match self.remote(&mut slot, &account, &secret).await? {
+            Remote::Imap(imap) => download_body(&self.store, imap, &self.parser, &location).await,
+            Remote::Gmail(gmail) => {
+                download_body(&self.store, gmail, &self.parser, &location).await
+            }
+        };
         // Closing without LOGOUT saves the reader a round trip; the server cleans up.
-        drop(imap);
-        Ok(body.into())
+        drop(slot);
+        Ok(self.refused(&account, body)?.into())
     }
 }
 
@@ -418,10 +505,72 @@ impl Core {
         self.store
             .accounts()?
             .into_iter()
-            .find(|a| a.id == id && a.kind == AccountKind::Imap)
+            .find(|a| a.id == id)
             .ok_or_else(|| CoreError::Storage {
-                detail: "no such IMAP account".into(),
+                detail: "no such account".into(),
             })
+    }
+
+    fn exists(&self, email: &str) -> Result<bool, CoreError> {
+        let known = self.store.accounts()?;
+        Ok(known.iter().any(|a| a.email.eq_ignore_ascii_case(email)))
+    }
+
+    /// The connection in `slot`, opened on first use.
+    async fn remote<'a>(
+        &self,
+        slot: &'a mut Option<Remote>,
+        account: &Account,
+        secret: &str,
+    ) -> Result<&'a mut Remote, CoreError> {
+        if let Some(remote) = slot {
+            return Ok(remote);
+        }
+        let remote = match account.kind {
+            AccountKind::Imap => Remote::Imap(self.connect(account, secret).await?),
+            AccountKind::Gmail => {
+                let token = self.access_token(account.id, secret).await?;
+                Remote::Gmail(GmailSession::new(self.tls()?, &token))
+            }
+            AccountKind::Graph => {
+                return Err(CoreError::Storage {
+                    detail: "Outlook accounts are not supported yet".into(),
+                });
+            }
+        };
+        Ok(slot.insert(remote))
+    }
+
+    /// A Gmail access token: the one from earlier while it works, else a new one.
+    async fn access_token(&self, account: AccountId, secret: &str) -> Result<String, CoreError> {
+        {
+            let tokens = self.tokens.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some((token, until)) = tokens.get(&account)
+                && *until > Instant::now()
+            {
+                return Ok(token.clone());
+            }
+        }
+        let fresh = oauth::refresh(self.tls()?, GOOGLE_CLIENT_ID, secret).await?;
+        let lives = Duration::from_secs(fresh.expires_in).saturating_sub(TOKEN_MARGIN);
+        let mut tokens = self.tokens.lock().unwrap_or_else(|p| p.into_inner());
+        tokens.insert(account, (fresh.access.clone(), Instant::now() + lives));
+        Ok(fresh.access)
+    }
+
+    /// Passes `result` on; a refused login drops the account's access token, so the next
+    /// call gets a new one.
+    fn refused<T, E: Into<CoreError>>(
+        &self,
+        account: &Account,
+        result: Result<T, E>,
+    ) -> Result<T, CoreError> {
+        let result = result.map_err(Into::into);
+        if let Err(CoreError::Auth) = result {
+            let mut tokens = self.tokens.lock().unwrap_or_else(|p| p.into_inner());
+            tokens.remove(&account.id);
+        }
+        result
     }
 
     /// Logs in to a saved IMAP account.
@@ -432,36 +581,36 @@ impl Core {
         self.login(server, password).await
     }
 
-    /// The IMAP session in `slot`, logged in on first use.
-    async fn imap<'a>(
-        &self,
-        slot: &'a mut Option<ImapSession>,
-        account: &Account,
-        password: &str,
-    ) -> Result<&'a mut ImapSession, CoreError> {
-        match slot {
-            Some(imap) => Ok(imap),
-            None => Ok(slot.insert(self.connect(account, password).await?)),
-        }
-    }
-
-    /// Sends what is due: actions over IMAP, then mail over SMTP with a copy into Sent.
-    /// Connects to IMAP only when it is needed and leaves the session in `slot`.
+    /// Sends what is due: actions, then mail; over IMAP and SMTP with a copy into Sent, or
+    /// over the Gmail API. Connects only when it is needed and leaves the connection in `slot`.
     async fn push_due(
         &self,
         account: &Account,
-        password: &str,
-        slot: &mut Option<ImapSession>,
+        secret: &str,
+        slot: &mut Option<Remote>,
     ) -> Result<(), CoreError> {
         let ops = self.store.due(account.id, now())?;
         if !ops.is_empty() {
-            let imap = self.imap(slot, account, password).await?;
-            push_ops(&self.store, imap, ops).await?;
+            match self.remote(slot, account, secret).await? {
+                Remote::Imap(imap) => push_ops(&self.store, imap, ops).await?,
+                Remote::Gmail(gmail) => push_ops(&self.store, gmail, ops).await?,
+            }
         }
         let mail = self.store.due_sends(account.id, now())?;
         if mail.is_empty() {
             return Ok(());
         }
+        let from = Address {
+            name: Some(account.display_name.clone()).filter(|n| *n != account.email),
+            email: account.email.clone(),
+        };
+        if let Remote::Gmail(gmail) = self.remote(slot, account, secret).await? {
+            // Gmail keeps the copy in Sent itself.
+            let copy: Option<SentCopy<'_, GmailSession>> = None;
+            push_sends(&self.store, gmail, &MimeBuilder, &from, copy, mail).await?;
+            return Ok(());
+        }
+        let password = secret;
         let server = account.smtp.as_ref().ok_or(CoreError::NoSmtp)?;
         let mut smtp = self.send_login(server, password).await?;
         let sent = if saves_sent_itself(&server.host) {
@@ -472,19 +621,14 @@ impl Core {
         };
         // Without IMAP the mail still goes; only its copy in Sent is missing.
         let copy = match &sent {
-            Some(folder) => self
-                .imap(slot, account, password)
-                .await
-                .ok()
-                .map(|provider| SentCopy {
+            Some(folder) => match self.remote(slot, account, password).await {
+                Ok(Remote::Imap(provider)) => Some(SentCopy {
                     provider,
                     folder: &folder.remote_id,
                 }),
+                _ => None,
+            },
             None => None,
-        };
-        let from = Address {
-            name: Some(account.display_name.clone()).filter(|n| *n != account.email),
-            email: account.email.clone(),
         };
         push_sends(&self.store, &mut smtp, &MimeBuilder, &from, copy, mail).await?;
         let _ = smtp.quit().await;
@@ -520,6 +664,20 @@ impl Core {
         }
         let tls = tls_config()?;
         Ok(self.tls.get_or_init(|| tls).clone())
+    }
+}
+
+/// The open connection to an account's server.
+enum Remote {
+    Imap(ImapSession),
+    Gmail(GmailSession),
+}
+
+impl Remote {
+    async fn close(self) {
+        if let Self::Imap(imap) = self {
+            let _ = imap.logout().await;
+        }
     }
 }
 
@@ -636,6 +794,24 @@ const ACCOUNT_COLORS: [u32; 6] = [
 
 fn rgb(color: u32) -> u32 {
     ACCOUNT_COLORS[color as usize % ACCOUNT_COLORS.len()]
+}
+
+/// A Google sign-in under way, from `google_sign_in`.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct GoogleSignIn {
+    /// Opens in the browser.
+    pub url: String,
+    /// Kept in memory until the browser comes back; never shown or logged.
+    pub verifier: String,
+    pub state: String,
+}
+
+/// A Gmail account Google let in, not saved yet.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct GoogleAccount {
+    pub email: String,
+    /// The refresh token: the platform keeps it like a password.
+    pub secret: String,
 }
 
 /// A server address as sign-in asks for it.

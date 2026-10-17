@@ -8,6 +8,8 @@
   "signin_password": "Пароль",
   "signin_server": "Сервер IMAP",
   "signin_port": "Порт",
+  "signin_google": "Продолжить с Google",
+  "signin_no_browser": "Нет браузера для входа",
   "signin_action": "Войти",
   "inbox_empty": "Писем нет",
   "inbox_no_subject": "Без темы",

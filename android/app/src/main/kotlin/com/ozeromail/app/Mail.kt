@@ -10,6 +10,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import uniffi.ozero_api.AccountItem
@@ -18,10 +19,12 @@ import uniffi.ozero_api.Core
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.DraftItem
 import uniffi.ozero_api.Endpoint
+import uniffi.ozero_api.GoogleSignIn
 import uniffi.ozero_api.InboxTab
 import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
 import uniffi.ozero_api.UnsentItem
+import uniffi.ozero_api.googleSignIn
 
 /** What the screens need from the core; every call runs off the main thread. */
 class Mail(private val context: Context) {
@@ -58,6 +61,29 @@ class Mail(private val context: Context) {
         if (core.accounts().any { it.email.equals(email, ignoreCase = true) }) throw CoreException.AccountExists()
         vault.setPassword(email, password)
         core.addImapAccount(email, email, imap, smtp, password)
+    }
+
+    /** The Google sign-in waiting for the browser to come back; only in memory. */
+    @Volatile
+    private var google: GoogleSignIn? = null
+
+    /** Addresses the browser came back to from Google, for the sign-in screen to finish. */
+    val googleRedirects = MutableStateFlow<String?>(null)
+
+    /** Starts Google sign-in and returns the page to open in the browser. */
+    fun startGoogle(): String = googleSignIn().also { google = it }.url
+
+    /**
+     * Finishes Google sign-in with the address the browser came back to. Like [signIn], the
+     * secret is kept before the account is saved.
+     */
+    suspend fun finishGoogle(redirect: String) = io {
+        // The app was closed meanwhile, so this answer is not for a sign-in it remembers.
+        val start = google ?: throw CoreException.Auth()
+        google = null
+        val account = core.googleAccount(start, redirect)
+        vault.setPassword(account.email, account.secret)
+        core.addGmailAccount(account.email)
     }
 
     /**
@@ -132,7 +158,7 @@ class Mail(private val context: Context) {
                 val password = vault.password(account.email) ?: return@mapNotNull null
                 async {
                     try {
-                        core.syncImap(account.id, password)
+                        core.sync(account.id, password)
                         null
                     } catch (e: CoreException) {
                         e

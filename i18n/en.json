@@ -8,6 +8,8 @@
   "signin_password": "Password",
   "signin_server": "IMAP server",
   "signin_port": "Port",
+  "signin_google": "Continue with Google",
+  "signin_no_browser": "No browser to sign in with",
   "signin_action": "Sign in",
   "inbox_empty": "No messages",
   "inbox_no_subject": "No subject",

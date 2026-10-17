@@ -1,5 +1,6 @@
 package com.ozeromail.app
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -27,6 +28,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val mail = (application as OzeroApp).mail
+        googleRedirect(intent)
         setContent {
             OzeroTheme {
                 Surface(Modifier.fillMaxSize()) {
@@ -34,6 +36,16 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        googleRedirect(intent)
+    }
+
+    private fun googleRedirect(intent: Intent) {
+        val uri = intent.data ?: return
+        if (uri.scheme == packageName) (application as OzeroApp).mail.googleRedirects.value = uri.toString()
     }
 }
 
