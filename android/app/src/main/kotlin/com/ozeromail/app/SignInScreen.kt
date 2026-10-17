@@ -1,5 +1,8 @@
 package com.ozeromail.app
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
@@ -15,10 +18,12 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -27,6 +32,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -34,6 +40,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.Endpoint
@@ -41,7 +48,8 @@ import uniffi.ozero_api.suggestedImapHost
 import uniffi.ozero_api.suggestedSmtpHost
 
 /**
- * Adds an IMAP account with its SMTP server. The fields sit in the lower half, in reach of the thumb.
+ * Adds a Gmail account through Google in the browser, or an IMAP account with its SMTP server.
+ * The fields sit in the lower half, in reach of the thumb.
  * With [onCancel], for a further account, system back and Cancel leave it.
  */
 @Composable
@@ -58,8 +66,36 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<Int?>(null) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     // Not while signing in: leaving would cut it off halfway.
     if (onCancel != null) BackHandler(enabled = !busy, onBack = onCancel)
+
+    LaunchedEffect(Unit) {
+        mail.googleRedirects.filterNotNull().collect { answer ->
+            mail.googleRedirects.value = null
+            busy = true
+            error = null
+            try {
+                mail.finishGoogle(answer)
+                onSignedIn()
+            } catch (e: CoreException) {
+                error = e.text()
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    fun google() {
+        error = null
+        try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(mail.startGoogle())))
+        } catch (e: ActivityNotFoundException) {
+            error = R.string.signin_no_browser
+        } catch (e: CoreException) {
+            error = e.text()
+        }
+    }
 
     val suggested = remember(email) { suggestedImapHost(email) }
     val suggestedSmtp = remember(email) { suggestedSmtpHost(email) }
@@ -105,6 +141,9 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
             }
         }
         Spacer(Modifier.weight(1f))
+        OutlinedButton(onClick = ::google, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.signin_google))
+        }
         Field(email, { email = it }, R.string.signin_email, KeyboardType.Email)
         Field(password, { password = it }, R.string.signin_password, KeyboardType.Password)
         Server(host, { server = it }, R.string.signin_server, port, { port = it })

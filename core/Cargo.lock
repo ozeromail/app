@@ -626,6 +626,7 @@ dependencies = [
  "jni",
  "ozero-app",
  "ozero-domain",
+ "ozero-gmail",
  "ozero-imap",
  "ozero-mime",
  "ozero-smtp",

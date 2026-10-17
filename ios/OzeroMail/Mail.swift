@@ -79,7 +79,7 @@ final class Mail: Sendable {
     /// A missing password only matters for a download, which then fails to log in.
     func body(of message: MessageItem) async throws -> MessageBody {
         let password = try password(of: message.accountId) ?? ""
-        return try await core.messageBody(message: message.id, password: password)
+        return try await core.messageBody(message: message.id, secret: password)
     }
 
     /// Messages matching every word of `text`, newest first.
@@ -137,7 +137,7 @@ final class Mail: Sendable {
         Task.detached {
             do {
                 guard let password = try self.password(of: account) else { return }
-                try await self.core.pushActions(account: account, password: password)
+                try await self.core.pushActions(account: account, secret: password)
             } catch {
                 // Still queued: the next push or sync sends it.
                 log.error("push failed: \(String(describing: error), privacy: .public)")
@@ -159,7 +159,7 @@ final class Mail: Sendable {
                 group.addTask {
                     do {
                         let password = try self.vault.password(email: account.email)
-                        try await self.core.syncImap(account: account.id, password: password)
+                        try await self.core.sync(account: account.id, secret: password)
                         return nil
                     } catch {
                         return error

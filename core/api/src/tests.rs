@@ -91,7 +91,7 @@ fn syncs_an_imap_inbox_into_the_list() {
     let account = add("pass").unwrap();
     assert_eq!(add("pass").unwrap_err(), CoreError::AccountExists);
 
-    let sync = || runtime.block_on(core.sync_imap(account, "pass".into()));
+    let sync = || runtime.block_on(core.sync(account, "pass".into()));
     sync().unwrap();
     // A second sync updates the same rows.
     sync().unwrap();
@@ -240,4 +240,34 @@ fn rows_are_marked_only_with_several_accounts() {
             },
         ]
     );
+}
+
+#[test]
+fn saves_a_gmail_account_that_can_send() {
+    let db = TempDb::new("gmail");
+    let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
+    let id = core.add_gmail_account("me@gmail.com".into()).unwrap();
+    assert_eq!(
+        core.add_gmail_account("Me@Gmail.com".into()),
+        Err(CoreError::AccountExists)
+    );
+    let account = core.account(AccountId(id)).unwrap();
+    assert_eq!((account.kind, account.smtp), (AccountKind::Gmail, None));
+    // Gmail sends over its API, so no SMTP server is needed.
+    core.send(
+        id,
+        "you@example.com".into(),
+        "Hi".into(),
+        "Text".into(),
+        None,
+    )
+    .unwrap();
+}
+
+#[test]
+fn starts_google_sign_in_at_google() {
+    let start = google_sign_in().unwrap();
+    assert!(start.url.starts_with("https://accounts.google.com/"));
+    assert!(start.url.contains(&start.state));
+    assert!(!start.url.contains(&start.verifier));
 }
