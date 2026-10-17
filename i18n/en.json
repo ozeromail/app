@@ -63,7 +63,6 @@
   "feedback_subject": "About Ozero Mail",
   "crash_subject": "Ozero Mail crashed",
   "crash_title": "Ozero Mail closed unexpectedly",
-  "crash_text": "Send the report to the author? The letter opens first, so you can read it. It holds only what went wrong and the phone model, no mail.",
-  "action_write": "Write",
-  "action_not_now": "Not now"
+  "crash_text": "Send the report to the author? The letter opens first, so you can read it. It holds where the app failed, the app and Android versions and the phone model. No mail.",
+  "action_dont_send": "Don’t send"
 }

@@ -84,7 +84,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import uniffi.ozero_api.AccountItem
 import uniffi.ozero_api.AccountMark
@@ -124,7 +126,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     // The report of the crash that closed the app last time, until the person decides.
-    var crash by remember { mutableStateOf(Crashes.last(context)) }
+    var crash by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        crash = withContext(Dispatchers.IO) { Crashes.last(context) }
+    }
     val archived = stringResource(R.string.inbox_archived)
     val undo = stringResource(R.string.action_undo)
     val sending = stringResource(R.string.inbox_sending)
@@ -460,23 +465,25 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     }
     crash?.let { report ->
         fun decided() {
-            Crashes.forget(context)
             crash = null
+            scope.launch(Dispatchers.IO) { Crashes.forget(context) }
         }
+        // Dismissed by a stray tap, it asks again next time.
         AlertDialog(
-            onDismissRequest = ::decided,
+            onDismissRequest = { crash = null },
             confirmButton = {
                 TextButton(onClick = {
                     decided()
                     composing = Composing(authorDraft(context, report))
-                }) { Text(stringResource(R.string.action_write)) }
+                }) { Text(stringResource(R.string.compose_new)) }
             },
             dismissButton = {
-                TextButton(onClick = ::decided) { Text(stringResource(R.string.action_not_now)) }
+                TextButton(onClick = ::decided) { Text(stringResource(R.string.action_dont_send)) }
             },
             title = { Text(stringResource(R.string.crash_title)) },
             text = { Text(stringResource(R.string.crash_text)) },
             containerColor = MaterialTheme.colorScheme.background,
+            shape = RoundedCornerShape(20.dp),
         )
     }
 }
