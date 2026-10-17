@@ -102,27 +102,36 @@ fn migrate(conn: &Connection) -> Result<(), StoreError> {
 
 impl Store for SqliteStore {
     fn add_account(&self, account: &NewAccount) -> Result<AccountId, StoreError> {
-        let conn = self.conn();
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
         let (server, smtp) = (account.server.as_ref(), account.smtp.as_ref());
-        conn.execute(
-            "INSERT INTO account (kind, email, display_name, server_host, server_port, server_user,
-                                  smtp_host, smtp_port, smtp_user, color)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
-                     coalesce((SELECT max(color) + 1 FROM account), 0))",
-            params![
-                kind_str(account.kind),
-                account.email,
-                account.display_name,
-                server.map(|s| &s.host),
-                server.map(|s| s.port),
-                server.map(|s| &s.user),
-                smtp.map(|s| &s.host),
-                smtp.map(|s| s.port),
-                smtp.map(|s| &s.user),
-            ],
-        )
-        .map_err(storage)?;
-        Ok(AccountId(conn.last_insert_rowid()))
+        // The lowest colour no account has, so a picked one is not repeated soon.
+        let id: i64 = tx
+            .query_row(
+                "INSERT INTO account (id, kind, email, display_name, server_host, server_port,
+                                      server_user, smtp_host, smtp_port, smtp_user, color)
+                 VALUES ((SELECT last + 1 FROM account_seq), ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
+                         (SELECT min(c) FROM (SELECT 0 AS c UNION SELECT color + 1 FROM account)
+                          WHERE c NOT IN (SELECT color FROM account)))
+                 RETURNING id",
+                params![
+                    kind_str(account.kind),
+                    account.email,
+                    account.display_name,
+                    server.map(|s| &s.host),
+                    server.map(|s| s.port),
+                    server.map(|s| &s.user),
+                    smtp.map(|s| &s.host),
+                    smtp.map(|s| s.port),
+                    smtp.map(|s| &s.user),
+                ],
+                |r| r.get(0),
+            )
+            .map_err(storage)?;
+        tx.execute("UPDATE account_seq SET last = ?1", [id])
+            .map_err(storage)?;
+        tx.commit().map_err(storage)?;
+        Ok(AccountId(id))
     }
 
     fn accounts(&self) -> Result<Vec<Account>, StoreError> {

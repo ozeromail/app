@@ -156,8 +156,8 @@ impl Core {
         Ok(self.store.set_account_color(AccountId(account), color)?)
     }
 
-    /// Removes the account and all its mail from the device, once its sync is done. The app
-    /// forgets its secret.
+    /// Removes the account and all its mail from the device, once its sync is done; a sync or
+    /// push that waited then finds nothing to do. The app forgets its secret.
     pub async fn remove_account(&self, account: i64) -> Result<(), CoreError> {
         let account = AccountId(account);
         let lock = self.busy(account);
@@ -397,6 +397,12 @@ impl Core {
             let wait = {
                 let lock = self.busy(account.id);
                 let _busy = lock.lock().await;
+                // Removed while this push waited: nothing to send.
+                let found = self.find(account.id);
+                if !matches!(found, Ok(Some(_))) {
+                    drop(waiter.take());
+                    return found.map(drop);
+                }
                 // Read under the lock: a push that waited finds what the one before it sent gone.
                 let step = async {
                     let mut remote = None;
@@ -436,9 +442,13 @@ impl Core {
     /// Sends the account's queued actions and mail, then brings its folders and what changed
     /// in its inbox and sent folder into the database. `secret` as for `push_actions`.
     pub async fn sync(&self, account: i64, secret: String) -> Result<(), CoreError> {
-        let account = self.account(AccountId(account))?;
-        let lock = self.busy(account.id);
+        let id = AccountId(account);
+        let lock = self.busy(id);
         let _busy = lock.lock().await;
+        // Read under the lock: an account removed meanwhile has nothing to sync.
+        let Some(account) = self.find(id)? else {
+            return Ok(());
+        };
         let mut slot = None;
         // A send that fails, say on a broken SMTP server, must not stop new mail coming in.
         let pushed = self.refused(&account, self.push_due(&account, &secret, &mut slot).await);
@@ -503,13 +513,13 @@ impl Core {
     }
 
     fn account(&self, id: AccountId) -> Result<Account, CoreError> {
-        self.store
-            .accounts()?
-            .into_iter()
-            .find(|a| a.id == id)
-            .ok_or_else(|| CoreError::Storage {
-                detail: "no such account".into(),
-            })
+        self.find(id)?.ok_or_else(|| CoreError::Storage {
+            detail: "no such account".into(),
+        })
+    }
+
+    fn find(&self, id: AccountId) -> Result<Option<Account>, CoreError> {
+        Ok(self.store.accounts()?.into_iter().find(|a| a.id == id))
     }
 
     fn exists(&self, email: &str) -> Result<bool, CoreError> {

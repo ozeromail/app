@@ -173,4 +173,12 @@ pub const MIGRATIONS: &[&str] = &[
     ALTER TABLE account ADD COLUMN color INTEGER NOT NULL DEFAULT 0;
     UPDATE account SET color = (SELECT count(*) FROM account a WHERE a.id < account.id);
     ",
+    // 15: account ids are never used again, so nothing kept by id passes to a new account;
+    // and the palette grew from six colours to ten, so each keeps its look.
+    "
+    CREATE TABLE account_seq (last INTEGER NOT NULL);
+    INSERT INTO account_seq SELECT coalesce(max(id), 0) FROM account;
+    UPDATE account SET color = CASE color % 6
+        WHEN 0 THEN 1 WHEN 1 THEN 2 WHEN 2 THEN 3 WHEN 3 THEN 5 WHEN 4 THEN 8 ELSE 9 END;
+    ",
 ];

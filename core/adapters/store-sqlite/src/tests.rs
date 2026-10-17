@@ -1053,4 +1053,19 @@ fn removing_an_account_removes_its_mail() {
     assert_eq!(left.len(), 1);
     assert_eq!(left[0].subject, "Subject 2");
     assert_eq!(store.remove_account(a), Err(StoreError::NotFound));
+
+    store.remove_account(b).unwrap();
+    let c = account(&store, "c@example.com");
+    assert!(c.0 > b.0, "ids are not used again");
+}
+
+#[test]
+fn a_new_account_gets_a_free_color() {
+    let store = store();
+    let a = account(&store, "a@example.com");
+    account(&store, "b@example.com");
+    store.set_account_color(a, 5).unwrap();
+    account(&store, "c@example.com");
+    let colors: Vec<_> = store.accounts().unwrap().iter().map(|a| a.color).collect();
+    assert_eq!(colors, [5, 1, 0]);
 }
