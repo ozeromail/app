@@ -3,6 +3,7 @@ package com.ozeromail.app
 import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,19 +11,21 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -33,7 +36,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -42,6 +51,7 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import uniffi.ozero_api.AccountItem
 import uniffi.ozero_api.CoreException
@@ -109,7 +119,7 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
                 to,
                 { to = it },
                 R.string.compose_to,
-                MaterialTheme.typography.bodyLarge,
+                TextStyle(fontSize = 15.sp),
                 KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next, autoCorrectEnabled = false),
             )
             HorizontalDivider(color = colors.outlineVariant)
@@ -117,14 +127,14 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
                 subject,
                 { subject = it },
                 R.string.compose_subject,
-                MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.44).sp),
                 KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Next),
             )
             Plain(
                 text,
                 { text = it },
                 R.string.compose_text,
-                MaterialTheme.typography.bodyLarge,
+                TextStyle(fontSize = 15.5.sp, lineHeight = 24.sp),
                 KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 singleLine = false,
                 modifier = Modifier.weight(1f, fill = false),
@@ -134,16 +144,27 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
             Text(stringResource(it), color = colors.error, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
         }
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            Modifier
+                .fillMaxWidth()
+                .drawBehind { drawLine(colors.outlineVariant, Offset.Zero, Offset(size.width, 0f), 1.dp.toPx()) }
+                .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            TextButton(onClick = onCancel) { Text(stringResource(R.string.action_cancel)) }
+            IconTile(R.drawable.ic_close, stringResource(R.string.action_close), onCancel, shape = CircleShape)
             Box(Modifier.weight(1f)) {
                 if (from != null) Sender(from, accounts, onPick = { accountId = it.id })
             }
-            Button(onClick = ::send, enabled = !busy && from != null) {
-                Text(stringResource(R.string.compose_send))
-            }
+            val ready = !busy && from != null
+            IconTile(
+                R.drawable.ic_send,
+                stringResource(R.string.compose_send),
+                ::send,
+                Modifier.width(56.dp).alpha(if (ready) 1f else 0.4f),
+                background = colors.primary,
+                tint = colors.onPrimary,
+                shape = CircleShape,
+            )
         }
     }
 }
@@ -155,18 +176,29 @@ private fun Original(message: MessageItem) {
     Column(
         Modifier
             .fillMaxWidth()
-            .padding(16.dp)
-            .background(colors.surfaceVariant, RoundedCornerShape(12.dp))
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
+            .padding(start = 16.dp, end = 16.dp, top = 12.dp)
+            .background(colors.surfaceVariant, RoundedCornerShape(16.dp))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(message.sender, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(message.subjectText(), color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                message.sender,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 14.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(shortDate(LocalContext.current, message.date), color = colors.onSurfaceVariant, fontSize = 12.5.sp)
+        }
+        Text(message.subjectText(), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (message.snippet.isNotBlank()) {
             Text(
                 message.snippet,
                 color = colors.onSurfaceVariant,
-                style = MaterialTheme.typography.bodySmall,
+                fontSize = 14.sp,
+                lineHeight = 21.sp,
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -174,22 +206,38 @@ private fun Original(message: MessageItem) {
     }
 }
 
-/** The account the message goes from; a tap lists the others. */
+/** The account the message goes from, as a chip by Send; a tap lists the others. */
 @Composable
 private fun Sender(from: AccountItem, accounts: List<AccountItem>, onPick: (AccountItem) -> Unit) {
     var open by remember { mutableStateOf(false) }
-    TextButton(onClick = { open = true }, enabled = accounts.size > 1) {
-        Text(from.email, maxLines = 1, overflow = TextOverflow.Ellipsis)
-    }
-    DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-        accounts.forEach { account ->
-            DropdownMenuItem(
-                text = { Text(account.email) },
-                onClick = {
-                    open = false
-                    onPick(account)
-                },
-            )
+    val colors = MaterialTheme.colorScheme
+    Box {
+        Row(
+            Modifier
+                .height(44.dp)
+                .clip(CircleShape)
+                .background(colors.surfaceVariant)
+                .clickable(enabled = accounts.size > 1) { open = true }
+                .padding(start = 8.dp, end = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Box(Modifier.size(22.dp).background(from.tint, CircleShape), contentAlignment = Alignment.Center) {
+                Text(initials(from.displayName.ifBlank { from.email }).take(1), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+            Text(from.email, fontSize = 14.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            accounts.forEach { account ->
+                DropdownMenuItem(
+                    text = { Text(account.email) },
+                    leadingIcon = { AccountDot(account.tint) },
+                    onClick = {
+                        open = false
+                        onPick(account)
+                    },
+                )
+            }
         }
     }
 }

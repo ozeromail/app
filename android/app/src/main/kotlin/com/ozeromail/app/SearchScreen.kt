@@ -1,18 +1,22 @@
 package com.ozeromail.app
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -24,8 +28,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.MessageItem
@@ -70,11 +76,11 @@ fun SearchScreen(
         LazyColumn(Modifier.weight(1f)) {
             val (shownFor, messages) = found ?: ("" to emptyList())
             if (shownFor == query && query.isNotBlank() && messages.isEmpty()) {
-                item { Empty() }
+                item { EmptyNote(R.drawable.ic_search, stringResource(R.string.inbox_empty)) }
             }
-            items(messages, key = { it.id }) { message ->
+            itemsIndexed(messages, key = { _, it -> it.id }) { index, message ->
+                if (index > 0) HorizontalDivider(Modifier.padding(start = 48.dp), color = colors.outlineVariant)
                 MessageRow(message, onClick = { onOpen(message) })
-                HorizontalDivider(Modifier.padding(start = 36.dp), color = colors.outlineVariant)
             }
         }
         error?.let {
@@ -85,17 +91,33 @@ fun SearchScreen(
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
             )
         }
-        HorizontalDivider(color = colors.outlineVariant)
-        Row(Modifier.padding(start = 20.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Plain(
-                query,
-                onQuery,
-                R.string.search_prompt,
-                MaterialTheme.typography.bodyLarge,
-                KeyboardOptions(imeAction = ImeAction.Done),
-                modifier = Modifier.weight(1f).focusRequester(focus),
-            )
-            TextButton(onClick = onBack) { Text(stringResource(R.string.action_cancel)) }
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 10.dp, top = 8.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(
+                Modifier
+                    .weight(1f)
+                    .height(48.dp)
+                    .background(colors.surfaceVariant, CircleShape)
+                    .padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Glyph(R.drawable.ic_search, null, colors.onSurfaceVariant)
+                Plain(
+                    query,
+                    onQuery,
+                    R.string.search_prompt,
+                    TextStyle(fontSize = 15.sp),
+                    KeyboardOptions(imeAction = ImeAction.Done),
+                    modifier = Modifier.weight(1f).focusRequester(focus),
+                )
+            }
+            IconTile(R.drawable.ic_close, stringResource(R.string.action_close), onBack, shape = CircleShape)
         }
     }
 }
