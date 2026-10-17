@@ -143,12 +143,14 @@ fn syncs_an_imap_inbox_into_the_list() {
             "Ответ из Ozero".into(),
             "Привет!".into(),
             Some(first),
+            "Anna wrote:\n> Hi".into(),
         )
         .unwrap()
     };
     let draft = core.undo_send(send()).unwrap().unwrap();
     assert_eq!(draft.to, "bob@example.org");
     assert_eq!(draft.reply_to, Some(first));
+    assert_eq!(draft.quote, "Anna wrote:\n> Hi");
     send();
     runtime
         .block_on(core.push_actions(account, "pass".into()))
@@ -260,6 +262,7 @@ fn saves_a_gmail_account_that_can_send() {
         "Hi".into(),
         "Text".into(),
         None,
+        String::new(),
     )
     .unwrap();
 }

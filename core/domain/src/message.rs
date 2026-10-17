@@ -28,12 +28,51 @@ pub struct NewMessage {
     /// The `Message-ID`s this one answers: `In-Reply-To` and `References`, oldest first.
     pub references: Vec<String>,
     pub from: Address,
+    /// `Reply-To`: where answers go instead of `from`.
+    pub answer_to: Vec<String>,
+    /// `To` and `Cc`.
+    pub recipients: Vec<String>,
     pub subject: String,
     pub snippet: String,
     /// Seconds since the Unix epoch.
     pub date: i64,
     pub flags: Flags,
     pub category: Category,
+}
+
+/// The addresses of a saved message, for answering it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Correspondents {
+    pub from: String,
+    pub answer_to: Vec<String>,
+    pub recipients: Vec<String>,
+}
+
+impl Correspondents {
+    /// Who an answer from `own` goes to: the sender, or `Reply-To` when there is one; with
+    /// `all`, everyone else it went to as well. Never `own`, and each address once. An answer
+    /// to the user's own message goes to the people it was sent to.
+    pub fn answer(&self, own: &str, all: bool) -> Vec<String> {
+        let first = if self.answer_to.is_empty() {
+            std::slice::from_ref(&self.from)
+        } else {
+            &self.answer_to[..]
+        };
+        let mine = self.from.eq_ignore_ascii_case(own);
+        let rest = if all || mine {
+            &self.recipients[..]
+        } else {
+            &[]
+        };
+        let mut to: Vec<String> = Vec::new();
+        for address in first.iter().chain(rest) {
+            let known = to.iter().any(|a| a.eq_ignore_ascii_case(address));
+            if !address.is_empty() && !address.eq_ignore_ascii_case(own) && !known {
+                to.push(address.clone());
+            }
+        }
+        to
+    }
 }
 
 /// One row of a message list, ready for the screen.
@@ -172,5 +211,39 @@ mod tests {
     #[test]
     fn snippet_cuts_a_long_first_word() {
         assert_eq!(snippet(&"x".repeat(500)).len(), 160);
+    }
+}
+
+#[cfg(test)]
+mod answer_tests {
+    use super::*;
+
+    fn mail(from: &str, answer_to: &[&str], recipients: &[&str]) -> Correspondents {
+        let list = |a: &[&str]| a.iter().map(|s| (*s).to_owned()).collect();
+        Correspondents {
+            from: from.into(),
+            answer_to: list(answer_to),
+            recipients: list(recipients),
+        }
+    }
+
+    #[test]
+    fn answers_the_sender_or_reply_to() {
+        let m = mail("anna@x.com", &[], &["me@x.com", "bob@x.com"]);
+        assert_eq!(m.answer("me@x.com", false), ["anna@x.com"]);
+        let m = mail("list@x.com", &["anna@x.com"], &["me@x.com"]);
+        assert_eq!(m.answer("me@x.com", false), ["anna@x.com"]);
+    }
+
+    #[test]
+    fn answers_all_without_me_or_repeats() {
+        let m = mail("anna@x.com", &[], &["ME@x.com", "bob@x.com", "Anna@x.com"]);
+        assert_eq!(m.answer("me@x.com", true), ["anna@x.com", "bob@x.com"]);
+    }
+
+    #[test]
+    fn answers_my_own_message_to_its_recipients() {
+        let m = mail("me@x.com", &[], &["anna@x.com", "bob@x.com"]);
+        assert_eq!(m.answer("me@x.com", false), ["anna@x.com", "bob@x.com"]);
     }
 }

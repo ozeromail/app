@@ -70,18 +70,6 @@ pub fn google_sign_in() -> Result<GoogleSignIn, CoreError> {
     Ok(oauth::sign_in(GOOGLE_CLIENT_ID, GOOGLE_REDIRECT)?.into())
 }
 
-/// An answer to `message`: from the account that got it, to its sender, `Re: ` once.
-#[uniffi::export]
-pub fn reply_draft(message: MessageItem) -> DraftItem {
-    DraftItem {
-        account_id: message.account_id,
-        to: message.from_email,
-        subject: ozero_domain::reply_subject(&message.subject),
-        text: String::new(),
-        reply_to: Some(message.id),
-    }
-}
-
 /// The mail core of one app install: the encrypted database and the network.
 #[derive(uniffi::Object)]
 pub struct Core {
@@ -263,6 +251,35 @@ impl Core {
         Ok(ops.into_iter().map(|op| op.0).collect())
     }
 
+    /// An answer to `message` from the account that got it, `Re: ` once: to its sender, or
+    /// with `all` to everyone it went to as well.
+    pub fn reply(&self, message: MessageItem, all: bool) -> Result<DraftItem, CoreError> {
+        let account = self.account(AccountId(message.account_id))?;
+        let correspondents = self.store.correspondents(MessageId(message.id))?;
+        Ok(DraftItem {
+            account_id: message.account_id,
+            to: correspondents.answer(&account.email, all).join(", "),
+            subject: ozero_domain::reply_subject(&message.subject),
+            text: String::new(),
+            reply_to: Some(message.id),
+            quote: String::new(),
+        })
+    }
+
+    /// The saved text of `message` under `header`, each line marked with `>`; empty while
+    /// its body is not saved.
+    pub fn quote(&self, message: i64, header: String) -> Result<String, CoreError> {
+        let Some(body) = self.store.body(MessageId(message))? else {
+            return Ok(String::new());
+        };
+        let mut quote = header;
+        for line in body.text.trim().lines() {
+            quote.push_str(if line.is_empty() { "\n>" } else { "\n> " });
+            quote.push_str(line);
+        }
+        Ok(quote)
+    }
+
     /// Takes back held actions. False if any may be on its way to the server.
     pub fn undo(&self, actions: Vec<i64>) -> Result<bool, CoreError> {
         let ops: Vec<_> = actions.into_iter().map(OpId).collect();
@@ -271,7 +288,8 @@ impl Core {
 
     /// Puts a message in the outbox, held for `HOLD` so `undo_send` can take it back;
     /// `push_actions` sends it. `to` is addresses split by commas or spaces; `reply_to` the
-    /// message it answers. Returns the id for `undo_send`.
+    /// message it answers, and `quote` what goes under the text. Returns the id for
+    /// `undo_send`.
     pub fn send(
         &self,
         account: i64,
@@ -279,6 +297,7 @@ impl Core {
         subject: String,
         text: String,
         reply_to: Option<i64>,
+        quote: String,
     ) -> Result<i64, CoreError> {
         let to = parse_recipients(&to).ok_or(CoreError::BadRecipients)?;
         let from = self.account(AccountId(account))?;
@@ -292,6 +311,7 @@ impl Core {
             subject,
             text,
             reply_to: reply_to.map(MessageId),
+            quote,
         };
         let now = now();
         let id = self.store.queue_send(
@@ -960,6 +980,8 @@ pub struct DraftItem {
     pub subject: String,
     pub text: String,
     pub reply_to: Option<i64>,
+    /// Goes under the text; empty for none.
+    pub quote: String,
 }
 
 impl From<Draft> for DraftItem {
@@ -970,6 +992,7 @@ impl From<Draft> for DraftItem {
             subject: d.subject,
             text: d.text,
             reply_to: d.reply_to.map(|m| m.0),
+            quote: d.quote,
         }
     }
 }

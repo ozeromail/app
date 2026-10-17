@@ -4,7 +4,7 @@ mod build;
 
 pub use build::MimeBuilder;
 
-use mail_parser::{Message, PartType};
+use mail_parser::{Address as Addresses, Message, PartType};
 use ozero_domain::{Address, Body, Category, MessageParser, NewMessage, RawMessage, Signals};
 
 #[derive(Debug, Default)]
@@ -33,6 +33,8 @@ impl MessageParser for MimeParser {
                 name: from.and_then(|a| a.name()).map(str::to_owned),
                 email: email.to_owned(),
             },
+            answer_to: emails([header.and_then(|h| h.reply_to())]),
+            recipients: emails([header.and_then(|h| h.to()), header.and_then(|h| h.cc())]),
             subject: header
                 .and_then(|h| h.subject())
                 .unwrap_or_default()
@@ -61,6 +63,17 @@ impl MessageParser for MimeParser {
             html,
         }
     }
+}
+
+/// The bare addresses of address headers, in order.
+fn emails<const N: usize>(headers: [Option<&Addresses<'_>>; N]) -> Vec<String> {
+    headers
+        .into_iter()
+        .flatten()
+        .flat_map(|h| h.iter())
+        .filter_map(|a| a.address())
+        .map(str::to_owned)
+        .collect()
 }
 
 /// How many `Message-ID`s of a long `References` chain are kept: the root and the newest.
@@ -108,6 +121,26 @@ mod tests {
         assert_eq!(m.from.email, "anna@example.com");
         assert_eq!(m.subject, "Привет");
         assert_eq!(m.message_id.as_deref(), Some("1@example.com"));
+    }
+
+    #[test]
+    fn reads_who_else_it_went_to() {
+        let m = parse(
+            b"From: Anna <anna@example.com>\r\n\
+              Reply-To: list@example.com\r\n\
+              To: me@example.com, Team: bob@example.com, cat@example.com;\r\n\
+              Cc: Dan <dan@example.com>\r\n\r\n",
+        );
+        assert_eq!(m.answer_to, ["list@example.com"]);
+        assert_eq!(
+            m.recipients,
+            [
+                "me@example.com",
+                "bob@example.com",
+                "cat@example.com",
+                "dan@example.com"
+            ]
+        );
         assert_eq!(m.date, 100);
     }
 

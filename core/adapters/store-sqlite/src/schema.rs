@@ -181,4 +181,11 @@ pub const MIGRATIONS: &[&str] = &[
     UPDATE account SET color = CASE color % 6
         WHEN 0 THEN 1 WHEN 1 THEN 2 WHEN 2 THEN 3 WHEN 3 THEN 5 WHEN 4 THEN 8 ELSE 9 END;
     ",
+    // 16: who a message also went to, for Reply all, one address per line; and the quote
+    // under an answer.
+    "
+    ALTER TABLE message ADD COLUMN answer_to TEXT NOT NULL DEFAULT '';
+    ALTER TABLE message ADD COLUMN recipients TEXT NOT NULL DEFAULT '';
+    ALTER TABLE outbox ADD COLUMN quote TEXT NOT NULL DEFAULT '';
+    ",
 ];

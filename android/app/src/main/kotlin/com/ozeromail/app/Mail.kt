@@ -128,6 +128,12 @@ class Mail(private val context: Context) {
         return actions
     }
 
+    /** An answer to [message]: to its sender, or with [all] to everyone it went to as well. */
+    suspend fun reply(message: MessageItem, all: Boolean): DraftItem = io { core.reply(message, all) }
+
+    /** The saved text of [message] quoted under [header]; empty while its body is not saved. */
+    suspend fun quote(message: MessageItem, header: String): String = io { core.quote(message.id, header) }
+
     /** Takes back an archive that has not gone to the server yet; false if too late. */
     suspend fun undo(actions: List<Long>): Boolean = io { core.undo(actions) }
 
@@ -136,7 +142,7 @@ class Mail(private val context: Context) {
      * It goes to the server once the undo time is over.
      */
     suspend fun send(draft: DraftItem): Long {
-        val id = io { core.send(draft.accountId, draft.to, draft.subject, draft.text, draft.replyTo) }
+        val id = io { core.send(draft.accountId, draft.to, draft.subject, draft.text, draft.replyTo, draft.quote) }
         push(draft.accountId)
         return id
     }

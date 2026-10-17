@@ -1,9 +1,9 @@
 use std::fmt;
 
 use crate::{
-    Account, AccountId, Action, Body, Category, Changes, Checkpoint, Draft, Folder, FolderId,
-    ListQuery, MessageId, MessageLocation, MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId,
-    OutboxId, Outgoing, Unsent,
+    Account, AccountId, Action, Body, Category, Changes, Checkpoint, Correspondents, Draft, Folder,
+    FolderId, ListQuery, MessageId, MessageLocation, MessageRow, NewAccount, NewFolder, NewMessage,
+    Op, OpId, OutboxId, Outgoing, Unsent,
 };
 
 /// Local database port. The UI reads only from here; sync writes here.
@@ -53,6 +53,8 @@ pub trait Store: Send + Sync {
     /// Like `take_fresh` without reading the mail: it is on screen already.
     fn clear_fresh(&self) -> Result<(), StoreError>;
 
+    /// Who the message came from and went to.
+    fn correspondents(&self, message: MessageId) -> Result<Correspondents, StoreError>;
     fn location(&self, message: MessageId) -> Result<MessageLocation, StoreError>;
     /// Saves the body and sets the message's snippet from it.
     fn save_body(&self, message: MessageId, body: &Body) -> Result<(), StoreError>;

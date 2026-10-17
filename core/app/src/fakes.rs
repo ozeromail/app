@@ -6,10 +6,10 @@ use std::sync::Mutex;
 use std::task::{Context, Poll, Waker};
 
 use ozero_domain::{
-    Account, AccountId, Action, Address, Body, Category, Changes, Checkpoint, Draft, Flags, Folder,
-    FolderId, ListQuery, MailProvider, MailSender, MessageBuilder, MessageId, MessageLocation,
-    MessageParser, MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing,
-    ProviderError, RawMessage, Store, StoreError, Unsent,
+    Account, AccountId, Action, Address, Body, Category, Changes, Checkpoint, Correspondents,
+    Draft, Flags, Folder, FolderId, ListQuery, MailProvider, MailSender, MessageBuilder, MessageId,
+    MessageLocation, MessageParser, MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId,
+    OutboxId, Outgoing, ProviderError, RawMessage, Store, StoreError, Unsent,
 };
 
 /// Fakes answer at once, so one poll finishes the future.
@@ -170,6 +170,8 @@ impl MessageParser for Parser {
                 name: None,
                 email: "a@example.com".into(),
             },
+            answer_to: vec![],
+            recipients: vec![],
             subject: String::from_utf8_lossy(&raw.header).into(),
             snippet: String::new(),
             date: raw.received,
@@ -207,6 +209,10 @@ impl Store for Memory {
 
     fn accounts(&self) -> Result<Vec<Account>, StoreError> {
         Ok(vec![])
+    }
+
+    fn correspondents(&self, _: MessageId) -> Result<Correspondents, StoreError> {
+        Ok(Correspondents::default())
     }
 
     fn remove_account(&self, _: AccountId) -> Result<(), StoreError> {

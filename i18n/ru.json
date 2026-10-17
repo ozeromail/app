@@ -53,5 +53,8 @@
   "account_remove": "Удалить аккаунт",
   "account_remove_title": "Удалить этот аккаунт?",
   "account_remove_text": "Его письма удалятся с этого телефона. Ящик на сервере останется как есть.",
-  "action_remove": "Удалить"
+  "action_remove": "Удалить",
+  "message_reply_all": "Ответить всем",
+  "compose_add_quote": "Добавить цитату",
+  "compose_quote_header": "%1$s, %2$s написал(а):"
 }

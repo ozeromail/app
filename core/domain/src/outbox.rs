@@ -14,6 +14,8 @@ pub struct Draft {
     pub text: String,
     /// The message this answers.
     pub reply_to: Option<MessageId>,
+    /// The answered message, quoted under the text; empty for none.
+    pub quote: String,
 }
 
 /// A message the server refused, kept for the user to fix.
@@ -32,6 +34,8 @@ pub struct Outgoing {
     pub to: Vec<String>,
     pub subject: String,
     pub text: String,
+    /// Goes under `text`; empty for none.
+    pub quote: String,
     /// `Message-ID` without angle brackets, made when it was queued so a retry keeps it.
     pub message_id: String,
     /// The `Message-ID` of the message this answers.

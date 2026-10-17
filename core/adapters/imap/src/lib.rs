@@ -38,9 +38,12 @@ const MAX_RESPONSE: u32 = 16 * 1024 * 1024;
 const MAX_BODY: NonZeroU32 = NonZeroU32::MIN.saturating_add(4 * 1024 * 1024 - 1);
 /// UIDs per STORE or MOVE command.
 const UID_CHUNK: usize = 500;
-/// Headers the message list, conversations and the inbox tabs need.
-const HEADER_FIELDS: [&str; 11] = [
+/// Headers the message list, conversations, answers and the inbox tabs need.
+const HEADER_FIELDS: [&str; 14] = [
     "FROM",
+    "REPLY-TO",
+    "TO",
+    "CC",
     "SUBJECT",
     "DATE",
     "MESSAGE-ID",

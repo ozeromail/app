@@ -1,6 +1,5 @@
 package com.ozeromail.app
 
-import android.text.format.DateUtils
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -50,7 +49,7 @@ import uniffi.ozero_api.MessageItem
 /**
  * A conversation, opened at the list's message: its HTML when it has one, otherwise the
  * text. The other messages, the user's replies among them, sit above it as cards; a tap
- * shows one. Reply and Done sit at the bottom, in reach of the thumb; system back returns
+ * shows one. Reply, Reply all and Done sit at the bottom, in reach of the thumb; system back returns
  * to the list.
  */
 @Composable
@@ -58,7 +57,7 @@ fun MessageScreen(
     mail: Mail,
     message: MessageItem,
     onBack: () -> Unit,
-    onReply: (MessageItem) -> Unit,
+    onReply: (MessageItem, all: Boolean) -> Unit,
     onDone: () -> Unit,
 ) {
     BackHandler(onBack = onBack)
@@ -119,12 +118,25 @@ fun MessageScreen(
             Modifier.fillMaxWidth().navigationBarsPadding().padding(top = 8.dp, bottom = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Pill(
-                stringResource(R.string.message_reply_prompt),
-                onClick = { onReply(answer) },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp),
-                height = 46.dp,
-            )
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Pill(
+                    stringResource(R.string.message_reply_prompt),
+                    onClick = { onReply(answer, false) },
+                    modifier = Modifier.weight(1f),
+                    height = 46.dp,
+                )
+                IconTile(
+                    R.drawable.ic_reply_all,
+                    stringResource(R.string.message_reply_all),
+                    { onReply(answer, true) },
+                    shape = CircleShape,
+                    size = 46.dp,
+                )
+            }
             Actions(onDone)
         }
     }
@@ -226,11 +238,7 @@ private fun Header(message: MessageItem, modifier: Modifier) {
                     }
                 }
                 Text(
-                    DateUtils.formatDateTime(
-                        LocalContext.current,
-                        message.date * 1000,
-                        DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_SHOW_TIME or DateUtils.FORMAT_ABBREV_MONTH,
-                    ),
+                    longDate(LocalContext.current, message.date),
                     color = colors.onSurfaceVariant,
                     fontSize = 12.5.sp,
                     modifier = Modifier.align(Alignment.Top).padding(top = 4.dp),
