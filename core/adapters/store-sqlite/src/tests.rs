@@ -1103,6 +1103,9 @@ fn a_taken_back_answer_keeps_its_quote() {
         ..draft(a)
     };
     let id = store.queue_send(&draft, "1@x", 0, 100).unwrap();
-    assert_eq!(store.due_sends(a, 100).unwrap()[0].quote, draft.quote);
+    assert_eq!(
+        store.due_sends(a, 100).unwrap()[0].text,
+        "Hello\n\nBob wrote:\n> Hi"
+    );
     assert_eq!(store.undo_send(id, 50).unwrap(), Some(draft));
 }

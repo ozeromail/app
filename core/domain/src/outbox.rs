@@ -33,9 +33,8 @@ pub struct Outgoing {
     pub id: OutboxId,
     pub to: Vec<String>,
     pub subject: String,
+    /// With the quote under it.
     pub text: String,
-    /// Goes under `text`; empty for none.
-    pub quote: String,
     /// `Message-ID` without angle brackets, made when it was queued so a retry keeps it.
     pub message_id: String,
     /// The `Message-ID` of the message this answers.
@@ -67,6 +66,24 @@ pub fn is_address(address: &str) -> bool {
         && address.chars().all(|c| {
             c.is_ascii_graphic() && !matches!(c, '<' | '>' | '"' | '(' | ')' | '[' | ']' | '\\')
         })
+}
+
+/// `text` of `header` marked with `>` line by line, the way mail clients quote.
+pub fn quote(header: String, text: &str) -> String {
+    let mut quote = header;
+    for line in text.trim().lines() {
+        quote.push_str(if line.is_empty() { "\n>" } else { "\n> " });
+        quote.push_str(line);
+    }
+    quote
+}
+
+/// What a message says: the text, then the quote, if any, after a blank line.
+pub fn with_quote(text: &str, quote: &str) -> String {
+    if quote.is_empty() {
+        return text.to_owned();
+    }
+    format!("{}\n\n{quote}", text.trim_end())
 }
 
 /// `Re: ` once, the way mail clients answer.
@@ -115,6 +132,14 @@ mod tests {
         ] {
             assert_eq!(parse_recipients(field), None, "{field:?}");
         }
+    }
+
+    #[test]
+    fn quotes_line_by_line() {
+        let quote = quote("Anna wrote:".into(), "Hi\n\nBye\n");
+        assert_eq!(quote, "Anna wrote:\n> Hi\n>\n> Bye");
+        assert_eq!(with_quote("Hello\n", &quote), format!("Hello\n\n{quote}"));
+        assert_eq!(with_quote("Hello", ""), "Hello");
     }
 
     #[test]

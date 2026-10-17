@@ -9,7 +9,7 @@ use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Body, Category, Changes, Checkpoint,
     Correspondents, Draft, Flags, Folder, FolderId, FolderRole, ListQuery, ListScope, MessageId,
     MessageLocation, MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing,
-    Server, Store, StoreError, Unsent,
+    Server, Store, StoreError, Unsent, with_quote,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{Connection, ErrorCode, OptionalExtension, Row, Transaction, params};
@@ -609,11 +609,10 @@ impl Store for SqliteStore {
                         id: OutboxId(r.get(0)?),
                         to: recipients(&r.get::<_, String>(1)?),
                         subject: r.get(2)?,
-                        text: r.get(3)?,
+                        text: with_quote(&r.get::<_, String>(3)?, &r.get::<_, String>(7)?),
                         message_id: r.get(4)?,
                         in_reply_to: r.get(5)?,
                         date: r.get(6)?,
-                        quote: r.get(7)?,
                     })
                 })?
                 .collect()
