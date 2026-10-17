@@ -40,7 +40,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.Endpoint
@@ -70,20 +69,22 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
     // Not while signing in: leaving would cut it off halfway.
     if (onCancel != null) BackHandler(enabled = !busy, onBack = onCancel)
 
-    LaunchedEffect(Unit) {
-        mail.googleRedirects.filterNotNull().collect { answer ->
-            mail.googleRedirects.value = null
-            busy = true
-            error = null
-            try {
-                mail.finishGoogle(answer)
-                onSignedIn()
-            } catch (e: CoreException) {
-                error = e.text()
-            } finally {
-                busy = false
-            }
+    /** Runs a sign-in, busy meanwhile; on success leaves the screen. */
+    suspend fun attempt(signIn: suspend () -> Unit) {
+        busy = true
+        error = null
+        try {
+            signIn()
+            onSignedIn()
+        } catch (e: CoreException) {
+            error = e.text()
+        } finally {
+            busy = false
         }
+    }
+
+    LaunchedEffect(Unit) {
+        for (answer in mail.googleRedirects) attempt { mail.finishGoogle(answer) }
     }
 
     fun google() {
@@ -107,18 +108,9 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
 
     fun submit() {
         if (!ready || imap == null || smtp == null) return
+        // Set before the coroutine starts, so a second tap does nothing.
         busy = true
-        error = null
-        scope.launch {
-            try {
-                mail.signIn(email.trim(), password, imap, smtp)
-                onSignedIn()
-            } catch (e: CoreException) {
-                error = e.text()
-            } finally {
-                busy = false
-            }
-        }
+        scope.launch { attempt { mail.signIn(email.trim(), password, imap, smtp) } }
     }
 
     Column(

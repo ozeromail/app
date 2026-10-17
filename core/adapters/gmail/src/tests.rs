@@ -172,8 +172,8 @@ async fn follows_the_history() {
             {"messagesAdded": [{"message": {"id": "new", "labelIds": ["INBOX", "UNREAD"]}}]},
             {"messagesAdded": [{"message": {"id": "sent", "labelIds": ["SENT"]}}]},
             {"labelsRemoved": [{"message": {"id": "archived", "labelIds": []}, "labelIds": ["INBOX"]}]},
-            {"labelsAdded": [{"message": {"id": "read", "labelIds": ["INBOX"]}, "labelIds": ["STARRED"]}]},
-            {"messagesDeleted": [{"message": {"id": "deleted"}}]},
+            {"labelsAdded": [{"message": {"id": "read", "labelIds": ["INBOX", "STARRED"]}, "labelIds": ["STARRED"]}]},
+            {"messagesDeleted": [{"message": {"id": "deleted", "labelIds": ["INBOX"]}}]},
         ],
     });
     let (mut gmail, seen) = session(vec![
@@ -182,16 +182,6 @@ async fn follows_the_history() {
             "/messages/new?",
             200,
             message("new", &["INBOX", "UNREAD"], 5_000, "New"),
-        ),
-        (
-            "/messages/archived?",
-            200,
-            json!({"labelIds": ["IMPORTANT"]}),
-        ),
-        (
-            "/messages/read?",
-            200,
-            json!({"labelIds": ["INBOX", "STARRED"]}),
         ),
     ])
     .await;
@@ -217,14 +207,18 @@ async fn follows_the_history() {
     };
     assert_eq!(changes.flags, [("read".to_owned(), read)]);
     assert_eq!(changes.gone, ["archived", "deleted"]);
-    // Mail only in Sent costs no request.
-    assert!(
-        !seen
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|(_, path, _)| path.contains("sent"))
-    );
+    // Known mail and mail only in Sent cost no request, and Sent reads the same history.
+    let sent = gmail.changes("SENT", since, &[], 10).await.unwrap();
+    assert_eq!(sent.checkpoint.next, 120);
+    let paths: Vec<String> = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, p, _)| p.clone())
+        .collect();
+    assert_eq!(paths.len(), 3, "{paths:?}");
+    assert!(paths[0].starts_with("/history") && paths[1].starts_with("/messages/new"));
+    assert!(paths[2].starts_with("/messages/sent"));
 }
 
 #[tokio::test]

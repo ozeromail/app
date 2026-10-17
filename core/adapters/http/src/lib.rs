@@ -114,7 +114,7 @@ impl From<ProviderError> for Failure {
 impl From<Failure> for ProviderError {
     fn from(f: Failure) -> Self {
         match f {
-            Failure::Closed => ProviderError::Network("the server closed the connection".into()),
+            Failure::Closed => closed(),
             Failure::Error(e) => e,
         }
     }
@@ -213,12 +213,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
                 });
             }
         };
-        let (body, keep) = match length {
-            Length::None => (Vec::new(), !close),
-            Length::Fixed(n) => (self.fixed(n).await?, !close),
-            Length::Chunked => (self.chunked().await?, !close),
-            Length::ToEnd => (self.until_closed().await?, false),
+        let body = match length {
+            Length::None => Vec::new(),
+            Length::Fixed(n) => self.fixed(n).await?,
+            Length::Chunked => self.chunked().await?,
+            Length::ToEnd => self.until_closed().await?,
         };
+        let keep = !close && !matches!(length, Length::ToEnd);
         Ok((Response { status, body }, keep))
     }
 
@@ -232,6 +233,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
             Err(e) => return Err(protocol(format!("bad response: {e}"))),
         };
         let status = parsed.code.ok_or_else(|| protocol("no status"))?;
+        if (100..200).contains(&status) {
+            // We send no Expect, so nothing should wait for one; skip it all the same.
+            self.buf.drain(..size);
+            return self.head();
+        }
         let header = |name: &str| {
             parsed
                 .headers
@@ -245,7 +251,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
             .iter()
             .any(|v| v.rsplit(',').next().is_some_and(|t| t.trim() == "chunked"));
         let lengths = header("content-length");
-        let length = if status == 204 || status == 304 || (100..200).contains(&status) {
+        let length = if status == 204 || status == 304 {
             Length::None
         } else if chunked {
             Length::Chunked
@@ -259,11 +265,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
         } else {
             return Err(protocol("more than one content length"));
         };
-        if (100..200).contains(&status) {
-            // We send no Expect, so nothing should wait for one; skip it all the same.
-            self.buf.drain(..size);
-            return self.head();
-        }
         self.buf.drain(..size);
         Ok(Some((status, length, close)))
     }
@@ -277,7 +278,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
                 return Err(closed());
             }
         }
-        Ok(self.buf.drain(..n).collect())
+        // Hands over the body without copying it; what follows stays in `buf`.
+        let rest = self.buf.split_off(n);
+        Ok(std::mem::replace(&mut self.buf, rest))
     }
 
     async fn chunked(&mut self) -> Result<Vec<u8>, ProviderError> {

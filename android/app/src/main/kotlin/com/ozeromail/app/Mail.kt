@@ -10,7 +10,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import uniffi.ozero_api.AccountItem
@@ -68,7 +68,7 @@ class Mail(private val context: Context) {
     private var google: GoogleSignIn? = null
 
     /** Addresses the browser came back to from Google, for the sign-in screen to finish. */
-    val googleRedirects = MutableStateFlow<String?>(null)
+    val googleRedirects = Channel<String>(Channel.CONFLATED)
 
     /** Starts Google sign-in and returns the page to open in the browser. */
     fun startGoogle(): String = googleSignIn().also { google = it }.url
