@@ -212,11 +212,6 @@ mod tests {
     fn snippet_cuts_a_long_first_word() {
         assert_eq!(snippet(&"x".repeat(500)).len(), 160);
     }
-}
-
-#[cfg(test)]
-mod answer_tests {
-    use super::*;
 
     fn mail(from: &str, answer_to: &[&str], recipients: &[&str]) -> Correspondents {
         let list = |a: &[&str]| a.iter().map(|s| (*s).to_owned()).collect();

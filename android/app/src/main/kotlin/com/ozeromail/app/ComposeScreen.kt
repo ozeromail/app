@@ -42,7 +42,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -80,6 +79,7 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<Int?>(null) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     LaunchedEffect(Unit) {
         try {
@@ -140,12 +140,8 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
                 modifier = Modifier.weight(1f, fill = false),
             )
             composing.original?.let { original ->
-                val header = stringResource(
-                    R.string.compose_quote_header,
-                    longDate(LocalContext.current, original.date),
-                    original.sender,
-                )
                 Quote(quote, onAdd = {
+                    val header = context.getString(R.string.compose_quote_header, longDate(context, original.date), original.sender)
                     scope.launch {
                         try {
                             quote = mail.quote(original, header)
@@ -228,16 +224,7 @@ private fun Original(message: MessageItem) {
 private fun Quote(quote: String, onAdd: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     if (quote.isEmpty()) {
-        Text(
-            stringResource(R.string.compose_add_quote),
-            color = colors.onSurfaceVariant,
-            fontSize = 13.sp,
-            modifier = Modifier
-                .clip(CircleShape)
-                .background(colors.surfaceVariant)
-                .clickable(role = Role.Button, onClick = onAdd)
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-        )
+        Pill(stringResource(R.string.compose_add_quote), onAdd, height = 32.dp)
     } else {
         Text(
             quote,

@@ -272,12 +272,7 @@ impl Core {
         let Some(body) = self.store.body(MessageId(message))? else {
             return Ok(String::new());
         };
-        let mut quote = header;
-        for line in body.text.trim().lines() {
-            quote.push_str(if line.is_empty() { "\n>" } else { "\n> " });
-            quote.push_str(line);
-        }
-        Ok(quote)
+        Ok(ozero_domain::quote(header, &body.text))
     }
 
     /// Takes back held actions. False if any may be on its way to the server.
