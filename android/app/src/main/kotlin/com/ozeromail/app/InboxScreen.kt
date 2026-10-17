@@ -530,7 +530,7 @@ private fun AccountsButton(accounts: List<AccountItem>, onClick: () -> Unit) {
     ) {
         val one = accounts.singleOrNull()
         if (one != null) {
-            AccountInitial(one.displayName.ifBlank { one.email }, one.tint, 24.dp)
+            AccountInitial(one.name, one.tint, 24.dp)
         } else {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 accounts.take(4).chunked(2).forEach { pair ->
@@ -661,6 +661,10 @@ val AccountMark.tint: Color
 
 val AccountItem.tint: Color
     get() = rgb(color)
+
+/** The account's name, or its address when it has none. */
+val AccountItem.name: String
+    get() = displayName.ifBlank { email }
 
 fun rgb(color: UInt) = Color(0xFF000000 or color.toLong())
 

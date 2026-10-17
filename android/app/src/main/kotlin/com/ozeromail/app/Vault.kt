@@ -27,14 +27,16 @@ class Vault(context: Context) {
         }
 
     /** Keyed by email, which is unique per account and known before the account is saved. */
-    fun password(email: String): String? = get("password.${email.lowercase()}")?.decodeToString()
+    fun password(email: String): String? = get(passwordKey(email))?.decodeToString()
 
-    fun setPassword(email: String, password: String) = put("password.${email.lowercase()}", password.encodeToByteArray())
+    fun setPassword(email: String, password: String) = put(passwordKey(email), password.encodeToByteArray())
 
     @SuppressLint("ApplySharedPref")
     fun forgetPassword(email: String) {
-        prefs.edit().remove("password.${email.lowercase()}").commit()
+        prefs.edit().remove(passwordKey(email)).commit()
     }
+
+    private fun passwordKey(email: String) = "password.${email.lowercase()}"
 
     /** The Google sign-in waiting for the browser, kept in case Android closes the app meanwhile. */
     fun googleSignIn(): GoogleSignIn? {

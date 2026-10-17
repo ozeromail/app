@@ -163,9 +163,10 @@ impl Core {
         let lock = self.busy(account);
         let _busy = lock.lock().await;
         self.store.remove_account(account)?;
-        let mut tokens = self.tokens.lock().unwrap_or_else(|p| p.into_inner());
-        tokens.remove(&account);
-        drop(tokens);
+        self.tokens
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&account);
         self.busy
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -827,6 +828,8 @@ pub struct AccountItem {
     pub display_name: String,
     /// 0xRRGGBB.
     pub color: u32,
+    /// The colour's place in `account_colors`.
+    pub color_index: u32,
 }
 
 impl From<Account> for AccountItem {
@@ -834,6 +837,7 @@ impl From<Account> for AccountItem {
         Self {
             id: a.id.0,
             color: rgb(a.color),
+            color_index: a.color % ACCOUNT_COLORS.len() as u32,
             email: a.email,
             display_name: a.display_name,
         }

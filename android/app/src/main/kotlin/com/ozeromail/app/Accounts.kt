@@ -69,8 +69,8 @@ fun AccountsSheet(
                 ) {
                     AccountDot(item.tint, size = 12.dp)
                     Column(Modifier.weight(1f)) {
-                        Text(item.displayName.ifBlank { item.email }, fontSize = 15.5.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (item.displayName.isNotBlank() && item.displayName != item.email) {
+                        Text(item.name, fontSize = 15.5.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (item.name != item.email) {
                             Text(item.email, color = colors.onSurfaceVariant, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
@@ -86,14 +86,14 @@ fun AccountsSheet(
 private fun AccountSettings(account: AccountItem, onColor: (Int) -> Unit, onRemove: () -> Unit) {
     var confirming by rememberSaveable { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
-    SheetTitle(account.displayName.ifBlank { account.email })
+    SheetTitle(account.name)
     Text(
         stringResource(R.string.account_color),
         color = colors.onSurfaceVariant,
         fontSize = 13.sp,
         modifier = Modifier.padding(start = 22.dp, end = 22.dp, top = 8.dp, bottom = 12.dp),
     )
-    Swatches(account.color, onColor)
+    Swatches(account.colorIndex.toInt(), onColor)
     SheetAction(R.drawable.ic_close, stringResource(R.string.account_remove), colors.error) { confirming = true }
     if (confirming) {
         AlertDialog(
@@ -119,17 +119,17 @@ private fun AccountSettings(account: AccountItem, onColor: (Int) -> Unit, onRemo
 
 /** The account colours in two rows; the current one has a ring. */
 @Composable
-private fun Swatches(current: UInt, onPick: (Int) -> Unit) {
-    val palette = remember { accountColors() }
+private fun Swatches(current: Int, onPick: (Int) -> Unit) {
+    val rows = remember { accountColors().withIndex().chunked(5) }
     val ring = MaterialTheme.colorScheme.onSurface
     Column(
         Modifier.padding(horizontal = 22.dp).padding(bottom = 18.dp).selectableGroup(),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        palette.withIndex().chunked(5).forEach { row ->
+        rows.forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 row.forEach { (index, color) ->
-                    val on = color == current
+                    val on = index == current
                     Box(
                         Modifier
                             .size(40.dp)
