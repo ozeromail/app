@@ -8,9 +8,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.Immutable
-import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
@@ -52,27 +49,13 @@ private val Dark = darkColorScheme(
     error = Color(0xFFF2596A),
 )
 
-/** Colours with a meaning that Material has no slot for. */
-@Immutable
-data class Meaning(
-    /** Done and Inbox Zero. */
-    val done: Color,
-)
-
-private val LightMeaning = Meaning(done = Color(0xFF43A95A))
-private val DarkMeaning = Meaning(done = Color(0xFF52B867))
-
-private val LocalMeaning = staticCompositionLocalOf { LightMeaning }
-
-val MaterialTheme.meaning: Meaning
-    @Composable get() = LocalMeaning.current
+/** Done and Inbox Zero: the one green, which Material has no slot for. */
+val MaterialTheme.done: Color
+    @Composable get() = if (isSystemInDarkTheme()) Color(0xFF52B867) else Color(0xFF43A95A)
 
 @Composable
 fun OzeroTheme(content: @Composable () -> Unit) {
-    val dark = isSystemInDarkTheme()
-    CompositionLocalProvider(LocalMeaning provides if (dark) DarkMeaning else LightMeaning) {
-        MaterialTheme(colorScheme = if (dark) Dark else Light, content = content)
-    }
+    MaterialTheme(colorScheme = if (isSystemInDarkTheme()) Dark else Light, content = content)
 }
 
 /** One of the app's line icons, in [tint]. */

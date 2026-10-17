@@ -47,6 +47,6 @@
   "tab_empty_title": "Здесь пусто",
   "tab_empty_text": "Всё разобрано. Можно выдохнуть.",
   "accounts_title": "Аккаунты",
-  "message_reply_to": "Ответить {name}…",
-  "action_close": "Закрыть"
+  "action_close": "Закрыть",
+  "message_reply_prompt": "Ответить…"
 }

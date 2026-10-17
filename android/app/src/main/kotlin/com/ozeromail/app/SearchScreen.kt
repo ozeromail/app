@@ -1,13 +1,11 @@
 package com.ozeromail.app
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -98,16 +96,7 @@ fun SearchScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Row(
-                Modifier
-                    .weight(1f)
-                    .height(48.dp)
-                    .background(colors.surfaceVariant, CircleShape)
-                    .padding(horizontal = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Glyph(R.drawable.ic_search, null, colors.onSurfaceVariant)
+            PillBox(Modifier.weight(1f), icon = R.drawable.ic_search) {
                 Plain(
                     query,
                     onQuery,

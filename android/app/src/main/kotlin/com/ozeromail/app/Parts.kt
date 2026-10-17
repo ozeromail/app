@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
@@ -23,6 +25,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.semantics.Role
@@ -57,7 +61,30 @@ fun IconTile(
     }
 }
 
-/** A wide rounded field-like button: search, quick reply. */
+/** The rounded grey shape of the search field and the quick reply. */
+@Composable
+fun PillBox(
+    modifier: Modifier = Modifier,
+    @DrawableRes icon: Int? = null,
+    height: Dp = 48.dp,
+    content: @Composable RowScope.() -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    Row(
+        modifier
+            .height(height)
+            .clip(CircleShape)
+            .background(colors.surfaceVariant)
+            .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        icon?.let { Glyph(it, null, colors.onSurfaceVariant) }
+        content()
+    }
+}
+
+/** A [PillBox] that is a button with a grey prompt in it. */
 @Composable
 fun Pill(
     text: String,
@@ -66,20 +93,33 @@ fun Pill(
     @DrawableRes icon: Int? = null,
     height: Dp = 48.dp,
 ) {
-    val colors = MaterialTheme.colorScheme
-    Row(
-        modifier
-            .height(height)
-            .clip(CircleShape)
-            .background(colors.surfaceVariant)
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        icon?.let { Glyph(it, null, colors.onSurfaceVariant) }
-        Text(text, color = colors.onSurfaceVariant, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    PillBox(modifier.clip(CircleShape).clickable(role = Role.Button, onClick = onClick), icon, height) {
+        Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
+}
+
+/** A screen's large title, set high where it needs no reach. */
+@Composable
+fun LargeTitle(text: String, modifier: Modifier = Modifier) {
+    Text(text, modifier, fontSize = 32.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.8).sp)
+}
+
+/** An account's colour with the first letter of its name. */
+@Composable
+fun AccountInitial(name: String, color: Color, size: Dp) {
+    Box(Modifier.size(size).background(color, CircleShape), contentAlignment = Alignment.Center) {
+        Text(initials(name).take(1), color = Color.White, fontSize = (size.value / 2).sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+/** The see-through background of the bars over the list. */
+val ColorScheme.bar: Color
+    get() = background.copy(alpha = 0.94f)
+
+/** A hairline along the top or bottom edge. */
+fun Modifier.hairline(color: Color, top: Boolean): Modifier = drawBehind {
+    val y = if (top) 0f else size.height
+    drawLine(color, Offset(0f, y), Offset(size.width, y), 1.dp.toPx())
 }
 
 /** A small round mark in an account's colour. */

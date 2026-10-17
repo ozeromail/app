@@ -47,6 +47,6 @@
   "tab_empty_title": "Nothing here",
   "tab_empty_text": "All sorted. Time to breathe out.",
   "accounts_title": "Accounts",
-  "message_reply_to": "Reply to {name}…",
-  "action_close": "Close"
+  "action_close": "Close",
+  "message_reply_prompt": "Reply…"
 }

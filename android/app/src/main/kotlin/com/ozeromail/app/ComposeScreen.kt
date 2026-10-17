@@ -38,9 +38,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -146,7 +143,7 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
         Row(
             Modifier
                 .fillMaxWidth()
-                .drawBehind { drawLine(colors.outlineVariant, Offset.Zero, Offset(size.width, 0f), 1.dp.toPx()) }
+                .hairline(colors.outlineVariant, top = true)
                 .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -222,9 +219,7 @@ private fun Sender(from: AccountItem, accounts: List<AccountItem>, onPick: (Acco
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Box(Modifier.size(22.dp).background(from.tint, CircleShape), contentAlignment = Alignment.Center) {
-                Text(initials(from.displayName.ifBlank { from.email }).take(1), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            }
+            AccountInitial(from.displayName.ifBlank { from.email }, from.tint, 22.dp)
             Text(from.email, fontSize = 14.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
