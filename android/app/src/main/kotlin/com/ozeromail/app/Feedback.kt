@@ -6,8 +6,8 @@ import android.os.Build
 import java.io.File
 import uniffi.ozero_api.DraftItem
 
-/** Where letters to the author go. */
-private const val AUTHOR = "hello@ozeromail.com"
+/** Where letters to the author go: the same address as on the site. */
+private const val AUTHOR = "khizrim@khizrim.ru"
 
 /** A letter to the author, with what the app runs on below, and a crash report if there is one. */
 fun authorDraft(context: Context, crash: String? = null): DraftItem {
