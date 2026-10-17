@@ -36,6 +36,8 @@ const MAX_LIST: u32 = 500;
 pub struct GmailSession {
     http: HttpsClient,
     auth: String,
+    /// Where the last history read started, what it found and where it ended.
+    last_history: Option<(u64, Vec<Touched>, u64)>,
 }
 
 impl GmailSession {
@@ -47,6 +49,7 @@ impl GmailSession {
         Self {
             http,
             auth: format!("Bearer {access_token}"),
+            last_history: None,
         }
     }
 
@@ -115,7 +118,7 @@ impl GmailSession {
             ))
             .await?;
         let mut messages = Vec::new();
-        for id in ids(&list["messages"]) {
+        for id in each(&list["messages"], |m| &m["id"]) {
             // Deleted between the list and here.
             if let Some(m) = self.header(&id).await? {
                 messages.push(m.raw);
@@ -140,19 +143,21 @@ impl GmailSession {
         }
     }
 
-    /// A message's labels; None once it is deleted.
-    async fn labels(&mut self, id: &str) -> Result<Option<Vec<String>>, ProviderError> {
-        let path = format!("/messages/{}?format=minimal&fields=labelIds", percent(id));
-        match self.get(&path).await {
-            Ok(json) => Ok(Some(strings(&json["labelIds"]))),
-            Err(ProviderError::Gone) => Ok(None),
-            Err(e) => Err(e),
+    /// The messages that changed since `start`, in the order they changed, and where the
+    /// history is now. `Gone` if `start` is too old or too much changed. The inbox and the
+    /// sent folder ask for the same history in one sync, so the last answer is kept.
+    async fn history(&mut self, start: u64) -> Result<(Vec<Touched>, u64), ProviderError> {
+        if let Some((from, touched, now)) = &self.last_history
+            && *from == start
+        {
+            return Ok((touched.clone(), *now));
         }
+        let fresh = self.read_history(start).await?;
+        self.last_history = Some((start, fresh.0.clone(), fresh.1));
+        Ok(fresh)
     }
 
-    /// The messages that changed since `start`, in the order they changed, each with a guess
-    /// whether it is in `label`; and where the history is now. `Gone` if `start` is too old.
-    async fn history(&mut self, start: u64) -> Result<(Vec<Touched>, u64), ProviderError> {
+    async fn read_history(&mut self, start: u64) -> Result<(Vec<Touched>, u64), ProviderError> {
         let mut touched: Vec<Touched> = Vec::new();
         let mut page = String::new();
         loop {
@@ -173,7 +178,12 @@ impl GmailSession {
                         let Some(id) = message["id"].as_str() else {
                             continue;
                         };
-                        let labels = strings(&message["labelIds"]);
+                        // A deleted message is in no folder.
+                        let labels = if kind == "messagesDeleted" {
+                            vec![]
+                        } else {
+                            strings(&message["labelIds"])
+                        };
                         match touched.iter_mut().find(|t| t.id == id) {
                             Some(t) => t.labels = labels,
                             None => touched.push(Touched {
@@ -214,7 +224,7 @@ impl GmailSession {
 }
 
 /// A message named in the history, with its labels as of its last change there.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Touched {
     id: String,
     labels: Vec<String>,
@@ -296,11 +306,13 @@ impl MailProvider for GmailSession {
         remote_ids: &[String],
         seen: bool,
     ) -> Result<(), ProviderError> {
-        if seen {
-            self.modify(remote_ids, &[], &["UNREAD"]).await
+        let (add, remove) = if seen {
+            (None, Some("UNREAD"))
         } else {
-            self.modify(remote_ids, &["UNREAD"], &[]).await
-        }
+            (Some("UNREAD"), None)
+        };
+        self.modify(remote_ids, add.as_slice(), remove.as_slice())
+            .await
     }
 
     async fn move_to(
@@ -310,26 +322,12 @@ impl MailProvider for GmailSession {
         remote_ids: &[String],
         to: &str,
     ) -> Result<(), ProviderError> {
-        let label = |l: &'_ str| -> Vec<String> {
-            if l == ARCHIVE {
-                vec![]
-            } else {
-                vec![l.to_owned()]
-            }
-        };
-        let (add, remove) = (label(to), label(folder));
-        let add: Vec<&str> = add.iter().map(String::as_str).collect();
-        let remove: Vec<&str> = remove.iter().map(String::as_str).collect();
-        self.modify(remote_ids, &add, &remove).await
+        self.modify(remote_ids, label(to).as_slice(), label(folder).as_slice())
+            .await
     }
 
     async fn append(&mut self, folder: &str, message: &[u8]) -> Result<(), ProviderError> {
-        let labels: Vec<&str> = if folder == ARCHIVE {
-            vec![]
-        } else {
-            vec![folder]
-        };
-        let body = json!({"raw": base64url(message), "labelIds": labels});
+        let body = json!({"raw": base64url(message), "labelIds": label(folder).as_slice()});
         self.post("/messages", &body).await.map(|_| ())
     }
 }
@@ -353,11 +351,10 @@ impl GmailSession {
         };
         for t in touched {
             if known.contains(t.id.as_str()) {
-                match self.labels(&t.id).await? {
-                    Some(labels) if has(&labels, folder) => {
-                        changes.flags.push((t.id, flags(&labels)));
-                    }
-                    _ => changes.gone.push(t.id),
+                if has(&t.labels, folder) {
+                    changes.flags.push((t.id, flags(&t.labels)));
+                } else {
+                    changes.gone.push(t.id);
                 }
             } else if has(&t.labels, folder)
                 && let Some(m) = self.header(&t.id).await?
@@ -384,6 +381,11 @@ impl MailSender for GmailSession {
         let body = json!({"raw": base64url(message)});
         self.post("/messages/send", &body).await.map(|_| ())
     }
+}
+
+/// The label that puts a message in `folder`; none for the archive.
+fn label(folder: &str) -> Option<&str> {
+    (folder != ARCHIVE).then_some(folder)
 }
 
 fn has(labels: &[String], folder: &str) -> bool {
@@ -445,22 +447,18 @@ fn number(value: &Value) -> Option<u64> {
         .or_else(|| value.as_u64())
 }
 
-fn strings(value: &Value) -> Vec<String> {
+/// The strings in an array, each picked out by `pick`.
+fn each(value: &Value, pick: impl Fn(&Value) -> &Value) -> Vec<String> {
     value
         .as_array()
         .into_iter()
         .flatten()
-        .filter_map(|v| v.as_str().map(str::to_owned))
+        .filter_map(|v| pick(v).as_str().map(str::to_owned))
         .collect()
 }
 
-fn ids(value: &Value) -> Vec<String> {
-    value
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|m| m["id"].as_str().map(str::to_owned))
-        .collect()
+fn strings(value: &Value) -> Vec<String> {
+    each(value, |v| v)
 }
 
 fn protocol(msg: impl Into<String>) -> ProviderError {

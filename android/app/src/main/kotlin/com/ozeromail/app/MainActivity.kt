@@ -45,7 +45,7 @@ class MainActivity : ComponentActivity() {
 
     private fun googleRedirect(intent: Intent) {
         val uri = intent.data ?: return
-        if (uri.scheme == packageName) (application as OzeroApp).mail.googleRedirects.value = uri.toString()
+        if (uri.scheme == packageName) (application as OzeroApp).mail.googleRedirects.trySend(uri.toString())
     }
 }
 

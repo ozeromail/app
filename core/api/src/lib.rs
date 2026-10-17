@@ -11,9 +11,9 @@ use ozero_app::ops::push_ops;
 use ozero_app::send::{SentCopy, push_sends};
 use ozero_app::sync::{SyncError, download_body, sync_mail};
 use ozero_domain::{
-    Account, AccountId, AccountKind, Action, Address, Body, Category, Draft, FolderRole, ListQuery,
-    ListScope, MessageId, MessageRow, NewAccount, OpId, OutboxId, ProviderError, Server, Store,
-    StoreError, parse_recipients, saves_sent_itself,
+    Account, AccountId, AccountKind, Action, Address, Body, Category, Changes, Checkpoint, Draft,
+    FolderRole, ListQuery, ListScope, MailProvider, MessageId, MessageRow, NewAccount, NewFolder,
+    OpId, OutboxId, ProviderError, Server, Store, StoreError, parse_recipients, saves_sent_itself,
 };
 use ozero_gmail::{GmailSession, oauth};
 use ozero_imap::ImapSession;
@@ -67,12 +67,7 @@ pub fn suggested_smtp_host(email: String) -> Option<String> {
 /// `google_account` when the browser comes back to `GOOGLE_REDIRECT`.
 #[uniffi::export]
 pub fn google_sign_in() -> Result<GoogleSignIn, CoreError> {
-    let start = oauth::sign_in(GOOGLE_CLIENT_ID, GOOGLE_REDIRECT)?;
-    Ok(GoogleSignIn {
-        url: start.url,
-        verifier: start.verifier,
-        state: start.state,
-    })
+    Ok(oauth::sign_in(GOOGLE_CLIENT_ID, GOOGLE_REDIRECT)?.into())
 }
 
 /// An answer to `message`: from the account that got it, to its sender, `Re: ` once.
@@ -346,16 +341,8 @@ impl Core {
         sign_in: GoogleSignIn,
         redirect: String,
     ) -> Result<GoogleAccount, CoreError> {
-        let start = oauth::SignIn {
-            url: sign_in.url,
-            verifier: sign_in.verifier,
-            state: sign_in.state,
-        };
-        // Saying no on Google's page is a refused sign-in like a wrong password.
-        let code = oauth::code(&redirect, &start).map_err(|e| match e {
-            ProviderError::Rejected(_) => CoreError::Auth,
-            e => e.into(),
-        })?;
+        let start = oauth::SignIn::from(sign_in);
+        let code = oauth::code(&redirect, &start)?;
         let tls = self.tls()?;
         let tokens = oauth::exchange(
             tls.clone(),
@@ -431,14 +418,7 @@ impl Core {
         // A send that fails, say on a broken SMTP server, must not stop new mail coming in.
         let pushed = self.refused(&account, self.push_due(&account, &secret, &mut slot).await);
         let remote = self.remote(&mut slot, &account, &secret).await?;
-        let synced = match remote {
-            Remote::Imap(imap) => {
-                sync_mail(&self.store, imap, &self.parser, account.id, SYNC_LIMIT).await
-            }
-            Remote::Gmail(gmail) => {
-                sync_mail(&self.store, gmail, &self.parser, account.id, SYNC_LIMIT).await
-            }
-        };
+        let synced = sync_mail(&self.store, remote, &self.parser, account.id, SYNC_LIMIT).await;
         self.refused(&account, synced)?;
         if let Some(remote) = slot {
             remote.close().await;
@@ -460,12 +440,8 @@ impl Core {
         let location = self.store.location(message)?;
         let account = self.account(location.account_id)?;
         let mut slot = None;
-        let body = match self.remote(&mut slot, &account, &secret).await? {
-            Remote::Imap(imap) => download_body(&self.store, imap, &self.parser, &location).await,
-            Remote::Gmail(gmail) => {
-                download_body(&self.store, gmail, &self.parser, &location).await
-            }
-        };
+        let remote = self.remote(&mut slot, &account, &secret).await?;
+        let body = download_body(&self.store, remote, &self.parser, &location).await;
         // Closing without LOGOUT saves the reader a round trip; the server cleans up.
         drop(slot);
         Ok(self.refused(&account, body)?.into())
@@ -591,10 +567,8 @@ impl Core {
     ) -> Result<(), CoreError> {
         let ops = self.store.due(account.id, now())?;
         if !ops.is_empty() {
-            match self.remote(slot, account, secret).await? {
-                Remote::Imap(imap) => push_ops(&self.store, imap, ops).await?,
-                Remote::Gmail(gmail) => push_ops(&self.store, gmail, ops).await?,
-            }
+            let remote = self.remote(slot, account, secret).await?;
+            push_ops(&self.store, remote, ops).await?;
         }
         let mail = self.store.due_sends(account.id, now())?;
         if mail.is_empty() {
@@ -610,9 +584,8 @@ impl Core {
             push_sends(&self.store, gmail, &MimeBuilder, &from, copy, mail).await?;
             return Ok(());
         }
-        let password = secret;
         let server = account.smtp.as_ref().ok_or(CoreError::NoSmtp)?;
-        let mut smtp = self.send_login(server, password).await?;
+        let mut smtp = self.send_login(server, secret).await?;
         let sent = if saves_sent_itself(&server.host) {
             None
         } else {
@@ -621,8 +594,8 @@ impl Core {
         };
         // Without IMAP the mail still goes; only its copy in Sent is missing.
         let copy = match &sent {
-            Some(folder) => match self.remote(slot, account, password).await {
-                Ok(Remote::Imap(provider)) => Some(SentCopy {
+            Some(folder) => match self.remote(slot, account, secret).await {
+                Ok(provider) => Some(SentCopy {
                     provider,
                     folder: &folder.remote_id,
                 }),
@@ -677,6 +650,74 @@ impl Remote {
     async fn close(self) {
         if let Self::Imap(imap) = self {
             let _ = imap.logout().await;
+        }
+    }
+}
+
+/// Passes each call on to the account's own provider.
+impl MailProvider for Remote {
+    async fn folders(&mut self) -> Result<Vec<NewFolder>, ProviderError> {
+        match self {
+            Self::Imap(p) => p.folders().await,
+            Self::Gmail(p) => p.folders().await,
+        }
+    }
+
+    async fn changes(
+        &mut self,
+        folder: &str,
+        since: Checkpoint,
+        known: &[String],
+        limit: u32,
+    ) -> Result<Changes, ProviderError> {
+        match self {
+            Self::Imap(p) => p.changes(folder, since, known, limit).await,
+            Self::Gmail(p) => p.changes(folder, since, known, limit).await,
+        }
+    }
+
+    async fn body(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_id: &str,
+    ) -> Result<Vec<u8>, ProviderError> {
+        match self {
+            Self::Imap(p) => p.body(folder, validity, remote_id).await,
+            Self::Gmail(p) => p.body(folder, validity, remote_id).await,
+        }
+    }
+
+    async fn set_seen(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_ids: &[String],
+        seen: bool,
+    ) -> Result<(), ProviderError> {
+        match self {
+            Self::Imap(p) => p.set_seen(folder, validity, remote_ids, seen).await,
+            Self::Gmail(p) => p.set_seen(folder, validity, remote_ids, seen).await,
+        }
+    }
+
+    async fn move_to(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_ids: &[String],
+        to: &str,
+    ) -> Result<(), ProviderError> {
+        match self {
+            Self::Imap(p) => p.move_to(folder, validity, remote_ids, to).await,
+            Self::Gmail(p) => p.move_to(folder, validity, remote_ids, to).await,
+        }
+    }
+
+    async fn append(&mut self, folder: &str, message: &[u8]) -> Result<(), ProviderError> {
+        match self {
+            Self::Imap(p) => p.append(folder, message).await,
+            Self::Gmail(p) => p.append(folder, message).await,
         }
     }
 }
@@ -804,6 +845,26 @@ pub struct GoogleSignIn {
     /// Kept in memory until the browser comes back; never shown or logged.
     pub verifier: String,
     pub state: String,
+}
+
+impl From<oauth::SignIn> for GoogleSignIn {
+    fn from(s: oauth::SignIn) -> Self {
+        Self {
+            url: s.url,
+            verifier: s.verifier,
+            state: s.state,
+        }
+    }
+}
+
+impl From<GoogleSignIn> for oauth::SignIn {
+    fn from(s: GoogleSignIn) -> Self {
+        Self {
+            url: s.url,
+            verifier: s.verifier,
+            state: s.state,
+        }
+    }
 }
 
 /// A Gmail account Google let in, not saved yet.

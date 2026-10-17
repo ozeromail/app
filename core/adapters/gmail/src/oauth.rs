@@ -49,15 +49,16 @@ pub fn sign_in(client_id: &str, redirect: &str) -> Result<SignIn, ProviderError>
     })
 }
 
-/// The code in the address the browser came back to. `Rejected` if the person said no.
+/// The code in the address the browser came back to. `Auth` if the person said no, like a
+/// wrong password.
 pub fn code(redirect: &str, sign_in: &SignIn) -> Result<String, ProviderError> {
     if query_value(redirect, "state").as_deref() != Some(sign_in.state.as_str()) {
         return Err(ProviderError::Protocol(
             "the sign-in answer is not ours".into(),
         ));
     }
-    if let Some(error) = query_value(redirect, "error") {
-        return Err(ProviderError::Rejected(error));
+    if query_value(redirect, "error").is_some() {
+        return Err(ProviderError::Auth);
     }
     query_value(redirect, "code")
         .filter(|c| !c.is_empty())
@@ -196,7 +197,7 @@ mod tests {
         );
         assert_eq!(
             code(&format!("app:/r?error=access_denied&state={state}"), &start),
-            Err(ProviderError::Rejected("access_denied".into()))
+            Err(ProviderError::Auth)
         );
         assert!(matches!(
             code("app:/r?state=other&code=x", &start),
