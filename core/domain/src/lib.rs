@@ -3,6 +3,7 @@
 mod account;
 mod encoding;
 mod folder;
+pub mod html;
 mod message;
 mod op;
 mod outbox;

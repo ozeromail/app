@@ -56,5 +56,7 @@
   "action_remove": "Удалить",
   "message_reply_all": "Ответить всем",
   "compose_add_quote": "Добавить цитату",
-  "compose_quote_header": "%1$s, %2$s написал(а):"
+  "compose_quote_header": "%1$s, %2$s написал(а):",
+  "message_images_hidden": "Картинки скрыты, чтобы отправитель не узнал, что письмо открыто.",
+  "action_show": "Показать"
 }

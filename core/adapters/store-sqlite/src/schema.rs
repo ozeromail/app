@@ -188,4 +188,8 @@ pub const MIGRATIONS: &[&str] = &[
     ALTER TABLE message ADD COLUMN recipients TEXT NOT NULL DEFAULT '';
     ALTER TABLE outbox ADD COLUMN quote TEXT NOT NULL DEFAULT '';
     ",
+    // 17: senders whose remote images load without asking.
+    "
+    CREATE TABLE image_sender (email TEXT PRIMARY KEY COLLATE NOCASE) WITHOUT ROWID;
+    ",
 ];

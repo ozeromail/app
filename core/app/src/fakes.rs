@@ -211,6 +211,14 @@ impl Store for Memory {
         Ok(vec![])
     }
 
+    fn shows_images(&self, _: MessageId) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    fn allow_images(&self, _: MessageId) -> Result<(), StoreError> {
+        Ok(())
+    }
+
     fn correspondents(&self, _: MessageId) -> Result<Correspondents, StoreError> {
         Ok(Correspondents::default())
     }

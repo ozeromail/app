@@ -45,6 +45,26 @@ fn html_is_wrapped_in_a_locked_page() {
 }
 
 #[test]
+fn holds_back_remote_images_and_counts_them() {
+    let body = MessageBody::from(Body {
+        text: String::new(),
+        html: Some("<img src=https://x.com/a.png><img src=https://x.com/p.gif width=1>".into()),
+    });
+    assert_eq!(body.remote_images, 1);
+    assert!(!body.html.unwrap().contains("x.com"));
+}
+
+#[test]
+fn makes_data_addresses_only_for_images() {
+    assert_eq!(
+        data_uri("Image/PNG; charset=x", b"ab").as_deref(),
+        Some("data:image/png;base64,YWI=")
+    );
+    assert_eq!(data_uri("text/html", b"ab"), None);
+    assert_eq!(data_uri("image/png\"><script>", b"ab"), None);
+}
+
+#[test]
 fn rejects_a_short_key() {
     assert_eq!(
         Core::open(TempDb::new("short-key").0.clone(), vec![1; 16]).unwrap_err(),
@@ -108,6 +128,8 @@ fn syncs_an_imap_inbox_into_the_list() {
     let plain = MessageBody {
         text: "Hello 2".into(),
         html: None,
+        remote_images: 0,
+        shows_images: true,
     };
     assert_eq!(body("pass").unwrap(), plain);
     // Saved now: no login, so a wrong password does not matter.

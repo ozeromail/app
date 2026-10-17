@@ -128,6 +128,12 @@ class Mail(private val context: Context) {
         return actions
     }
 
+    /** [message]'s page with its remote images loaded; null when it has none. */
+    suspend fun images(message: MessageItem): String? = io { core.messageImages(message.id) }
+
+    /** From now on the remote images of mail from [message]'s sender load on their own. */
+    suspend fun allowImages(message: MessageItem) = io { core.allowImages(message.id) }
+
     /** An answer to [message]: to its sender, or with [all] to everyone it went to as well. */
     suspend fun reply(message: MessageItem, all: Boolean): DraftItem = io { core.reply(message, all) }
 

@@ -30,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,6 +43,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
@@ -66,6 +68,8 @@ fun MessageScreen(
     // With the id of its message, so a page is never shown under another message's header.
     var body by remember(message.id) { mutableStateOf<Pair<Long, MessageBody>?>(null) }
     var error by remember(message.id) { mutableStateOf<Int?>(null) }
+    // The page again with its remote images, by message id.
+    var withImages by remember(message.id) { mutableStateOf<Pair<Long, String>?>(null) }
     LaunchedEffect(message.id) {
         try {
             thread = mail.thread(message)
@@ -74,13 +78,23 @@ fun MessageScreen(
             error = e.text()
         }
     }
-    LaunchedEffect(shown.id) {
+    suspend fun loadImages(of: MessageItem) {
         try {
-            body = shown.id to mail.body(shown)
+            mail.images(of)?.let { withImages = of.id to it }
         } catch (e: CoreException) {
             error = e.text()
         }
     }
+    LaunchedEffect(shown.id) {
+        try {
+            val loaded = mail.body(shown)
+            body = shown.id to loaded
+            if (loaded.remoteImages > 0u && loaded.showsImages) loadImages(shown)
+        } catch (e: CoreException) {
+            error = e.text()
+        }
+    }
+    val scope = rememberCoroutineScope()
     // The newest message not from the user, when the user's own reply is shown.
     val answer = if (shown.sent) thread.lastOrNull { !it.sent } ?: message else shown
 
@@ -100,12 +114,26 @@ fun MessageScreen(
         }
         HorizontalDivider(Modifier.padding(top = 14.dp), color = colors.outlineVariant)
         val loaded = body?.takeIf { it.first == shown.id }?.second
-        val html = loaded?.html
+        val full = withImages?.takeIf { it.first == shown.id }?.second
+        val html = full ?: loaded?.html
+        if (loaded != null && full == null && loaded.remoteImages > 0u && !loaded.showsImages) {
+            HiddenImages(onShow = {
+                val of = shown
+                scope.launch {
+                    try {
+                        mail.allowImages(of)
+                    } catch (e: CoreException) {
+                        error = e.text()
+                    }
+                    loadImages(of)
+                }
+            })
+        }
         val failed = error
         val content = Modifier.weight(1f).fillMaxWidth()
         when {
             // A new web view per message: it loads its page only once.
-            html != null -> key(shown.id) { HtmlView(html, content) }
+            html != null -> key(shown.id, full != null) { HtmlView(html, content) }
             loaded != null -> SelectionContainer(content.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 18.dp)) {
                 Text(loaded.text, fontSize = 15.5.sp, lineHeight = 24.8.sp, modifier = Modifier.widthIn(max = 620.dp))
             }
@@ -164,6 +192,40 @@ private fun Actions(onDone: () -> Unit) {
             Glyph(R.drawable.ic_done, null, Color.White)
             Text(stringResource(R.string.action_done), color = Color.White, fontSize = 11.5.sp)
         }
+    }
+}
+
+/** A note that the remote images are held back, with a way to see them from now on. */
+@Composable
+private fun HiddenImages(onShow: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 16.dp, top = 12.dp)
+            .background(colors.surfaceVariant, RoundedCornerShape(14.dp))
+            .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            stringResource(R.string.message_images_hidden),
+            color = colors.onSurfaceVariant,
+            fontSize = 13.sp,
+            lineHeight = 17.5.sp,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            stringResource(R.string.action_show),
+            color = colors.primary,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier
+                .clip(CircleShape)
+                .background(colors.background)
+                .clickable(role = Role.Button, onClick = onShow)
+                .padding(horizontal = 12.dp, vertical = 7.dp),
+        )
     }
 }
 
