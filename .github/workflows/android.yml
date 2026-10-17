@@ -59,6 +59,22 @@ jobs:
         env:
           RELEASE: ${{ !startsWith(github.ref, 'refs/tags/v') && ':app:assembleRelease' || '' }}
         run: ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME" ./gradlew :app:assembleDebug :app:lintDebug $RELEASE
+      - name: Show lint errors
+        if: failure()
+        working-directory: android
+        # Annotations show where logs cannot be read.
+        run: |
+          python3 - <<'PY'
+          import pathlib, xml.etree.ElementTree as ET
+          for report in pathlib.Path("app/build").glob("**/lint-results-debug.xml"):
+              for issue in ET.parse(report).getroot().iter("issue"):
+                  if issue.get("severity") not in ("Error", "Fatal"):
+                      continue
+                  where = issue.find("location")
+                  file = where.get("file", "") if where is not None else ""
+                  line = where.get("line", "1") if where is not None else "1"
+                  print(f"::error file={file},line={line}::{issue.get('id')}: {issue.get('message')}")
+          PY
       - name: Build the signed release
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         working-directory: android
