@@ -219,7 +219,7 @@ private fun Sender(from: AccountItem, accounts: List<AccountItem>, onPick: (Acco
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            AccountInitial(from.displayName.ifBlank { from.email }, from.tint, 22.dp)
+            AccountInitial(from.name, from.tint, 22.dp)
             Text(from.email, fontSize = 14.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
