@@ -24,16 +24,19 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -48,13 +51,15 @@ fun IconTile(
     tint: Color = MaterialTheme.colorScheme.onSurface,
     shape: Shape = RoundedCornerShape(16.dp),
     size: Dp = 48.dp,
+    enabled: Boolean = true,
 ) {
     Box(
         modifier
             .size(size)
+            .alpha(if (enabled) 1f else 0.4f)
             .clip(shape)
             .background(background)
-            .clickable(onClickLabel = description, role = Role.Button, onClick = onClick),
+            .clickable(enabled = enabled, onClickLabel = description, role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Glyph(icon, description, tint)
@@ -108,7 +113,7 @@ fun LargeTitle(text: String, modifier: Modifier = Modifier) {
 @Composable
 fun AccountInitial(name: String, color: Color, size: Dp) {
     Box(Modifier.size(size).background(color, CircleShape), contentAlignment = Alignment.Center) {
-        Text(initials(name).take(1), color = Color.White, fontSize = (size.value / 2).sp, fontWeight = FontWeight.Bold)
+        Text(initials(name).take(1), color = Color.White, fontSize = fixedSp(size / 2), fontWeight = FontWeight.Bold)
     }
 }
 
@@ -139,10 +144,14 @@ fun Avatar(name: String, key: String, modifier: Modifier = Modifier, size: Dp = 
             initials(name),
             color = Color.White,
             fontWeight = FontWeight.SemiBold,
-            fontSize = (size.value * 0.36f).sp,
+            fontSize = fixedSp(size * 0.36f),
         )
     }
 }
+
+/** Text that fills a circle of a fixed size, so it does not grow with the font scale. */
+@Composable
+private fun fixedSp(size: Dp): TextUnit = with(LocalDensity.current) { size.toSp() }
 
 /** The first letters of the first two words, or of the address. */
 fun initials(name: String): String =

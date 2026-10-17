@@ -36,7 +36,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
@@ -157,10 +156,11 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
                 R.drawable.ic_send,
                 stringResource(R.string.compose_send),
                 ::send,
-                Modifier.width(56.dp).alpha(if (ready) 1f else 0.4f),
+                Modifier.width(56.dp),
                 background = colors.primary,
                 tint = colors.onPrimary,
                 shape = CircleShape,
+                enabled = ready,
             )
         }
     }

@@ -16,16 +16,20 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -45,6 +49,8 @@ import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -138,6 +144,14 @@ fun InboxScreen(mail: Mail) {
         }
     }
 
+    suspend fun loadAccounts() {
+        try {
+            accounts = mail.accounts()
+        } catch (e: CoreException) {
+            error = e.text()
+        }
+    }
+
     suspend fun load() {
         loadList()
         counts()
@@ -162,6 +176,8 @@ fun InboxScreen(mail: Mail) {
             error = e.text()
         }
         MailWorker.clearNotifications(context)
+        // The first read may have failed; a sync is a good moment to try again.
+        if (accounts.isEmpty()) loadAccounts()
         try {
             load()
         } finally {
@@ -175,12 +191,7 @@ fun InboxScreen(mail: Mail) {
 
     // Only change when one is added.
     LaunchedEffect(addingAccount) {
-        if (addingAccount) return@LaunchedEffect
-        try {
-            accounts = mail.accounts()
-        } catch (e: CoreException) {
-            error = e.text()
-        }
+        if (!addingAccount) loadAccounts()
     }
     LaunchedEffect(tab) {
         loadList()
@@ -257,6 +268,9 @@ fun InboxScreen(mail: Mail) {
             onReply = { to -> composing = Composing(replyDraft(to), to) },
             onDone = {
                 open = null
+                // Back to the inbox, where the toast can undo it.
+                searching = false
+                query = ""
                 archive(opened) {}
             },
         )
@@ -294,13 +308,24 @@ fun InboxScreen(mail: Mail) {
     var dockHeight by remember { mutableStateOf(0.dp) }
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     // The compact title shows once the large one has scrolled under the status bar.
-    val scrolled by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 60 } }
+    val titleGone = with(density) { 24.dp.roundToPx() }
+    val scrolled by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > titleGone } }
+    val pull = rememberPullToRefreshState()
     val mini by animateFloatAsState(if (scrolled) 1f else 0f, label = "title")
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
         PullToRefreshBox(
             isRefreshing = syncing,
             onRefresh = { scope.launch { sync() } },
             modifier = Modifier.fillMaxSize(),
+            state = pull,
+            // Below the status bar, where the compact title would cover it.
+            indicator = {
+                PullToRefreshDefaults.Indicator(
+                    state = pull,
+                    isRefreshing = syncing,
+                    modifier = Modifier.align(Alignment.TopCenter).padding(top = top + 48.dp),
+                )
+            },
         ) {
             LazyColumn(
                 Modifier.fillMaxSize(),
@@ -329,16 +354,6 @@ fun InboxScreen(mail: Mail) {
                         MessageRow(message, onClick = { open = message })
                     }
                 }
-                error?.let {
-                    item(key = "error") {
-                        Text(
-                            stringResource(it),
-                            color = colors.onSurfaceVariant,
-                            fontSize = 13.sp,
-                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-                        )
-                    }
-                }
             }
         }
         // The compact title, over the list once it scrolls.
@@ -359,6 +374,17 @@ fun InboxScreen(mail: Mail) {
         Column(Modifier.align(Alignment.BottomCenter)) {
             // Low on the screen, in reach of the thumb that swiped.
             Toast(snackbar, Modifier.padding(bottom = 8.dp))
+            error?.let {
+                Text(
+                    stringResource(it),
+                    color = colors.onSurfaceVariant,
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(colors.bar)
+                        .padding(horizontal = 20.dp, vertical = 8.dp),
+                )
+            }
             Dock(
                 modifier = Modifier.onSizeChanged { dockHeight = with(density) { it.height.toDp() } },
                 tab = tab,
