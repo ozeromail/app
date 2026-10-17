@@ -11,6 +11,7 @@ import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
+import uniffi.ozero_api.GoogleSignIn
 
 /** Secrets sealed with an AES key that never leaves Android Keystore. */
 class Vault(context: Context) {
@@ -29,6 +30,21 @@ class Vault(context: Context) {
     fun password(email: String): String? = get("password.${email.lowercase()}")?.decodeToString()
 
     fun setPassword(email: String, password: String) = put("password.${email.lowercase()}", password.encodeToByteArray())
+
+    /** The Google sign-in waiting for the browser, kept in case Android closes the app meanwhile. */
+    fun googleSignIn(): GoogleSignIn? {
+        val parts = get(GOOGLE)?.decodeToString()?.split('\n') ?: return null
+        return if (parts.size == 3) GoogleSignIn(parts[0], parts[1], parts[2]) else null
+    }
+
+    @SuppressLint("ApplySharedPref")
+    fun setGoogleSignIn(signIn: GoogleSignIn?) {
+        if (signIn == null) {
+            prefs.edit().remove(GOOGLE).commit()
+        } else {
+            put(GOOGLE, listOf(signIn.url, signIn.verifier, signIn.state).joinToString("\n").encodeToByteArray())
+        }
+    }
 
     // Written at once: a lost database key makes the whole database unreadable.
     @SuppressLint("ApplySharedPref")
@@ -67,5 +83,6 @@ class Vault(context: Context) {
         const val IV_SIZE = 12
         const val TAG_BITS = 128
         const val DATABASE_KEY = "database"
+        const val GOOGLE = "google.signin"
     }
 }

@@ -19,7 +19,6 @@ import uniffi.ozero_api.Core
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.DraftItem
 import uniffi.ozero_api.Endpoint
-import uniffi.ozero_api.GoogleSignIn
 import uniffi.ozero_api.InboxTab
 import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
@@ -63,25 +62,26 @@ class Mail(private val context: Context) {
         core.addImapAccount(email, email, imap, smtp, password)
     }
 
-    /** The Google sign-in waiting for the browser to come back; only in memory. */
-    @Volatile
-    private var google: GoogleSignIn? = null
-
     /** Addresses the browser came back to from Google, for the sign-in screen to finish. */
     val googleRedirects = Channel<String>(Channel.CONFLATED)
 
-    /** Starts Google sign-in and returns the page to open in the browser. */
-    fun startGoogle(): String = googleSignIn().also { google = it }.url
+    /**
+     * Starts Google sign-in and returns the page to open in the browser. A second tap opens the
+     * same sign-in, so whichever browser tab finishes it, the answer is one we expect.
+     */
+    suspend fun startGoogle(): String = io {
+        (vault.googleSignIn() ?: googleSignIn().also { vault.setGoogleSignIn(it) }).url
+    }
 
     /**
      * Finishes Google sign-in with the address the browser came back to. Like [signIn], the
      * secret is kept before the account is saved.
      */
     suspend fun finishGoogle(redirect: String) = io {
-        // The app was closed meanwhile, so this answer is not for a sign-in it remembers.
-        val start = google ?: throw CoreException.Auth()
-        google = null
+        // No sign-in under way: an old answer, say from a link opened again.
+        val start = vault.googleSignIn() ?: throw CoreException.Auth()
         val account = core.googleAccount(start, redirect)
+        vault.setGoogleSignIn(null)
         vault.setPassword(account.email, account.secret)
         core.addGmailAccount(account.email)
     }

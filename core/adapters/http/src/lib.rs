@@ -77,9 +77,12 @@ impl HttpsClient {
         let (response, conn) = match reused {
             Some(conn) => match exchange(conn, &request).await {
                 Ok(done) => done,
-                // The server closed the kept-alive connection before it read the request;
-                // a new connection sends it once more.
-                Err(Failure::Closed) => exchange(self.connect().await?, &request).await?,
+                // The server closed the kept-alive connection before answering; a new one
+                // asks again, but only what is safe to ask twice: a POST may have gone through.
+                Err(Failure::Closed) if method == "GET" => {
+                    exchange(self.connect().await?, &request).await?
+                }
+                Err(Failure::Closed) => return Err(closed()),
                 Err(Failure::Error(e)) => return Err(e),
             },
             None => exchange(self.connect().await?, &request).await?,
@@ -294,7 +297,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
                 while !self.line().await?.is_empty() {}
                 return Ok(body);
             }
-            if body.len() + size > MAX_BODY {
+            if size > MAX_BODY - body.len() {
                 return Err(protocol("response too large"));
             }
             body.extend(self.fixed(size).await?);

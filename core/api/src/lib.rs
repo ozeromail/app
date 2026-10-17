@@ -5,7 +5,7 @@ use std::fmt;
 use std::hash::{BuildHasher, RandomState};
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ozero_app::ops::push_ops;
 use ozero_app::send::{SentCopy, push_sends};
@@ -92,8 +92,9 @@ pub struct Core {
     busy: Mutex<HashMap<AccountId, Arc<tokio::sync::Mutex<()>>>>,
     /// Accounts with a push waiting for held actions to come due.
     waiting: Mutex<HashSet<AccountId>>,
-    /// Gmail access tokens and until when they work.
-    tokens: Mutex<HashMap<AccountId, (String, Instant)>>,
+    /// Gmail access tokens and until when they work, by the wall clock: a monotonic one stops
+    /// while the phone sleeps, and the token would look fresh for too long.
+    tokens: Mutex<HashMap<AccountId, (String, SystemTime)>>,
 }
 
 /// Marks an account as having a waiting push until dropped.
@@ -522,7 +523,7 @@ impl Core {
         {
             let tokens = self.tokens.lock().unwrap_or_else(|p| p.into_inner());
             if let Some((token, until)) = tokens.get(&account)
-                && *until > Instant::now()
+                && *until > SystemTime::now()
             {
                 return Ok(token.clone());
             }
@@ -530,7 +531,7 @@ impl Core {
         let fresh = oauth::refresh(self.tls()?, GOOGLE_CLIENT_ID, secret).await?;
         let lives = Duration::from_secs(fresh.expires_in).saturating_sub(TOKEN_MARGIN);
         let mut tokens = self.tokens.lock().unwrap_or_else(|p| p.into_inner());
-        tokens.insert(account, (fresh.access.clone(), Instant::now() + lives));
+        tokens.insert(account, (fresh.access.clone(), SystemTime::now() + lives));
         Ok(fresh.access)
     }
 
@@ -578,10 +579,12 @@ impl Core {
             name: Some(account.display_name.clone()).filter(|n| *n != account.email),
             email: account.email.clone(),
         };
-        if let Remote::Gmail(gmail) = self.remote(slot, account, secret).await? {
+        if account.kind == AccountKind::Gmail {
             // Gmail keeps the copy in Sent itself.
-            let copy: Option<SentCopy<'_, GmailSession>> = None;
-            push_sends(&self.store, gmail, &MimeBuilder, &from, copy, mail).await?;
+            let copy: Option<SentCopy<'_, Remote>> = None;
+            if let Remote::Gmail(gmail) = self.remote(slot, account, secret).await? {
+                push_sends(&self.store, gmail, &MimeBuilder, &from, copy, mail).await?;
+            }
             return Ok(());
         }
         let server = account.smtp.as_ref().ok_or(CoreError::NoSmtp)?;
