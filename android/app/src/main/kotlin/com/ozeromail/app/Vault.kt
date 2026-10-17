@@ -31,6 +31,11 @@ class Vault(context: Context) {
 
     fun setPassword(email: String, password: String) = put("password.${email.lowercase()}", password.encodeToByteArray())
 
+    @SuppressLint("ApplySharedPref")
+    fun forgetPassword(email: String) {
+        prefs.edit().remove("password.${email.lowercase()}").commit()
+    }
+
     /** The Google sign-in waiting for the browser, kept in case Android closes the app meanwhile. */
     fun googleSignIn(): GoogleSignIn? {
         val parts = get(GOOGLE)?.decodeToString()?.split('\n') ?: return null

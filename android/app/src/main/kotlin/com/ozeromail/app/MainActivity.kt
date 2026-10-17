@@ -71,7 +71,7 @@ private fun App(mail: Mail) {
     when (val s = start) {
         Start.Loading -> Unit
         Start.SignIn -> SignInScreen(mail, onSignedIn = { start = Start.Inbox })
-        Start.Inbox -> InboxScreen(mail)
+        Start.Inbox -> InboxScreen(mail, onNoAccounts = { start = Start.SignIn })
         is Start.Failed -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
             Text(stringResource(s.text))
         }

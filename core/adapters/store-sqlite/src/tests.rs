@@ -1019,3 +1019,38 @@ fn each_new_account_gets_the_next_color() {
     let colors: Vec<_> = store.accounts().unwrap().iter().map(|a| a.color).collect();
     assert_eq!(colors, [0, 1, 2]);
 }
+
+#[test]
+fn sets_an_account_color() {
+    let store = store();
+    let a = account(&store, "a@example.com");
+    store.set_account_color(a, 7).unwrap();
+    assert_eq!(store.accounts().unwrap()[0].color, 7);
+    assert_eq!(
+        store.set_account_color(AccountId(99), 1),
+        Err(StoreError::NotFound)
+    );
+}
+
+#[test]
+fn removing_an_account_removes_its_mail() {
+    let store = store();
+    let a = account(&store, "a@example.com");
+    let b = account(&store, "b@example.com");
+    store
+        .save_messages(inbox(&store, a), &[message(1, 100)])
+        .unwrap();
+    store
+        .save_messages(inbox(&store, b), &[message(2, 200)])
+        .unwrap();
+
+    store.remove_account(a).unwrap();
+
+    let accounts = store.accounts().unwrap();
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0].id, b);
+    let left = list(&store, ListScope::Inbox(Category::People), 10, None);
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].subject, "Subject 2");
+    assert_eq!(store.remove_account(a), Err(StoreError::NotFound));
+}

@@ -154,6 +154,25 @@ impl Store for SqliteStore {
         rows.and_then(|rows| rows.collect()).map_err(storage)
     }
 
+    fn remove_account(&self, account: AccountId) -> Result<(), StoreError> {
+        let changed = self
+            .conn()
+            .execute("DELETE FROM account WHERE id = ?1", [account.0])
+            .map_err(storage)?;
+        found(changed)
+    }
+
+    fn set_account_color(&self, account: AccountId, color: u32) -> Result<(), StoreError> {
+        let changed = self
+            .conn()
+            .execute(
+                "UPDATE account SET color = ?2 WHERE id = ?1",
+                params![account.0, color],
+            )
+            .map_err(storage)?;
+        found(changed)
+    }
+
     fn save_folders(
         &self,
         account: AccountId,
@@ -1117,6 +1136,14 @@ fn role_ref(role: FolderRole) -> &'static &'static str {
 
 fn role_str(role: FolderRole) -> &'static str {
     role_ref(role)
+}
+
+/// Fails with `NotFound` when a write changed no row.
+fn found(changed: usize) -> Result<(), StoreError> {
+    if changed == 0 {
+        return Err(StoreError::NotFound);
+    }
+    Ok(())
 }
 
 /// Fails with `NotFound` when the row a write depends on is missing.
