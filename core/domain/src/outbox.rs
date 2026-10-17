@@ -80,10 +80,12 @@ pub fn quote(header: String, text: &str) -> String {
 
 /// What a message says: the text, then the quote, if any, after a blank line.
 pub fn with_quote(text: &str, quote: &str) -> String {
-    if quote.is_empty() {
-        return text.to_owned();
+    let text = text.trim_end();
+    match (text.is_empty(), quote.is_empty()) {
+        (_, true) => text.to_owned(),
+        (true, false) => quote.to_owned(),
+        (false, false) => format!("{text}\n\n{quote}"),
     }
-    format!("{}\n\n{quote}", text.trim_end())
 }
 
 /// `Re: ` once, the way mail clients answer.
@@ -140,6 +142,7 @@ mod tests {
         assert_eq!(quote, "Anna wrote:\n> Hi\n>\n> Bye");
         assert_eq!(with_quote("Hello\n", &quote), format!("Hello\n\n{quote}"));
         assert_eq!(with_quote("Hello", ""), "Hello");
+        assert_eq!(with_quote(" \n", &quote), quote);
     }
 
     #[test]

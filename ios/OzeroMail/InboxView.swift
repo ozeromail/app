@@ -92,7 +92,7 @@ struct InboxView: View {
                 }
             }
             .navigationDestination(for: MessageItem.self) { message in
-                MessageView(mail: mail, message: message) { composing = .reply(to: $0) }
+                MessageView(mail: mail, message: message) { composing = try? mail.reply(to: $0) }
             }
             .refreshable { await sync() }
             .safeAreaInset(edge: .bottom) {

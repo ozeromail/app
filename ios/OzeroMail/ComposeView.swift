@@ -87,7 +87,7 @@ struct ComposeView: View {
         error = nil
         let draft = DraftItem(
             accountId: from.id, to: to, subject: subject, text: text,
-            replyTo: composing.draft.replyTo)
+            replyTo: composing.draft.replyTo, quote: composing.draft.quote)
         Task {
             defer { busy = false }
             do {
@@ -123,11 +123,7 @@ private struct Original: View {
 extension Composing {
     /// A blank message; account 0 is none, so compose starts from the first account.
     static var new: Composing {
-        Composing(draft: DraftItem(accountId: 0, to: "", subject: "", text: "", replyTo: nil))
-    }
-
-    /// An answer to `message`, shown above it.
-    static func reply(to message: MessageItem) -> Composing {
-        Composing(draft: replyDraft(message: message), original: message)
+        Composing(
+            draft: DraftItem(accountId: 0, to: "", subject: "", text: "", replyTo: nil, quote: ""))
     }
 }
