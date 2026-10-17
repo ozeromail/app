@@ -1,0 +1,169 @@
+package com.ozeromail.app
+
+import androidx.annotation.DrawableRes
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+
+/** A square-ish button holding one icon, as in the bottom bars. */
+@Composable
+fun IconTile(
+    @DrawableRes icon: Int,
+    description: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    background: Color = Color.Transparent,
+    tint: Color = MaterialTheme.colorScheme.onSurface,
+    shape: Shape = RoundedCornerShape(16.dp),
+    size: Dp = 48.dp,
+) {
+    Box(
+        modifier
+            .size(size)
+            .clip(shape)
+            .background(background)
+            .clickable(onClickLabel = description, role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Glyph(icon, description, tint)
+    }
+}
+
+/** A wide rounded field-like button: search, quick reply. */
+@Composable
+fun Pill(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    @DrawableRes icon: Int? = null,
+    height: Dp = 48.dp,
+) {
+    val colors = MaterialTheme.colorScheme
+    Row(
+        modifier
+            .height(height)
+            .clip(CircleShape)
+            .background(colors.surfaceVariant)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        icon?.let { Glyph(it, null, colors.onSurfaceVariant) }
+        Text(text, color = colors.onSurfaceVariant, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** A small round mark in an account's colour. */
+@Composable
+fun AccountDot(color: Color, modifier: Modifier = Modifier, size: Dp = 10.dp) {
+    Box(modifier.size(size).background(color, CircleShape))
+}
+
+/** A person's initials on a colour of their own. */
+@Composable
+fun Avatar(name: String, key: String, modifier: Modifier = Modifier, size: Dp = 44.dp) {
+    Box(
+        modifier.size(size).background(avatarColor(key), CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            initials(name),
+            color = Color.White,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = (size.value * 0.36f).sp,
+        )
+    }
+}
+
+/** The first letters of the first two words, or of the address. */
+fun initials(name: String): String =
+    name.split(' ', '.', '@', '_', '-')
+        .filter { it.isNotBlank() }
+        .take(2)
+        .joinToString("") { it.take(1) }
+        .uppercase()
+        .ifEmpty { "?" }
+
+private val AVATAR_COLORS = listOf(
+    0xFF5B6C8F, 0xFF4F8A8B, 0xFF8A6FB0, 0xFFB0775A, 0xFF5E8F5E, 0xFF9A6A87, 0xFF6F7F96,
+).map(::Color)
+
+/** The same colour every time for one sender. */
+private fun avatarColor(key: String): Color = AVATAR_COLORS[Math.floorMod(key.lowercase().hashCode(), AVATAR_COLORS.size)]
+
+/** A round note with a title and a line under it, for empty lists. */
+@Composable
+fun EmptyNote(
+    @DrawableRes icon: Int,
+    title: String,
+    text: String? = null,
+    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    ring: Color = MaterialTheme.colorScheme.surfaceVariant,
+    ringSize: Dp = 64.dp,
+) {
+    val colors = MaterialTheme.colorScheme
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 48.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(Modifier.size(ringSize).background(ring, CircleShape), contentAlignment = Alignment.Center) {
+            Glyph(icon, null, tint, size = ringSize * 0.46f)
+        }
+        Text(title, fontWeight = FontWeight.Bold, fontSize = 20.sp, textAlign = TextAlign.Center)
+        text?.let {
+            Text(
+                it,
+                color = colors.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                lineHeight = 21.sp,
+                modifier = Modifier.widthIn(max = 280.dp),
+            )
+        }
+    }
+}
+
+/** The undo toast: dark, rounded, low on the screen. */
+@Composable
+fun Toast(state: SnackbarHostState, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    SnackbarHost(state, modifier) { data ->
+        Snackbar(
+            data,
+            modifier = Modifier.padding(horizontal = 12.dp),
+            shape = RoundedCornerShape(14.dp),
+            containerColor = colors.inverseSurface,
+            contentColor = colors.inverseOnSurface,
+            actionColor = colors.primary,
+        )
+    }
+}

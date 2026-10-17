@@ -6,42 +6,49 @@ import android.content.pm.PackageManager
 import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,15 +60,26 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import uniffi.ozero_api.AccountItem
 import uniffi.ozero_api.AccountMark
 import uniffi.ozero_api.Category
 import uniffi.ozero_api.CoreException
@@ -87,6 +105,8 @@ fun InboxScreen(mail: Mail) {
     var unsent by remember { mutableStateOf(emptyList<UnsentItem>()) }
     var searching by rememberSaveable { mutableStateOf(false) }
     var addingAccount by rememberSaveable { mutableStateOf(false) }
+    var accountsOpen by rememberSaveable { mutableStateOf(false) }
+    var accounts by remember { mutableStateOf(emptyList<AccountItem>()) }
     var query by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -113,6 +133,7 @@ fun InboxScreen(mail: Mail) {
         try {
             tabs = mail.tabs()
             unsent = mail.unsent()
+            accounts = mail.accounts()
         } catch (e: CoreException) {
             error = e.text()
         }
@@ -226,6 +247,10 @@ fun InboxScreen(mail: Mail) {
                 scope.launch { load() }
             },
             onReply = { to -> composing = Composing(replyDraft(to), to) },
+            onDone = {
+                open = null
+                archive(opened) {}
+            },
         )
         return
     }
@@ -256,22 +281,25 @@ fun InboxScreen(mail: Mail) {
         return
     }
 
-    Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-        Row(Modifier.padding(start = 20.dp, end = 8.dp, top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                stringResource(R.string.inbox_title),
-                style = MaterialTheme.typography.headlineLarge,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f),
-            )
-            TextButton(onClick = { addingAccount = true }) { Text(stringResource(R.string.inbox_add_account)) }
-        }
+    val colors = MaterialTheme.colorScheme
+    val density = LocalDensity.current
+    var dockHeight by remember { mutableStateOf(0.dp) }
+    val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    // The compact title shows once the large one has scrolled under the status bar.
+    val scrolled by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 60 } }
+    val mini by animateFloatAsState(if (scrolled) 1f else 0f, label = "title")
+    Box(Modifier.fillMaxSize()) {
         PullToRefreshBox(
             isRefreshing = syncing,
             onRefresh = { scope.launch { sync() } },
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.fillMaxSize(),
         ) {
-            LazyColumn(Modifier.fillMaxSize(), state = listState) {
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                state = listState,
+                contentPadding = PaddingValues(top = top, bottom = dockHeight + 16.dp),
+            ) {
+                item(key = "title") { Hero(accounts.size > 1) }
                 items(unsent, key = { "unsent-${it.id}" }) { failed ->
                     UnsentRow(failed, onClick = {
                         scope.launch {
@@ -283,68 +311,271 @@ fun InboxScreen(mail: Mail) {
                             counts()
                         }
                     })
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
                 if (messages.isEmpty() && !syncing && error == null) {
-                    item { Empty() }
+                    item(key = "empty") { if (tab == Category.PEOPLE) InboxZero() else TabEmpty() }
                 }
-                items(messages, key = { it.id }) { message ->
+                itemsIndexed(messages, key = { _, it -> it.id }) { index, message ->
+                    if (index > 0) HorizontalDivider(Modifier.padding(start = 48.dp), color = colors.outlineVariant)
                     SwipeToDone(onDone = { reset -> archive(message, reset) }) {
                         MessageRow(message, onClick = { open = message })
                     }
-                    HorizontalDivider(Modifier.padding(start = 36.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                }
+                error?.let {
+                    item(key = "error") {
+                        Text(
+                            stringResource(it),
+                            color = colors.onSurfaceVariant,
+                            fontSize = 13.sp,
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                        )
+                    }
                 }
             }
         }
-        error?.let {
-            Text(
-                stringResource(it),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+        // The compact title, over the list once it scrolls.
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .graphicsLayer { alpha = mini }
+                .background(colors.background.copy(alpha = 0.94f))
+                .padding(top = top)
+                .height(48.dp)
+                .drawBehind { drawLine(colors.outlineVariant, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx()) },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(stringResource(R.string.inbox_title), fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+        }
+        Column(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .onSizeChanged { dockHeight = with(density) { it.height.toDp() } },
+        ) {
+            // Low on the screen, in reach of the thumb that swiped.
+            Toast(snackbar, Modifier.padding(bottom = 8.dp))
+            Dock(
+                tab = tab,
+                tabs = tabs,
+                accounts = accounts,
+                onTab = { tab = it },
+                onAccounts = { accountsOpen = true },
+                onSearch = { searching = true },
+                onCompose = { composing = Composing(NEW_DRAFT) },
             )
         }
-        // Low on the screen, in reach of the thumb that swiped.
-        SnackbarHost(snackbar)
-        Text(
-            stringResource(R.string.search_prompt),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 16.dp, end = 16.dp, top = 8.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant)
-                .clickable { searching = true }
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+    }
+    if (accountsOpen) {
+        AccountsSheet(
+            accounts,
+            onAdd = {
+                accountsOpen = false
+                addingAccount = true
+            },
+            onClose = { accountsOpen = false },
         )
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.weight(1f)) { Tabs(tab, tabs, onPick = { tab = it }) }
-            TextButton(
-                onClick = { composing = Composing(NEW_DRAFT) },
-                modifier = Modifier.padding(end = 8.dp),
-            ) {
-                Text(stringResource(R.string.compose_new))
+    }
+}
+
+/** The large title at the top of the list, where it does not need the thumb. */
+@Composable
+private fun Hero(allAccounts: Boolean) {
+    Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 14.dp)) {
+        Text(
+            stringResource(R.string.inbox_title),
+            fontSize = 32.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = (-0.8).sp,
+        )
+        if (allAccounts) {
+            Text(
+                stringResource(R.string.inbox_all_accounts),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 13.5.sp,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun InboxZero() {
+    val done = MaterialTheme.meaning.done
+    EmptyNote(
+        R.drawable.ic_done,
+        stringResource(R.string.inbox_zero_title),
+        stringResource(R.string.inbox_zero_text),
+        tint = done,
+        ring = done.copy(alpha = 0.14f),
+        ringSize = 96.dp,
+    )
+}
+
+@Composable
+private fun TabEmpty() {
+    EmptyNote(R.drawable.ic_done, stringResource(R.string.tab_empty_title), stringResource(R.string.tab_empty_text))
+}
+
+/**
+ * Everything the thumb needs, along the bottom: the tabs, then the accounts button, search
+ * and a new message.
+ */
+@Composable
+private fun Dock(
+    tab: Category,
+    tabs: List<InboxTab>,
+    accounts: List<AccountItem>,
+    onTab: (Category) -> Unit,
+    onAccounts: () -> Unit,
+    onSearch: () -> Unit,
+    onCompose: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(colors.background.copy(alpha = 0.94f))
+            .drawBehind { drawLine(colors.outlineVariant, Offset.Zero, Offset(size.width, 0f), 1.dp.toPx()) }
+            .navigationBarsPadding()
+            .padding(top = 10.dp, bottom = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Tabs(tab, tabs, onTab)
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            AccountsButton(accounts, onAccounts)
+            Pill(stringResource(R.string.search_prompt), onSearch, Modifier.weight(1f), icon = R.drawable.ic_search)
+            IconTile(
+                R.drawable.ic_compose,
+                stringResource(R.string.compose_new),
+                onCompose,
+                background = colors.primary,
+                tint = colors.onPrimary,
+            )
+        }
+    }
+}
+
+/** The accounts' colours, as the logo has them; opens the accounts. */
+@Composable
+private fun AccountsButton(accounts: List<AccountItem>, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val label = stringResource(R.string.accounts_title)
+    Box(
+        Modifier
+            .size(48.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(colors.surfaceVariant)
+            .clickable(onClickLabel = label, role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = label },
+        contentAlignment = Alignment.Center,
+    ) {
+        val one = accounts.singleOrNull()
+        if (one != null) {
+            Box(Modifier.size(24.dp).background(one.tint, CircleShape), contentAlignment = Alignment.Center) {
+                Text(initials(one.displayName.ifBlank { one.email }).take(1), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                accounts.take(4).chunked(2).forEach { pair ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        pair.forEach { AccountDot(it.tint) }
+                    }
+                }
             }
         }
     }
 }
 
-/** The inbox tabs at the bottom, each with its unread count. */
+/** The accounts, and a way to add one. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun Tabs(tab: Category, tabs: List<InboxTab>, onPick: (Category) -> Unit) {
-    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-        // Every tab shows at once; the counts come when the core has them.
-        Category.entries.forEachIndexed { index, category ->
-            val name = stringResource(category.label())
-            val unread = tabs.find { it.category == category }?.unread ?: 0u
-            SegmentedButton(
-                selected = category == tab,
-                onClick = { onPick(category) },
-                shape = SegmentedButtonDefaults.itemShape(index, Category.entries.size),
-                icon = {},
+private fun AccountsSheet(accounts: List<AccountItem>, onAdd: () -> Unit, onClose: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    ModalBottomSheet(onDismissRequest = onClose, containerColor = colors.background) {
+        Column(Modifier.navigationBarsPadding().padding(bottom = 16.dp)) {
+            Text(
+                stringResource(R.string.accounts_title),
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(start = 22.dp, end = 22.dp, bottom = 10.dp),
+            )
+            accounts.forEach { account ->
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    AccountDot(account.tint, size = 12.dp)
+                    Column(Modifier.weight(1f)) {
+                        Text(account.displayName.ifBlank { account.email }, fontSize = 15.5.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (account.displayName.isNotBlank() && account.displayName != account.email) {
+                            Text(account.email, color = colors.onSurfaceVariant, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            }
+            Row(
+                Modifier.fillMaxWidth().clickable(onClick = onAdd).padding(horizontal = 18.dp, vertical = 13.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text(if (unread > 0u) "$name $unread" else name, maxLines = 1)
+                Glyph(R.drawable.ic_add, null, colors.primary)
+                Text(stringResource(R.string.inbox_add_account), color = colors.primary, fontSize = 15.5.sp, fontWeight = FontWeight.Medium)
+            }
+        }
+    }
+}
+
+/** The inbox tabs as one segmented control, each with its unread count. */
+@Composable
+private fun Tabs(tab: Category, tabs: List<InboxTab>, onPick: (Category) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(colors.surfaceVariant)
+            .padding(3.dp)
+            .selectableGroup(),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        // Every tab shows at once; the counts come when the core has them.
+        Category.entries.forEach { category ->
+            val on = category == tab
+            val unread = tabs.find { it.category == category }?.unread ?: 0u
+            Row(
+                Modifier
+                    .weight(1f)
+                    .height(34.dp)
+                    .then(if (on) Modifier.shadow(1.dp, RoundedCornerShape(11.dp)) else Modifier)
+                    .clip(RoundedCornerShape(11.dp))
+                    .background(if (on) colors.background else Color.Transparent)
+                    .selectable(selected = on, role = Role.Tab, onClick = { onPick(category) }),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    stringResource(category.label()),
+                    color = if (on) colors.onSurface else colors.onSurfaceVariant,
+                    fontSize = 13.5.sp,
+                    fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (unread > 0u) {
+                    Text(
+                        unread.toString(),
+                        color = colors.primary,
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 6.dp),
+                    )
+                }
             }
         }
     }
@@ -372,11 +603,13 @@ private fun SwipeToDone(onDone: (reset: () -> Unit) -> Unit, content: @Composabl
         state = state,
         enableDismissFromStartToEnd = false,
         backgroundContent = {
-            Box(
-                Modifier.fillMaxSize().background(colors.primary).padding(horizontal = 20.dp),
-                contentAlignment = Alignment.CenterEnd,
+            Row(
+                Modifier.fillMaxSize().background(MaterialTheme.meaning.done).padding(horizontal = 24.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(stringResource(R.string.action_done), color = colors.onPrimary, fontWeight = FontWeight.SemiBold)
+                Glyph(R.drawable.ic_done, null, Color.White)
+                Text(stringResource(R.string.action_done), color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
             }
         },
     ) {
@@ -387,21 +620,24 @@ private fun SwipeToDone(onDone: (reset: () -> Unit) -> Unit, content: @Composabl
 /** A message the server refused; a tap opens it to fix. */
 @Composable
 private fun UnsentRow(unsent: UnsentItem, onClick: () -> Unit) {
-    Column(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(start = 36.dp, end = 20.dp, top = 10.dp, bottom = 10.dp)) {
-        Text(stringResource(R.string.inbox_not_sent), color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold)
+    val colors = MaterialTheme.colorScheme
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(colors.error.copy(alpha = 0.1f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        Text(stringResource(R.string.inbox_not_sent), color = colors.error, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp)
         Text(
             unsent.subject.ifBlank { stringResource(R.string.inbox_no_subject) },
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = colors.onSurfaceVariant,
+            fontSize = 13.5.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-    }
-}
-
-@Composable
-internal fun Empty() {
-    Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
-        Text(stringResource(R.string.inbox_empty), color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -409,50 +645,89 @@ internal fun Empty() {
 val AccountMark.tint: Color
     get() = Color(0xFF000000 or color.toLong())
 
-/** A row of a list; with several accounts, a strip of the account's colour and its name mark it. */
+val AccountItem.tint: Color
+    get() = Color(0xFF000000 or color.toLong())
+
+/**
+ * A row of a list. Unread shows as a blue dot and bold text; with several accounts, a strip
+ * of the account's colour on the left and its name by the time mark it.
+ */
 @Composable
 internal fun MessageRow(message: MessageItem, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val account = message.account
+    val unread = message.threadUnread > 0u
     Row(
         Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .then(if (account == null) Modifier else Modifier.drawBehind { drawRect(account.tint, size = Size(3.dp.toPx(), size.height)) })
-            .padding(vertical = 10.dp),
-        verticalAlignment = Alignment.Top,
-    ) {
-        val unread = message.threadUnread > 0u
-        Box(Modifier.width(36.dp).padding(top = 7.dp), contentAlignment = Alignment.Center) {
-            if (unread) {
-                Box(Modifier.size(8.dp).background(colors.primary, CircleShape))
-            }
-        }
-        Column(Modifier.weight(1f).padding(end = 20.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        message.sender,
-                        fontWeight = if (unread) FontWeight.SemiBold else FontWeight.Normal,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                    if (message.threadCount > 1u) {
-                        Text(
-                            message.threadCount.toString(),
-                            color = colors.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(start = 6.dp),
+            .then(
+                if (account == null) {
+                    Modifier
+                } else {
+                    Modifier.drawBehind {
+                        val inset = 10.dp.toPx()
+                        val width = 4.dp.toPx()
+                        // Rounded on the right only: the left corners sit off the edge.
+                        drawRoundRect(
+                            account.tint,
+                            topLeft = Offset(-width, inset),
+                            size = Size(width * 2, size.height - inset * 2),
+                            cornerRadius = CornerRadius(3.dp.toPx()),
                         )
                     }
+                },
+            )
+            .padding(start = 18.dp, end = 16.dp, top = 12.dp, bottom = 12.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Box(Modifier.width(20.dp).padding(top = 6.dp)) {
+            if (unread) Box(Modifier.padding(start = 6.dp).size(9.dp).background(colors.primary, CircleShape))
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    message.sender,
+                    fontSize = 15.5.sp,
+                    fontWeight = if (unread) FontWeight.Bold else FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (message.threadCount > 1u) {
+                    Text(
+                        message.threadCount.toString(),
+                        color = colors.onSurfaceVariant,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .padding(start = 6.dp)
+                            .background(colors.surfaceContainerHighest, CircleShape)
+                            .padding(horizontal = 6.dp, vertical = 1.dp),
+                    )
                 }
-                Spacer(Modifier.width(8.dp))
-                Text(shortDate(LocalContext.current, message.date), color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.weight(1f).widthIn(min = 8.dp))
+                account?.let {
+                    Text(
+                        it.name,
+                        color = colors.onSurfaceVariant,
+                        fontSize = 11.5.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.widthIn(max = 70.dp).padding(end = 8.dp),
+                    )
+                }
+                Text(
+                    shortDate(LocalContext.current, message.date),
+                    color = if (unread) colors.onSurface else colors.onSurfaceVariant,
+                    fontSize = 12.5.sp,
+                )
             }
             Text(
                 message.subjectText(),
-                color = colors.onSurfaceVariant,
+                fontSize = 14.5.sp,
+                fontWeight = if (unread) FontWeight.SemiBold else FontWeight.Normal,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -460,13 +735,11 @@ internal fun MessageRow(message: MessageItem, onClick: () -> Unit) {
                 Text(
                     message.snippet,
                     color = colors.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall,
+                    fontSize = 13.5.sp,
+                    lineHeight = 18.6.sp,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-            }
-            account?.let {
-                Text(it.name, color = colors.onSurfaceVariant, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }

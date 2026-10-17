@@ -11,9 +11,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
@@ -40,6 +42,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.Endpoint
@@ -126,8 +129,9 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 stringResource(R.string.signin_title),
-                style = MaterialTheme.typography.headlineLarge,
+                fontSize = 32.sp,
                 fontWeight = FontWeight.Bold,
+                letterSpacing = (-0.8).sp,
                 modifier = Modifier.weight(1f),
             )
             if (onCancel != null) {
@@ -135,7 +139,7 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
             }
         }
         Spacer(Modifier.weight(1f))
-        OutlinedButton(onClick = ::google, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+        OutlinedButton(onClick = ::google, enabled = !busy, modifier = Modifier.fillMaxWidth().height(48.dp)) {
             Text(stringResource(R.string.signin_google))
         }
         Field(email, { email = it }, R.string.signin_email, KeyboardType.Email)
@@ -146,7 +150,7 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
         Button(
             onClick = ::submit,
             enabled = ready,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().height(48.dp),
         ) {
             Text(stringResource(R.string.signin_action))
         }
@@ -187,6 +191,7 @@ private fun Field(
         value = value,
         onValueChange = onChange,
         label = { Text(stringResource(label)) },
+        shape = RoundedCornerShape(14.dp),
         singleLine = true,
         visualTransformation = if (keyboard == KeyboardType.Password) PasswordVisualTransformation() else VisualTransformation.None,
         keyboardOptions = KeyboardOptions(

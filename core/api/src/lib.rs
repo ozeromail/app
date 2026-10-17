@@ -802,12 +802,15 @@ pub struct AccountItem {
     pub id: i64,
     pub email: String,
     pub display_name: String,
+    /// 0xRRGGBB.
+    pub color: u32,
 }
 
 impl From<Account> for AccountItem {
     fn from(a: Account) -> Self {
         Self {
             id: a.id.0,
+            color: rgb(a.color),
             email: a.email,
             display_name: a.display_name,
         }

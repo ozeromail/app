@@ -40,5 +40,13 @@
   "notify_channel": "New mail",
   "notify_more": "More new mail is waiting in the inbox.",
   "search_prompt": "Search mail",
-  "inbox_add_account": "Add account"
+  "inbox_add_account": "Add account",
+  "inbox_all_accounts": "All accounts",
+  "inbox_zero_title": "Inbox is empty",
+  "inbox_zero_text": "All sorted. New mail will show up here.",
+  "tab_empty_title": "Nothing here",
+  "tab_empty_text": "All sorted. Time to breathe out.",
+  "accounts_title": "Accounts",
+  "message_reply_to": "Reply to {name}…",
+  "action_close": "Close"
 }

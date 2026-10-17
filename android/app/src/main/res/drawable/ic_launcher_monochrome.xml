@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Three overlapping account circles, each cut by a gap from the one on top. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M44.928,44.33A11.572,11.572 0 1,0 44.928,63.668A13.259,13.259 0 0,1 44.928,44.33Z" />
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M60.357,44.33A11.572,11.572 0 1,0 60.357,63.668A13.259,13.259 0 0,1 60.357,44.33Z" />
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M57.858,53.999a11.572,11.572 0 1,0 23.143,0a11.572,11.572 0 1,0 -23.143,0Z" />
+</vector>

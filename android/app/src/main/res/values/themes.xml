@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Ozero" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- The window behind the first frame: the app's own white, so launch does not flash. -->
+    <style name="Theme.Ozero" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+    </style>
 </resources>
