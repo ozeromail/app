@@ -15,6 +15,7 @@ class OzeroApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        Crashes.install(this)
         try {
             CoreNative.init(this)
         } catch (e: RuntimeException) {

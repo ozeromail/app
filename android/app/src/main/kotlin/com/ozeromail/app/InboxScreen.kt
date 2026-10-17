@@ -38,6 +38,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -47,6 +48,7 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
@@ -121,6 +123,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
+    // The report of the crash that closed the app last time, until the person decides.
+    var crash by remember { mutableStateOf(Crashes.last(context)) }
     val archived = stringResource(R.string.inbox_archived)
     val undo = stringResource(R.string.action_undo)
     val sending = stringResource(R.string.inbox_sending)
@@ -447,7 +451,32 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                     if (accounts.isEmpty()) onNoAccounts() else load()
                 }
             },
+            onWrite = {
+                accountsOpen = false
+                composing = Composing(authorDraft(context))
+            },
             onClose = { accountsOpen = false },
+        )
+    }
+    crash?.let { report ->
+        fun decided() {
+            Crashes.forget(context)
+            crash = null
+        }
+        AlertDialog(
+            onDismissRequest = ::decided,
+            confirmButton = {
+                TextButton(onClick = {
+                    decided()
+                    composing = Composing(authorDraft(context, report))
+                }) { Text(stringResource(R.string.action_write)) }
+            },
+            dismissButton = {
+                TextButton(onClick = ::decided) { Text(stringResource(R.string.action_not_now)) }
+            },
+            title = { Text(stringResource(R.string.crash_title)) },
+            text = { Text(stringResource(R.string.crash_text)) },
+            containerColor = MaterialTheme.colorScheme.background,
         )
     }
 }

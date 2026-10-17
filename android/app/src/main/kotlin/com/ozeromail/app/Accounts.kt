@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -49,6 +50,7 @@ fun AccountsSheet(
     onAdd: () -> Unit,
     onColor: (AccountItem, Int) -> Unit,
     onRemove: (AccountItem) -> Unit,
+    onWrite: () -> Unit,
     onClose: () -> Unit,
 ) {
     var editing by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -82,6 +84,8 @@ fun AccountsSheet(
                 }
             }
             SheetAction(R.drawable.ic_add, stringResource(R.string.inbox_add_account), colors.primary, onAdd)
+            HorizontalDivider(Modifier.padding(vertical = 6.dp), color = colors.outlineVariant)
+            SheetAction(R.drawable.ic_compose, stringResource(R.string.feedback_write), colors.onSurface, onWrite)
         }
     }
 }

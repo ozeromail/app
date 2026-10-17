@@ -58,5 +58,12 @@
   "compose_add_quote": "Add quote",
   "compose_quote_header": "%1$s, %2$s wrote:",
   "message_images_hidden": "Images are hidden, so the sender can’t tell you opened this.",
-  "action_show": "Show"
+  "action_show": "Show",
+  "feedback_write": "Write to the author",
+  "feedback_subject": "About Ozero Mail",
+  "crash_subject": "Ozero Mail crashed",
+  "crash_title": "Ozero Mail closed unexpectedly",
+  "crash_text": "Send the report to the author? The letter opens first, so you can read it. It holds only what went wrong and the phone model, no mail.",
+  "action_write": "Write",
+  "action_not_now": "Not now"
 }
