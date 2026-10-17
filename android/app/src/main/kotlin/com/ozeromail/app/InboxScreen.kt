@@ -427,6 +427,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         return@launch
                     }
                     MailWorker.clearNotifications(context)
+                    // Gone also when the list cannot be read again.
+                    accounts = accounts.filterNot { it.id == account.id }
                     loadAccounts()
                     if (accounts.isEmpty()) onNoAccounts() else load()
                 }

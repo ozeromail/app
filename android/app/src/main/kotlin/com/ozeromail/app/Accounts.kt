@@ -57,7 +57,12 @@ fun AccountsSheet(
         Column(Modifier.navigationBarsPadding().padding(bottom = 16.dp)) {
             val account = accounts.find { it.id == editing }
             if (account != null) {
-                AccountSettings(account, onColor = { onColor(account, it) }, onRemove = { onRemove(account) })
+                AccountSettings(
+                    account,
+                    onBack = { editing = null },
+                    onColor = { onColor(account, it) },
+                    onRemove = { onRemove(account) },
+                )
                 return@Column
             }
             SheetTitle(stringResource(R.string.accounts_title))
@@ -83,10 +88,13 @@ fun AccountsSheet(
 
 /** One account: its colour, and a way to remove it from the phone. */
 @Composable
-private fun AccountSettings(account: AccountItem, onColor: (Int) -> Unit, onRemove: () -> Unit) {
+private fun AccountSettings(account: AccountItem, onBack: () -> Unit, onColor: (Int) -> Unit, onRemove: () -> Unit) {
     var confirming by rememberSaveable { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
-    SheetTitle(account.name)
+    Row(Modifier.padding(start = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconTile(R.drawable.ic_back, stringResource(R.string.accounts_title), onBack, size = 40.dp)
+        SheetTitle(account.name, Modifier.weight(1f).padding(start = 2.dp, end = 22.dp))
+    }
     Text(
         stringResource(R.string.account_color),
         color = colors.onSurfaceVariant,
@@ -149,14 +157,14 @@ private fun Swatches(current: Int, onPick: (Int) -> Unit) {
 }
 
 @Composable
-private fun SheetTitle(text: String) {
+private fun SheetTitle(text: String, modifier: Modifier = Modifier.padding(start = 22.dp, end = 22.dp, bottom = 10.dp)) {
     Text(
         text,
         fontSize = 18.sp,
         fontWeight = FontWeight.Bold,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.padding(start = 22.dp, end = 22.dp, bottom = 10.dp),
+        modifier = modifier,
     )
 }
 
