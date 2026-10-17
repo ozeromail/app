@@ -119,9 +119,8 @@ fun MessageScreen(
             Modifier.fillMaxWidth().navigationBarsPadding().padding(top = 8.dp, bottom = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            val name = answer.sender.substringBefore(' ')
             Pill(
-                stringResource(R.string.message_reply_to).replace("{name}", name),
+                stringResource(R.string.message_reply_prompt),
                 onClick = { onReply(answer) },
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp),
                 height = 46.dp,
@@ -137,7 +136,7 @@ fun MessageScreen(
  */
 @Composable
 private fun Actions(onDone: () -> Unit) {
-    val done = MaterialTheme.meaning.done
+    val done = MaterialTheme.done
     Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         repeat(3) { Spacer(Modifier.weight(1f)) }
         Column(

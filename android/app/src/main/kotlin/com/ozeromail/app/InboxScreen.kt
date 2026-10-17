@@ -133,7 +133,6 @@ fun InboxScreen(mail: Mail) {
         try {
             tabs = mail.tabs()
             unsent = mail.unsent()
-            accounts = mail.accounts()
         } catch (e: CoreException) {
             error = e.text()
         }
@@ -174,6 +173,15 @@ fun InboxScreen(mail: Mail) {
         }
     }
 
+    // Only change when one is added.
+    LaunchedEffect(addingAccount) {
+        if (addingAccount) return@LaunchedEffect
+        try {
+            accounts = mail.accounts()
+        } catch (e: CoreException) {
+            error = e.text()
+        }
+    }
     LaunchedEffect(tab) {
         loadList()
         listState.scrollToItem(0)
@@ -334,26 +342,25 @@ fun InboxScreen(mail: Mail) {
             }
         }
         // The compact title, over the list once it scrolls.
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .graphicsLayer { alpha = mini }
-                .background(colors.background.copy(alpha = 0.94f))
-                .padding(top = top)
-                .height(48.dp)
-                .drawBehind { drawLine(colors.outlineVariant, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx()) },
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(stringResource(R.string.inbox_title), fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+        if (mini > 0f) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .graphicsLayer { alpha = mini }
+                    .background(colors.bar)
+                    .padding(top = top)
+                    .height(48.dp)
+                    .hairline(colors.outlineVariant, top = false),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(stringResource(R.string.inbox_title), fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+            }
         }
-        Column(
-            Modifier
-                .align(Alignment.BottomCenter)
-                .onSizeChanged { dockHeight = with(density) { it.height.toDp() } },
-        ) {
+        Column(Modifier.align(Alignment.BottomCenter)) {
             // Low on the screen, in reach of the thumb that swiped.
             Toast(snackbar, Modifier.padding(bottom = 8.dp))
             Dock(
+                modifier = Modifier.onSizeChanged { dockHeight = with(density) { it.height.toDp() } },
                 tab = tab,
                 tabs = tabs,
                 accounts = accounts,
@@ -380,12 +387,7 @@ fun InboxScreen(mail: Mail) {
 @Composable
 private fun Hero(allAccounts: Boolean) {
     Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 14.dp)) {
-        Text(
-            stringResource(R.string.inbox_title),
-            fontSize = 32.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = (-0.8).sp,
-        )
+        LargeTitle(stringResource(R.string.inbox_title))
         if (allAccounts) {
             Text(
                 stringResource(R.string.inbox_all_accounts),
@@ -399,7 +401,7 @@ private fun Hero(allAccounts: Boolean) {
 
 @Composable
 private fun InboxZero() {
-    val done = MaterialTheme.meaning.done
+    val done = MaterialTheme.done
     EmptyNote(
         R.drawable.ic_done,
         stringResource(R.string.inbox_zero_title),
@@ -421,6 +423,7 @@ private fun TabEmpty() {
  */
 @Composable
 private fun Dock(
+    modifier: Modifier,
     tab: Category,
     tabs: List<InboxTab>,
     accounts: List<AccountItem>,
@@ -431,10 +434,10 @@ private fun Dock(
 ) {
     val colors = MaterialTheme.colorScheme
     Column(
-        Modifier
+        modifier
             .fillMaxWidth()
-            .background(colors.background.copy(alpha = 0.94f))
-            .drawBehind { drawLine(colors.outlineVariant, Offset.Zero, Offset(size.width, 0f), 1.dp.toPx()) }
+            .background(colors.bar)
+            .hairline(colors.outlineVariant, top = true)
             .navigationBarsPadding()
             .padding(top = 10.dp, bottom = 12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -474,9 +477,7 @@ private fun AccountsButton(accounts: List<AccountItem>, onClick: () -> Unit) {
     ) {
         val one = accounts.singleOrNull()
         if (one != null) {
-            Box(Modifier.size(24.dp).background(one.tint, CircleShape), contentAlignment = Alignment.Center) {
-                Text(initials(one.displayName.ifBlank { one.email }).take(1), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            }
+            AccountInitial(one.displayName.ifBlank { one.email }, one.tint, 24.dp)
         } else {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 accounts.take(4).chunked(2).forEach { pair ->
@@ -604,7 +605,7 @@ private fun SwipeToDone(onDone: (reset: () -> Unit) -> Unit, content: @Composabl
         enableDismissFromStartToEnd = false,
         backgroundContent = {
             Row(
-                Modifier.fillMaxSize().background(MaterialTheme.meaning.done).padding(horizontal = 24.dp),
+                Modifier.fillMaxSize().background(MaterialTheme.done).padding(horizontal = 24.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -643,10 +644,12 @@ private fun UnsentRow(unsent: UnsentItem, onClick: () -> Unit) {
 
 /** The account's colour, from the core. */
 val AccountMark.tint: Color
-    get() = Color(0xFF000000 or color.toLong())
+    get() = rgb(color)
 
 val AccountItem.tint: Color
-    get() = Color(0xFF000000 or color.toLong())
+    get() = rgb(color)
+
+private fun rgb(color: UInt) = Color(0xFF000000 or color.toLong())
 
 /**
  * A row of a list. Unread shows as a blue dot and bold text; with several accounts, a strip
