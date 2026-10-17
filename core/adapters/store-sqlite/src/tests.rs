@@ -101,6 +101,8 @@ fn message(uid: u32, date: i64) -> NewMessage {
             name: Some("Anna".into()),
             email: "anna@example.com".into(),
         },
+        answer_to: vec![],
+        recipients: vec![],
         subject: format!("Subject {uid}"),
         snippet: "Hello".into(),
         date,
@@ -658,6 +660,7 @@ fn draft(account: AccountId) -> Draft {
         subject: "Hi".into(),
         text: "Hello".into(),
         reply_to: None,
+        quote: String::new(),
     }
 }
 
@@ -1068,4 +1071,38 @@ fn a_new_account_gets_a_free_color() {
     account(&store, "c@example.com");
     let colors: Vec<_> = store.accounts().unwrap().iter().map(|a| a.color).collect();
     assert_eq!(colors, [5, 1, 0]);
+}
+
+#[test]
+fn keeps_who_a_message_went_to() {
+    let store = store();
+    let folder = inbox(&store, account(&store, "a@example.com"));
+    let sent = NewMessage {
+        answer_to: vec!["list@example.com".into()],
+        recipients: vec!["a@example.com".into(), "bob@example.com".into()],
+        ..message(1, 100)
+    };
+    store.save_messages(folder, &[sent]).unwrap();
+    let id = list(&store, ListScope::Inbox(Category::People), 1, None)[0].id;
+    assert_eq!(
+        store.correspondents(id).unwrap(),
+        Correspondents {
+            from: "anna@example.com".into(),
+            answer_to: vec!["list@example.com".into()],
+            recipients: vec!["a@example.com".into(), "bob@example.com".into()],
+        }
+    );
+}
+
+#[test]
+fn a_taken_back_answer_keeps_its_quote() {
+    let store = store();
+    let a = account(&store, "a@example.com");
+    let draft = Draft {
+        quote: "Bob wrote:\n> Hi".into(),
+        ..draft(a)
+    };
+    let id = store.queue_send(&draft, "1@x", 0, 100).unwrap();
+    assert_eq!(store.due_sends(a, 100).unwrap()[0].quote, draft.quote);
+    assert_eq!(store.undo_send(id, 50).unwrap(), Some(draft));
 }

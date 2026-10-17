@@ -6,10 +6,10 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
 use ozero_domain::{
-    Account, AccountId, AccountKind, Action, Address, Body, Category, Changes, Checkpoint, Draft,
-    Flags, Folder, FolderId, FolderRole, ListQuery, ListScope, MessageId, MessageLocation,
-    MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing, Server, Store,
-    StoreError, Unsent,
+    Account, AccountId, AccountKind, Action, Address, Body, Category, Changes, Checkpoint,
+    Correspondents, Draft, Flags, Folder, FolderId, FolderRole, ListQuery, ListScope, MessageId,
+    MessageLocation, MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing,
+    Server, Store, StoreError, Unsent,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{Connection, ErrorCode, OptionalExtension, Row, Transaction, params};
@@ -364,6 +364,23 @@ impl Store for SqliteStore {
             .map_err(storage)
     }
 
+    fn correspondents(&self, message: MessageId) -> Result<Correspondents, StoreError> {
+        self.conn()
+            .prepare_cached("SELECT from_email, answer_to, recipients FROM message WHERE id = ?1")
+            .and_then(|mut s| {
+                s.query_row([message.0], |r| {
+                    Ok(Correspondents {
+                        from: r.get(0)?,
+                        answer_to: recipients(&r.get::<_, String>(1)?),
+                        recipients: recipients(&r.get::<_, String>(2)?),
+                    })
+                })
+                .optional()
+            })
+            .map_err(storage)?
+            .ok_or(StoreError::NotFound)
+    }
+
     fn location(&self, message: MessageId) -> Result<MessageLocation, StoreError> {
         self.conn()
             .prepare_cached(
@@ -516,8 +533,8 @@ impl Store for SqliteStore {
         let id = tx
             .query_row(
                 "INSERT INTO outbox (account_id, recipients, subject, text, reply_to, in_reply_to,
-                                     message_id, date, not_before)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) RETURNING id",
+                                     message_id, date, not_before, quote)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) RETURNING id",
                 params![
                     draft.account_id.0,
                     draft.to.join("\n"),
@@ -528,6 +545,7 @@ impl Store for SqliteStore {
                     message_id,
                     date,
                     not_before,
+                    draft.quote,
                 ],
                 |r| r.get(0),
             )
@@ -540,7 +558,7 @@ impl Store for SqliteStore {
         self.conn()
             .prepare_cached(
                 "DELETE FROM outbox WHERE id = ?1 AND (not_before > ?2 OR failed IS NOT NULL)
-                 RETURNING account_id, recipients, subject, text, reply_to",
+                 RETURNING account_id, recipients, subject, text, reply_to, quote",
             )
             .and_then(|mut s| {
                 s.query_row(params![id.0, now], |r| {
@@ -550,6 +568,7 @@ impl Store for SqliteStore {
                         subject: r.get(2)?,
                         text: r.get(3)?,
                         reply_to: r.get::<_, Option<i64>>(4)?.map(MessageId),
+                        quote: r.get(5)?,
                     })
                 })
                 .optional()
@@ -580,7 +599,8 @@ impl Store for SqliteStore {
         let conn = self.conn();
         let rows = conn
             .prepare_cached(
-                "SELECT id, recipients, subject, text, message_id, in_reply_to, date FROM outbox
+                "SELECT id, recipients, subject, text, message_id, in_reply_to, date, quote
+                 FROM outbox
                  WHERE account_id = ?1 AND not_before <= ?2 AND failed IS NULL ORDER BY id",
             )
             .and_then(|mut s| {
@@ -593,6 +613,7 @@ impl Store for SqliteStore {
                         message_id: r.get(4)?,
                         in_reply_to: r.get(5)?,
                         date: r.get(6)?,
+                        quote: r.get(7)?,
                     })
                 })?
                 .collect()
@@ -789,6 +810,8 @@ fn upsert_messages(
                 m.date,
                 flags_bits(m.flags),
                 category_ref(m.category),
+                m.answer_to.join("\n"),
+                m.recipients.join("\n"),
             ])
             .map_err(storage)?;
         link_thread(tx, account, folder, m)?;
@@ -924,18 +947,20 @@ const SAVE_FLAGS: &str = concat!(
 
 const SAVE_MESSAGE: &str = concat!(
     "INSERT INTO message (folder_id, remote_id, message_id, from_name, from_email,
-                          subject, snippet, date, flags, category, fresh)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1)
+                          subject, snippet, date, flags, category, answer_to, recipients, fresh)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1)
      ON CONFLICT (folder_id, remote_id) DO UPDATE SET
          message_id = excluded.message_id, from_name = excluded.from_name,
          from_email = excluded.from_email, subject = excluded.subject,
+         answer_to = excluded.answer_to, recipients = excluded.recipients,
          snippet = coalesce(nullif(excluded.snippet, ''), snippet),
          date = excluded.date, category = excluded.category, flags = ",
     merged_flags!("excluded.flags"),
-    " WHERE (message_id, from_name, from_email, subject, snippet, date, category, flags)
+    " WHERE (message_id, from_name, from_email, subject, snippet, date, category,
+            answer_to, recipients, flags)
          IS NOT (excluded.message_id, excluded.from_name, excluded.from_email,
                  excluded.subject, coalesce(nullif(excluded.snippet, ''), snippet),
-                 excluded.date, excluded.category, ",
+                 excluded.date, excluded.category, excluded.answer_to, excluded.recipients, ",
     merged_flags!("excluded.flags"),
     ")"
 );
@@ -1125,7 +1150,7 @@ fn category_ref(category: Category) -> &'static &'static str {
     }
 }
 
-/// The addresses of `outbox.recipients`, one per line.
+/// The addresses of a column that holds one per line.
 fn recipients(stored: &str) -> Vec<String> {
     stored.lines().map(str::to_owned).collect()
 }

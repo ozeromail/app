@@ -37,9 +37,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -55,7 +58,7 @@ import uniffi.ozero_api.DraftItem
 import uniffi.ozero_api.MessageItem
 
 /** A blank message; account 0 is none, so compose starts from the first account. */
-val NEW_DRAFT = DraftItem(0, "", "", "", null)
+val NEW_DRAFT = DraftItem(0, "", "", "", null, "")
 
 /** A message being written, and the one it answers. */
 data class Composing(val draft: DraftItem, val original: MessageItem? = null)
@@ -72,6 +75,7 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
     var subject by rememberSaveable { mutableStateOf(start.subject) }
     var text by rememberSaveable { mutableStateOf(start.text) }
     var accountId by rememberSaveable { mutableStateOf(start.accountId) }
+    var quote by rememberSaveable { mutableStateOf(start.quote) }
     var accounts by remember { mutableStateOf(emptyList<AccountItem>()) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<Int?>(null) }
@@ -91,7 +95,7 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
         if (busy || from == null) return
         busy = true
         error = null
-        val draft = DraftItem(from.id, to, subject, text, start.replyTo)
+        val draft = DraftItem(from.id, to, subject, text, start.replyTo, quote)
         scope.launch {
             try {
                 onSent(mail.send(draft), composing.copy(draft = draft))
@@ -135,6 +139,22 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
                 singleLine = false,
                 modifier = Modifier.weight(1f, fill = false),
             )
+            composing.original?.let { original ->
+                val header = stringResource(
+                    R.string.compose_quote_header,
+                    longDate(LocalContext.current, original.date),
+                    original.sender,
+                )
+                Quote(quote, onAdd = {
+                    scope.launch {
+                        try {
+                            quote = mail.quote(original, header)
+                        } catch (e: CoreException) {
+                            error = e.text()
+                        }
+                    }
+                })
+            }
         }
         error?.let {
             Text(stringResource(it), color = colors.error, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
@@ -200,6 +220,36 @@ private fun Original(message: MessageItem) {
                 overflow = TextOverflow.Ellipsis,
             )
         }
+    }
+}
+
+/** The quoted original under the text, or a button that adds it. */
+@Composable
+private fun Quote(quote: String, onAdd: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    if (quote.isEmpty()) {
+        Text(
+            stringResource(R.string.compose_add_quote),
+            color = colors.onSurfaceVariant,
+            fontSize = 13.sp,
+            modifier = Modifier
+                .clip(CircleShape)
+                .background(colors.surfaceVariant)
+                .clickable(role = Role.Button, onClick = onAdd)
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+        )
+    } else {
+        Text(
+            quote,
+            color = colors.onSurfaceVariant,
+            fontSize = 13.5.sp,
+            lineHeight = 19.5.sp,
+            maxLines = 6,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .drawBehind { drawLine(colors.outlineVariant, Offset.Zero, Offset(0f, size.height), 3.dp.toPx()) }
+                .padding(start = 12.dp, top = 2.dp, bottom = 2.dp),
+        )
     }
 }
 

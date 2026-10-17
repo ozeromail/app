@@ -29,7 +29,12 @@ impl MessageBuilder for MimeBuilder {
         header("Content-Type", "text/plain; charset=utf-8");
         header("Content-Transfer-Encoding", "base64");
         out.push_str("\r\n");
-        let body = base64(crlf(&message.text).as_bytes());
+        let text = if message.quote.is_empty() {
+            message.text.clone()
+        } else {
+            format!("{}\n\n{}", message.text.trim_end(), message.quote)
+        };
+        let body = base64(crlf(&text).as_bytes());
         // RFC 2045: lines of at most 76 characters; base64 is ASCII, so bytes are characters.
         for line in body.as_bytes().chunks(76) {
             out.push_str(&String::from_utf8_lossy(line));
@@ -122,10 +127,29 @@ mod tests {
             to: vec!["bob@example.org".into(), "cat@example.net".into()],
             subject: subject.into(),
             text: text.into(),
+            quote: String::new(),
             message_id: "1.2@example.com".into(),
             in_reply_to: Some("parent@example.org".into()),
             date: 1_791_971_283,
         }
+    }
+
+    #[test]
+    fn puts_the_quote_under_the_text() {
+        let from = Address {
+            name: None,
+            email: "anna@example.com".into(),
+        };
+        let message = Outgoing {
+            quote: "Bob wrote:\n> Hi".into(),
+            ..outgoing("Re: Hi", "Hello\n")
+        };
+        let raw = MimeBuilder.build(&from, &message);
+        let parsed = MessageParser::default().parse(&raw).unwrap();
+        assert_eq!(
+            parsed.body_text(0).as_deref(),
+            Some("Hello\r\n\r\nBob wrote:\r\n> Hi")
+        );
     }
 
     #[test]

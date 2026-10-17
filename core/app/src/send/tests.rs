@@ -9,6 +9,7 @@ fn outgoing(id: i64, to: &str) -> Outgoing {
         to: vec![to.into()],
         subject: format!("Message {id}"),
         text: String::new(),
+        quote: String::new(),
         message_id: format!("{id}@example.com"),
         in_reply_to: None,
         date: 100,

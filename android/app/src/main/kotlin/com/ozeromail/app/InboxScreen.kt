@@ -91,7 +91,6 @@ import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.InboxTab
 import uniffi.ozero_api.MessageItem
 import uniffi.ozero_api.UnsentItem
-import uniffi.ozero_api.replyDraft
 import uniffi.ozero_api.undoSeconds
 
 /**
@@ -267,7 +266,15 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 open = null
                 scope.launch { load() }
             },
-            onReply = { to -> composing = Composing(replyDraft(to), to) },
+            onReply = { to, all ->
+                scope.launch {
+                    try {
+                        composing = Composing(mail.reply(to, all), to)
+                    } catch (e: CoreException) {
+                        error = e.text()
+                    }
+                }
+            },
             onDone = {
                 open = null
                 // Back to the inbox, where the toast can undo it.
@@ -784,3 +791,10 @@ fun shortDate(context: Context, seconds: Long): String {
     }
     return DateUtils.formatDateTime(context, millis, flags)
 }
+
+/** The date and time, as a message header shows them. */
+fun longDate(context: Context, seconds: Long): String = DateUtils.formatDateTime(
+    context,
+    seconds * 1000,
+    DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_SHOW_TIME or DateUtils.FORMAT_ABBREV_MONTH,
+)
