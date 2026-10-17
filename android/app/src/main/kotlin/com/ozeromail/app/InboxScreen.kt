@@ -41,7 +41,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
@@ -95,10 +94,13 @@ import uniffi.ozero_api.UnsentItem
 import uniffi.ozero_api.replyDraft
 import uniffi.ozero_api.undoSeconds
 
-/** The unified inbox: shows what is saved at once, then syncs; pull down to sync again. */
+/**
+ * The unified inbox: shows what is saved at once, then syncs; pull down to sync again.
+ * [onNoAccounts] runs once the last account is removed.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun InboxScreen(mail: Mail) {
+fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var messages by remember { mutableStateOf(emptyList<MessageItem>()) }
     var syncing by remember { mutableStateOf(false) }
     // A sync asked for while one runs, say for a new account, runs right after it.
@@ -404,6 +406,31 @@ fun InboxScreen(mail: Mail) {
                 accountsOpen = false
                 addingAccount = true
             },
+            onColor = { account, color ->
+                scope.launch {
+                    try {
+                        mail.setAccountColor(account, color)
+                    } catch (e: CoreException) {
+                        error = e.text()
+                    }
+                    loadAccounts()
+                    loadList()
+                }
+            },
+            onRemove = { account ->
+                accountsOpen = false
+                scope.launch {
+                    try {
+                        mail.removeAccount(account)
+                    } catch (e: CoreException) {
+                        error = e.text()
+                        return@launch
+                    }
+                    MailWorker.clearNotifications(context)
+                    loadAccounts()
+                    if (accounts.isEmpty()) onNoAccounts() else load()
+                }
+            },
             onClose = { accountsOpen = false },
         )
     }
@@ -511,46 +538,6 @@ private fun AccountsButton(accounts: List<AccountItem>, onClick: () -> Unit) {
                         pair.forEach { AccountDot(it.tint) }
                     }
                 }
-            }
-        }
-    }
-}
-
-/** The accounts, and a way to add one. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun AccountsSheet(accounts: List<AccountItem>, onAdd: () -> Unit, onClose: () -> Unit) {
-    val colors = MaterialTheme.colorScheme
-    ModalBottomSheet(onDismissRequest = onClose, containerColor = colors.background) {
-        Column(Modifier.navigationBarsPadding().padding(bottom = 16.dp)) {
-            Text(
-                stringResource(R.string.accounts_title),
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(start = 22.dp, end = 22.dp, bottom = 10.dp),
-            )
-            accounts.forEach { account ->
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                ) {
-                    AccountDot(account.tint, size = 12.dp)
-                    Column(Modifier.weight(1f)) {
-                        Text(account.displayName.ifBlank { account.email }, fontSize = 15.5.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (account.displayName.isNotBlank() && account.displayName != account.email) {
-                            Text(account.email, color = colors.onSurfaceVariant, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                    }
-                }
-            }
-            Row(
-                Modifier.fillMaxWidth().clickable(onClick = onAdd).padding(horizontal = 18.dp, vertical = 13.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Glyph(R.drawable.ic_add, null, colors.primary)
-                Text(stringResource(R.string.inbox_add_account), color = colors.primary, fontSize = 15.5.sp, fontWeight = FontWeight.Medium)
             }
         }
     }
@@ -675,7 +662,7 @@ val AccountMark.tint: Color
 val AccountItem.tint: Color
     get() = rgb(color)
 
-private fun rgb(color: UInt) = Color(0xFF000000 or color.toLong())
+fun rgb(color: UInt) = Color(0xFF000000 or color.toLong())
 
 /**
  * A row of a list. Unread shows as a blue dot and bold text; with several accounts, a strip

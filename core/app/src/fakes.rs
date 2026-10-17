@@ -209,6 +209,14 @@ impl Store for Memory {
         Ok(vec![])
     }
 
+    fn remove_account(&self, _: AccountId) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn set_account_color(&self, _: AccountId, _: u32) -> Result<(), StoreError> {
+        Ok(())
+    }
+
     fn save_folders(
         &self,
         account: AccountId,

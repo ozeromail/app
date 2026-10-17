@@ -150,6 +150,29 @@ impl Core {
             .collect())
     }
 
+    /// Sets the account's colour to one of `account_colors`, by its place there.
+    pub fn set_account_color(&self, account: i64, color: u32) -> Result<(), CoreError> {
+        let color = color % ACCOUNT_COLORS.len() as u32;
+        Ok(self.store.set_account_color(AccountId(account), color)?)
+    }
+
+    /// Removes the account and all its mail from the device, once its sync is done. The app
+    /// forgets its secret.
+    pub async fn remove_account(&self, account: i64) -> Result<(), CoreError> {
+        let account = AccountId(account);
+        let lock = self.busy(account);
+        let _busy = lock.lock().await;
+        self.store.remove_account(account)?;
+        let mut tokens = self.tokens.lock().unwrap_or_else(|p| p.into_inner());
+        tokens.remove(&account);
+        drop(tokens);
+        self.busy
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&account);
+        Ok(())
+    }
+
     /// Saves the Gmail account `google_account` returned, once the app has kept its secret.
     pub fn add_gmail_account(&self, email: String) -> Result<i64, CoreError> {
         if self.exists(&email)? {
@@ -834,9 +857,16 @@ impl From<&Account> for AccountMark {
     }
 }
 
-/// Account colours in the order accounts get them. The blue accent stays for actions.
-const ACCOUNT_COLORS: [u32; 6] = [
-    0x2A_A1_98, 0x8E_5C_D9, 0xF0_8A_24, 0x43_A9_5A, 0xE0_56_9B, 0xC4_AD_7D,
+/// The colours an account can have, as 0xRRGGBB.
+#[uniffi::export]
+pub fn account_colors() -> Vec<u32> {
+    ACCOUNT_COLORS.to_vec()
+}
+
+/// Account colours in the order accounts get them: the logo's three first.
+const ACCOUNT_COLORS: [u32; 10] = [
+    0xEF_4A_5C, 0x14_A3_8B, 0x8A_5C_F6, 0xE8_90_2A, 0xE8_B5_2A, 0x43_A9_5A, 0x2F_8C_F0, 0x4F_5B_D5,
+    0xD1_48_9A, 0x5F_6B_85,
 ];
 
 fn rgb(color: u32) -> u32 {

@@ -41,6 +41,15 @@ class Mail(private val context: Context) {
     /** The accounts mail can be sent from, in the order they were added. */
     suspend fun accounts(): List<AccountItem> = io { core.accounts() }
 
+    /** [color] is a place in [accountColors]. */
+    suspend fun setAccountColor(account: AccountItem, color: Int) = io { core.setAccountColor(account.id, color.toUInt()) }
+
+    /** Removes the account and its mail from the phone, then its secret. */
+    suspend fun removeAccount(account: AccountItem) = io {
+        core.removeAccount(account.id)
+        vault.forgetPassword(account.email)
+    }
+
     suspend fun inbox(tab: Category): List<MessageItem> = io { core.unifiedInbox(tab, INBOX_SIZE) }
 
     /** Unread mail in People that came since the last call, for a notification. */
