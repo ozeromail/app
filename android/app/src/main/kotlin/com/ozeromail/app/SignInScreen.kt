@@ -89,12 +89,14 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
 
     fun google() {
         error = null
-        try {
-            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(mail.startGoogle())))
-        } catch (e: ActivityNotFoundException) {
-            error = R.string.signin_no_browser
-        } catch (e: CoreException) {
-            error = e.text()
+        scope.launch {
+            try {
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(mail.startGoogle())))
+            } catch (e: ActivityNotFoundException) {
+                error = R.string.signin_no_browser
+            } catch (e: CoreException) {
+                error = e.text()
+            }
         }
     }
 

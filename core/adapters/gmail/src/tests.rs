@@ -299,7 +299,12 @@ async fn maps_errors() {
             json!({"error": {"message": "Bad"}}),
         ),
         ("/profile", 401, json!({})),
-        ("/messages/busy", 503, json!({})),
+        ("/messages/busy", 503, json!("<html>Unavailable</html>")),
+        (
+            "/messages/limited",
+            403,
+            json!({"error": {"message": "Slow down", "errors": [{"reason": "userRateLimitExceeded"}]}}),
+        ),
     ])
     .await;
     assert_eq!(
@@ -314,6 +319,11 @@ async fn maps_errors() {
     assert_eq!(gmail.email().await, Err(ProviderError::Auth));
     assert!(matches!(
         gmail.body("INBOX", 0, "busy").await,
+        Err(ProviderError::Network(_))
+    ));
+    // Over a rate limit: tried again later, not refused for good.
+    assert!(matches!(
+        gmail.body("INBOX", 0, "limited").await,
         Err(ProviderError::Network(_))
     ));
     assert_eq!(

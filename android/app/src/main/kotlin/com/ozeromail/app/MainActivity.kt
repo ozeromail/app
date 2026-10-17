@@ -28,7 +28,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val mail = (application as OzeroApp).mail
-        googleRedirect(intent)
+        // Only a fresh launch: a recreated activity keeps the intent it was first started with.
+        if (savedInstanceState == null) googleRedirect(intent)
         setContent {
             OzeroTheme {
                 Surface(Modifier.fillMaxSize()) {
@@ -44,6 +45,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun googleRedirect(intent: Intent) {
+        if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
         val uri = intent.data ?: return
         if (uri.scheme == packageName) (application as OzeroApp).mail.googleRedirects.trySend(uri.toString())
     }

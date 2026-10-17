@@ -86,18 +86,24 @@ impl GmailSession {
             .http
             .send(method, &path, &[("Authorization", &self.auth)], body)
             .await?;
-        let json: Value = if response.body.is_empty() {
-            Value::Null
-        } else {
-            serde_json::from_slice(&response.body).map_err(|e| protocol(e.to_string()))?
-        };
         if response.ok() {
-            return Ok(json);
+            if response.body.is_empty() {
+                return Ok(Value::Null);
+            }
+            return serde_json::from_slice(&response.body).map_err(|e| protocol(e.to_string()));
         }
-        let reason = json["error"]["message"].as_str().unwrap_or_default();
+        // A front end in the way may answer an error with HTML.
+        let json: Value = serde_json::from_slice(&response.body).unwrap_or(Value::Null);
+        let error = &json["error"];
+        let reason = error["message"].as_str().unwrap_or_default();
+        let limited = each(&error["errors"], |e| &e["reason"])
+            .iter()
+            .any(|r| r.ends_with("LimitExceeded") || r == "quotaExceeded");
         Err(match response.status {
             401 => ProviderError::Auth,
             404 => ProviderError::Gone,
+            // Over a rate or quota limit: later it goes through.
+            403 if limited => ProviderError::Network(format!("403 {reason}")),
             429 | 500.. => ProviderError::Network(format!("{} {reason}", response.status)),
             status => ProviderError::Rejected(format!("{status} {reason}")),
         })
