@@ -364,6 +364,34 @@ impl Store for SqliteStore {
             .map_err(storage)
     }
 
+    fn shows_images(&self, message: MessageId) -> Result<bool, StoreError> {
+        self.conn()
+            .prepare_cached(
+                "SELECT category = 'people'
+                        OR EXISTS (SELECT 1 FROM image_sender WHERE email = from_email)
+                 FROM message WHERE id = ?1",
+            )
+            .and_then(|mut s| s.query_row([message.0], |r| r.get(0)).optional())
+            .map_err(storage)?
+            .ok_or(StoreError::NotFound)
+    }
+
+    fn allow_images(&self, message: MessageId) -> Result<(), StoreError> {
+        let changed = self
+            .conn()
+            .execute(
+                "INSERT OR IGNORE INTO image_sender (email)
+                 SELECT from_email FROM message WHERE id = ?1",
+                [message.0],
+            )
+            .map_err(storage)?;
+        // Zero also when the sender was already allowed.
+        if changed == 0 {
+            self.shows_images(message)?;
+        }
+        Ok(())
+    }
+
     fn correspondents(&self, message: MessageId) -> Result<Correspondents, StoreError> {
         self.conn()
             .prepare_cached("SELECT from_email, answer_to, recipients FROM message WHERE id = ?1")

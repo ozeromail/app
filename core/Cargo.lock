@@ -627,6 +627,7 @@ dependencies = [
  "ozero-app",
  "ozero-domain",
  "ozero-gmail",
+ "ozero-http",
  "ozero-imap",
  "ozero-mime",
  "ozero-smtp",

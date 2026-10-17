@@ -1109,3 +1109,27 @@ fn a_taken_back_answer_keeps_its_quote() {
     );
     assert_eq!(store.undo_send(id, 50).unwrap(), Some(draft));
 }
+
+#[test]
+fn shows_images_from_people_and_chosen_senders() {
+    let store = store();
+    let folder = inbox(&store, account(&store, "a@example.com"));
+    let news = NewMessage {
+        category: Category::Newsletters,
+        ..message(2, 200)
+    };
+    store
+        .save_messages(folder, &[message(1, 100), news])
+        .unwrap();
+    let id = |tab| list(&store, ListScope::Inbox(tab), 1, None)[0].id;
+    let (person, letter) = (id(Category::People), id(Category::Newsletters));
+    assert!(store.shows_images(person).unwrap());
+    assert!(!store.shows_images(letter).unwrap());
+    store.allow_images(letter).unwrap();
+    store.allow_images(letter).unwrap();
+    assert!(store.shows_images(letter).unwrap());
+    assert_eq!(
+        store.allow_images(MessageId(999)),
+        Err(StoreError::NotFound)
+    );
+}

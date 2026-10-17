@@ -1,5 +1,9 @@
 //! Minimal HTTPS/1.1 client for the providers' APIs: one kept-alive connection to one host,
-//! one request at a time. No redirects, no compression, no plain HTTP.
+//! one request at a time. No compression, no plain HTTP; only `fetch` follows redirects.
+
+mod fetch;
+
+pub use fetch::{MAX_IMAGE, image};
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -27,6 +31,8 @@ pub struct Response {
     pub status: u16,
     /// The Content-Type header, empty without one.
     pub content_type: String,
+    /// The Location header, empty without one.
+    pub location: String,
     pub body: Vec<u8>,
 }
 
@@ -50,6 +56,10 @@ pub struct HttpsClient {
     port: u16,
     tls: Arc<ClientConfig>,
     conn: Option<(Conn<TlsStream<TcpStream>>, Instant)>,
+    /// Largest response body.
+    limit: usize,
+    /// Refuses hosts that resolve to a private or local address.
+    public_only: bool,
 }
 
 impl HttpsClient {
@@ -59,6 +69,18 @@ impl HttpsClient {
             port,
             tls,
             conn: None,
+            limit: MAX_BODY,
+            public_only: false,
+        }
+    }
+
+    /// For a host named by someone else, such as an image in a message: it may not reach
+    /// into the local network, and its responses may be at most `limit` bytes.
+    pub fn untrusted(host: &str, port: u16, tls: Arc<ClientConfig>, limit: usize) -> Self {
+        Self {
+            limit,
+            public_only: true,
+            ..Self::new(host, port, tls)
         }
     }
 
@@ -121,9 +143,23 @@ impl HttpsClient {
     async fn connect(&self) -> Result<Conn<TlsStream<TcpStream>>, ProviderError> {
         let name = ServerName::try_from(self.host.clone())
             .map_err(|_| ProviderError::Network(format!("bad host name {}", self.host)))?;
-        let tcp = timed(TcpStream::connect((self.host.as_str(), self.port))).await?;
+        let tcp = if self.public_only {
+            let addrs = timed(tokio::net::lookup_host((self.host.as_str(), self.port))).await?;
+            let public: Vec<_> = addrs.filter(|a| fetch::is_public(a.ip())).collect();
+            if public.is_empty() {
+                return Err(ProviderError::Network(format!(
+                    "{} is not public",
+                    self.host
+                )));
+            }
+            timed(TcpStream::connect(&public[..])).await?
+        } else {
+            timed(TcpStream::connect((self.host.as_str(), self.port))).await?
+        };
         let tls = TlsConnector::from(self.tls.clone());
-        Ok(Conn::new(timed(tls.connect(name, tcp)).await?))
+        let mut conn = Conn::new(timed(tls.connect(name, tcp)).await?);
+        conn.limit = self.limit;
+        Ok(conn)
     }
 }
 
@@ -173,8 +209,13 @@ fn request(
     if !path.starts_with('/') || ![method, host, path].into_iter().chain(fields).all(clean) {
         return Err(ProviderError::Protocol("bad request".into()));
     }
-    let mut head =
-        format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nAccept: application/json\r\n");
+    let mut head = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\n");
+    if !headers
+        .iter()
+        .any(|(n, _)| n.eq_ignore_ascii_case("accept"))
+    {
+        head.push_str("Accept: application/json\r\n");
+    }
     for (name, value) in headers {
         head.push_str(&format!("{name}: {value}\r\n"));
     }
@@ -201,6 +242,8 @@ struct Conn<S> {
     stream: S,
     /// Read but not yet used.
     buf: Vec<u8>,
+    /// Largest body.
+    limit: usize,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
@@ -208,6 +251,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
         Self {
             stream,
             buf: Vec::new(),
+            limit: MAX_BODY,
         }
     }
 
@@ -226,7 +270,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
 
     /// The response and whether the connection can carry another request.
     async fn response(&mut self) -> Result<(Response, bool), Failure> {
-        let (status, content_type, length, close) = loop {
+        let (status, content_type, location, length, close) = loop {
             if let Some(head) = self.head()? {
                 break head;
             }
@@ -252,6 +296,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
             Response {
                 status,
                 content_type,
+                location,
                 body,
             },
             keep,
@@ -259,7 +304,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
     }
 
     /// Parses and takes the head from `buf` once it is all there.
-    fn head(&mut self) -> Result<Option<(u16, String, Length, bool)>, ProviderError> {
+    #[allow(clippy::type_complexity)]
+    fn head(&mut self) -> Result<Option<(u16, String, String, Length, bool)>, ProviderError> {
         let mut headers = [httparse::EMPTY_HEADER; MAX_HEADERS];
         let mut parsed = httparse::Response::new(&mut headers);
         let size = match parsed.parse(&self.buf) {
@@ -294,12 +340,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
             return Err(protocol("more than one content length"));
         };
         let content_type = content_type(parsed.headers);
+        let location = raw(parsed.headers, "location");
         self.buf.drain(..size);
-        Ok(Some((status, content_type, length, close)))
+        Ok(Some((status, content_type, location, length, close)))
     }
 
     async fn fixed(&mut self, n: usize) -> Result<Vec<u8>, ProviderError> {
-        if n > MAX_BODY {
+        if n > self.limit {
             return Err(protocol("response too large"));
         }
         while self.buf.len() < n {
@@ -323,7 +370,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
                 while !self.line().await?.is_empty() {}
                 return Ok(body);
             }
-            if size > MAX_BODY - body.len() {
+            if size > self.limit - body.len() {
                 return Err(protocol("response too large"));
             }
             body.extend(self.fixed(size).await?);
@@ -335,7 +382,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
 
     async fn until_closed(&mut self) -> Result<Vec<u8>, ProviderError> {
         while self.fill().await? {
-            if self.buf.len() > MAX_BODY {
+            if self.buf.len() > self.limit {
                 return Err(protocol("response too large"));
             }
         }
@@ -370,6 +417,7 @@ pub fn parse(data: &[u8]) -> Option<Response> {
     Some(Response {
         status: parsed.code?,
         content_type: content_type(parsed.headers),
+        location: raw(parsed.headers, "location"),
         body: data[size..].to_vec(),
     })
 }
@@ -385,9 +433,14 @@ fn values(headers: &[httparse::Header<'_>], name: &str) -> Vec<String> {
 
 /// As sent: a multipart boundary in it is case-sensitive.
 fn content_type(headers: &[httparse::Header<'_>]) -> String {
+    raw(headers, "content-type")
+}
+
+/// The first header called `name` as sent, trimmed; empty without one.
+fn raw(headers: &[httparse::Header<'_>], name: &str) -> String {
     headers
         .iter()
-        .find(|h| h.name.eq_ignore_ascii_case("content-type"))
+        .find(|h| h.name.eq_ignore_ascii_case(name))
         .map(|h| String::from_utf8_lossy(h.value).trim().to_owned())
         .unwrap_or_default()
 }

@@ -53,6 +53,11 @@ pub trait Store: Send + Sync {
     /// Like `take_fresh` without reading the mail: it is on screen already.
     fn clear_fresh(&self) -> Result<(), StoreError>;
 
+    /// Whether the message's remote images load without asking: mail from people, and from
+    /// senders whose images the user chose to see.
+    fn shows_images(&self, message: MessageId) -> Result<bool, StoreError>;
+    /// From now on the message's sender's images load without asking.
+    fn allow_images(&self, message: MessageId) -> Result<(), StoreError>;
     /// Who the message came from and went to.
     fn correspondents(&self, message: MessageId) -> Result<Correspondents, StoreError>;
     fn location(&self, message: MessageId) -> Result<MessageLocation, StoreError>;

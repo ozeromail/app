@@ -13,7 +13,8 @@ use ozero_app::sync::{SyncError, download_body, sync_mail};
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Body, Category, Changes, Checkpoint, Draft,
     FolderRole, ListQuery, ListScope, MailProvider, MessageId, MessageRow, NewAccount, NewFolder,
-    OpId, OutboxId, ProviderError, Server, Store, StoreError, parse_recipients, saves_sent_itself,
+    OpId, OutboxId, ProviderError, Server, Store, StoreError, base64, html, parse_recipients,
+    saves_sent_itself,
 };
 use ozero_gmail::{GmailSession, oauth};
 use ozero_imap::ImapSession;
@@ -484,8 +485,13 @@ impl Core {
         secret: String,
     ) -> Result<MessageBody, CoreError> {
         let message = MessageId(message);
+        let shows_images = self.store.shows_images(message)?;
+        let page = |body: Body| MessageBody {
+            shows_images,
+            ..body.into()
+        };
         if let Some(body) = self.store.body(message)? {
-            return Ok(body.into());
+            return Ok(page(body));
         }
         let location = self.store.location(message)?;
         let account = self.account(location.account_id)?;
@@ -494,8 +500,64 @@ impl Core {
         let body = download_body(&self.store, remote, &self.parser, &location).await;
         // Closing without LOGOUT saves the reader a round trip; the server cleans up.
         drop(slot);
-        Ok(self.refused(&account, body)?.into())
+        Ok(page(self.refused(&account, body)?))
     }
+
+    /// The message's page with its remote images loaded now, for `MessageBody::html`; None
+    /// when it has none. An image that does not load stays out.
+    pub async fn message_images(&self, message: i64) -> Result<Option<String>, CoreError> {
+        let Some(html) = self.store.body(MessageId(message))?.and_then(|b| b.html) else {
+            return Ok(None);
+        };
+        let page = html::clean(&html);
+        if page.images.is_empty() {
+            return Ok(None);
+        }
+        let tls = self.tls()?;
+        let mut loaded = Vec::with_capacity(page.images.len());
+        let mut left = IMAGES_SIZE;
+        for urls in page
+            .images
+            .chunks(IMAGES_AT_ONCE)
+            .take(IMAGES / IMAGES_AT_ONCE)
+        {
+            let fetches: Vec<_> = urls
+                .iter()
+                .map(|url| {
+                    let (url, tls) = (url.clone(), tls.clone());
+                    tokio::spawn(async move { ozero_http::image(&url, tls).await })
+                })
+                .collect();
+            for fetch in fetches {
+                let image = fetch.await.ok().and_then(Result::ok);
+                let uri = image.filter(|i| i.body.len() <= left).and_then(|i| {
+                    left -= i.body.len();
+                    data_uri(&i.content_type, &i.body)
+                });
+                loaded.push(uri);
+            }
+        }
+        Ok(Some(sandboxed(&html::with_images(&page.html, &loaded))))
+    }
+
+    /// From now on the remote images of mail from this message's sender load on their own.
+    pub fn allow_images(&self, message: i64) -> Result<(), CoreError> {
+        Ok(self.store.allow_images(MessageId(message))?)
+    }
+}
+
+/// How many remote images a message loads, how many at a time, and how many bytes in all.
+const IMAGES: usize = 48;
+const IMAGES_AT_ONCE: usize = 6;
+const IMAGES_SIZE: usize = 12 * 1024 * 1024;
+
+/// A `data:` address for an image of `content_type`; None for a type that is not an image.
+fn data_uri(content_type: &str, data: &[u8]) -> Option<String> {
+    let mime = content_type.split(';').next()?.trim().to_ascii_lowercase();
+    let plain = mime
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '+' | '-'));
+    (mime.starts_with("image/") && plain).then(|| format!("data:{mime};base64,{}", base64(data)))
 }
 
 impl Core {
@@ -996,14 +1058,25 @@ impl From<Draft> for DraftItem {
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct MessageBody {
     pub text: String,
-    /// A whole HTML document for a web view with JavaScript and network off.
+    /// A whole HTML document for a web view with JavaScript and network off, without its
+    /// remote images; `message_images` loads them.
     pub html: Option<String>,
+    /// How many remote images the page holds back.
+    pub remote_images: u32,
+    /// The remote images load without asking: the mail is from a person, or the user chose
+    /// to see this sender's.
+    pub shows_images: bool,
 }
 
 impl From<Body> for MessageBody {
     fn from(body: Body) -> Self {
+        let page = body.html.as_deref().map(html::clean);
         Self {
-            html: body.html.as_deref().map(sandboxed),
+            remote_images: page
+                .as_ref()
+                .map_or(0, |p| u32::try_from(p.images.len()).unwrap_or(u32::MAX)),
+            html: page.map(|p| sandboxed(&p.html)),
+            shows_images: false,
             text: body.text,
         }
     }
