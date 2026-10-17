@@ -107,6 +107,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var error by remember { mutableStateOf<Int?>(null) }
     var open by remember { mutableStateOf<MessageItem?>(null) }
     var composing by remember { mutableStateOf<Composing?>(null) }
+    // One answer at a time: a second tap would replace the one being written.
+    var replying by remember { mutableStateOf(false) }
     var tab by rememberSaveable { mutableStateOf(Category.PEOPLE) }
     var tabs by remember { mutableStateOf(emptyList<InboxTab>()) }
     var unsent by remember { mutableStateOf(emptyList<UnsentItem>()) }
@@ -267,11 +269,16 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 scope.launch { load() }
             },
             onReply = { to, all ->
-                scope.launch {
-                    try {
-                        composing = Composing(mail.reply(to, all), to)
-                    } catch (e: CoreException) {
-                        error = e.text()
+                if (!replying) {
+                    replying = true
+                    scope.launch {
+                        try {
+                            composing = Composing(mail.reply(to, all), to)
+                        } catch (e: CoreException) {
+                            error = e.text()
+                        } finally {
+                            replying = false
+                        }
                     }
                 }
             },

@@ -74,7 +74,9 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
     var subject by rememberSaveable { mutableStateOf(start.subject) }
     var text by rememberSaveable { mutableStateOf(start.text) }
     var accountId by rememberSaveable { mutableStateOf(start.accountId) }
-    var quote by rememberSaveable { mutableStateOf(start.quote) }
+    // Not saveable: a long quote would not fit in the saved state.
+    var quote by remember { mutableStateOf(start.quote) }
+    var quotable by remember { mutableStateOf(true) }
     var accounts by remember { mutableStateOf(emptyList<AccountItem>()) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<Int?>(null) }
@@ -139,12 +141,17 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
                 singleLine = false,
                 modifier = Modifier.weight(1f, fill = false),
             )
-            composing.original?.let { original ->
-                Quote(quote, onAdd = {
+            val original = composing.original
+            if (quote.isNotEmpty()) {
+                Quote(quote, onRemove = { quote = "" })
+            } else if (original != null && quotable) {
+                Pill(stringResource(R.string.compose_add_quote), height = 32.dp, onClick = {
                     val header = context.getString(R.string.compose_quote_header, longDate(context, original.date), original.sender)
                     scope.launch {
                         try {
                             quote = mail.quote(original, header)
+                            // Nothing saved to quote.
+                            quotable = quote.isNotEmpty()
                         } catch (e: CoreException) {
                             error = e.text()
                         }
@@ -219,13 +226,11 @@ private fun Original(message: MessageItem) {
     }
 }
 
-/** The quoted original under the text, or a button that adds it. */
+/** The quoted original under the text, with a way to take it out. */
 @Composable
-private fun Quote(quote: String, onAdd: () -> Unit) {
+private fun Quote(quote: String, onRemove: () -> Unit) {
     val colors = MaterialTheme.colorScheme
-    if (quote.isEmpty()) {
-        Pill(stringResource(R.string.compose_add_quote), onAdd, height = 32.dp)
-    } else {
+    Row(verticalAlignment = Alignment.Top) {
         Text(
             quote,
             color = colors.onSurfaceVariant,
@@ -234,9 +239,11 @@ private fun Quote(quote: String, onAdd: () -> Unit) {
             maxLines = 6,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier
+                .weight(1f)
                 .drawBehind { drawLine(colors.outlineVariant, Offset.Zero, Offset(0f, size.height), 3.dp.toPx()) }
                 .padding(start = 12.dp, top = 2.dp, bottom = 2.dp),
         )
+        IconTile(R.drawable.ic_close, stringResource(R.string.action_remove), onRemove, size = 32.dp)
     }
 }
 

@@ -112,12 +112,17 @@ final class Mail: Sendable {
         try core.undo(actions: actions)
     }
 
+    /// An answer to `message`, to its sender, shown above it.
+    func reply(to message: MessageItem) throws -> Composing {
+        Composing(draft: try core.reply(message: message, all: false), original: message)
+    }
+
     /// Puts the message in the outbox and returns it for `undoSend`.
     /// It goes to the server once the undo time is over.
     func send(_ draft: DraftItem) async throws -> Int64 {
         let id = try core.send(
             account: draft.accountId, to: draft.to, subject: draft.subject, text: draft.text,
-            replyTo: draft.replyTo)
+            replyTo: draft.replyTo, quote: draft.quote)
         push(account: draft.accountId)
         return id
     }
