@@ -398,6 +398,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "httparse"
+version = "1.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
+
+[[package]]
 name = "imap-codec"
 version = "2.0.0-alpha.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -646,6 +652,28 @@ dependencies = [
 [[package]]
 name = "ozero-domain"
 version = "0.1.0"
+
+[[package]]
+name = "ozero-gmail"
+version = "0.1.0"
+dependencies = [
+ "ozero-domain",
+ "ozero-http",
+ "ring",
+ "serde_json",
+ "tokio",
+ "tokio-rustls",
+]
+
+[[package]]
+name = "ozero-http"
+version = "0.1.0"
+dependencies = [
+ "httparse",
+ "ozero-domain",
+ "tokio",
+ "tokio-rustls",
+]
 
 [[package]]
 name = "ozero-imap"

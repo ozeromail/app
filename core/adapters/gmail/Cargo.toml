@@ -1,0 +1,22 @@
+[package]
+name = "ozero-gmail"
+description = "Gmail API provider and Google sign-in."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ozero-domain.workspace = true
+ozero-http.workspace = true
+# The same ring rustls already brings: random bytes and SHA-256 for PKCE.
+ring = { version = "0.17", default-features = false }
+serde_json = { version = "1", default-features = false, features = ["std"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+
+[dev-dependencies]
+tokio = { version = "1.53", default-features = false, features = ["rt", "macros"] }
+
+[lints]
+workspace = true
