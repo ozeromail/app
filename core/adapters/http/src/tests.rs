@@ -20,13 +20,16 @@ async fn read(reply: &[u8]) -> Result<(Response, bool), ProviderError> {
 
 #[tokio::test]
 async fn reads_a_fixed_length_body() {
-    let (response, keep) = read(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello")
-        .await
-        .unwrap();
+    let (response, keep) = read(
+        b"HTTP/1.1 200 OK\r\nContent-Type: text/plain; Charset=A\r\nContent-Length: 5\r\n\r\nhello",
+    )
+    .await
+    .unwrap();
     assert_eq!(
         response,
         Response {
             status: 200,
+            content_type: "text/plain; Charset=A".into(),
             body: b"hello".to_vec()
         }
     );
@@ -60,6 +63,7 @@ async fn has_no_body_for_204_and_skips_100() {
         response,
         Response {
             status: 204,
+            content_type: String::new(),
             body: Vec::new()
         }
     );
@@ -141,4 +145,18 @@ async fn keeps_the_connection_for_the_next_request() {
         panic!("second")
     };
     assert_eq!((first.body, second.body), (b"a".to_vec(), b"b".to_vec()));
+}
+
+#[test]
+fn parses_a_response_held_in_memory() {
+    let response = parse(b"HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\n\r\n{}\r\n");
+    assert_eq!(
+        response,
+        Some(Response {
+            status: 404,
+            content_type: "application/json".into(),
+            body: b"{}\r\n".to_vec(),
+        })
+    );
+    assert_eq!(parse(b"HTTP/1.1 200 OK\r\n"), None);
 }

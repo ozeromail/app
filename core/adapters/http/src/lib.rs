@@ -25,6 +25,8 @@ const MAX_HEADERS: usize = 64;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Response {
     pub status: u16,
+    /// The Content-Type header, empty without one.
+    pub content_type: String,
     pub body: Vec<u8>,
 }
 
@@ -69,6 +71,29 @@ impl HttpsClient {
         headers: &[(&str, &str)],
         body: Option<Body<'_>>,
     ) -> Result<Response, ProviderError> {
+        self.exchange(method, path, headers, body, method == "GET")
+            .await
+    }
+
+    /// Like `send`, for a request that is safe to send twice whatever its method.
+    pub async fn send_repeatable(
+        &mut self,
+        method: &str,
+        path: &str,
+        headers: &[(&str, &str)],
+        body: Option<Body<'_>>,
+    ) -> Result<Response, ProviderError> {
+        self.exchange(method, path, headers, body, true).await
+    }
+
+    async fn exchange(
+        &mut self,
+        method: &str,
+        path: &str,
+        headers: &[(&str, &str)],
+        body: Option<Body<'_>>,
+        repeatable: bool,
+    ) -> Result<Response, ProviderError> {
         let request = request(method, &self.host, path, headers, body)?;
         let reused = match self.conn.take() {
             Some((conn, used)) if used.elapsed() < IDLE => Some(conn),
@@ -79,7 +104,7 @@ impl HttpsClient {
                 Ok(done) => done,
                 // The server closed the kept-alive connection before answering; a new one
                 // asks again, but only what is safe to ask twice: a POST may have gone through.
-                Err(Failure::Closed) if method == "GET" => {
+                Err(Failure::Closed) if repeatable => {
                     exchange(self.connect().await?, &request).await?
                 }
                 Err(Failure::Closed) => return Err(closed()),
@@ -201,7 +226,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
 
     /// The response and whether the connection can carry another request.
     async fn response(&mut self) -> Result<(Response, bool), Failure> {
-        let (status, length, close) = loop {
+        let (status, content_type, length, close) = loop {
             if let Some(head) = self.head()? {
                 break head;
             }
@@ -223,11 +248,18 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
             Length::ToEnd => self.until_closed().await?,
         };
         let keep = !close && !matches!(length, Length::ToEnd);
-        Ok((Response { status, body }, keep))
+        Ok((
+            Response {
+                status,
+                content_type,
+                body,
+            },
+            keep,
+        ))
     }
 
     /// Parses and takes the head from `buf` once it is all there.
-    fn head(&mut self) -> Result<Option<(u16, Length, bool)>, ProviderError> {
+    fn head(&mut self) -> Result<Option<(u16, String, Length, bool)>, ProviderError> {
         let mut headers = [httparse::EMPTY_HEADER; MAX_HEADERS];
         let mut parsed = httparse::Response::new(&mut headers);
         let size = match parsed.parse(&self.buf) {
@@ -241,14 +273,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
             self.buf.drain(..size);
             return self.head();
         }
-        let header = |name: &str| {
-            parsed
-                .headers
-                .iter()
-                .filter(|h| h.name.eq_ignore_ascii_case(name))
-                .map(|h| String::from_utf8_lossy(h.value).trim().to_ascii_lowercase())
-                .collect::<Vec<_>>()
-        };
+        let header = |name| values(parsed.headers, name);
         let close = header("connection").iter().any(|v| v == "close");
         let chunked = header("transfer-encoding")
             .iter()
@@ -268,8 +293,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
         } else {
             return Err(protocol("more than one content length"));
         };
+        let content_type = content_type(parsed.headers);
         self.buf.drain(..size);
-        Ok(Some((status, length, close)))
+        Ok(Some((status, content_type, length, close)))
     }
 
     async fn fixed(&mut self, n: usize) -> Result<Vec<u8>, ProviderError> {
@@ -331,6 +357,39 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
             }
         }
     }
+}
+
+/// A whole response held in `data`, as a part of a multipart body carries one: its head,
+/// then everything after it as the body. None if the head is not a complete response head.
+pub fn parse(data: &[u8]) -> Option<Response> {
+    let mut headers = [httparse::EMPTY_HEADER; MAX_HEADERS];
+    let mut parsed = httparse::Response::new(&mut headers);
+    let httparse::Status::Complete(size) = parsed.parse(data).ok()? else {
+        return None;
+    };
+    Some(Response {
+        status: parsed.code?,
+        content_type: content_type(parsed.headers),
+        body: data[size..].to_vec(),
+    })
+}
+
+/// The values of every header called `name`, trimmed and lowercased.
+fn values(headers: &[httparse::Header<'_>], name: &str) -> Vec<String> {
+    headers
+        .iter()
+        .filter(|h| h.name.eq_ignore_ascii_case(name))
+        .map(|h| String::from_utf8_lossy(h.value).trim().to_ascii_lowercase())
+        .collect()
+}
+
+/// As sent: a multipart boundary in it is case-sensitive.
+fn content_type(headers: &[httparse::Header<'_>]) -> String {
+    headers
+        .iter()
+        .find(|h| h.name.eq_ignore_ascii_case("content-type"))
+        .map(|h| String::from_utf8_lossy(h.value).trim().to_owned())
+        .unwrap_or_default()
 }
 
 #[derive(Debug, Clone, Copy)]

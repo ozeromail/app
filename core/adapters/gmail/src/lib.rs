@@ -5,16 +5,18 @@
 
 pub mod oauth;
 
+mod batch;
 mod codec;
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use ozero_domain::{
     Changes, Checkpoint, Flags, FolderRole, MailProvider, MailSender, NewFolder, ProviderError,
     RawMessage,
 };
-use ozero_http::{Body, HttpsClient};
+use ozero_http::{Body, HttpsClient, Response};
 use serde_json::{Value, json};
 use tokio_rustls::rustls::ClientConfig;
 
@@ -30,6 +32,10 @@ const MAX_MODIFY: usize = 1000;
 const MAX_TOUCHED: usize = 500;
 /// Most ids one list call returns.
 const MAX_LIST: u32 = 500;
+/// Most requests in one batch, and the least time between batches: together they stay under
+/// a user's quota of 250 units a second, at 5 units a message.
+const MAX_BATCH: usize = 25;
+const BATCH_PACE: Duration = Duration::from_millis(500);
 
 /// A Gmail mailbox, signed in with an access token.
 #[derive(Debug)]
@@ -38,6 +44,8 @@ pub struct GmailSession {
     auth: String,
     /// Where the last history read started, what it found and where it ended.
     last_history: Option<(u64, Vec<Touched>, u64)>,
+    /// When the last batch went out.
+    last_batch: Option<Instant>,
 }
 
 impl GmailSession {
@@ -50,6 +58,7 @@ impl GmailSession {
             http,
             auth: format!("Bearer {access_token}"),
             last_history: None,
+            last_batch: None,
         }
     }
 
@@ -86,27 +95,39 @@ impl GmailSession {
             .http
             .send(method, &path, &[("Authorization", &self.auth)], body)
             .await?;
-        if response.ok() {
-            if response.body.is_empty() {
-                return Ok(Value::Null);
-            }
-            return serde_json::from_slice(&response.body).map_err(|e| protocol(e.to_string()));
+        answer(&response)
+    }
+
+    /// GETs `paths` in one round trip; the answer to each, in order.
+    async fn batch(
+        &mut self,
+        paths: &[String],
+    ) -> Result<Vec<Result<Value, ProviderError>>, ProviderError> {
+        if let Some(last) = self.last_batch {
+            tokio::time::sleep_until((last + BATCH_PACE).into()).await;
         }
-        // A front end in the way may answer an error with HTML.
-        let json: Value = serde_json::from_slice(&response.body).unwrap_or(Value::Null);
-        let error = &json["error"];
-        let reason = error["message"].as_str().unwrap_or_default();
-        let limited = each(&error["errors"], |e| &e["reason"])
-            .iter()
-            .any(|r| r.ends_with("LimitExceeded") || r == "quotaExceeded");
-        Err(match response.status {
-            401 => ProviderError::Auth,
-            404 => ProviderError::Gone,
-            // Over a rate or quota limit: later it goes through.
-            403 if limited => ProviderError::Network(format!("403 {reason}")),
-            429 | 500.. => ProviderError::Network(format!("{} {reason}", response.status)),
-            status => ProviderError::Rejected(format!("{status} {reason}")),
-        })
+        self.last_batch = Some(Instant::now());
+        let body = batch::request(paths);
+        let body = Body {
+            content_type: batch::CONTENT_TYPE,
+            data: body.as_bytes(),
+        };
+        // Only GETs inside, so safe to send again.
+        let response = self
+            .http
+            .send_repeatable(
+                "POST",
+                "/batch/gmail/v1",
+                &[("Authorization", &self.auth)],
+                Some(body),
+            )
+            .await?;
+        if !response.ok() {
+            return Err(error(&response));
+        }
+        let answers = batch::response(&response.content_type, &response.body, paths.len())
+            .ok_or_else(|| protocol("bad batch"))?;
+        Ok(answers.iter().map(answer).collect())
     }
 
     async fn history_id(&mut self) -> Result<u64, ProviderError> {
@@ -123,30 +144,57 @@ impl GmailSession {
                 limit.min(MAX_LIST)
             ))
             .await?;
-        let mut messages = Vec::new();
-        for id in each(&list["messages"], |m| &m["id"]) {
-            // Deleted between the list and here.
-            if let Some(m) = self.header(&id).await? {
-                messages.push(m.raw);
-            }
-        }
+        let ids = each(&list["messages"], |m| &m["id"]);
+        let mut messages: Vec<_> = self
+            .headers(&ids)
+            .await?
+            .into_iter()
+            .map(|m| m.raw)
+            .collect();
         messages.sort_by_key(|m| m.received);
         Ok(messages)
     }
 
-    /// A message's labels and header; None once it is deleted.
-    async fn header(&mut self, id: &str) -> Result<Option<Labeled>, ProviderError> {
-        let path = format!(
-            "/messages/{}?format=metadata&fields=id,labelIds,internalDate,payload/headers",
-            percent(id)
-        );
-        match self.get(&path).await {
-            Ok(json) => raw_message(&json)
-                .map(Some)
-                .ok_or_else(|| protocol("bad message")),
-            Err(ProviderError::Gone) => Ok(None),
-            Err(e) => Err(e),
+    /// The labels and header of each message still there. What is over a rate limit is
+    /// asked again in a later batch, as long as each batch gets something through.
+    async fn headers(&mut self, ids: &[String]) -> Result<Vec<Labeled>, ProviderError> {
+        let mut found = Vec::with_capacity(ids.len());
+        let mut queue: VecDeque<&String> = ids.iter().collect();
+        while !queue.is_empty() {
+            let chunk: Vec<&String> = queue.drain(..queue.len().min(MAX_BATCH)).collect();
+            let paths: Vec<String> = chunk
+                .iter()
+                .map(|id| {
+                    format!(
+                        "{BASE}/messages/{}?format=metadata&fields=id,labelIds,internalDate,payload/headers",
+                        percent(id)
+                    )
+                })
+                .collect();
+            let (mut limited, mut last) = (0, None);
+            for (id, answer) in chunk.iter().zip(self.batch(&paths).await?) {
+                match answer {
+                    Ok(json) => {
+                        found.push(raw_message(&json).ok_or_else(|| protocol("bad message"))?)
+                    }
+                    // Deleted between the list and here.
+                    Err(ProviderError::Gone) => {}
+                    Err(e @ ProviderError::Network(_)) => {
+                        queue.push_back(id);
+                        limited += 1;
+                        last = Some(e);
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            // Nothing got through: the sync tries again later.
+            if limited == chunk.len()
+                && let Some(e) = last
+            {
+                return Err(e);
+            }
         }
+        Ok(found)
     }
 
     /// The messages that changed since `start`, in the order they changed, and where the
@@ -355,6 +403,7 @@ impl GmailSession {
             flags: vec![],
             gone: vec![],
         };
+        let mut added = Vec::new();
         for t in touched {
             if known.contains(t.id.as_str()) {
                 if has(&t.labels, folder) {
@@ -362,10 +411,12 @@ impl GmailSession {
                 } else {
                     changes.gone.push(t.id);
                 }
-            } else if has(&t.labels, folder)
-                && let Some(m) = self.header(&t.id).await?
-                && has(&m.labels, folder)
-            {
+            } else if has(&t.labels, folder) {
+                added.push(t.id);
+            }
+        }
+        for m in self.headers(&added).await? {
+            if has(&m.labels, folder) {
                 changes.new.push(m.raw);
             }
         }
@@ -443,6 +494,37 @@ fn raw_message(json: &Value) -> Option<Labeled> {
         },
         labels,
     })
+}
+
+/// The JSON of a response, or the error its status means.
+fn answer(response: &Response) -> Result<Value, ProviderError> {
+    if !response.ok() {
+        return Err(error(response));
+    }
+    if response.body.is_empty() {
+        return Ok(Value::Null);
+    }
+    serde_json::from_slice(&response.body).map_err(|e| protocol(e.to_string()))
+}
+
+/// The error a failed response means.
+fn error(response: &Response) -> ProviderError {
+    let Response { status, body, .. } = response;
+    // A front end in the way may answer an error with HTML.
+    let json: Value = serde_json::from_slice(body).unwrap_or(Value::Null);
+    let error = &json["error"];
+    let reason = error["message"].as_str().unwrap_or_default();
+    let limited = each(&error["errors"], |e| &e["reason"])
+        .iter()
+        .any(|r| r.ends_with("LimitExceeded") || r == "quotaExceeded");
+    match status {
+        401 => ProviderError::Auth,
+        404 => ProviderError::Gone,
+        // Over a rate or quota limit: later it goes through.
+        403 if limited => ProviderError::Network(format!("403 {reason}")),
+        429 | 500.. => ProviderError::Network(format!("{status} {reason}")),
+        status => ProviderError::Rejected(format!("{status} {reason}")),
+    }
 }
 
 /// Google sends 64-bit numbers as strings.

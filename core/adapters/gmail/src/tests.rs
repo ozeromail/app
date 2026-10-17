@@ -80,26 +80,64 @@ async fn serve(listener: TcpListener, routes: Routes, seen: Seen) {
         let body = String::from_utf8(buf.drain(..length).collect()).unwrap();
         let mut words = head.split(' ');
         let method = words.next().unwrap().to_owned();
-        let path = words.next().unwrap().strip_prefix(BASE).unwrap().to_owned();
-        let (status, json) = routes
-            .iter()
-            .find(|(prefix, ..)| path.starts_with(prefix))
-            .map_or(
-                (404, json!({"error": {"message": "Not Found"}})),
-                |(_, s, j)| (*s, j.clone()),
-            );
-        seen.lock().unwrap().push((method, path, body));
-        let json = if status == 204 {
-            String::new()
+        let path = words.next().unwrap().to_owned();
+        let reply = if path == "/batch/gmail/v1" {
+            // One round trip; each part answered from the routes, last part first.
+            seen.lock().unwrap().push((method, path, String::new()));
+            let boundary = head
+                .lines()
+                .find_map(|l| l.split_once("boundary="))
+                .unwrap()
+                .1;
+            let mut parts = String::new();
+            for (i, part) in body.split(&format!("--{boundary}")).enumerate().skip(1) {
+                let Some(get) = part.lines().find_map(|l| l.strip_prefix("GET ")) else {
+                    continue;
+                };
+                let get = get.strip_prefix(BASE).unwrap().to_owned();
+                let (status, json) = route(&routes, &get);
+                seen.lock()
+                    .unwrap()
+                    .push(("GET".into(), get, String::new()));
+                parts.insert_str(
+                    0,
+                    &format!(
+                        "--b_1\r\nContent-Type: application/http\r\nContent-ID: <response-{}>\r\n\r\nHTTP/1.1 {status} X\r\n\r\n{json}\r\n",
+                        i - 1
+                    ),
+                );
+            }
+            parts.push_str("--b_1--\r\n");
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: multipart/mixed; boundary=b_1\r\nContent-Length: {}\r\n\r\n{parts}",
+                parts.len()
+            )
         } else {
-            json.to_string()
+            let path = path.strip_prefix(BASE).unwrap().to_owned();
+            let (status, json) = route(&routes, &path);
+            seen.lock().unwrap().push((method, path, body));
+            let json = if status == 204 {
+                String::new()
+            } else {
+                json.to_string()
+            };
+            format!(
+                "HTTP/1.1 {status} X\r\nContent-Length: {}\r\n\r\n{json}",
+                json.len()
+            )
         };
-        let reply = format!(
-            "HTTP/1.1 {status} X\r\nContent-Length: {}\r\n\r\n{json}",
-            json.len()
-        );
         tls.write_all(reply.as_bytes()).await.unwrap();
     }
+}
+
+fn route(routes: &Routes, path: &str) -> (u16, Value) {
+    routes
+        .iter()
+        .find(|(prefix, ..)| path.starts_with(prefix))
+        .map_or(
+            (404, json!({"error": {"message": "Not Found"}})),
+            |(_, s, j)| (*s, j.clone()),
+        )
 }
 
 fn message(id: &str, labels: &[&str], date_ms: u64, subject: &str) -> Value {
@@ -214,6 +252,7 @@ async fn follows_the_history() {
         .lock()
         .unwrap()
         .iter()
+        .filter(|(m, ..)| m == "GET")
         .map(|(_, p, _)| p.clone())
         .collect();
     assert_eq!(paths.len(), 3, "{paths:?}");
@@ -330,4 +369,40 @@ async fn maps_errors() {
         gmail.body("INBOX", 0, "nothere").await,
         Err(ProviderError::Gone)
     );
+}
+
+#[tokio::test]
+async fn reads_headers_in_batches() {
+    let (mut gmail, seen) = session(vec![
+        ("/messages/a?", 200, message("a", &["INBOX"], 1_000, "A")),
+        (
+            "/messages/busy?",
+            429,
+            json!({"error": {"message": "Slow down"}}),
+        ),
+    ])
+    .await;
+    let mut ids: Vec<String> = (0..MAX_BATCH).map(|_| "a".into()).collect();
+    ids.push("gone".into());
+    assert_eq!(gmail.headers(&ids).await.unwrap().len(), MAX_BATCH);
+    let batches = |seen: &Seen| {
+        seen.lock()
+            .unwrap()
+            .iter()
+            .filter(|(m, ..)| m == "POST")
+            .count()
+    };
+    assert_eq!(batches(&seen), 2);
+    // Asked again once on its own; still over the limit, the sync tries again later.
+    assert!(matches!(
+        gmail.headers(&["a".into(), "busy".into()]).await,
+        Err(ProviderError::Network(_))
+    ));
+    let busy = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, p, _)| p.starts_with("/messages/busy"))
+        .count();
+    assert_eq!(busy, 2);
 }
