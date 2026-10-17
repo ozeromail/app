@@ -43,7 +43,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
@@ -70,6 +73,7 @@ fun MessageScreen(
     var error by remember(message.id) { mutableStateOf<Int?>(null) }
     // The page again with its remote images, by message id.
     var withImages by remember(message.id) { mutableStateOf<Pair<Long, String>?>(null) }
+    var imagesError by remember(message.id) { mutableStateOf<Int?>(null) }
     LaunchedEffect(message.id) {
         try {
             thread = mail.thread(message)
@@ -82,14 +86,22 @@ fun MessageScreen(
         try {
             mail.images(of)?.let { withImages = of.id to it }
         } catch (e: CoreException) {
-            error = e.text()
+            imagesError = e.text()
         }
     }
     LaunchedEffect(shown.id) {
         try {
             val loaded = mail.body(shown)
-            body = shown.id to loaded
-            if (loaded.remoteImages > 0u && loaded.showsImages) loadImages(shown)
+            if (loaded.remoteImages > 0u && loaded.showsImages) {
+                // Wait a moment for the images, so the page does not load twice and jump.
+                coroutineScope {
+                    val images = async { loadImages(shown) }
+                    withTimeoutOrNull(IMAGES_WAIT_MS) { images.await() }
+                    body = shown.id to loaded
+                }
+            } else {
+                body = shown.id to loaded
+            }
         } catch (e: CoreException) {
             error = e.text()
         }
@@ -116,16 +128,18 @@ fun MessageScreen(
         val loaded = body?.takeIf { it.first == shown.id }?.second
         val full = withImages?.takeIf { it.first == shown.id }?.second
         val html = full ?: loaded?.html
-        if (loaded != null && full == null && loaded.remoteImages > 0u && !loaded.showsImages) {
-            HiddenImages(onShow = {
+        val imagesFailed = imagesError
+        if (loaded != null && full == null && (imagesFailed != null || loaded.remoteImages > 0u && !loaded.showsImages)) {
+            HiddenImages(imagesFailed ?: R.string.message_images_hidden, onShow = {
                 val of = shown
+                imagesError = null
                 scope.launch {
                     try {
                         mail.allowImages(of)
+                        loadImages(of)
                     } catch (e: CoreException) {
-                        error = e.text()
+                        imagesError = e.text()
                     }
-                    loadImages(of)
                 }
             })
         }
@@ -197,7 +211,7 @@ private fun Actions(onDone: () -> Unit) {
 
 /** A note that the remote images are held back, with a way to see them from now on. */
 @Composable
-private fun HiddenImages(onShow: () -> Unit) {
+private fun HiddenImages(note: Int, onShow: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     Row(
         Modifier
@@ -209,7 +223,7 @@ private fun HiddenImages(onShow: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text(
-            stringResource(R.string.message_images_hidden),
+            stringResource(note),
             color = colors.onSurfaceVariant,
             fontSize = 13.sp,
             lineHeight = 17.5.sp,
@@ -309,3 +323,6 @@ private fun Header(message: MessageItem, modifier: Modifier) {
         }
     }
 }
+
+/** How long a page waits for its images before it shows without them. */
+private const val IMAGES_WAIT_MS = 2_000L

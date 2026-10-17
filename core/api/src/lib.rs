@@ -514,27 +514,25 @@ impl Core {
             return Ok(None);
         }
         let tls = self.tls()?;
-        let mut loaded = Vec::with_capacity(page.images.len());
+        let slots = Arc::new(tokio::sync::Semaphore::new(IMAGES_AT_ONCE));
+        // A JoinSet stops the downloads when the reader leaves and this future is dropped.
+        let mut fetches = tokio::task::JoinSet::new();
+        for (n, url) in page.images.iter().take(IMAGES).enumerate() {
+            let (url, tls, slots) = (url.clone(), tls.clone(), slots.clone());
+            fetches.spawn(async move {
+                let _slot = slots.acquire().await;
+                (n, ozero_http::image(&url, tls).await.ok())
+            });
+        }
+        let mut loaded = vec![None; fetches.len()];
         let mut left = IMAGES_SIZE;
-        for urls in page
-            .images
-            .chunks(IMAGES_AT_ONCE)
-            .take(IMAGES / IMAGES_AT_ONCE)
-        {
-            let fetches: Vec<_> = urls
-                .iter()
-                .map(|url| {
-                    let (url, tls) = (url.clone(), tls.clone());
-                    tokio::spawn(async move { ozero_http::image(&url, tls).await })
-                })
-                .collect();
-            for fetch in fetches {
-                let image = fetch.await.ok().and_then(Result::ok);
-                let uri = image.filter(|i| i.body.len() <= left).and_then(|i| {
-                    left -= i.body.len();
-                    data_uri(&i.content_type, &i.body)
-                });
-                loaded.push(uri);
+        while let Some(fetched) = fetches.join_next().await {
+            let Ok((n, Some(image))) = fetched else {
+                continue;
+            };
+            if image.body.len() <= left {
+                left -= image.body.len();
+                loaded[n] = data_uri(&image.content_type, &image.body);
             }
         }
         Ok(Some(sandboxed(&html::with_images(&page.html, &loaded))))

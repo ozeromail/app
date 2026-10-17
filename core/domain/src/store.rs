@@ -54,7 +54,7 @@ pub trait Store: Send + Sync {
     fn clear_fresh(&self) -> Result<(), StoreError>;
 
     /// Whether the message's remote images load without asking: mail from people, and from
-    /// senders whose images the user chose to see.
+    /// senders whose images the user chose to see; never in junk.
     fn shows_images(&self, message: MessageId) -> Result<bool, StoreError>;
     /// From now on the message's sender's images load without asking.
     fn allow_images(&self, message: MessageId) -> Result<(), StoreError>;
