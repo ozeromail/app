@@ -33,14 +33,28 @@ pub async fn image(url: &str, tls: Arc<ClientConfig>) -> Result<Response, Provid
             };
         }
         let next = &response.location;
-        if next.starts_with('/') && !next.starts_with("//") {
-            path = next.clone();
+        let next = if let Some(n) = next.strip_prefix("//") {
+            format!("https://{n}")
+        } else if next.starts_with('/') {
+            format!("https://{host}:{port}{next}")
+        } else if next.contains("://") {
+            next.clone()
         } else {
-            let next = next.strip_prefix("//").map(|n| format!("https://{n}"));
-            (host, port, path) = split(next.as_deref().unwrap_or(&response.location))?;
-        }
+            format!("https://{host}:{port}{}", relative(&path, next))
+        };
+        (host, port, path) = split(&next)?;
     }
     Err(bad("too many redirects"))
+}
+
+/// The path a relative reference such as `b.png` or `?v=2` leads to from `path`.
+fn relative(path: &str, next: &str) -> String {
+    let path = path.split('?').next().unwrap_or_default();
+    if next.starts_with('?') {
+        return format!("{path}{next}");
+    }
+    let dir = path.rfind('/').map_or("/", |at| &path[..=at]);
+    format!("{dir}{next}")
 }
 
 /// Host, port and path of an `https` address, without its fragment.
@@ -77,23 +91,26 @@ pub(crate) fn is_public(ip: IpAddr) -> bool {
             !(v4.is_private()
                 || v4.is_loopback()
                 || v4.is_link_local()
-                || v4.is_unspecified()
-                || v4.is_broadcast()
                 || v4.is_documentation()
                 || a == 0
-                // Carrier-grade NAT, 100.64.0.0/10.
-                || (a == 100 && (64..128).contains(&b)))
+                // Multicast, reserved and broadcast.
+                || a >= 224
+                // Carrier-grade NAT 100.64.0.0/10, benchmarking 198.18.0.0/15.
+                || (a == 100 && (64..128).contains(&b))
+                || (a == 198 && (18..20).contains(&b)))
         }
         IpAddr::V6(v6) => {
             if let Some(v4) = v6.to_ipv4_mapped() {
                 return is_public(IpAddr::V4(v4));
             }
-            let first = v6.segments()[0];
-            !(v6.is_loopback()
-                || v6.is_unspecified()
-                // Unique local fc00::/7 and link-local fe80::/10.
-                || (first & 0xfe00) == 0xfc00
-                || (first & 0xffc0) == 0xfe80)
+            let [first, second, ..] = v6.segments();
+            // Global unicast 2000::/3 only, without the ranges that lead elsewhere: protocol
+            // assignments 2001::/23 (Teredo among them), documentation 2001:db8::/32 and
+            // 6to4 2002::/16. NAT64, multicast and local ranges are outside 2000::/3.
+            (first & 0xe000) == 0x2000
+                && !(first == 0x2001 && second < 0x200)
+                && !(first == 0x2001 && second == 0xdb8)
+                && first != 0x2002
         }
     }
 }
@@ -128,6 +145,12 @@ mod tests {
     }
 
     #[test]
+    fn follows_relative_references() {
+        assert_eq!(relative("/a/b.png?x", "c.png"), "/a/c.png");
+        assert_eq!(relative("/a/b.png?x", "?v=2"), "/a/b.png?v=2");
+    }
+
+    #[test]
     fn tells_public_addresses() {
         for ip in [
             "10.0.0.1",
@@ -139,10 +162,17 @@ mod tests {
             "fd00::1",
             "fe80::1",
             "::ffff:192.168.0.1",
+            "::a00:1",
+            "64:ff9b::a00:1",
+            "2002:a00:1::1",
+            "2001:db8::1",
+            "ff02::1",
+            "224.0.0.1",
+            "198.18.0.1",
         ] {
             assert!(!is_public(ip.parse().unwrap()), "{ip}");
         }
-        for ip in ["93.184.216.34", "2606:4700::1111"] {
+        for ip in ["93.184.216.34", "2606:4700::1111", "2001:4860:4860::8888"] {
             assert!(is_public(ip.parse().unwrap()), "{ip}");
         }
     }

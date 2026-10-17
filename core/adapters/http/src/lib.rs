@@ -157,9 +157,7 @@ impl HttpsClient {
             timed(TcpStream::connect((self.host.as_str(), self.port))).await?
         };
         let tls = TlsConnector::from(self.tls.clone());
-        let mut conn = Conn::new(timed(tls.connect(name, tcp)).await?);
-        conn.limit = self.limit;
-        Ok(conn)
+        Ok(Conn::new(timed(tls.connect(name, tcp)).await?, self.limit))
     }
 }
 
@@ -247,11 +245,11 @@ struct Conn<S> {
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
-    fn new(stream: S) -> Self {
+    fn new(stream: S, limit: usize) -> Self {
         Self {
             stream,
             buf: Vec::new(),
-            limit: MAX_BODY,
+            limit,
         }
     }
 
@@ -270,7 +268,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
 
     /// The response and whether the connection can carry another request.
     async fn response(&mut self) -> Result<(Response, bool), Failure> {
-        let (status, content_type, location, length, close) = loop {
+        let (mut response, length, close) = loop {
             if let Some(head) = self.head()? {
                 break head;
             }
@@ -285,27 +283,19 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
                 });
             }
         };
-        let body = match length {
+        response.body = match length {
             Length::None => Vec::new(),
             Length::Fixed(n) => self.fixed(n).await?,
             Length::Chunked => self.chunked().await?,
             Length::ToEnd => self.until_closed().await?,
         };
         let keep = !close && !matches!(length, Length::ToEnd);
-        Ok((
-            Response {
-                status,
-                content_type,
-                location,
-                body,
-            },
-            keep,
-        ))
+        Ok((response, keep))
     }
 
-    /// Parses and takes the head from `buf` once it is all there.
-    #[allow(clippy::type_complexity)]
-    fn head(&mut self) -> Result<Option<(u16, String, String, Length, bool)>, ProviderError> {
+    /// Parses and takes the head from `buf` once it is all there: the response without its
+    /// body, how the body is sent, and whether the server closes the connection after it.
+    fn head(&mut self) -> Result<Option<(Response, Length, bool)>, ProviderError> {
         let mut headers = [httparse::EMPTY_HEADER; MAX_HEADERS];
         let mut parsed = httparse::Response::new(&mut headers);
         let size = match parsed.parse(&self.buf) {
@@ -339,10 +329,14 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
         } else {
             return Err(protocol("more than one content length"));
         };
-        let content_type = content_type(parsed.headers);
-        let location = raw(parsed.headers, "location");
+        let response = Response {
+            status,
+            content_type: content_type(parsed.headers),
+            location: raw(parsed.headers, "location"),
+            body: Vec::new(),
+        };
         self.buf.drain(..size);
-        Ok(Some((status, content_type, location, length, close)))
+        Ok(Some((response, length, close)))
     }
 
     async fn fixed(&mut self, n: usize) -> Result<Vec<u8>, ProviderError> {

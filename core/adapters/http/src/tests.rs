@@ -7,7 +7,7 @@ async fn served(reply: &[u8]) -> Conn<DuplexStream> {
     let (client, mut server) = duplex(1 << 20);
     server.write_all(reply).await.unwrap();
     drop(server);
-    Conn::new(client)
+    Conn::new(client, MAX_BODY)
 }
 
 async fn read(reply: &[u8]) -> Result<(Response, bool), ProviderError> {
@@ -138,7 +138,7 @@ async fn keeps_the_connection_for_the_next_request() {
     let (client, mut server) = duplex(1 << 16);
     let replies = b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\naHTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nb";
     server.write_all(replies).await.unwrap();
-    let conn = Conn::new(client);
+    let conn = Conn::new(client, MAX_BODY);
     let get = request("GET", "h", "/", &[], None).unwrap();
     let Ok((first, Some(conn))) = exchange(conn, &get).await else {
         panic!("first")

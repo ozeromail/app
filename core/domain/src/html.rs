@@ -7,7 +7,7 @@
 pub struct Page {
     /// Each held back image carries `data-ozero-image="N"` instead of its source.
     pub html: String,
-    /// The `https` addresses of the held back images, by `N`.
+    /// The `https` addresses of the held back images, by `N`; each address once.
     pub images: Vec<String>,
 }
 
@@ -16,6 +16,9 @@ const DROPPED: [&str; 5] = ["script", "iframe", "object", "embed", "template"];
 /// Tags dropped on their own: they would change how the page loads.
 const VOID_DROPPED: [&str; 3] = ["base", "meta", "link"];
 const IMAGE_MARK: &str = "data-ozero-image";
+/// The mark where the sender wrote it, so only marks `clean` puts in load images. Read as
+/// text or an attribute value it shows the same; as an attribute name it means nothing.
+const FORGED_MARK: &str = "data-ozero-imag&#101;";
 
 /// Drops scripts, frames and tracking pixels, and holds back remote images.
 pub fn clean(html: &str) -> Page {
@@ -25,7 +28,7 @@ pub fn clean(html: &str) -> Page {
     };
     let mut rest = html;
     while let Some(lt) = rest.find('<') {
-        page.html.push_str(&rest[..lt]);
+        push(&mut page.html, &rest[..lt]);
         rest = &rest[lt..];
         if let Some(comment) = rest.strip_prefix("<!--") {
             rest = comment.find("-->").map_or("", |end| &comment[end + 3..]);
@@ -37,19 +40,28 @@ pub fn clean(html: &str) -> Page {
             continue;
         };
         rest = &rest[tag.len..];
-        if !tag.closing && DROPPED.contains(&tag.name.as_str()) {
-            rest = after_end_tag(rest, &tag.name);
-        } else if VOID_DROPPED.contains(&tag.name.as_str()) || DROPPED.contains(&tag.name.as_str())
-        {
-            // Dropped.
-        } else if tag.name == "img" && !tag.closing {
+        let name = tag.name.as_str();
+        if DROPPED.contains(&name) {
+            if !tag.closing {
+                rest = after_end_tag(rest, name);
+            }
+        } else if name == "img" && !tag.closing {
             image(&tag, &mut page);
-        } else {
-            page.html.push_str(tag.raw);
+        } else if !VOID_DROPPED.contains(&name) {
+            push(&mut page.html, tag.raw);
         }
     }
-    page.html.push_str(rest);
+    push(&mut page.html, rest);
     page
+}
+
+/// Writes what the sender wrote, with any image mark in it made harmless.
+fn push(out: &mut String, sent: &str) {
+    if sent.contains(IMAGE_MARK) {
+        out.push_str(&sent.replace(IMAGE_MARK, FORGED_MARK));
+    } else {
+        out.push_str(sent);
+    }
 }
 
 /// Puts the loaded images in: `images[N]` is a `data:` address for image `N`, or None to
@@ -59,11 +71,11 @@ pub fn with_images(html: &str, images: &[Option<String>]) -> String {
     let mut rest = html;
     let mark = format!("{IMAGE_MARK}=\"");
     while let Some(at) = rest.find(&mark) {
-        out.push_str(&rest[..at]);
         let value = &rest[at + mark.len()..];
         let Some(end) = value.find('"') else {
             break;
         };
+        out.push_str(&rest[..at]);
         let source = value[..end]
             .parse::<usize>()
             .ok()
@@ -182,15 +194,13 @@ impl<'a> Tag<'a> {
 
 /// What follows the end tag of `name`, or nothing if it never ends.
 fn after_end_tag<'a>(html: &'a str, name: &str) -> &'a str {
-    let lower = html.to_ascii_lowercase();
     let end = format!("</{name}");
-    let Some(at) = lower.find(&end) else {
-        return "";
-    };
-    match html[at..].find('>') {
-        Some(close) => &html[at + close + 1..],
-        None => "",
-    }
+    let at = html.match_indices("</").map(|(at, _)| at).find(|&at| {
+        html.get(at..at + end.len())
+            .is_some_and(|s| s.eq_ignore_ascii_case(&end))
+    });
+    let close = at.and_then(|at| html[at..].find('>').map(|close| at + close + 1));
+    close.map_or("", |close| &html[close..])
 }
 
 /// Writes an image: as is, without a pixel, or held back.
@@ -200,7 +210,7 @@ fn image(tag: &Tag<'_>, page: &mut Page) {
     }
     let remote = tag.attr("src").and_then(remote_source);
     let Some(source) = remote else {
-        page.html.push_str(tag.raw);
+        push(&mut page.html, tag.raw);
         return;
     };
     page.html.push_str("<img");
@@ -209,26 +219,29 @@ fn image(tag: &Tag<'_>, page: &mut Page) {
             continue;
         }
         page.html.push(' ');
-        page.html.push_str(name);
+        push(&mut page.html, name);
         if let Some(value) = value {
             page.html.push_str("=\"");
-            page.html.push_str(&value.replace('"', "&quot;"));
+            push(&mut page.html, &value.replace('"', "&quot;"));
             page.html.push('"');
         }
     }
-    page.html
-        .push_str(&format!(" {IMAGE_MARK}=\"{}\">", page.images.len()));
-    page.images.push(source);
+    // A repeated image, such as a logo, loads once.
+    let n = page
+        .images
+        .iter()
+        .position(|s| *s == source)
+        .unwrap_or_else(|| {
+            page.images.push(source);
+            page.images.len() - 1
+        });
+    page.html.push_str(&format!(" {IMAGE_MARK}=\"{n}\">"));
 }
 
 /// An image too small to see, or hidden: it is only there to report the message was opened.
+/// A line, 600 by 1, is not one.
 fn is_pixel(tag: &Tag<'_>) -> bool {
-    let tiny = |attr| {
-        tag.attr(attr)
-            .and_then(|v| v.trim().trim_end_matches("px").parse::<f32>().ok())
-            .is_some_and(|n| n <= 1.0)
-    };
-    let style: String = tag
+    let style = tag
         .attr("style")
         .unwrap_or_default()
         .chars()
@@ -238,10 +251,19 @@ fn is_pixel(tag: &Tag<'_>) -> bool {
     let hidden = ["display:none", "visibility:hidden"]
         .iter()
         .any(|s| style.contains(s));
-    let tiny_style = ["width:0", "width:1px", "height:0", "height:1px"]
-        .iter()
-        .any(|s| style.split(';').any(|rule| rule.starts_with(s)));
-    tiny("width") || tiny("height") || hidden || tiny_style
+    let size = |name: &str| {
+        let rule = format!("{name}:");
+        let styled = style.split(';').find_map(|r| r.strip_prefix(&rule));
+        styled
+            .or(tag.attr(name))
+            .and_then(|v| v.trim().trim_end_matches("px").parse::<f32>().ok())
+    };
+    let (width, height) = (size("width"), size("height"));
+    let zero = |n: Option<f32>| n.is_some_and(|n| n <= 0.0);
+    let tiny = |n: Option<f32>, other: Option<f32>| {
+        n.is_some_and(|n| n <= 1.0) && other.is_none_or(|n| n <= 1.0)
+    };
+    hidden || zero(width) || zero(height) || tiny(width, height) || tiny(height, width)
 }
 
 /// The `https` address of a remote image source; `http` becomes `https`.
@@ -284,6 +306,41 @@ mod tests {
             r#"<p>Hi</p><img alt="a &quot;b&quot;" src="data:image/png;base64,BB"><img src="data:image/png;base64,AA">"#
         );
         assert!(!with_images(&page.html, &[None]).contains("src=\"data:image/png;base64,BB"));
+    }
+
+    #[test]
+    fn loads_only_its_own_marks() {
+        let page =
+            clean(r#"<p data-ozero-image="0">data-ozero-image="0"</p><img src=https://x/a>"#);
+        let shown = with_images(&page.html, &[Some("data:image/png;base64,AA".into())]);
+        assert_eq!(shown.matches("src=").count(), 1, "{shown}");
+        assert_eq!(
+            with_images("a data-ozero-image=\"0", &[]),
+            "a data-ozero-image=\"0"
+        );
+    }
+
+    #[test]
+    fn keeps_lines_but_not_pixels() {
+        for pixel in [
+            "<img src=https://x/p width=1>",
+            "<img src=https://x/p style='width:1px;height:1px'>",
+            "<img src=https://x/p width=600 height=0>",
+        ] {
+            assert!(clean(pixel).html.is_empty(), "{pixel}");
+        }
+        let line = clean("<img src=https://x/l width=600 height=1>");
+        assert_eq!(line.images.len(), 1);
+    }
+
+    #[test]
+    fn loads_a_repeated_image_once() {
+        let page = clean("<img src=https://x/l.png><SCRIPT>x</Script ><img src=https://x/l.png>");
+        assert_eq!(page.images, ["https://x/l.png"]);
+        assert_eq!(
+            page.html,
+            r#"<img data-ozero-image="0"><img data-ozero-image="0">"#
+        );
     }
 
     #[test]

@@ -367,9 +367,11 @@ impl Store for SqliteStore {
     fn shows_images(&self, message: MessageId) -> Result<bool, StoreError> {
         self.conn()
             .prepare_cached(
-                "SELECT category = 'people'
-                        OR EXISTS (SELECT 1 FROM image_sender WHERE email = from_email)
-                 FROM message WHERE id = ?1",
+                // Never in junk: a sender there may be anyone, and may be pretending.
+                "SELECT f.role IS NOT 'junk' AND (
+                            m.category = 'people' AND m.from_email != ''
+                            OR EXISTS (SELECT 1 FROM image_sender WHERE email = m.from_email))
+                 FROM message m JOIN folder f ON f.id = m.folder_id WHERE m.id = ?1",
             )
             .and_then(|mut s| s.query_row([message.0], |r| r.get(0)).optional())
             .map_err(storage)?
@@ -380,16 +382,13 @@ impl Store for SqliteStore {
         let changed = self
             .conn()
             .execute(
-                "INSERT OR IGNORE INTO image_sender (email)
+                // REPLACE counts a sender already allowed, so zero means no such message.
+                "INSERT OR REPLACE INTO image_sender (email)
                  SELECT from_email FROM message WHERE id = ?1",
                 [message.0],
             )
             .map_err(storage)?;
-        // Zero also when the sender was already allowed.
-        if changed == 0 {
-            self.shows_images(message)?;
-        }
-        Ok(())
+        found(changed)
     }
 
     fn correspondents(&self, message: MessageId) -> Result<Correspondents, StoreError> {

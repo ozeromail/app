@@ -1128,6 +1128,12 @@ fn shows_images_from_people_and_chosen_senders() {
     store.allow_images(letter).unwrap();
     store.allow_images(letter).unwrap();
     assert!(store.shows_images(letter).unwrap());
+    store
+        .conn()
+        .execute_batch("UPDATE folder SET role = 'junk'")
+        .unwrap();
+    assert!(!store.shows_images(person).unwrap());
+    assert!(!store.shows_images(letter).unwrap());
     assert_eq!(
         store.allow_images(MessageId(999)),
         Err(StoreError::NotFound)
