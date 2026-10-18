@@ -3,23 +3,27 @@ package com.ozeromail.app
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
+import java.io.ByteArrayInputStream
+import uniffi.ozero_api.RemoteImage
 
 /**
  * Shows a message's HTML with no scripts, no file access and no network.
  * The page from the core also carries its own policy; links open in the browser.
+ * The page asks for its loaded [images] by address, so it stays small.
  */
 @Composable
-fun HtmlView(html: String, modifier: Modifier = Modifier) {
+fun HtmlView(html: String, images: List<RemoteImage?>, modifier: Modifier = Modifier) {
     AndroidView(
         modifier = modifier,
         factory = { context ->
             WebView(context).apply {
-                configure()
+                configure(images)
                 loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
             }
         },
@@ -27,7 +31,7 @@ fun HtmlView(html: String, modifier: Modifier = Modifier) {
     )
 }
 
-private fun WebView.configure() {
+private fun WebView.configure(images: List<RemoteImage?>) {
     settings.apply {
         javaScriptEnabled = false
         allowFileAccess = false
@@ -40,6 +44,14 @@ private fun WebView.configure() {
         displayZoomControls = false
     }
     webViewClient = object : WebViewClient() {
+        // The page's own loaded images, from images.ozero.invalid/<message>/<n>.
+        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+            if (request.url.host != IMAGES_HOST) return null
+            val image = request.url.lastPathSegment?.toIntOrNull()?.let(images::getOrNull)
+                ?: return WebResourceResponse("text/plain", null, 404, "Not Found", null, ByteArrayInputStream(ByteArray(0)))
+            return WebResourceResponse(image.mime, null, ByteArrayInputStream(image.data))
+        }
+
         // Only a tap opens a link; a page cannot redirect on its own.
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             if (request.hasGesture() && request.url.scheme?.lowercase() in LINK_SCHEMES) {
@@ -56,4 +68,5 @@ private fun WebView.configure() {
     }
 }
 
+private const val IMAGES_HOST = "images.ozero.invalid"
 private val LINK_SCHEMES = setOf("http", "https", "mailto")

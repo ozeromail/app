@@ -13,7 +13,7 @@ use ozero_app::sync::{SyncError, download_body, sync_mail};
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Body, Category, Changes, Checkpoint, Draft,
     FolderRole, ListQuery, ListScope, MailProvider, MessageId, MessageRow, NewAccount, NewFolder,
-    OpId, OutboxId, ProviderError, Server, Store, StoreError, base64, html, parse_recipients,
+    OpId, OutboxId, ProviderError, Server, Store, StoreError, html, parse_recipients,
     saves_sent_itself,
 };
 use ozero_gmail::{GmailSession, oauth};
@@ -505,7 +505,7 @@ impl Core {
 
     /// The message's page with its remote images loaded now, for `MessageBody::html`; None
     /// when it has none. An image that does not load stays out.
-    pub async fn message_images(&self, message: i64) -> Result<Option<String>, CoreError> {
+    pub async fn message_images(&self, message: i64) -> Result<Option<ImagesPage>, CoreError> {
         let Some(html) = self.store.body(MessageId(message))?.and_then(|b| b.html) else {
             return Ok(None);
         };
@@ -524,18 +524,35 @@ impl Core {
                 (n, ozero_http::image(&url, tls).await.ok())
             });
         }
-        let mut loaded = vec![None; fetches.len()];
+        let mut images = vec![None; fetches.len()];
         let mut left = IMAGES_SIZE;
         while let Some(fetched) = fetches.join_next().await {
             let Ok((n, Some(image))) = fetched else {
                 continue;
             };
-            if image.body.len() <= left {
-                left -= image.body.len();
-                loaded[n] = data_uri(&image.content_type, &image.body);
+            let Some(image) = RemoteImage::new(&image.content_type, image.body) else {
+                continue;
+            };
+            if image.data.len() <= left {
+                left -= image.data.len();
+                images[n] = Some(image);
             }
         }
-        Ok(Some(sandboxed(&html::with_images(&page.html, &loaded))))
+        // Addresses, not `data:` copies: a page with all its images inline is too big to
+        // pass around on the app's side.
+        let sources: Vec<_> = images
+            .iter()
+            .enumerate()
+            .map(|(n, image)| {
+                image
+                    .as_ref()
+                    .map(|_| format!("{IMAGE_ADDRESS}{message}/{n}"))
+            })
+            .collect();
+        Ok(Some(ImagesPage {
+            html: sandboxed(&html::with_images(&page.html, &sources)),
+            images,
+        }))
     }
 
     /// From now on the remote images of mail from this message's sender load on their own.
@@ -549,14 +566,17 @@ const IMAGES: usize = 48;
 const IMAGES_AT_ONCE: usize = 6;
 const IMAGES_SIZE: usize = 12 * 1024 * 1024;
 
-/// A `data:` address for an image of `content_type`; None for a type that is not an image.
-fn data_uri(content_type: &str, data: &[u8]) -> Option<String> {
-    let mime = content_type.split(';').next()?.trim().to_ascii_lowercase();
-    let plain = mime
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '+' | '-'));
-    (mime.starts_with("image/") && plain).then(|| format!("data:{mime};base64,{}", base64(data)))
+/// The host a page asks for its loaded images on; `.invalid` never reaches the network.
+macro_rules! image_host {
+    () => {
+        "images.ozero.invalid"
+    };
 }
+
+/// Where a page asks for its loaded image `N`: `{IMAGE_ADDRESS}{message}/{N}`. The app answers
+/// these from `ImagesPage::images`. The web view may keep images in memory by address across
+/// pages, so the message id keeps another message's image `N` from showing.
+const IMAGE_ADDRESS: &str = concat!("https://", image_host!(), "/");
 
 impl Core {
     /// List rows, marked with their account when there is more than one.
@@ -1080,13 +1100,43 @@ impl From<Body> for MessageBody {
     }
 }
 
+/// A page with its remote images, which it asks for by address.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ImagesPage {
+    /// As `MessageBody::html`, with each loaded image's address in its place.
+    pub html: String,
+    /// By the last part of an image's address; None for an image that did not load.
+    pub images: Vec<Option<RemoteImage>>,
+}
+
+/// One downloaded image.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RemoteImage {
+    /// A plain `image/...` type.
+    pub mime: String,
+    pub data: Vec<u8>,
+}
+
+impl RemoteImage {
+    /// None for a type that is not an image.
+    fn new(content_type: &str, data: Vec<u8>) -> Option<Self> {
+        let mime = content_type.split(';').next()?.trim().to_ascii_lowercase();
+        let plain = mime
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '+' | '-'));
+        (mime.starts_with("image/") && plain).then_some(Self { mime, data })
+    }
+}
+
 /// Wraps a message's HTML so the page can load nothing from outside, even if the
 /// web view's own blocking fails: no scripts, frames, forms or remote images.
 fn sandboxed(html: &str) -> String {
     const HEAD: &str = concat!(
         "<!doctype html><html><head><meta charset=\"utf-8\">",
         "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; ",
-        "img-src data:; style-src 'unsafe-inline'; font-src data:; ",
+        "img-src data: https://",
+        image_host!(),
+        "; style-src 'unsafe-inline'; font-src data:; ",
         "base-uri 'none'; form-action 'none'\">",
         "<meta http-equiv=\"x-dns-prefetch-control\" content=\"off\">",
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",

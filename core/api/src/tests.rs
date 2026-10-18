@@ -55,13 +55,20 @@ fn holds_back_remote_images_and_counts_them() {
 }
 
 #[test]
-fn makes_data_addresses_only_for_images() {
+fn keeps_only_images() {
+    let image = RemoteImage::new("Image/PNG; charset=x", b"ab".to_vec()).unwrap();
+    assert_eq!(image.mime, "image/png");
+    assert_eq!(RemoteImage::new("text/html", b"ab".to_vec()), None);
     assert_eq!(
-        data_uri("Image/PNG; charset=x", b"ab").as_deref(),
-        Some("data:image/png;base64,YWI=")
+        RemoteImage::new("image/png\"><script>", b"ab".to_vec()),
+        None
     );
-    assert_eq!(data_uri("text/html", b"ab"), None);
-    assert_eq!(data_uri("image/png\"><script>", b"ab"), None);
+}
+
+#[test]
+fn lets_the_page_load_its_images() {
+    let host = IMAGE_ADDRESS.trim_end_matches('/');
+    assert!(sandboxed("").contains(&format!("img-src data: {host};")));
 }
 
 #[test]

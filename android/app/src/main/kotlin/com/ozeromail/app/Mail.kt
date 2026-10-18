@@ -19,6 +19,7 @@ import uniffi.ozero_api.Core
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.DraftItem
 import uniffi.ozero_api.Endpoint
+import uniffi.ozero_api.ImagesPage
 import uniffi.ozero_api.InboxTab
 import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
@@ -129,7 +130,7 @@ class Mail(private val context: Context) {
     }
 
     /** [message]'s page with its remote images loaded; null when it has none. */
-    suspend fun images(message: MessageItem): String? = io { core.messageImages(message.id) }
+    suspend fun images(message: MessageItem): ImagesPage? = io { core.messageImages(message.id) }
 
     /** From now on the remote images of mail from [message]'s sender load on their own. */
     suspend fun allowImages(message: MessageItem) = io { core.allowImages(message.id) }
