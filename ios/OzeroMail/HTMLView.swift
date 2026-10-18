@@ -14,6 +14,10 @@ struct HTMLView: UIViewRepresentable {
         config.defaultWebpagePreferences.allowsContentJavaScript = false
         let view = WKWebView(frame: .zero, configuration: config)
         view.navigationDelegate = context.coordinator
+        // A plain page is clear and takes the screen's colour; a newsletter paints its own.
+        view.isOpaque = false
+        view.backgroundColor = .clear
+        view.scrollView.backgroundColor = .clear
         Task {
             // Without the rule list the page's own policy still blocks the network.
             if let rules = await Self.rules.value {

@@ -234,7 +234,7 @@ impl Core {
         Ok(rows.into_iter().map(MessageItem::from).collect())
     }
 
-    /// Marks a message's conversation read or unread on the device at once;
+    /// Marks a message's conversation read, or the message alone unread, on the device at once;
     /// `push_actions` tells the server.
     pub fn mark_read(&self, message: i64, seen: bool) -> Result<(), CoreError> {
         self.store
