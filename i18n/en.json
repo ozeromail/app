@@ -8,7 +8,7 @@
   "signin_password": "Password",
   "signin_server": "IMAP server",
   "signin_port": "Port",
-  "signin_google": "Continue with Google",
+  "signin_google": "Google",
   "signin_no_browser": "No browser to sign in with",
   "signin_action": "Sign in",
   "inbox_empty": "No messages",
@@ -64,5 +64,14 @@
   "crash_subject": "Ozero Mail crashed",
   "crash_title": "Ozero Mail closed unexpectedly",
   "crash_text": "Send the report to the author? The letter opens first, so you can read it. It holds where the app failed, the app and Android versions and the phone model. No mail.",
-  "action_dont_send": "Don’t send"
+  "action_dont_send": "Don’t send",
+  "signin_text": "Pick where your mail lives.",
+  "signin_icloud": "iCloud",
+  "signin_yahoo": "Yahoo",
+  "signin_yandex": "Yandex",
+  "signin_mailru": "Mail.ru",
+  "signin_other": "Other mail",
+  "signin_app_password": "App password",
+  "signin_app_password_text": "This service asks for an app password, not your usual one. Making one takes a minute.",
+  "signin_app_password_make": "Make an app password"
 }

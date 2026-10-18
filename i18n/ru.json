@@ -8,7 +8,7 @@
   "signin_password": "Пароль",
   "signin_server": "Сервер IMAP",
   "signin_port": "Порт",
-  "signin_google": "Продолжить с Google",
+  "signin_google": "Google",
   "signin_no_browser": "Нет браузера для входа",
   "signin_action": "Войти",
   "inbox_empty": "Писем нет",
@@ -64,5 +64,14 @@
   "crash_subject": "Сбой Ozero Mail",
   "crash_title": "Ozero Mail неожиданно закрылась",
   "crash_text": "Отправить отчёт автору? Сначала откроется письмо, его можно прочитать. В нём место сбоя, версии приложения и Android и модель телефона. Без почты.",
-  "action_dont_send": "Не отправлять"
+  "action_dont_send": "Не отправлять",
+  "signin_text": "Выберите, где ваша почта.",
+  "signin_icloud": "iCloud",
+  "signin_yahoo": "Yahoo",
+  "signin_yandex": "Яндекс",
+  "signin_mailru": "Mail.ru",
+  "signin_other": "Другая почта",
+  "signin_app_password": "Пароль приложения",
+  "signin_app_password_text": "Этот сервис просит пароль приложения, а не обычный пароль. Создать его можно за минуту.",
+  "signin_app_password_make": "Создать пароль приложения"
 }
