@@ -111,11 +111,11 @@ class Mail(private val context: Context) {
     suspend fun thread(message: MessageItem): List<MessageItem> = io { core.thread(message.id) }
 
     /**
-     * Marks the message's conversation read on the device now, so the list shows it on return;
+     * Marks the message's conversation read, or unread, on the device now, so the list shows it on return;
      * the server hears about it in the background.
      */
-    suspend fun markRead(message: MessageItem) {
-        io { core.markRead(message.id, true) }
+    suspend fun markRead(message: MessageItem, seen: Boolean = true) {
+        io { core.markRead(message.id, seen) }
         push(message.accountId)
     }
 
@@ -125,6 +125,13 @@ class Mail(private val context: Context) {
      */
     suspend fun archive(message: MessageItem): List<Long> {
         val actions = io { core.archive(message.id) }
+        push(message.accountId)
+        return actions
+    }
+
+    /** As [archive], into the trash. */
+    suspend fun trash(message: MessageItem): List<Long> {
+        val actions = io { core.trash(message.id) }
         push(message.accountId)
         return actions
     }
@@ -216,6 +223,7 @@ fun CoreException.text(): Int {
         is CoreException.Server -> R.string.error_server
         is CoreException.Gone -> R.string.error_gone
         is CoreException.NoArchive -> R.string.error_no_archive
+        is CoreException.NoTrash -> R.string.error_no_trash
         is CoreException.BadRecipients -> R.string.error_bad_recipients
         is CoreException.NoSmtp -> R.string.error_no_smtp
         else -> R.string.error_storage

@@ -2,6 +2,7 @@ package com.ozeromail.app
 
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.graphics.Color
 import android.view.ViewGroup
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -26,6 +27,8 @@ fun HtmlView(html: String, images: List<RemoteImage?>, modifier: Modifier = Modi
         factory = { context ->
             WebView(context).apply {
                 layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                // A plain page is clear and takes the screen's colour; a newsletter paints its own.
+                setBackgroundColor(Color.TRANSPARENT)
                 configure(images)
                 loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
             }

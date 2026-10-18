@@ -8,18 +8,23 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -38,6 +43,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -107,14 +113,17 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
     }
 
     val colors = MaterialTheme.colorScheme
+    val keyboard = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
-            composing.original?.let { Original(it) }
+            // The message being answered takes the room the fields leave; alone, the fields sit low.
+            val original = composing.original
+            if (original != null) Original(mail, original, Modifier.weight(1f))
             Column(
-                Modifier.weight(1f).padding(horizontal = Gap.screen),
+                (if (original == null) Modifier.weight(1f) else Modifier).padding(horizontal = Gap.screen),
                 verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
             ) {
-                Spacer(Modifier.weight(1f))
+                if (original == null) Spacer(Modifier.weight(1f))
                 Plain(
                     to,
                     { to = it },
@@ -137,9 +146,9 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
                     TextStyle(fontSize = 15.5.sp, lineHeight = 24.sp),
                     KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                     singleLine = false,
-                    modifier = Modifier.weight(1f, fill = false),
+                    // Room for a few lines from the start, less while the keyboard takes the screen.
+                    modifier = Modifier.heightIn(min = if (keyboard) 96.dp else 168.dp, max = 320.dp),
                 )
-                val original = composing.original
                 if (quote.isNotEmpty()) {
                     Quote(quote, onRemove = { quote = "" })
                 } else if (original != null && quotable) {
@@ -203,19 +212,26 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
     }
 }
 
-/** The message being answered, kept short. */
+/** The message being answered, whole, scrolling in the room it gets. */
 @Composable
-private fun Original(message: MessageItem) {
+private fun Original(mail: Mail, message: MessageItem, modifier: Modifier) {
     val colors = MaterialTheme.colorScheme
+    var text by remember(message.id) { mutableStateOf(message.snippet) }
+    LaunchedEffect(message.id) {
+        try {
+            mail.body(message).text.takeIf { it.isNotBlank() }?.let { text = it }
+        } catch (_: CoreException) {
+            // The snippet stays.
+        }
+    }
     Column(
-        Modifier
+        modifier
+            .heightIn(min = 112.dp)
             .fillMaxWidth()
-            .padding(start = Gap.card, end = Gap.card, top = 12.dp)
-            .background(colors.surfaceVariant, RoundedCornerShape(Radius.tile))
-            .padding(horizontal = Gap.inCard, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+            .padding(start = Gap.card, end = Gap.card, top = 12.dp, bottom = 10.dp)
+            .background(colors.surfaceVariant, RoundedCornerShape(Radius.tile)),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.padding(start = Gap.inCard, end = Gap.inCard, top = 12.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 message.sender,
                 fontWeight = FontWeight.SemiBold,
@@ -226,17 +242,16 @@ private fun Original(message: MessageItem) {
             )
             Text(shortDate(LocalContext.current, message.date), color = colors.onSurfaceVariant, fontSize = 12.5.sp)
         }
-        Text(message.subjectText(), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        if (message.snippet.isNotBlank()) {
-            Text(
-                message.snippet,
-                color = colors.onSurfaceVariant,
-                fontSize = 14.sp,
-                lineHeight = 21.sp,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+        Text(
+            text,
+            color = colors.onSurfaceVariant,
+            fontSize = 14.sp,
+            lineHeight = 21.sp,
+            modifier = Modifier
+                .weight(1f, fill = false)
+                .verticalScroll(rememberScrollState())
+                .padding(start = Gap.inCard, end = Gap.inCard, bottom = 12.dp),
+        )
     }
 }
 
