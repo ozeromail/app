@@ -901,6 +901,13 @@ fn actions_apply_to_the_whole_conversation() {
     let rows = list(&store, ListScope::Folder(folder), 10, None);
     assert_eq!((rows[1].thread_count, rows[1].thread_unread), (2, 0));
     assert_eq!(rows[0].thread_unread, 1);
+    // Unread is only the message itself, as if it had just come.
+    let ops = store.queue(conversation, Action::Seen(false), 0).unwrap();
+    assert_eq!(ops.len(), 1);
+    assert_eq!(
+        list(&store, ListScope::Folder(folder), 10, None)[1].thread_unread,
+        1
+    );
 
     let ops = store.queue(conversation, Action::Archive, 50).unwrap();
     assert_eq!(ops.len(), 2);

@@ -483,9 +483,10 @@ impl Store for SqliteStore {
         }
         let mut ops = vec![];
         for (id, flags) in ids {
-            // The rest of the conversation only where it changes something.
+            // The rest of the conversation only where it changes something; unread is
+            // only the message itself.
             let changes = match action {
-                Action::Seen(seen) => (flags & SEEN != 0) != seen,
+                Action::Seen(seen) => seen && flags & SEEN == 0,
                 Action::Archive | Action::Trash => true,
             };
             if id == message.0 || changes {

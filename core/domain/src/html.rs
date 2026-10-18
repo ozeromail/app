@@ -105,11 +105,20 @@ const FOLD_CLOSE: &str = "</details>";
 
 /// The page sets its own look, with colours, backgrounds or a table layout, as newsletters
 /// do: it keeps the light page it was made for. Plain mail takes the reader's colours.
+/// Only the markup counts, tags and `<style>` sheets, never the words of the mail.
 pub fn is_styled(html: &str) -> bool {
-    let lower = html.to_ascii_lowercase();
-    ["bgcolor", "background", "color:", "color=", "<table"]
-        .iter()
-        .any(|s| lower.contains(s))
+    let sets_colours = |s: &str| {
+        ["bgcolor", "background", "color:", "color="]
+            .iter()
+            .any(|n| s.contains(n))
+    };
+    html.split('<').skip(1).any(|part| {
+        let (tag, after) = part.split_once('>').unwrap_or((part, ""));
+        let tag = tag.to_ascii_lowercase();
+        tag.starts_with("table")
+            || sets_colours(&tag)
+            || (tag.starts_with("style") && sets_colours(&after.to_ascii_lowercase()))
+    })
 }
 
 /// Folds the quoted mail at the end of a reply under a mark that opens it. Answers written
@@ -496,10 +505,15 @@ mod tests {
 
     #[test]
     fn tells_a_newsletter_from_plain_mail() {
-        assert!(!is_styled(
-            "<div dir=ltr>Hi <b>Anna</b></div><blockquote type=cite>old</blockquote>"
-        ));
+        for plain in [
+            "<div dir=ltr>Hi <b>Anna</b></div><blockquote type=cite>old</blockquote>",
+            "<p>Did the background check pass? Favourite color: blue</p>",
+            "<style>p{margin:0}</style><p>Hi</p>",
+        ] {
+            assert!(!is_styled(plain), "{plain}");
+        }
         for styled in [
+            "<style>BODY { Background: #f4f4f4 }</style><p>Hi</p>",
             "<table width=600><tr><td>News</td></tr></table>",
             "<div style='Color: #222'>Hi</div>",
             "<body BGCOLOR=#fff>Hi</body>",

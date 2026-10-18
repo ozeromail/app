@@ -121,7 +121,8 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
         Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
             // The message being answered takes the room the fields leave; alone, the fields sit low.
             val original = composing.original
-            if (original != null) Original(mail, original, Modifier.weight(1f))
+            // With the keyboard up the card may close to nothing, so Send always stays in sight.
+            if (original != null) Original(mail, original, Modifier.weight(1f).heightIn(min = if (keyboard) 0.dp else 112.dp))
             Column(
                 (if (original == null) Modifier.weight(1f) else Modifier).padding(horizontal = Gap.screen),
                 verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
@@ -149,7 +150,7 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
                     KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                     singleLine = false,
                     // Room for a few lines from the start, less while the keyboard takes the screen.
-                    modifier = Modifier.heightIn(min = if (keyboard) 96.dp else 168.dp, max = 320.dp),
+                    modifier = Modifier.heightIn(min = if (keyboard) 72.dp else 168.dp, max = if (keyboard) 168.dp else 320.dp),
                 )
                 if (quote.isNotEmpty()) {
                     Quote(quote, onRemove = { quote = "" })
@@ -228,10 +229,10 @@ private fun Original(mail: Mail, message: MessageItem, modifier: Modifier) {
     }
     Column(
         modifier
-            .heightIn(min = 112.dp)
             .fillMaxWidth()
             .padding(start = Gap.card, end = Gap.card, top = 12.dp, bottom = 10.dp)
-            .background(colors.surfaceVariant, RoundedCornerShape(Radius.tile)),
+            .clip(RoundedCornerShape(Radius.tile))
+            .background(colors.surfaceVariant),
     ) {
         Row(Modifier.padding(start = Gap.inCard, end = Gap.inCard, top = 12.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(

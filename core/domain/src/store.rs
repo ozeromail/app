@@ -67,7 +67,7 @@ pub trait Store: Send + Sync {
 
     /// Applies the action to the message's conversation in its folder and inbox tab now, in one transaction,
     /// and queues it for the server from `not_before`: the message itself, and the others
-    /// where it changes something. It replaces queued actions of the same kind. Lists leave
+    /// where it changes something; marking unread leaves the others alone. It replaces queued actions of the same kind. Lists leave
     /// out a message being moved; a move fails with `NoArchive` or `NoTrash` if the account
     /// has no such folder.
     fn queue(

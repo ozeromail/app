@@ -103,6 +103,19 @@ fn archives_after_setting_read_state() {
 }
 
 #[test]
+fn trash_moves_to_its_own_folder() {
+    let mut trash = op(1, "INBOX", "5", Action::Trash);
+    trash.to = Some("Trash".into());
+    let store = store(vec![trash, op(2, "INBOX", "6", Action::Archive)]);
+    let mut server = Server::default();
+    run(push_ops(&store, &mut server, store.ops.clone())).unwrap();
+    let mut moved = server.moved_to.clone();
+    moved.sort();
+    assert_eq!(moved, ["Archive", "Trash"]);
+    assert_eq!(store.finished.lock().unwrap().len(), 2);
+}
+
+#[test]
 fn archiving_without_an_archive_folder_is_reverted() {
     let mut no_folder = op(1, "INBOX", "5", Action::Archive);
     no_folder.to = None;
