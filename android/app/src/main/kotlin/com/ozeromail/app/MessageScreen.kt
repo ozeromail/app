@@ -48,6 +48,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import uniffi.ozero_api.CoreException
+import uniffi.ozero_api.ImagesPage
 import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
 
@@ -72,7 +73,7 @@ fun MessageScreen(
     var body by remember(message.id) { mutableStateOf<Pair<Long, MessageBody>?>(null) }
     var error by remember(message.id) { mutableStateOf<Int?>(null) }
     // The page again with its remote images, by message id.
-    var withImages by remember(message.id) { mutableStateOf<Pair<Long, String>?>(null) }
+    var withImages by remember(message.id) { mutableStateOf<Pair<Long, ImagesPage>?>(null) }
     var imagesError by remember(message.id) { mutableStateOf<Int?>(null) }
     LaunchedEffect(message.id) {
         try {
@@ -82,14 +83,17 @@ fun MessageScreen(
             error = e.text()
         }
     }
+    // Kept only while [of] is still shown: another message's images can be many megabytes.
     suspend fun loadImages(of: MessageItem) {
         try {
-            mail.images(of)?.let { withImages = of.id to it }
+            mail.images(of)?.let { if (shown.id == of.id) withImages = of.id to it }
         } catch (e: CoreException) {
-            imagesError = e.text()
+            if (shown.id == of.id) imagesError = e.text()
         }
     }
     LaunchedEffect(shown.id) {
+        withImages = null
+        imagesError = null
         try {
             val loaded = mail.body(shown)
             if (loaded.remoteImages > 0u && loaded.showsImages) {
@@ -127,7 +131,7 @@ fun MessageScreen(
         HorizontalDivider(Modifier.padding(top = 14.dp), color = colors.outlineVariant)
         val loaded = body?.takeIf { it.first == shown.id }?.second
         val full = withImages?.takeIf { it.first == shown.id }?.second
-        val html = full ?: loaded?.html
+        val html = full?.html ?: loaded?.html
         val imagesFailed = imagesError
         if (loaded != null && full == null && (imagesFailed != null || loaded.remoteImages > 0u && !loaded.showsImages)) {
             HiddenImages(imagesFailed ?: R.string.message_images_hidden, onShow = {
@@ -147,7 +151,7 @@ fun MessageScreen(
         val content = Modifier.weight(1f).fillMaxWidth()
         when {
             // A new web view per message: it loads its page only once.
-            html != null -> key(shown.id, full != null) { HtmlView(html, content) }
+            html != null -> key(shown.id, full != null) { HtmlView(html, full?.images.orEmpty(), content) }
             loaded != null -> SelectionContainer(content.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 18.dp)) {
                 Text(loaded.text, fontSize = 15.5.sp, lineHeight = 24.8.sp, modifier = Modifier.widthIn(max = 620.dp))
             }

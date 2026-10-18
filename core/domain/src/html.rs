@@ -64,7 +64,7 @@ fn push(out: &mut String, sent: &str) {
     }
 }
 
-/// Puts the loaded images in: `images[N]` is a `data:` address for image `N`, or None to
+/// Puts the loaded images in: `images[N]` is the source for image `N`, or None to
 /// leave it out.
 pub fn with_images(html: &str, images: &[Option<String>]) -> String {
     let mut out = String::with_capacity(html.len());
