@@ -184,7 +184,7 @@ private fun hueOrder(color: UInt): Float {
 
 /** A row with an icon and a coloured label, as at the end of a sheet. */
 @Composable
-private fun SheetAction(@DrawableRes icon: Int, text: String, color: Color, onClick: () -> Unit) {
+fun SheetAction(@DrawableRes icon: Int, text: String, color: Color, onClick: () -> Unit) {
     SheetRow(onClick, lead = { Glyph(icon, null, color) }) {
         Text(text, color = color, fontSize = 15.5.sp, fontWeight = FontWeight.Medium)
     }

@@ -163,14 +163,9 @@ fun MessageScreen(
         }
         // Like every menu, the rarer actions open in a sheet, low in reach of the thumb.
         Sheet(visible = more, onClose = { more = false }) {
-            SheetRow(
-                onClick = {
-                    more = false
-                    onUnread()
-                },
-                lead = { Glyph(R.drawable.ic_unread, null, MaterialTheme.colorScheme.onSurface) },
-            ) {
-                Text(stringResource(R.string.action_mark_unread), fontSize = 15.5.sp, modifier = Modifier.weight(1f))
+            SheetAction(R.drawable.ic_unread, stringResource(R.string.action_mark_unread), MaterialTheme.colorScheme.onSurface) {
+                more = false
+                onUnread()
             }
         }
     }
@@ -356,14 +351,14 @@ private fun PlainText(text: String, quote: String, modifier: Modifier) {
 private fun Actions(onDelete: () -> Unit, onMore: () -> Unit, onDone: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth().padding(horizontal = Gap.bar), horizontalArrangement = Arrangement.spacedBy(Gap.inBar)) {
-        Action(R.drawable.ic_delete, R.string.action_delete, colors.onSurface, Color.Transparent, onDelete)
-        Action(R.drawable.ic_more, R.string.action_more, colors.onSurface, Color.Transparent, onMore)
+        Action(R.drawable.ic_delete, R.string.action_delete, colors.onSurface, onClick = onDelete)
+        Action(R.drawable.ic_more, R.string.action_more, colors.onSurface, onClick = onMore)
         Action(R.drawable.ic_done, R.string.action_done, Color.White, MaterialTheme.done, onDone)
     }
 }
 
 @Composable
-private fun RowScope.Action(@DrawableRes icon: Int, @StringRes label: Int, tint: Color, background: Color, onClick: () -> Unit) {
+private fun RowScope.Action(@DrawableRes icon: Int, @StringRes label: Int, tint: Color, background: Color = Color.Transparent, onClick: () -> Unit) {
     Column(
         Modifier
             .weight(1f)

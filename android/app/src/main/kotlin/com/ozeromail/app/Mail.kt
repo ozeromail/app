@@ -123,15 +123,13 @@ class Mail(private val context: Context) {
      * Takes the message's conversation out of the inbox now and returns the actions for [undo].
      * The server gets the move once the undo time is over.
      */
-    suspend fun archive(message: MessageItem): List<Long> {
-        val actions = io { core.archive(message.id) }
-        push(message.accountId)
-        return actions
-    }
+    suspend fun archive(message: MessageItem): List<Long> = move(message) { core.archive(it) }
 
     /** As [archive], into the trash. */
-    suspend fun trash(message: MessageItem): List<Long> {
-        val actions = io { core.trash(message.id) }
+    suspend fun trash(message: MessageItem): List<Long> = move(message) { core.trash(it) }
+
+    private suspend fun move(message: MessageItem, queue: (Long) -> List<Long>): List<Long> {
+        val actions = io { queue(message.id) }
         push(message.accountId)
         return actions
     }
