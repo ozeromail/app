@@ -246,18 +246,12 @@ impl Core {
     /// archive for `HOLD`, so `undo` can take it back. Returns the actions for `undo`.
     /// Fails with `NoArchive` if the account has no archive folder.
     pub fn archive(&self, message: i64) -> Result<Vec<i64>, CoreError> {
-        let ops = self
-            .store
-            .queue(MessageId(message), Action::Archive, now() + HOLD)?;
-        Ok(ops.into_iter().map(|op| op.0).collect())
+        self.hold_move(message, Action::Archive)
     }
 
     /// As `archive`, into the trash. Fails with `NoTrash` if the account has no trash folder.
     pub fn trash(&self, message: i64) -> Result<Vec<i64>, CoreError> {
-        let ops = self
-            .store
-            .queue(MessageId(message), Action::Trash, now() + HOLD)?;
-        Ok(ops.into_iter().map(|op| op.0).collect())
+        self.hold_move(message, Action::Trash)
     }
 
     /// An answer to `message` from the account that got it, `Re: ` once: to its sender, or
@@ -590,6 +584,12 @@ macro_rules! image_host {
 const IMAGE_ADDRESS: &str = concat!("https://", image_host!(), "/");
 
 impl Core {
+    /// Queues a move held for the undo time and returns its ops for `undo`.
+    fn hold_move(&self, message: i64, action: Action) -> Result<Vec<i64>, CoreError> {
+        let ops = self.store.queue(MessageId(message), action, now() + HOLD)?;
+        Ok(ops.into_iter().map(|op| op.0).collect())
+    }
+
     /// List rows, marked with their account when there is more than one.
     fn items(&self, rows: Vec<MessageRow>) -> Result<Vec<MessageItem>, CoreError> {
         let accounts = self.store.accounts()?;
@@ -1124,12 +1124,13 @@ impl From<Body> for MessageBody {
     fn from(body: Body) -> Self {
         let page = body.html.as_deref().map(html::clean);
         let (text, quote) = body.split_quote();
+        let styled = page.as_ref().is_some_and(|p| html::is_styled(&p.html));
         Self {
             remote_images: page
                 .as_ref()
                 .map_or(0, |p| u32::try_from(p.images.len()).unwrap_or(u32::MAX)),
-            styled: page.as_ref().is_some_and(|p| html::is_styled(&p.html)),
-            html: page.map(|p| sandboxed(&html::fold_quote(&p.html), html::is_styled(&p.html))),
+            styled,
+            html: page.map(|p| sandboxed(&html::fold_quote(&p.html), styled)),
             shows_images: false,
             text: text.to_owned(),
             quote: quote.to_owned(),
@@ -1186,7 +1187,7 @@ fn sandboxed(html: &str, styled: bool) -> String {
         "details.ozero-quote>summary::-webkit-details-marker{display:none}",
     );
     const LIGHT: &str = "html{color-scheme:light;background:#fff}";
-    // The app's own colours; the web view is clear, so the screen shows through.
+    // The app's own colours, kept in step with the Android Theme.kt; the web view is clear, so the screen shows through.
     const THEMED: &str = concat!(
         "html{color-scheme:light dark;background:transparent;color:#1d1f24}",
         "a{color:#2f7cf6}",

@@ -763,24 +763,8 @@ fn queue_one(
             (queued.unwrap_or(i64::from(flags & SEEN != 0)), None)
         }
         // Undone by dropping the op, which shows the message again.
-        Action::Archive => (
-            0,
-            Some(role_folder(
-                tx,
-                message,
-                FolderRole::Archive,
-                StoreError::NoArchive,
-            )?),
-        ),
-        Action::Trash => (
-            0,
-            Some(role_folder(
-                tx,
-                message,
-                FolderRole::Trash,
-                StoreError::NoTrash,
-            )?),
-        ),
+        Action::Archive => (0, Some(role_folder(tx, message, FolderRole::Archive)?)),
+        Action::Trash => (0, Some(role_folder(tx, message, FolderRole::Trash)?)),
     };
     // Kept even when it undoes itself: a push may be sending the older value right now.
     let id = tx
@@ -922,13 +906,17 @@ fn link_thread(
     Ok(())
 }
 
-/// The folder of the message's account with `role`; `missing` when it has none.
+/// The folder of the message's account with `role`, the archive or the trash.
 fn role_folder(
     tx: &Transaction<'_>,
     message: MessageId,
     role: FolderRole,
-    missing: StoreError,
 ) -> Result<i64, StoreError> {
+    let missing = if role == FolderRole::Trash {
+        StoreError::NoTrash
+    } else {
+        StoreError::NoArchive
+    };
     tx.prepare_cached(
         "SELECT a.id FROM message m JOIN folder f ON f.id = m.folder_id
          JOIN folder a ON a.account_id = f.account_id AND a.role = ?2
@@ -1012,9 +1000,9 @@ const SAVE_MESSAGE: &str = concat!(
 );
 
 /// Lists leave out a message while its move to the archive or trash is held.
-macro_rules! not_archiving {
+macro_rules! not_moving {
     () => {
-        not_archiving!("m")
+        not_moving!("m")
     };
     ($m:literal) => {
         concat!(
@@ -1032,7 +1020,7 @@ macro_rules! in_thread {
         concat!(
             "FROM message n WHERE n.thread_id = m.thread_id AND n.folder_id = m.folder_id
              AND n.category = m.category AND ",
-            not_archiving!("n")
+            not_moving!("n")
         )
     };
 }
@@ -1122,14 +1110,14 @@ macro_rules! list_sql {
                 ", char(30)) FROM message n JOIN folder nf ON nf.id = n.folder_id WHERE ",
                 in_conversation!("n", "nf", "m"),
                 " AND ",
-                not_archiving!("n"),
+                not_moving!("n"),
                 ")"
             )),
             " WHERE ",
             $scope,
             " AND (m.date, m.id) < (?2, ?3)
              AND ",
-            not_archiving!(),
+            not_moving!(),
             // One row per conversation: its newest message.
             " AND NOT EXISTS (SELECT 1 ",
             in_thread!(),
@@ -1152,7 +1140,7 @@ const THREAD: &str = concat!(
     " JOIN message s ON s.id = ?1 WHERE ",
     in_conversation!("m", "f", "s"),
     " AND ",
-    not_archiving!(),
+    not_moving!(),
     " ORDER BY m.date, m.id"
 );
 
@@ -1162,7 +1150,7 @@ const THREAD_IDS: &str = concat!(
      JOIN message s ON s.thread_id = m.thread_id AND s.folder_id = m.folder_id
          AND s.category = m.category
      WHERE s.id = ?1 AND ",
-    not_archiving!(),
+    not_moving!(),
     " ORDER BY m.date, m.id"
 );
 
@@ -1182,12 +1170,12 @@ const SEARCH: &str = concat!(
     message_from!(),
     " JOIN message_search ON message_search.rowid = m.id
      WHERE message_search MATCH ?1 AND f.role NOT IN ('trash', 'junk') AND ",
-    not_archiving!(),
+    not_moving!(),
     " AND NOT EXISTS (
          SELECT 1 FROM message d JOIN folder g ON g.id = d.folder_id
          WHERE d.message_id = m.message_id AND d.id > m.id AND g.account_id = f.account_id
            AND g.role NOT IN ('trash', 'junk') AND ",
-    not_archiving!("d"),
+    not_moving!("d"),
     ")
      ORDER BY m.date DESC, m.id DESC LIMIT ?2"
 );
@@ -1210,7 +1198,7 @@ const CLEAR_FRESH: &str = "UPDATE message SET fresh = 0 WHERE fresh = 1";
 const FRESH_PEOPLE: &str = concat!(
     message_select!(),
     "m.fresh = 1 AND m.date > ?1 AND f.role = 'inbox' AND m.category = 'people' AND m.flags & 1 = 0 AND ",
-    not_archiving!(),
+    not_moving!(),
     " ORDER BY m.date DESC, m.id DESC"
 );
 
@@ -1218,7 +1206,7 @@ const FRESH_PEOPLE: &str = concat!(
 const INBOX_UNREAD: &str = concat!(
     "SELECT m.category, count(*) FROM message m
      WHERE m.folder_id IN (SELECT id FROM folder WHERE role = 'inbox') AND m.flags & 1 = 0 AND ",
-    not_archiving!(),
+    not_moving!(),
     " GROUP BY m.category"
 );
 // The unary `+` keeps SQLite on the date index: rows come out in order and the scan stops at LIMIT.
