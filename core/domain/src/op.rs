@@ -7,6 +7,8 @@ pub enum Action {
     Seen(bool),
     /// Moves the message out of its folder into the account's archive.
     Archive,
+    /// Moves the message out of its folder into the account's trash.
+    Trash,
 }
 
 /// Local id of a queued action.

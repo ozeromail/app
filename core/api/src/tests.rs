@@ -68,7 +68,7 @@ fn keeps_only_images() {
 #[test]
 fn lets_the_page_load_its_images() {
     let host = IMAGE_ADDRESS.trim_end_matches('/');
-    assert!(sandboxed("").contains(&format!("img-src data: {host};")));
+    assert!(sandboxed("", false).contains(&format!("img-src data: {host};")));
 }
 
 #[test]
@@ -135,6 +135,7 @@ fn syncs_an_imap_inbox_into_the_list() {
     let plain = MessageBody {
         text: "Hello 2".into(),
         quote: String::new(),
+        styled: false,
         html: None,
         remote_images: 0,
         shows_images: true,

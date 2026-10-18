@@ -103,6 +103,15 @@ const FOLD_OPEN: &str =
     "<details class=\"ozero-quote\"><summary>\u{2022}\u{2022}\u{2022}</summary>";
 const FOLD_CLOSE: &str = "</details>";
 
+/// The page sets its own look, with colours, backgrounds or a table layout, as newsletters
+/// do: it keeps the light page it was made for. Plain mail takes the reader's colours.
+pub fn is_styled(html: &str) -> bool {
+    let lower = html.to_ascii_lowercase();
+    ["bgcolor", "background", "color:", "color=", "<table"]
+        .iter()
+        .any(|s| lower.contains(s))
+}
+
 /// Folds the quoted mail at the end of a reply under a mark that opens it. Answers written
 /// between quotes stay open, and so does a forward with nothing written above it.
 pub fn fold_quote(html: &str) -> Cow<'_, str> {
@@ -483,6 +492,21 @@ mod tests {
             fold_quote(apple),
             format!("Yes{FOLD_OPEN}{}{FOLD_CLOSE}", &apple[3..])
         );
+    }
+
+    #[test]
+    fn tells_a_newsletter_from_plain_mail() {
+        assert!(!is_styled(
+            "<div dir=ltr>Hi <b>Anna</b></div><blockquote type=cite>old</blockquote>"
+        ));
+        for styled in [
+            "<table width=600><tr><td>News</td></tr></table>",
+            "<div style='Color: #222'>Hi</div>",
+            "<body BGCOLOR=#fff>Hi</body>",
+            "<font color=red>Hi</font>",
+        ] {
+            assert!(is_styled(styled), "{styled}");
+        }
     }
 
     #[test]

@@ -76,5 +76,10 @@
   "signin_app_password_make": "Создать пароль приложения",
   "message_more": "Ещё %1$d",
   "message_me": "я",
-  "message_quote": "Показать цитату"
+  "message_quote": "Показать цитату",
+  "error_no_trash": "У этого аккаунта нет папки «Корзина».",
+  "inbox_trashed": "Перенесено в корзину",
+  "action_delete": "Удалить",
+  "action_more": "Ещё",
+  "action_mark_unread": "Отметить непрочитанным"
 }
