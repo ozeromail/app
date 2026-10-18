@@ -2,6 +2,7 @@ package com.ozeromail.app
 
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.view.ViewGroup
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -13,7 +14,8 @@ import java.io.ByteArrayInputStream
 import uniffi.ozero_api.RemoteImage
 
 /**
- * Shows a message's HTML with no scripts, no file access and no network.
+ * Shows a message's HTML with no scripts, no file access and no network. Given no height,
+ * it is as tall as its page.
  * The page from the core also carries its own policy; links open in the browser.
  * The page asks for its loaded [images] by address, so it stays small.
  */
@@ -23,6 +25,7 @@ fun HtmlView(html: String, images: List<RemoteImage?>, modifier: Modifier = Modi
         modifier = modifier,
         factory = { context ->
             WebView(context).apply {
+                layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 configure(images)
                 loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
             }

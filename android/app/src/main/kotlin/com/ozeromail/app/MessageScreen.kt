@@ -1,8 +1,12 @@
 package com.ozeromail.app
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -15,13 +19,13 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -35,6 +39,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -46,6 +51,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -61,9 +68,10 @@ import uniffi.ozero_api.MessageItem
 import uniffi.ozero_api.RemoteImage
 
 /**
- * A conversation, opened at the list's message: its HTML when it has one, otherwise the
- * text. The other messages, the user's replies among them, sit above it as cards; a tap
- * shows one. Reply, Reply all and Done sit at the bottom, in reach of the thumb.
+ * A conversation, oldest first, on one page. The message opened from the list is open; the
+ * others sit closed as a line each, unread ones in bold, and a tap opens or closes any of them.
+ * A message on its own fills the screen, so a wide newsletter can be pinched. Reply, Reply
+ * all and Done sit at the bottom, in reach of the thumb.
  */
 @Composable
 fun MessageScreen(
@@ -73,13 +81,12 @@ fun MessageScreen(
     onDone: () -> Unit,
 ) {
     var thread by remember(message.id) { mutableStateOf(listOf(message)) }
-    var shown by remember(message.id) { mutableStateOf(message) }
-    // With the id of its message, so a page is never shown under another message's header.
-    var body by remember(message.id) { mutableStateOf<Pair<Long, MessageBody>?>(null) }
     var error by remember(message.id) { mutableStateOf<Int?>(null) }
-    // The page again with its remote images, by message id.
-    var withImages by remember(message.id) { mutableStateOf<Pair<Long, ImagesPage>?>(null) }
-    var imagesError by remember(message.id) { mutableStateOf<Int?>(null) }
+    // What the user opened or closed; at first only the message from the list is open.
+    val opened = remember(message.id) { mutableStateMapOf<Long, Boolean>() }
+    var showAll by remember(message.id) { mutableStateOf(false) }
+    // Loaded bodies, so a message opened again shows at once.
+    val bodies = remember(message.id) { mutableStateMapOf<Long, MessageBody>() }
     LaunchedEffect(message.id) {
         try {
             thread = mail.thread(message)
@@ -88,109 +95,38 @@ fun MessageScreen(
             error = e.text()
         }
     }
-    // Kept only while [of] is still shown: another message's images can be many megabytes.
-    suspend fun loadImages(of: MessageItem) {
-        try {
-            mail.images(of)?.let { if (shown.id == of.id) withImages = of.id to it }
-        } catch (e: CoreException) {
-            if (shown.id == of.id) imagesError = e.text()
-        }
-    }
-    LaunchedEffect(shown.id) {
-        withImages = null
-        imagesError = null
-        try {
-            val loaded = mail.body(shown)
-            if (loaded.remoteImages > 0u && loaded.showsImages) {
-                // Wait a moment for the images, so the page does not load twice and jump.
-                coroutineScope {
-                    val images = async { loadImages(shown) }
-                    withTimeoutOrNull(IMAGES_WAIT_MS) { images.await() }
-                    body = shown.id to loaded
-                }
-            } else {
-                body = shown.id to loaded
-            }
-        } catch (e: CoreException) {
-            error = e.text()
-        }
-    }
-    val scope = rememberCoroutineScope()
-    // The newest message not from the user, when the user's own reply is shown.
-    val answer = if (shown.sent) thread.lastOrNull { !it.sent } ?: message else shown
+    fun isOpen(m: MessageItem) = opened[m.id] ?: (m.id == message.id)
+    // The newest message not from the user.
+    val answer = thread.lastOrNull { !it.sent } ?: message
 
-    val colors = MaterialTheme.colorScheme
     Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
-        Header(shown, Modifier.padding(top = 18.dp))
-        // The rest of the conversation opens in once it has loaded.
-        val older = remember(thread, shown.id) { thread.filter { it.id != shown.id }.takeIf { it.isNotEmpty() } }
-        Reveal(older) { others ->
-            Column(
-                Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState()).padding(top = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                others.forEach { other ->
-                    Older(other, onClick = {
-                        error = null
-                        shown = other
-                    })
-                }
-            }
-        }
-        HorizontalDivider(Modifier.padding(top = 16.dp), color = colors.outlineVariant)
-        val loaded = body?.takeIf { it.first == shown.id }?.second
-        val full = withImages?.takeIf { it.first == shown.id }?.second
-        val html = full?.html ?: loaded?.html
-        val imagesFailed = imagesError
-        val imagesNote = when {
-            loaded == null || full != null -> null
-            imagesFailed != null -> imagesFailed
-            loaded.remoteImages > 0u && !loaded.showsImages -> R.string.message_images_hidden
-            else -> null
-        }
-        Reveal(imagesNote) { note ->
-            HiddenImages(note, onShow = onShow@{
-                val of = shown
-                // The note is closing: the images are here already.
-                if (withImages?.first == of.id) return@onShow
-                imagesError = null
-                scope.launch {
-                    try {
-                        mail.allowImages(of)
-                        loadImages(of)
-                    } catch (e: CoreException) {
-                        imagesError = e.text()
+        if (thread.size > 1 || message.threadCount > 1u) {
+            Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
+                Title(message)
+                // A long run of closed messages in the middle folds into one line.
+                val middle = 1 until thread.size - 2
+                val folded = !showAll && middle.count() >= 2 && middle.none { isOpen(thread[it]) }
+                thread.forEachIndexed { i, m ->
+                    if (i == 1) {
+                        Reveal(middle.count().takeIf { folded }) { count -> More(count, onClick = { showAll = true }) }
+                    }
+                    key(m.id) {
+                        val letter = @Composable { Letter(mail, m, bodies, isOpen(m), onToggle = { opened[m.id] = !isOpen(m) }) }
+                        if (i in middle) {
+                            AnimatedVisibility(!folded, enter = opening, exit = closing) { letter() }
+                        } else {
+                            letter()
+                        }
                     }
                 }
-            })
-        }
-        val failed = error
-        val shownBody = when {
-            html != null -> Body.Page(shown.id, html, full?.images.orEmpty(), withImages = full != null)
-            loaded != null -> Body.Plain(loaded.text)
-            failed != null -> Body.Failed(failed)
-            else -> Body.Loading
-        }
-        // The page fades in over the spinner instead of popping in; the old one fades out whole.
-        AnimatedContent(
-            shownBody,
-            Modifier.weight(1f).fillMaxWidth(),
-            transitionSpec = { (fadeIn(Motion.calm(Motion.SMALL)) togetherWith fadeOut(Motion.calm(Motion.SMALL))).using(null) },
-            contentKey = { it::class },
-            label = "body",
-        ) { kind ->
-            val content = Modifier.fillMaxSize()
-            when (kind) {
-                // A new web view per message: it loads its page only once.
-                is Body.Page -> key(kind.id, kind.withImages) { HtmlView(kind.html, kind.images, content) }
-                is Body.Plain -> SelectionContainer(content.verticalScroll(rememberScrollState()).padding(horizontal = Gap.screen, vertical = 18.dp)) {
-                    Text(kind.text, fontSize = 15.5.sp, lineHeight = 24.8.sp, modifier = Modifier.widthIn(max = 620.dp))
-                }
-                is Body.Failed -> Text(stringResource(kind.text), color = colors.onSurfaceVariant, modifier = content.padding(Gap.screen))
-                Body.Loading -> Box(content.padding(32.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
+                Reveal(error) { Text(stringResource(it), color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(Gap.screen)) }
+                Spacer(Modifier.height(12.dp))
             }
+        } else {
+            Title(message)
+            From(message, open = true)
+            HorizontalDivider(Modifier.padding(top = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
+            LetterBody(mail, message, bodies, Modifier.weight(1f), fill = true)
         }
         Column(
             Modifier.fillMaxWidth().navigationBarsPadding().padding(top = Gap.barTop, bottom = Gap.barBottom),
@@ -216,6 +152,172 @@ fun MessageScreen(
                 )
             }
             Actions(onDone)
+        }
+    }
+}
+
+/** A message opens slowly from its line down, and closes a little quicker. */
+private val opening = expandVertically(Motion.calm(Motion.SCREEN), expandFrom = Alignment.Top) + fadeIn(Motion.calm(Motion.SCREEN))
+private val closing = shrinkVertically(Motion.calm(Motion.NOTE), shrinkTowards = Alignment.Top) + fadeOut(Motion.calm(Motion.SMALL))
+
+/** One message of a conversation: its line, and under it the message when open. */
+@Composable
+private fun Letter(mail: Mail, message: MessageItem, bodies: MutableMap<Long, MessageBody>, open: Boolean, onToggle: () -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        HorizontalDivider(Modifier.padding(horizontal = Gap.screen), color = MaterialTheme.colorScheme.outlineVariant)
+        From(message, open, onToggle)
+        AnimatedVisibility(open, enter = opening, exit = closing) {
+            LetterBody(mail, message, bodies, Modifier.fillMaxWidth(), fill = false)
+        }
+    }
+}
+
+/** The line of closed messages folded away; a tap shows them. */
+@Composable
+private fun More(count: Int, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Column(Modifier.fillMaxWidth()) {
+        HorizontalDivider(Modifier.padding(horizontal = Gap.screen), color = colors.outlineVariant)
+        Text(
+            stringResource(R.string.message_more, count),
+            color = colors.primary,
+            fontSize = 13.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(role = Role.Button, onClick = onClick)
+                .padding(horizontal = Gap.screen, vertical = 13.dp),
+        )
+    }
+}
+
+/**
+ * A message's page, or its text with the quote folded; it loads when shown, once into
+ * [bodies]. With [fill] it takes the space it is given and scrolls itself; otherwise it is
+ * as tall as it is.
+ */
+@Composable
+private fun LetterBody(mail: Mail, message: MessageItem, bodies: MutableMap<Long, MessageBody>, modifier: Modifier, fill: Boolean) {
+    // A page whose images load on their own waits for them again, as on the first time.
+    var body by remember(message.id) { mutableStateOf(bodies[message.id]?.takeUnless { it.remoteImages > 0u && it.showsImages }) }
+    var error by remember(message.id) { mutableStateOf<Int?>(null) }
+    // The page again with its remote images.
+    var withImages by remember(message.id) { mutableStateOf<ImagesPage?>(null) }
+    var imagesError by remember(message.id) { mutableStateOf<Int?>(null) }
+    val scope = rememberCoroutineScope()
+    suspend fun loadImages() {
+        try {
+            mail.images(message)?.let { withImages = it }
+        } catch (e: CoreException) {
+            imagesError = e.text()
+        }
+    }
+    LaunchedEffect(message.id) {
+        try {
+            val loaded = bodies[message.id] ?: mail.body(message).also { bodies[message.id] = it }
+            if (loaded.remoteImages > 0u && loaded.showsImages) {
+                // Wait a moment for the images, so the page does not load twice and jump.
+                coroutineScope {
+                    val images = async { loadImages() }
+                    withTimeoutOrNull(IMAGES_WAIT_MS) { images.await() }
+                    body = loaded
+                }
+            } else {
+                body = loaded
+            }
+        } catch (e: CoreException) {
+            error = e.text()
+        }
+    }
+    val loaded = body
+    val full = withImages
+    val imagesFailed = imagesError
+    val imagesNote = when {
+        loaded == null || full != null -> null
+        imagesFailed != null -> imagesFailed
+        loaded.remoteImages > 0u && !loaded.showsImages -> R.string.message_images_hidden
+        else -> null
+    }
+    val failed = error
+    val html = loaded?.html
+    val shown = when {
+        full != null -> Body.Page(full.html, full.images, withImages = true)
+        html != null -> Body.Page(html, emptyList(), withImages = false)
+        loaded != null -> Body.Plain(loaded.text, loaded.quote)
+        failed != null -> Body.Failed(failed)
+        else -> Body.Loading
+    }
+    // A page grows in steps as it lays out; only the short text and notes animate.
+    Column(if (fill || shown is Body.Page) modifier else modifier.animateContentSize(Motion.calm(Motion.NOTE))) {
+        Reveal(imagesNote) { note ->
+            HiddenImages(note, onShow = onShow@{
+                // The note is closing: the images are here already.
+                if (withImages != null) return@onShow
+                imagesError = null
+                scope.launch {
+                    try {
+                        mail.allowImages(message)
+                        // The sender's other messages load theirs on their own now too.
+                        val allowed = bodies[message.id]?.copy(showsImages = true)
+                        bodies.clear()
+                        allowed?.let { bodies[message.id] = it }
+                        loadImages()
+                    } catch (e: CoreException) {
+                        imagesError = e.text()
+                    }
+                }
+            })
+        }
+        // The page fades in over the spinner instead of popping in; the old one fades out whole.
+        AnimatedContent(
+            shown,
+            if (fill) Modifier.weight(1f).fillMaxWidth() else Modifier.fillMaxWidth(),
+            transitionSpec = { (fadeIn(Motion.calm(Motion.SMALL)) togetherWith fadeOut(Motion.calm(Motion.SMALL))).using(null) },
+            contentKey = { it::class },
+            label = "body",
+        ) { kind ->
+            val content = if (fill) Modifier.fillMaxSize() else Modifier.fillMaxWidth()
+            when (kind) {
+                // A new web view per page: it loads its page only once.
+                is Body.Page -> key(kind.withImages) { HtmlView(kind.html, kind.images, content.padding(top = 4.dp)) }
+                is Body.Plain -> PlainText(kind.text, kind.quote, if (fill) content.verticalScroll(rememberScrollState()) else content)
+                is Body.Failed -> Text(stringResource(kind.text), color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = content.padding(Gap.screen))
+                Body.Loading -> Box(if (fill) content else content.height(96.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            }
+        }
+    }
+}
+
+/** The text, and the quote under it behind a mark that opens it. */
+@Composable
+private fun PlainText(text: String, quote: String, modifier: Modifier) {
+    var showQuote by remember { mutableStateOf(false) }
+    val colors = MaterialTheme.colorScheme
+    SelectionContainer(modifier.padding(start = Gap.screen, end = Gap.screen, top = 6.dp, bottom = 18.dp)) {
+        Column(Modifier.widthIn(max = 620.dp)) {
+            if (text.isNotEmpty()) Text(text, fontSize = 15.5.sp, lineHeight = 24.8.sp)
+            if (quote.isNotEmpty()) {
+                val label = stringResource(R.string.message_quote)
+                Text(
+                    "•••",
+                    color = colors.onSurfaceVariant,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp,
+                    modifier = Modifier
+                        .padding(top = 10.dp)
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(colors.surfaceVariant)
+                        .clickable(role = Role.Button) { showQuote = !showQuote }
+                        .semantics { contentDescription = label }
+                        .padding(horizontal = 10.dp, vertical = 1.dp),
+                )
+                Reveal(quote.takeIf { showQuote }) {
+                    Text(it, color = colors.onSurfaceVariant, fontSize = 14.5.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 10.dp))
+                }
+            }
         }
     }
 }
@@ -252,7 +354,7 @@ private fun HiddenImages(note: Int, onShow: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(start = Gap.card, end = Gap.card, top = 12.dp)
+            .padding(start = Gap.card, end = Gap.card, top = 4.dp, bottom = 8.dp)
             .background(colors.surfaceVariant, RoundedCornerShape(Radius.medium))
             .padding(start = Gap.inCard, end = 8.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -279,42 +381,55 @@ private fun HiddenImages(note: Int, onShow: () -> Unit) {
     }
 }
 
-/** Another message of the conversation, as a short card. */
+/**
+ * Who sent a message and when. Open, it shows the address and the full date; closed, the
+ * start of the text. With [onToggle] a tap opens or closes the message.
+ */
 @Composable
-private fun Older(message: MessageItem, onClick: () -> Unit) {
+private fun From(message: MessageItem, open: Boolean, onToggle: (() -> Unit)? = null) {
     val colors = MaterialTheme.colorScheme
+    val unread = message.threadUnread > 0u
+    val detail = when {
+        !open -> message.snippet
+        message.sender != message.fromEmail -> message.fromEmail
+        else -> ""
+    }
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = Gap.card)
-            .clip(RoundedCornerShape(Radius.medium))
-            .background(colors.surfaceVariant)
-            .clickable(onClick = onClick)
-            .padding(horizontal = Gap.inCard, vertical = 10.dp),
+            .then(if (onToggle == null) Modifier else Modifier.clickable(onClick = onToggle))
+            .padding(horizontal = Gap.screen, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Avatar(message.sender, message.fromEmail, size = 32.dp)
+        Avatar(message.sender, message.fromEmail, size = if (open) 40.dp else 32.dp)
         Column(Modifier.weight(1f)) {
-            Text(message.sender, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (message.snippet.isNotBlank()) {
-                Text(message.snippet, color = colors.onSurfaceVariant, fontSize = 13.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                message.sender,
+                fontWeight = if (unread) FontWeight.Bold else FontWeight.SemiBold,
+                fontSize = 15.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (detail.isNotBlank()) {
+                Text(detail, color = colors.onSurfaceVariant, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
+        val context = LocalContext.current
         Text(
-            shortDate(LocalContext.current, message.date),
+            if (open) longDate(context, message.date) else shortDate(context, message.date),
             color = colors.onSurfaceVariant,
-            fontSize = 12.sp,
-            modifier = Modifier.align(Alignment.Top),
+            fontSize = 12.5.sp,
+            modifier = Modifier.align(Alignment.Top).padding(top = 2.dp),
         )
     }
 }
 
-/** The subject, the account it came to and who sent it. */
+/** The subject and the account it came to. */
 @Composable
-private fun Header(message: MessageItem, modifier: Modifier) {
+private fun Title(message: MessageItem) {
     val colors = MaterialTheme.colorScheme
-    SelectionContainer(modifier) {
+    SelectionContainer(Modifier.padding(top = 18.dp)) {
         Column {
             Text(
                 message.subjectText(),
@@ -327,7 +442,7 @@ private fun Header(message: MessageItem, modifier: Modifier) {
             message.account?.let { account ->
                 Row(
                     Modifier
-                        .padding(start = Gap.screen, end = Gap.screen, bottom = 14.dp)
+                        .padding(start = Gap.screen, end = Gap.screen, bottom = 8.dp)
                         .background(colors.surfaceVariant, CircleShape)
                         .padding(horizontal = 11.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -337,34 +452,15 @@ private fun Header(message: MessageItem, modifier: Modifier) {
                     Text(account.name, color = colors.onSurfaceVariant, fontSize = 12.5.sp, fontWeight = FontWeight.Medium)
                 }
             }
-            Row(
-                Modifier.padding(horizontal = Gap.screen),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Avatar(message.sender, message.fromEmail)
-                Column(Modifier.weight(1f)) {
-                    Text(message.sender, fontWeight = FontWeight.SemiBold, fontSize = 15.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (message.sender != message.fromEmail) {
-                        Text(message.fromEmail, color = colors.onSurfaceVariant, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                }
-                Text(
-                    longDate(LocalContext.current, message.date),
-                    color = colors.onSurfaceVariant,
-                    fontSize = 12.5.sp,
-                    modifier = Modifier.align(Alignment.Top).padding(top = 4.dp),
-                )
-            }
         }
     }
 }
 
-/** What the body area shows. */
+/** What a message's body area shows. */
 private sealed interface Body {
     data object Loading : Body
-    data class Page(val id: Long, val html: String, val images: List<RemoteImage?>, val withImages: Boolean) : Body
-    data class Plain(val text: String) : Body
+    data class Page(val html: String, val images: List<RemoteImage?>, val withImages: Boolean) : Body
+    data class Plain(val text: String, val quote: String) : Body
     data class Failed(val text: Int) : Body
 }
 
