@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.selectable
@@ -143,19 +144,21 @@ private fun AccountSettings(account: AccountItem, onBack: () -> Unit, onColor: (
 /** The account colours in two rows; the current one has a ring. */
 @Composable
 private fun Swatches(current: Int, onPick: (Int) -> Unit) {
-    val rows = remember { accountColors().withIndex().chunked(5) }
+    // In rainbow order, grey last, so each row reads as a run of hues; the saved place stays the same.
+    val rows = remember { accountColors().withIndex().sortedBy { (_, color) -> hueOrder(color) }.chunked(5) }
     val ring = MaterialTheme.colorScheme.onSurface
     Column(
-        Modifier.padding(horizontal = Gap.sheet).padding(bottom = 18.dp).selectableGroup(),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        Modifier.fillMaxWidth().padding(horizontal = Gap.sheet).padding(bottom = 18.dp).selectableGroup(),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         rows.forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            // Edge to edge, as wide as the rows above.
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 row.forEach { (index, color) ->
                     val on = index == current
                     Box(
                         Modifier
-                            .size(40.dp)
+                            .size(48.dp)
                             .then(if (on) Modifier.border(2.dp, ring, CircleShape) else Modifier)
                             .padding(4.dp)
                             .clip(CircleShape)
@@ -169,6 +172,14 @@ private fun Swatches(current: Int, onPick: (Int) -> Unit) {
             }
         }
     }
+}
+
+/** Where a colour falls from red round to pink; greys go after all of them. */
+private fun hueOrder(color: UInt): Float {
+    val hsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(color.toInt(), hsv)
+    // Reds just under 360° belong at the start.
+    return if (hsv[1] < 0.35f) 1000f else (hsv[0] + 20f) % 360f
 }
 
 /** A row with an icon and a coloured label, as at the end of a sheet. */

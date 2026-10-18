@@ -56,14 +56,14 @@ object Radius {
  * interrupted. The system's animation scale, reduced motion included, applies to all of it.
  */
 object Motion {
-    /** The prototype's curve: quick to start, long and soft at the end. */
-    val Ease = CubicBezierEasing(0.3f, 0.7f, 0.1f, 1f)
+    /** Eases in over the first few frames, so nothing jumps, then a long, soft ease-out. */
+    val Ease = CubicBezierEasing(0.25f, 0.1f, 0.1f, 1f)
 
     /** A screen pushed in or a sheet rising. */
-    const val SCREEN = 500
+    const val SCREEN = 420
 
     /** The dim behind a sheet. */
-    const val SCRIM = 450
+    const val SCRIM = 380
 
     /** Toasts and notes that come and go. */
     const val NOTE = 400
@@ -81,7 +81,7 @@ object Motion {
 
     /**
      * How far into a [SCREEN] animation to seek so the screen sits where a back gesture at
-     * [progress] has taken it: the curve runs ahead early on, so the time is read back from it.
+     * [progress] has taken it: the curve is not a straight line, so the time is read back from it.
      */
     fun follow(progress: Float): Float {
         var low = 0f

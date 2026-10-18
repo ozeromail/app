@@ -76,7 +76,7 @@ fun SearchScreen(
             }
             itemsIndexed(messages, key = { _, it -> it.id }) { index, message ->
                 Column(rowMove()) {
-                    if (index > 0) HorizontalDivider(Modifier.padding(start = 48.dp), color = colors.outlineVariant)
+                    if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.screen), color = colors.outlineVariant)
                     MessageRow(message, onClick = { onOpen(message) })
                 }
             }

@@ -34,7 +34,6 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
@@ -48,7 +47,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -105,6 +103,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.coroutines.cancellation.CancellationException
@@ -547,6 +546,12 @@ private fun InboxList(
     val colors = MaterialTheme.colorScheme
     val density = LocalDensity.current
     var dockHeight by remember { mutableStateOf(0.dp) }
+    // Whether this tab just had mail: then the done note draws itself in as the last message
+    // leaves, and not on opening the app or switching to an empty tab.
+    // Right after a switch the list is still the old tab's, so it does not count.
+    val oldTabList = remember(tab) { messages }
+    var hadMail by remember(tab) { mutableStateOf(false) }
+    LaunchedEffect(messages) { hadMail = messages.isNotEmpty() && messages !== oldTabList }
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     // The compact title shows once the large one has scrolled under the status bar.
     val titleGone = with(density) { 24.dp.roundToPx() }
@@ -578,11 +583,11 @@ private fun InboxList(
                     UnsentRow(failed, rowMove(), onClick = { onUnsent(failed) })
                 }
                 if (messages.isEmpty() && !syncing && error == null) {
-                    item(key = "empty") { if (tab == Category.PEOPLE) InboxZero() else TabEmpty() }
+                    item(key = "empty") { if (tab == Category.PEOPLE) InboxZero(hadMail) else TabEmpty(hadMail) }
                 }
                 itemsIndexed(messages, key = { _, it -> it.id }) { index, message ->
                     Column(rowMove()) {
-                        if (index > 0) HorizontalDivider(Modifier.padding(start = 48.dp), color = colors.outlineVariant)
+                        if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.screen), color = colors.outlineVariant)
                         SwipeToDone(onDone = { reset -> onArchive(message, reset) }) {
                             MessageRow(message, onClick = { onOpen(message) })
                         }
@@ -650,21 +655,20 @@ private fun Hero(allAccounts: Boolean) {
 }
 
 @Composable
-private fun InboxZero() {
+private fun InboxZero(drawIn: Boolean) {
     val done = MaterialTheme.done
-    EmptyNote(
-        R.drawable.ic_done,
+    DoneNote(
         stringResource(R.string.inbox_zero_title),
         stringResource(R.string.inbox_zero_text),
+        drawIn,
         tint = done,
         ring = done.copy(alpha = 0.14f),
-        ringSize = 96.dp,
     )
 }
 
 @Composable
-private fun TabEmpty() {
-    EmptyNote(R.drawable.ic_done, stringResource(R.string.tab_empty_title), stringResource(R.string.tab_empty_text))
+private fun TabEmpty(drawIn: Boolean) {
+    DoneNote(stringResource(R.string.tab_empty_title), stringResource(R.string.tab_empty_text), drawIn)
 }
 
 /**
@@ -907,13 +911,9 @@ internal fun MessageRow(message: MessageItem, onClick: () -> Unit) {
                     }
                 },
             )
-            .padding(start = 18.dp, end = 16.dp, top = 12.dp, bottom = 12.dp),
+            .padding(start = Gap.screen, end = 16.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        Box(Modifier.width(20.dp).padding(top = 6.dp)) {
-            if (unread) Box(Modifier.padding(start = 6.dp).size(9.dp).background(colors.primary, CircleShape))
-        }
-        Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // The sender and count take what is left, so the time always ends at the edge.
@@ -924,7 +924,15 @@ internal fun MessageRow(message: MessageItem, onClick: () -> Unit) {
                         fontWeight = if (unread) FontWeight.Bold else FontWeight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            // The unread dot hangs in the margin, so text lines up with the title.
+                            .drawBehind {
+                                if (unread) {
+                                    val x = if (layoutDirection == LayoutDirection.Ltr) -9.dp.toPx() else size.width + 9.dp.toPx()
+                                    drawCircle(colors.primary, 4.dp.toPx(), Offset(x, size.height / 2))
+                                }
+                            },
                     )
                     if (message.threadCount > 1u) {
                         Text(
