@@ -9,7 +9,7 @@ use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Body, Category, Changes, Checkpoint,
     Correspondents, Draft, Flags, Folder, FolderId, FolderRole, ListQuery, ListScope, MessageId,
     MessageLocation, MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing,
-    Server, Store, StoreError, Unsent, with_quote,
+    Sender, Server, Store, StoreError, Unsent, with_quote,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{Connection, ErrorCode, OptionalExtension, Row, Transaction, params};
@@ -1017,12 +1017,61 @@ macro_rules! in_thread {
     };
 }
 
-/// The columns `message_row` reads, in its order, with `$thread`'s count and unread count.
-/// `1` is `SEEN`.
+/// Message `$n`, in folder `$nf`, is in the conversation of `$of` as the reader shows it:
+/// in `$of`'s folder and inbox tab, or the user's reply from the sent folder.
+macro_rules! in_conversation {
+    ($n:literal, $nf:literal, $of:literal) => {
+        concat!(
+            $n,
+            ".thread_id = ",
+            $of,
+            ".thread_id AND ((",
+            $n,
+            ".folder_id = ",
+            $of,
+            ".folder_id AND ",
+            $n,
+            ".category = ",
+            $of,
+            ".category) OR (",
+            $nf,
+            ".role = 'sent' AND NOT EXISTS (
+                -- Mail to oneself, or a list that sends one's post back: shown once.
+                SELECT 1 FROM message x WHERE x.thread_id = ",
+            $of,
+            ".thread_id
+                AND x.folder_id = ",
+            $of,
+            ".folder_id AND x.message_id = ",
+            $n,
+            ".message_id)))"
+        )
+    };
+}
+
+/// One sender for `parse_senders`: the date, whether it is in the sent folder, the address
+/// and the name, without the separators.
+macro_rules! sender {
+    ($m:literal, $f:literal) => {
+        concat!(
+            $m,
+            ".date || char(31) || coalesce(",
+            $f,
+            ".role = 'sent', 0) || char(31) || replace(replace(",
+            $m,
+            ".from_email, char(30), ''), char(31), '') || char(31) || replace(replace(coalesce(",
+            $m,
+            ".from_name, ''), char(30), ''), char(31), '')"
+        )
+    };
+}
+
+/// The columns `message_row` reads, in its order, with `$thread`'s unread count and
+/// senders, one per message. `1` is `SEEN`.
 macro_rules! message_from {
     // The message on its own.
     () => {
-        message_from!("1, 1 - (m.flags & 1)")
+        message_from!(concat!("1 - (m.flags & 1), ", sender!("m", "f")))
     };
     ($thread:expr) => {
         concat!(
@@ -1048,9 +1097,13 @@ macro_rules! list_sql {
             message_from!(concat!(
                 "(SELECT count(*) ",
                 in_thread!(),
-                "), (SELECT count(*) ",
-                in_thread!(),
-                " AND n.flags & 1 = 0)"
+                " AND n.flags & 1 = 0), (SELECT group_concat(",
+                sender!("n", "nf"),
+                ", char(30)) FROM message n JOIN folder nf ON nf.id = n.folder_id WHERE ",
+                in_conversation!("n", "nf", "m"),
+                " AND ",
+                not_archiving!("n"),
+                ")"
             )),
             " WHERE ",
             $scope,
@@ -1076,14 +1129,9 @@ const LIST_INBOX_TAB: &str =
 /// from the sent folder, oldest first. `f` is the folder `message_from!` joins.
 const THREAD: &str = concat!(
     message_from!(),
-    " JOIN message s ON s.thread_id = m.thread_id
-     WHERE s.id = ?1
-       AND ((s.folder_id = m.folder_id AND s.category = m.category)
-            OR (f.role = 'sent' AND m.message_id NOT IN (
-                -- Mail to oneself, or a list that sends one's post back: shown once.
-                SELECT n.message_id FROM message n
-                WHERE n.thread_id = s.thread_id AND n.folder_id = s.folder_id
-                  AND n.message_id IS NOT NULL))) AND ",
+    " JOIN message s ON s.id = ?1 WHERE ",
+    in_conversation!("m", "f", "s"),
+    " AND ",
     not_archiving!(),
     " ORDER BY m.date, m.id"
 );
@@ -1215,6 +1263,8 @@ fn require(tx: &Transaction<'_>, sql: &str, id: i64) -> Result<(), StoreError> {
 }
 
 fn message_row(r: &Row<'_>) -> rusqlite::Result<MessageRow> {
+    let (thread_count, senders) =
+        parse_senders(&r.get::<_, Option<String>>(9)?.unwrap_or_default());
     Ok(MessageRow {
         id: MessageId(r.get(0)?),
         account_id: AccountId(r.get(1)?),
@@ -1226,10 +1276,25 @@ fn message_row(r: &Row<'_>) -> rusqlite::Result<MessageRow> {
         snippet: r.get(5)?,
         date: r.get(6)?,
         flags: parse_flags(r.get(7)?),
-        thread_count: r.get(8)?,
-        thread_unread: r.get(9)?,
+        thread_unread: r.get(8)?,
+        thread_count,
+        senders,
         sent: r.get(10)?,
     })
+}
+
+/// Senders as `sender!` writes them, joined by `\x1e`: how many messages, and who wrote.
+fn parse_senders(joined: &str) -> (u32, Vec<Sender>) {
+    let wrote: Vec<_> = joined
+        .split('\x1e')
+        .filter_map(|one| {
+            let mut parts = one.splitn(4, '\x1f');
+            let date = parts.next()?.parse().ok()?;
+            Some((date, parts.next()? == "1", parts.next()?, parts.next()?))
+        })
+        .collect();
+    let count = u32::try_from(wrote.len()).unwrap_or(u32::MAX);
+    (count, Sender::collect(wrote))
 }
 
 fn storage(e: rusqlite::Error) -> StoreError {

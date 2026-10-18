@@ -73,5 +73,8 @@
   "signin_other": "Другая почта",
   "signin_app_password": "Пароль приложения",
   "signin_app_password_text": "Этот сервис просит пароль приложения, а не обычный пароль. Создать его можно за минуту.",
-  "signin_app_password_make": "Создать пароль приложения"
+  "signin_app_password_make": "Создать пароль приложения",
+  "message_more": "Ещё %1$d",
+  "message_me": "я",
+  "message_quote": "Показать цитату"
 }

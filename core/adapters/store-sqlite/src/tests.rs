@@ -924,13 +924,27 @@ fn a_conversation_shows_the_users_replies() {
     store
         .save_messages(inbox, &[message(1, 100), reply(3, 300, &[1, 2])])
         .unwrap();
-    store.save_messages(sent, &[reply(2, 200, &[1])]).unwrap();
+    let mine = NewMessage {
+        from: Address {
+            name: None,
+            email: "A@example.com".into(),
+        },
+        ..reply(2, 200, &[1])
+    };
+    store.save_messages(sent, &[mine]).unwrap();
 
+    // The row counts the user's reply and names who wrote, each once.
     let rows = list(&store, ListScope::Folder(inbox), 10, None);
     assert_eq!(
-        (subjects(&rows), rows[0].thread_count),
-        (vec!["Subject 3"], 2)
+        (subjects(&rows), rows[0].thread_count, rows[0].thread_unread),
+        (vec!["Subject 3"], 3, 2)
     );
+    let senders: Vec<_> = rows[0]
+        .senders
+        .iter()
+        .map(|s| (s.name.as_str(), s.me))
+        .collect();
+    assert_eq!(senders, [("Anna", false), ("a@example.com", true)]);
     let thread = store.thread(rows[0].id).unwrap();
     assert_eq!(subjects(&thread), ["Subject 1", "Subject 2", "Subject 3"]);
     let sent_flags: Vec<_> = thread.iter().map(|m| m.sent).collect();
@@ -946,6 +960,10 @@ fn a_conversation_shows_the_users_replies() {
         )
         .unwrap();
     assert_eq!(store.thread(rows[0].id).unwrap().len(), 3);
+    assert_eq!(
+        list(&store, ListScope::Folder(inbox), 10, None)[0].thread_count,
+        3
+    );
     // Reading the conversation leaves the sent folder alone.
     store.queue(rows[0].id, Action::Seen(true), 0).unwrap();
     assert!(

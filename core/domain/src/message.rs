@@ -91,8 +91,43 @@ pub struct MessageRow {
     pub thread_count: u32,
     /// How many of those are unread.
     pub thread_unread: u32,
+    /// Who wrote in the conversation, the user's replies included, oldest first, each once.
+    pub senders: Vec<Sender>,
     /// In the sent folder: the user wrote it.
     pub sent: bool,
+}
+
+/// Someone who wrote in a conversation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Sender {
+    /// The name, or the address when there is none.
+    pub name: String,
+    /// The user, writing from the sent folder.
+    pub me: bool,
+}
+
+impl Sender {
+    /// Who wrote, from each message's date, whether the user sent it, address and name:
+    /// oldest first, each address once. An address the user wrote from is the user's.
+    pub fn collect(mut wrote: Vec<(i64, bool, &str, &str)>) -> Vec<Self> {
+        wrote.sort_by_key(|w| w.0);
+        let mut senders: Vec<(String, Self)> = Vec::new();
+        for (_, me, email, name) in wrote {
+            let email = email.to_lowercase();
+            match senders.iter_mut().find(|(e, _)| *e == email) {
+                Some((_, known)) => known.me |= me,
+                None => {
+                    let name = if name.trim().is_empty() {
+                        email.clone()
+                    } else {
+                        name.to_owned()
+                    };
+                    senders.push((email, Self { name, me }));
+                }
+            }
+        }
+        senders.into_iter().map(|(_, s)| s).collect()
+    }
 }
 
 impl MessageRow {
@@ -122,7 +157,7 @@ impl Body {
         let words = self
             .text
             .lines()
-            .filter(|l| !l.trim_start().starts_with('>'))
+            .filter(|l| !is_quoted(l))
             .flat_map(str::split_whitespace);
         for word in words {
             let word_len = word.chars().count();
@@ -142,6 +177,48 @@ impl Body {
         }
         out
     }
+
+    /// The text without the quoted mail at its end, and that quote with the line that
+    /// introduces it, such as "On Mon, 1 Oct, Anna wrote:". No quote when nothing is
+    /// written above it.
+    pub fn split_quote(&self) -> (&str, &str) {
+        let text = self.text.trim_end();
+        let mut start = text.len();
+        let mut quoted = false;
+        // Back over the quoted lines and the blank lines between them.
+        for line in text.lines().rev() {
+            let blank = line.trim().is_empty();
+            if !blank && !is_quoted(line) {
+                break;
+            }
+            quoted |= !blank;
+            start -= line.len();
+            start = text[..start].trim_end_matches(['\n', '\r']).len();
+        }
+        if !quoted {
+            return (text, "");
+        }
+        let above = text[..start].trim_end();
+        let intro = above.rsplit('\n').next().unwrap_or_default();
+        // "On 1 Oct 2026, Anna wrote:" has a date; "My answers:" is the user's own line.
+        let intro_line = intro.trim_end();
+        let start =
+            if intro_line.ends_with(':') && intro_line.contains(|c: char| c.is_ascii_digit()) {
+                above.len() - intro.len()
+            } else {
+                start
+            };
+        let reply = text[..start].trim_end();
+        if reply.is_empty() {
+            return (text, "");
+        }
+        (reply, text[start..].trim_start_matches(['\n', '\r']))
+    }
+}
+
+/// A line of quoted mail, `> ...`.
+fn is_quoted(line: &str) -> bool {
+    line.trim_start().starts_with('>')
 }
 
 /// Where a saved message lives on its server.
@@ -199,6 +276,33 @@ mod tests {
             snippet("Hi Anna,\n\n> old reply\n  see you\tsoon"),
             "Hi Anna, see you soon"
         );
+    }
+
+    #[test]
+    fn splits_the_quote_at_the_end() {
+        let body = |text: &str| Body {
+            text: text.into(),
+            ..Body::default()
+        };
+        let b = body("Yes, at one.\n\nOn Mon, 12 Oct, Anna wrote:\n> Lunch?\n>\n> Or later\n\n");
+        assert_eq!(
+            b.split_quote(),
+            (
+                "Yes, at one.",
+                "On Mon, 12 Oct, Anna wrote:\n> Lunch?\n>\n> Or later"
+            )
+        );
+        let b = body("Yes\r\n> Lunch?\r\n");
+        assert_eq!(b.split_quote(), ("Yes", "> Lunch?"));
+        let b = body("Thanks\nMy answers:\n> Q1");
+        assert_eq!(b.split_quote(), ("Thanks\nMy answers:", "> Q1"));
+        for text in [
+            "> Lunch?\nYes",
+            "On 1 Oct Anna wrote:\n> Lunch?",
+            "Just text",
+        ] {
+            assert_eq!(body(text).split_quote(), (text, ""), "{text}");
+        }
     }
 
     #[test]

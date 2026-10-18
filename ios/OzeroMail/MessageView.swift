@@ -45,7 +45,7 @@ struct MessageView: View {
                 ScrollView {
                     Group {
                         if let loaded {
-                            Text(loaded.text).textSelection(.enabled)
+                            Text([loaded.text, loaded.quote].filter { !$0.isEmpty }.joined(separator: "\n\n")).textSelection(.enabled)
                         } else if let error {
                             Text(error).foregroundStyle(.secondary)
                         } else {

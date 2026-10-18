@@ -73,5 +73,8 @@
   "signin_other": "Other mail",
   "signin_app_password": "App password",
   "signin_app_password_text": "This service asks for an app password, not your usual one. Making one takes a minute.",
-  "signin_app_password_make": "Make an app password"
+  "signin_app_password_make": "Make an app password",
+  "message_more": "%1$d more",
+  "message_me": "me",
+  "message_quote": "Show the quoted text"
 }

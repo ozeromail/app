@@ -2,6 +2,8 @@
 //! sandbox is the real guard; this takes out what has no business in a message and holds
 //! back remote images, so the sender cannot tell the message was opened.
 
+use std::borrow::Cow;
+
 /// A message's HTML ready to show, and the remote images it holds back.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Page {
@@ -90,6 +92,91 @@ pub fn with_images(html: &str, images: &[Option<String>]) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// What mail apps put a quoted message in, by class.
+const QUOTE_CLASSES: [&str; 3] = ["gmail_quote", "yahoo_quoted", "protonmail_quote"];
+/// The same, by id: Outlook's.
+const QUOTE_IDS: [&str; 1] = ["mail-editor-reference-message-container"];
+/// The folded quote opens with a tap, with no script.
+const FOLD_OPEN: &str =
+    "<details class=\"ozero-quote\"><summary>\u{2022}\u{2022}\u{2022}</summary>";
+const FOLD_CLOSE: &str = "</details>";
+
+/// Folds the quoted mail at the end of a reply under a mark that opens it. Answers written
+/// between quotes stay open, and so does a forward with nothing written above it.
+pub fn fold_quote(html: &str) -> Cow<'_, str> {
+    match last_quote(html) {
+        Some((start, end)) if has_text(&html[..start]) && !has_text(&html[end..]) => Cow::Owned(
+            [
+                &html[..start],
+                FOLD_OPEN,
+                &html[start..end],
+                FOLD_CLOSE,
+                &html[end..],
+            ]
+            .concat(),
+        ),
+        _ => Cow::Borrowed(html),
+    }
+}
+
+/// Where the last quote that is not inside another one starts and ends.
+fn last_quote(html: &str) -> Option<(usize, usize)> {
+    let mut last = None;
+    // The open quote's tag name, how deep its own tag goes, and where it starts.
+    let mut open: Option<(String, usize, usize)> = None;
+    let mut at = 0;
+    while let Some(lt) = html[at..].find('<') {
+        at += lt;
+        let Some(tag) = Tag::read(&html[at..]) else {
+            at += 1;
+            continue;
+        };
+        let end = at + tag.len;
+        match &mut open {
+            None if !tag.closing && tag.is_quote() => open = Some((tag.name, 1, at)),
+            Some((name, depth, start)) if *name == tag.name => {
+                if !tag.closing {
+                    *depth += 1;
+                } else if *depth == 1 {
+                    last = Some((*start, end));
+                    open = None;
+                } else {
+                    *depth -= 1;
+                }
+            }
+            _ => {}
+        }
+        at = end;
+    }
+    open.map(|(_, _, start)| (start, html.len())).or(last)
+}
+
+/// Whether any text shows: not tags, styles or spaces.
+fn has_text(html: &str) -> bool {
+    let mut rest = html;
+    loop {
+        let lt = rest.find('<').unwrap_or(rest.len());
+        let shown = rest[..lt]
+            .split("&nbsp;")
+            .flat_map(|t| t.split("&#160;"))
+            .any(|t| t.chars().any(|c| !c.is_whitespace()));
+        if shown {
+            return true;
+        }
+        rest = &rest[lt..];
+        if rest.is_empty() {
+            return false;
+        }
+        match Tag::read(rest) {
+            Some(tag) if !tag.closing && matches!(tag.name.as_str(), "style" | "title") => {
+                rest = after_end_tag(&rest[tag.len..], &tag.name);
+            }
+            Some(tag) => rest = &rest[tag.len..],
+            None => return true,
+        }
+    }
 }
 
 /// One start or end tag.
@@ -182,6 +269,17 @@ impl<'a> Tag<'a> {
             len: at + 1,
             attrs,
         })
+    }
+
+    /// A quoted message, as mail apps mark one.
+    fn is_quote(&self) -> bool {
+        let class = self.attr("class").unwrap_or_default();
+        (self.name == "blockquote"
+            && self
+                .attr("type")
+                .is_some_and(|t| t.eq_ignore_ascii_case("cite")))
+            || class.split_whitespace().any(|c| QUOTE_CLASSES.contains(&c))
+            || self.attr("id").is_some_and(|id| QUOTE_IDS.contains(&id))
     }
 
     fn attr(&self, name: &str) -> Option<&'a str> {
@@ -362,5 +460,37 @@ mod tests {
         let html = "<p title=\"unclosed>text";
         assert_eq!(clean(html).html, html);
         assert_eq!(clean("Привет <i>мир</i>").html, "Привет <i>мир</i>");
+    }
+    #[test]
+    fn folds_the_quote_under_a_reply() {
+        let html = concat!(
+            "<div>Sounds good</div>",
+            "<div class=\"gmail_quote\"><div>On Mon, Anna wrote:</div>",
+            "<blockquote class=\"gmail_quote\"><div>Lunch?</div></blockquote></div>",
+            "<br>&nbsp;",
+        );
+        assert_eq!(
+            fold_quote(html),
+            concat!(
+                "<div>Sounds good</div><details class=\"ozero-quote\"><summary>\u{2022}\u{2022}\u{2022}</summary>",
+                "<div class=\"gmail_quote\"><div>On Mon, Anna wrote:</div>",
+                "<blockquote class=\"gmail_quote\"><div>Lunch?</div></blockquote></div>",
+                "</details><br>&nbsp;",
+            )
+        );
+        let apple = "Yes<BLOCKQUOTE type=Cite>On Mon<blockquote type=cite>old</blockquote>";
+        assert_eq!(
+            fold_quote(apple),
+            format!("Yes{FOLD_OPEN}{}{FOLD_CLOSE}", &apple[3..])
+        );
+    }
+
+    #[test]
+    fn keeps_inline_answers_and_bare_forwards() {
+        let inline = "<blockquote type=cite>Lunch?</blockquote>Yes<blockquote type=cite>At 1?</blockquote>Sure";
+        assert_eq!(fold_quote(inline), inline);
+        let forward = "<style>p{}</style><p>&nbsp;</p><div class=gmail_quote>Forwarded</div>";
+        assert_eq!(fold_quote(forward), forward);
+        assert_eq!(fold_quote("Just text"), "Just text");
     }
 }
