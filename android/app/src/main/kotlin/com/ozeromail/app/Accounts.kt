@@ -1,15 +1,17 @@
 package com.ozeromail.app
 
 import androidx.annotation.DrawableRes
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.selectable
@@ -17,10 +19,8 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -42,10 +42,13 @@ import androidx.compose.ui.unit.sp
 import uniffi.ozero_api.AccountItem
 import uniffi.ozero_api.accountColors
 
-/** The accounts and a way to add one; a tap on an account opens its settings. */
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * The accounts and a way to add one, in a sheet; a tap on an account opens its settings in
+ * the same sheet, which grows or shrinks to fit.
+ */
 @Composable
 fun AccountsSheet(
+    visible: Boolean,
     accounts: List<AccountItem>,
     onAdd: () -> Unit,
     onColor: (AccountItem, Int) -> Unit,
@@ -53,39 +56,44 @@ fun AccountsSheet(
     onWrite: () -> Unit,
     onClose: () -> Unit,
 ) {
-    var editing by rememberSaveable { mutableStateOf<Long?>(null) }
     val colors = MaterialTheme.colorScheme
-    ModalBottomSheet(onDismissRequest = onClose, containerColor = colors.background) {
-        Column(Modifier.navigationBarsPadding().padding(bottom = 16.dp)) {
-            val account = accounts.find { it.id == editing }
-            if (account != null) {
-                AccountSettings(
-                    account,
-                    onBack = { editing = null },
-                    onColor = { onColor(account, it) },
-                    onRemove = { onRemove(account) },
-                )
-                return@Column
-            }
-            SheetTitle(stringResource(R.string.accounts_title))
-            accounts.forEach { item ->
-                Row(
-                    Modifier.fillMaxWidth().clickable { editing = item.id }.padding(horizontal = 22.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                ) {
-                    AccountDot(item.tint, size = 12.dp)
-                    Column(Modifier.weight(1f)) {
-                        Text(item.name, fontSize = 15.5.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (item.name != item.email) {
-                            Text(item.email, color = colors.onSurfaceVariant, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Sheet(visible, onClose) {
+        // Inside the sheet, so it opens on the list again next time.
+        var editing by rememberSaveable { mutableStateOf<Long?>(null) }
+        AnimatedContent(
+            accounts.find { it.id == editing },
+            transitionSpec = {
+                (fadeIn(Motion.calm(Motion.SMALL)) togetherWith fadeOut(Motion.calm(Motion.SMALL)))
+                    .using(SizeTransform { _, _ -> Motion.settle() })
+            },
+            contentKey = { it?.id },
+            label = "accounts",
+        ) { account ->
+            Column {
+                if (account != null) {
+                    AccountSettings(
+                        account,
+                        onBack = { editing = null },
+                        onColor = { onColor(account, it) },
+                        onRemove = { onRemove(account) },
+                    )
+                } else {
+                    SheetTitle(stringResource(R.string.accounts_title))
+                    accounts.forEach { item ->
+                        SheetRow(onClick = { editing = item.id }, lead = { AccountDot(item.tint, size = 12.dp) }) {
+                            Column(Modifier.weight(1f)) {
+                                Text(item.name, fontSize = 15.5.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                if (item.name != item.email) {
+                                    Text(item.email, color = colors.onSurfaceVariant, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
                         }
                     }
+                    SheetAction(R.drawable.ic_add, stringResource(R.string.inbox_add_account), colors.primary, onAdd)
+                    HorizontalDivider(Modifier.padding(vertical = 6.dp), color = colors.outlineVariant)
+                    SheetAction(R.drawable.ic_compose, stringResource(R.string.feedback_write), colors.onSurface, onWrite)
                 }
             }
-            SheetAction(R.drawable.ic_add, stringResource(R.string.inbox_add_account), colors.primary, onAdd)
-            HorizontalDivider(Modifier.padding(vertical = 6.dp), color = colors.outlineVariant)
-            SheetAction(R.drawable.ic_compose, stringResource(R.string.feedback_write), colors.onSurface, onWrite)
         }
     }
 }
@@ -95,15 +103,18 @@ fun AccountsSheet(
 private fun AccountSettings(account: AccountItem, onBack: () -> Unit, onColor: (Int) -> Unit, onRemove: () -> Unit) {
     var confirming by rememberSaveable { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
-    Row(Modifier.padding(start = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconTile(R.drawable.ic_back, stringResource(R.string.accounts_title), onBack, size = 40.dp)
-        SheetTitle(account.name, Modifier.weight(1f).padding(start = 2.dp, end = 22.dp))
+    // The back arrow is centred on the rows' icon slot, so the name starts where their labels do.
+    val back = 44.dp
+    val overhang = (back - Gap.slot) / 2
+    Row(Modifier.padding(start = Gap.sheet - overhang, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconTile(R.drawable.ic_back, stringResource(R.string.accounts_title), onBack, size = back)
+        SheetTitle(account.name, Modifier.weight(1f).padding(start = Gap.afterSlot - overhang, end = Gap.sheet))
     }
     Text(
         stringResource(R.string.account_color),
         color = colors.onSurfaceVariant,
         fontSize = 13.sp,
-        modifier = Modifier.padding(start = 22.dp, end = 22.dp, top = 8.dp, bottom = 12.dp),
+        modifier = Modifier.padding(start = Gap.sheet, end = Gap.sheet, top = 8.dp, bottom = 12.dp),
     )
     Swatches(account.colorIndex.toInt(), onColor)
     SheetAction(R.drawable.ic_close, stringResource(R.string.account_remove), colors.error) { confirming = true }
@@ -124,7 +135,7 @@ private fun AccountSettings(account: AccountItem, onBack: () -> Unit, onColor: (
             title = { Text(stringResource(R.string.account_remove_title)) },
             text = { Text(stringResource(R.string.account_remove_text)) },
             containerColor = colors.background,
-            shape = RoundedCornerShape(20.dp),
+            shape = RoundedCornerShape(Radius.dialog),
         )
     }
 }
@@ -135,7 +146,7 @@ private fun Swatches(current: Int, onPick: (Int) -> Unit) {
     val rows = remember { accountColors().withIndex().chunked(5) }
     val ring = MaterialTheme.colorScheme.onSurface
     Column(
-        Modifier.padding(horizontal = 22.dp).padding(bottom = 18.dp).selectableGroup(),
+        Modifier.padding(horizontal = Gap.sheet).padding(bottom = 18.dp).selectableGroup(),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         rows.forEach { row ->
@@ -160,27 +171,10 @@ private fun Swatches(current: Int, onPick: (Int) -> Unit) {
     }
 }
 
-@Composable
-private fun SheetTitle(text: String, modifier: Modifier = Modifier.padding(start = 22.dp, end = 22.dp, bottom = 10.dp)) {
-    Text(
-        text,
-        fontSize = 18.sp,
-        fontWeight = FontWeight.Bold,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        modifier = modifier,
-    )
-}
-
 /** A row with an icon and a coloured label, as at the end of a sheet. */
 @Composable
 private fun SheetAction(@DrawableRes icon: Int, text: String, color: Color, onClick: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 18.dp, vertical = 13.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Glyph(icon, null, color)
+    SheetRow(onClick, lead = { Glyph(icon, null, color) }) {
         Text(text, color = color, fontSize = 15.5.sp, fontWeight = FontWeight.Medium)
     }
 }

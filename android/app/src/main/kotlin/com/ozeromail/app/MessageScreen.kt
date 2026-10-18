@@ -1,6 +1,9 @@
 package com.ozeromail.app
 
-import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -8,12 +11,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -51,22 +58,20 @@ import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.ImagesPage
 import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
+import uniffi.ozero_api.RemoteImage
 
 /**
  * A conversation, opened at the list's message: its HTML when it has one, otherwise the
  * text. The other messages, the user's replies among them, sit above it as cards; a tap
- * shows one. Reply, Reply all and Done sit at the bottom, in reach of the thumb; system back returns
- * to the list.
+ * shows one. Reply, Reply all and Done sit at the bottom, in reach of the thumb.
  */
 @Composable
 fun MessageScreen(
     mail: Mail,
     message: MessageItem,
-    onBack: () -> Unit,
     onReply: (MessageItem, all: Boolean) -> Unit,
     onDone: () -> Unit,
 ) {
-    BackHandler(onBack = onBack)
     var thread by remember(message.id) { mutableStateOf(listOf(message)) }
     var shown by remember(message.id) { mutableStateOf(message) }
     // With the id of its message, so a page is never shown under another message's header.
@@ -115,12 +120,16 @@ fun MessageScreen(
     val answer = if (shown.sent) thread.lastOrNull { !it.sent } ?: message else shown
 
     val colors = MaterialTheme.colorScheme
-    Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        Header(shown, Modifier.padding(top = 12.dp))
-        val older = thread.filter { it.id != shown.id }
-        if (older.isNotEmpty()) {
-            Column(Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState()).padding(top = 12.dp)) {
-                older.forEach { other ->
+    Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
+        Header(shown, Modifier.padding(top = 18.dp))
+        // The rest of the conversation opens in once it has loaded.
+        val older = remember(thread, shown.id) { thread.filter { it.id != shown.id }.takeIf { it.isNotEmpty() } }
+        Reveal(older) { others ->
+            Column(
+                Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState()).padding(top = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                others.forEach { other ->
                     Older(other, onClick = {
                         error = null
                         shown = other
@@ -128,14 +137,22 @@ fun MessageScreen(
                 }
             }
         }
-        HorizontalDivider(Modifier.padding(top = 14.dp), color = colors.outlineVariant)
+        HorizontalDivider(Modifier.padding(top = 16.dp), color = colors.outlineVariant)
         val loaded = body?.takeIf { it.first == shown.id }?.second
         val full = withImages?.takeIf { it.first == shown.id }?.second
         val html = full?.html ?: loaded?.html
         val imagesFailed = imagesError
-        if (loaded != null && full == null && (imagesFailed != null || loaded.remoteImages > 0u && !loaded.showsImages)) {
-            HiddenImages(imagesFailed ?: R.string.message_images_hidden, onShow = {
+        val imagesNote = when {
+            loaded == null || full != null -> null
+            imagesFailed != null -> imagesFailed
+            loaded.remoteImages > 0u && !loaded.showsImages -> R.string.message_images_hidden
+            else -> null
+        }
+        Reveal(imagesNote) { note ->
+            HiddenImages(note, onShow = onShow@{
                 val of = shown
+                // The note is closing: the images are here already.
+                if (withImages?.first == of.id) return@onShow
                 imagesError = null
                 scope.launch {
                     try {
@@ -148,26 +165,41 @@ fun MessageScreen(
             })
         }
         val failed = error
-        val content = Modifier.weight(1f).fillMaxWidth()
-        when {
-            // A new web view per message: it loads its page only once.
-            html != null -> key(shown.id, full != null) { HtmlView(html, full?.images.orEmpty(), content) }
-            loaded != null -> SelectionContainer(content.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 18.dp)) {
-                Text(loaded.text, fontSize = 15.5.sp, lineHeight = 24.8.sp, modifier = Modifier.widthIn(max = 620.dp))
-            }
-            failed != null -> Text(stringResource(failed), color = colors.onSurfaceVariant, modifier = content.padding(20.dp))
-            else -> Box(content.padding(32.dp), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
+        val shownBody = when {
+            html != null -> Body.Page(shown.id, html, full?.images.orEmpty(), withImages = full != null)
+            loaded != null -> Body.Plain(loaded.text)
+            failed != null -> Body.Failed(failed)
+            else -> Body.Loading
+        }
+        // The page fades in over the spinner instead of popping in; the old one fades out whole.
+        AnimatedContent(
+            shownBody,
+            Modifier.weight(1f).fillMaxWidth(),
+            transitionSpec = { (fadeIn(Motion.calm(Motion.SMALL)) togetherWith fadeOut(Motion.calm(Motion.SMALL))).using(null) },
+            contentKey = { it::class },
+            label = "body",
+        ) { kind ->
+            val content = Modifier.fillMaxSize()
+            when (kind) {
+                // A new web view per message: it loads its page only once.
+                is Body.Page -> key(kind.id, kind.withImages) { HtmlView(kind.html, kind.images, content) }
+                is Body.Plain -> SelectionContainer(content.verticalScroll(rememberScrollState()).padding(horizontal = Gap.screen, vertical = 18.dp)) {
+                    Text(kind.text, fontSize = 15.5.sp, lineHeight = 24.8.sp, modifier = Modifier.widthIn(max = 620.dp))
+                }
+                is Body.Failed -> Text(stringResource(kind.text), color = colors.onSurfaceVariant, modifier = content.padding(Gap.screen))
+                Body.Loading -> Box(content.padding(32.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
             }
         }
         Column(
-            Modifier.fillMaxWidth().navigationBarsPadding().padding(top = 8.dp, bottom = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            Modifier.fillMaxWidth().navigationBarsPadding().padding(top = Gap.barTop, bottom = Gap.barBottom),
+            verticalArrangement = Arrangement.spacedBy(Gap.inBar),
         ) {
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 10.dp),
+                Modifier.fillMaxWidth().padding(horizontal = Gap.bar),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
             ) {
                 Pill(
                     stringResource(R.string.message_reply_prompt),
@@ -195,12 +227,12 @@ fun MessageScreen(
 @Composable
 private fun Actions(onDone: () -> Unit) {
     val done = MaterialTheme.done
-    Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = Gap.bar), horizontalArrangement = Arrangement.spacedBy(Gap.inBar)) {
         repeat(3) { Spacer(Modifier.weight(1f)) }
         Column(
             Modifier
                 .weight(1f)
-                .clip(RoundedCornerShape(14.dp))
+                .clip(RoundedCornerShape(Radius.medium))
                 .background(done)
                 .clickable(role = Role.Button, onClick = onDone)
                 .padding(vertical = 6.dp),
@@ -220,9 +252,9 @@ private fun HiddenImages(note: Int, onShow: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(start = 16.dp, end = 16.dp, top = 12.dp)
-            .background(colors.surfaceVariant, RoundedCornerShape(14.dp))
-            .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+            .padding(start = Gap.card, end = Gap.card, top = 12.dp)
+            .background(colors.surfaceVariant, RoundedCornerShape(Radius.medium))
+            .padding(start = Gap.inCard, end = 8.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -254,11 +286,11 @@ private fun Older(message: MessageItem, onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(start = 16.dp, end = 16.dp, bottom = 8.dp)
-            .clip(RoundedCornerShape(14.dp))
+            .padding(horizontal = Gap.card)
+            .clip(RoundedCornerShape(Radius.medium))
             .background(colors.surfaceVariant)
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(horizontal = Gap.inCard, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -290,12 +322,12 @@ private fun Header(message: MessageItem, modifier: Modifier) {
                 lineHeight = 28.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = (-0.46).sp,
-                modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 10.dp),
+                modifier = Modifier.padding(start = Gap.screen, end = Gap.screen, bottom = 10.dp),
             )
             message.account?.let { account ->
                 Row(
                     Modifier
-                        .padding(start = 20.dp, end = 20.dp, bottom = 14.dp)
+                        .padding(start = Gap.screen, end = Gap.screen, bottom = 14.dp)
                         .background(colors.surfaceVariant, CircleShape)
                         .padding(horizontal = 11.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -306,7 +338,7 @@ private fun Header(message: MessageItem, modifier: Modifier) {
                 }
             }
             Row(
-                Modifier.padding(horizontal = 20.dp),
+                Modifier.padding(horizontal = Gap.screen),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
@@ -326,6 +358,14 @@ private fun Header(message: MessageItem, modifier: Modifier) {
             }
         }
     }
+}
+
+/** What the body area shows. */
+private sealed interface Body {
+    data object Loading : Body
+    data class Page(val id: Long, val html: String, val images: List<RemoteImage?>, val withImages: Boolean) : Body
+    data class Plain(val text: String) : Body
+    data class Failed(val text: Int) : Body
 }
 
 /** How long a page waits for its images before it shows without them. */

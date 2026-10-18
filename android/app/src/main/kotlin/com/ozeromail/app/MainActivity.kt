@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.annotation.StringRes
+import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -68,12 +69,15 @@ private fun App(mail: Mail) {
             Start.Failed(e.text())
         }
     }
-    when (val s = start) {
-        Start.Loading -> Unit
-        Start.SignIn -> SignInScreen(mail, onSignedIn = { start = Start.Inbox })
-        Start.Inbox -> InboxScreen(mail, onNoAccounts = { start = Start.SignIn })
-        is Start.Failed -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-            Text(stringResource(s.text))
+    // The first screen fades in, as does the inbox after signing in.
+    Crossfade(start, animationSpec = Motion.calm(Motion.NOTE), label = "start") { s ->
+        when (s) {
+            Start.Loading -> Unit
+            Start.SignIn -> SignInScreen(mail, onSignedIn = { start = Start.Inbox })
+            Start.Inbox -> InboxScreen(mail, onNoAccounts = { start = Start.SignIn })
+            is Start.Failed -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                Text(stringResource(s.text))
+            }
         }
     }
 }

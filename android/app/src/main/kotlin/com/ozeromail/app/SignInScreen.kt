@@ -67,8 +67,8 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
     var error by remember { mutableStateOf<Int?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    // Not while signing in: leaving would cut it off halfway.
-    if (onCancel != null) BackHandler(enabled = !busy, onBack = onCancel)
+    // Not while signing in: leaving would cut it off halfway. Otherwise back leaves, from the inbox.
+    if (onCancel != null) BackHandler(enabled = busy) {}
 
     /** Runs a sign-in, busy meanwhile; on success leaves the screen. */
     suspend fun attempt(signIn: suspend () -> Unit) {
@@ -121,7 +121,7 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
             .fillMaxSize()
             .safeDrawingPadding()
             .imePadding()
-            .padding(24.dp),
+            .padding(horizontal = Gap.screen, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -138,7 +138,7 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
         Field(password, { password = it }, R.string.signin_password, KeyboardType.Password)
         Server(host, { server = it }, R.string.signin_server, port, { port = it })
         Server(smtpHost, { smtpServer = it }, R.string.signin_smtp_server, smtpPort, { smtpPort = it }, onDone = ::submit)
-        error?.let { Text(stringResource(it), color = MaterialTheme.colorScheme.error) }
+        Reveal(error) { Text(stringResource(it), color = MaterialTheme.colorScheme.error) }
         Button(
             onClick = ::submit,
             enabled = ready,
@@ -183,7 +183,7 @@ private fun Field(
         value = value,
         onValueChange = onChange,
         label = { Text(stringResource(label)) },
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(Radius.medium),
         singleLine = true,
         visualTransformation = if (keyboard == KeyboardType.Password) PasswordVisualTransformation() else VisualTransformation.None,
         keyboardOptions = KeyboardOptions(
