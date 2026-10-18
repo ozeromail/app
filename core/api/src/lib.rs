@@ -13,7 +13,7 @@ use ozero_app::sync::{SyncError, download_body, sync_mail};
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Body, Category, Changes, Checkpoint, Draft,
     FolderRole, ListQuery, ListScope, MailProvider, MessageId, MessageRow, NewAccount, NewFolder,
-    OpId, OutboxId, ProviderError, Server, Store, StoreError, html, parse_recipients,
+    OpId, OutboxId, ProviderError, Sender, Server, Store, StoreError, html, parse_recipients,
     saves_sent_itself,
 };
 use ozero_gmail::{GmailSession, oauth};
@@ -550,7 +550,7 @@ impl Core {
             })
             .collect();
         Ok(Some(ImagesPage {
-            html: sandboxed(&html::with_images(&page.html, &sources)),
+            html: sandboxed(&html::fold_quote(&html::with_images(&page.html, &sources))),
             images,
         }))
     }
@@ -949,6 +949,24 @@ impl From<Account> for AccountItem {
     }
 }
 
+/// Someone who wrote in a conversation.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SenderItem {
+    /// The name, or the address when there is none.
+    pub name: String,
+    /// The user.
+    pub me: bool,
+}
+
+impl From<Sender> for SenderItem {
+    fn from(s: Sender) -> Self {
+        Self {
+            name: s.name,
+            me: s.me,
+        }
+    }
+}
+
 /// The account a row is in, for lists that show mail of several accounts.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct AccountMark {
@@ -1075,7 +1093,10 @@ impl From<Draft> for DraftItem {
 /// What the reading screen shows.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct MessageBody {
+    /// The text without the quoted mail at its end.
     pub text: String,
+    /// That quote, for the reader to fold; empty for none.
+    pub quote: String,
     /// A whole HTML document for a web view with JavaScript and network off, without its
     /// remote images; `message_images` loads them.
     pub html: Option<String>,
@@ -1089,13 +1110,15 @@ pub struct MessageBody {
 impl From<Body> for MessageBody {
     fn from(body: Body) -> Self {
         let page = body.html.as_deref().map(html::clean);
+        let (text, quote) = body.split_quote();
         Self {
             remote_images: page
                 .as_ref()
                 .map_or(0, |p| u32::try_from(p.images.len()).unwrap_or(u32::MAX)),
-            html: page.map(|p| sandboxed(&p.html)),
+            html: page.map(|p| sandboxed(&html::fold_quote(&p.html))),
             shows_images: false,
-            text: body.text,
+            text: text.to_owned(),
+            quote: quote.to_owned(),
         }
     }
 }
@@ -1142,7 +1165,11 @@ fn sandboxed(html: &str) -> String {
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
         "<style>html{color-scheme:light;background:#fff}",
         "body{margin:0;padding:0 16px 16px;overflow-wrap:break-word}",
-        "img{max-width:100%;height:auto}</style>",
+        "img{max-width:100%;height:auto}",
+        "details.ozero-quote>summary{list-style:none;display:inline-block;margin:10px 0;",
+        "padding:0 10px;border-radius:9px;background:#eef0f3;color:#6b7280;",
+        "font:700 13px/22px sans-serif;letter-spacing:1px}",
+        "details.ozero-quote>summary::-webkit-details-marker{display:none}</style>",
         "</head><body dir=\"auto\">",
     );
     [HEAD, html, "</body></html>"].concat()
@@ -1165,6 +1192,8 @@ pub struct MessageItem {
     pub thread_count: u32,
     /// How many of them are unread.
     pub thread_unread: u32,
+    /// Who wrote in the conversation, the user included, oldest first, each once.
+    pub senders: Vec<SenderItem>,
     /// The user wrote it: it is in the sent folder.
     pub sent: bool,
     /// In mixed lists (the unified inbox, search), set when there is more than one account.
@@ -1185,6 +1214,7 @@ impl From<MessageRow> for MessageItem {
             flagged: row.flags.flagged,
             thread_count: row.thread_count,
             thread_unread: row.thread_unread,
+            senders: row.senders.into_iter().map(SenderItem::from).collect(),
             sent: row.sent,
             account: None,
         }

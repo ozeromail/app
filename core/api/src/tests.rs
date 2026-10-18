@@ -134,6 +134,7 @@ fn syncs_an_imap_inbox_into_the_list() {
     let body = |password: &str| runtime.block_on(core.message_body(message, password.into()));
     let plain = MessageBody {
         text: "Hello 2".into(),
+        quote: String::new(),
         html: None,
         remote_images: 0,
         shows_images: true,
@@ -246,6 +247,7 @@ fn rows_are_marked_only_with_several_accounts() {
         flags: Default::default(),
         thread_count: 1,
         thread_unread: 0,
+        senders: Vec::new(),
         sent: false,
     };
     let first = add("a@example.com");
