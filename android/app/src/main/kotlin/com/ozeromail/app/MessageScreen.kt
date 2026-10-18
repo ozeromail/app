@@ -1,5 +1,7 @@
 package com.ozeromail.app
 
+import androidx.annotation.DrawableRes
+import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -14,6 +16,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -78,8 +81,11 @@ fun MessageScreen(
     mail: Mail,
     message: MessageItem,
     onReply: (MessageItem, all: Boolean) -> Unit,
+    onDelete: () -> Unit,
+    onUnread: () -> Unit,
     onDone: () -> Unit,
 ) {
+    var more by remember(message.id) { mutableStateOf(false) }
     var thread by remember(message.id) { mutableStateOf(listOf(message)) }
     var error by remember(message.id) { mutableStateOf<Int?>(null) }
     // What the user opened or closed; at first only the message from the list is open.
@@ -99,59 +105,73 @@ fun MessageScreen(
     // The newest message not from the user.
     val answer = thread.lastOrNull { !it.sent } ?: message
 
-    Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
-        if (thread.size > 1 || message.threadCount > 1u) {
-            Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
-                Title(message)
-                // A long run of closed messages in the middle folds into one line.
-                val middle = 1 until thread.size - 2
-                val folded = !showAll && middle.count() >= 2 && middle.none { isOpen(thread[it]) }
-                thread.forEachIndexed { i, m ->
-                    if (i == 1) {
-                        Reveal(middle.count().takeIf { folded }) { count -> More(count, onClick = { showAll = true }) }
-                    }
-                    key(m.id) {
-                        val letter = @Composable { Letter(mail, m, bodies, isOpen(m), onToggle = { opened[m.id] = !isOpen(m) }) }
-                        if (i in middle) {
-                            AnimatedVisibility(!folded, enter = opening, exit = closing) { letter() }
-                        } else {
-                            letter()
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
+            if (thread.size > 1 || message.threadCount > 1u) {
+                Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
+                    Title(message)
+                    // A long run of closed messages in the middle folds into one line.
+                    val middle = 1 until thread.size - 2
+                    val folded = !showAll && middle.count() >= 2 && middle.none { isOpen(thread[it]) }
+                    thread.forEachIndexed { i, m ->
+                        if (i == 1) {
+                            Reveal(middle.count().takeIf { folded }) { count -> More(count, onClick = { showAll = true }) }
+                        }
+                        key(m.id) {
+                            val letter = @Composable { Letter(mail, m, bodies, isOpen(m), onToggle = { opened[m.id] = !isOpen(m) }) }
+                            if (i in middle) {
+                                AnimatedVisibility(!folded, enter = opening, exit = closing) { letter() }
+                            } else {
+                                letter()
+                            }
                         }
                     }
+                    Reveal(error) { Text(stringResource(it), color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(Gap.screen)) }
+                    Spacer(Modifier.height(12.dp))
                 }
-                Reveal(error) { Text(stringResource(it), color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(Gap.screen)) }
-                Spacer(Modifier.height(12.dp))
+            } else {
+                Title(message)
+                From(message, open = true)
+                HorizontalDivider(Modifier.padding(top = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                LetterBody(mail, message, bodies, Modifier.weight(1f), fill = true)
             }
-        } else {
-            Title(message)
-            From(message, open = true)
-            HorizontalDivider(Modifier.padding(top = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
-            LetterBody(mail, message, bodies, Modifier.weight(1f), fill = true)
-        }
-        Column(
-            Modifier.fillMaxWidth().navigationBarsPadding().padding(top = Gap.barTop, bottom = Gap.barBottom),
-            verticalArrangement = Arrangement.spacedBy(Gap.inBar),
-        ) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = Gap.bar),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
+            Column(
+                Modifier.fillMaxWidth().navigationBarsPadding().padding(top = Gap.barTop, bottom = Gap.barBottom),
+                verticalArrangement = Arrangement.spacedBy(Gap.inBar),
             ) {
-                Pill(
-                    stringResource(R.string.message_reply_prompt),
-                    onClick = { onReply(answer, false) },
-                    modifier = Modifier.weight(1f),
-                    height = 46.dp,
-                )
-                IconTile(
-                    R.drawable.ic_reply_all,
-                    stringResource(R.string.message_reply_all),
-                    { onReply(answer, true) },
-                    shape = CircleShape,
-                    size = 46.dp,
-                )
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = Gap.bar),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
+                ) {
+                    Pill(
+                        stringResource(R.string.message_reply_prompt),
+                        onClick = { onReply(answer, false) },
+                        modifier = Modifier.weight(1f),
+                        height = 46.dp,
+                    )
+                    IconTile(
+                        R.drawable.ic_reply_all,
+                        stringResource(R.string.message_reply_all),
+                        { onReply(answer, true) },
+                        shape = CircleShape,
+                        size = 46.dp,
+                    )
+                }
+                Actions(onDelete = onDelete, onMore = { more = true }, onDone = onDone)
             }
-            Actions(onDone)
+        }
+        // Like every menu, the rarer actions open in a sheet, low in reach of the thumb.
+        Sheet(visible = more, onClose = { more = false }) {
+            SheetRow(
+                onClick = {
+                    more = false
+                    onUnread()
+                },
+                lead = { Glyph(R.drawable.ic_unread, null, MaterialTheme.colorScheme.onSurface) },
+            ) {
+                Text(stringResource(R.string.action_mark_unread), fontSize = 15.5.sp, modifier = Modifier.weight(1f))
+            }
         }
     }
 }
@@ -240,9 +260,10 @@ private fun LetterBody(mail: Mail, message: MessageItem, bodies: MutableMap<Long
     }
     val failed = error
     val html = loaded?.html
+    val styled = loaded?.styled == true
     val shown = when {
-        full != null -> Body.Page(full.html, full.images, withImages = true)
-        html != null -> Body.Page(html, emptyList(), withImages = false)
+        full != null -> Body.Page(full.html, full.images, withImages = true, styled)
+        html != null -> Body.Page(html, emptyList(), withImages = false, styled)
         loaded != null -> Body.Plain(loaded.text, loaded.quote)
         failed != null -> Body.Failed(failed)
         else -> Body.Loading
@@ -279,7 +300,15 @@ private fun LetterBody(mail: Mail, message: MessageItem, bodies: MutableMap<Long
             val content = if (fill) Modifier.fillMaxSize() else Modifier.fillMaxWidth()
             when (kind) {
                 // A new web view per page: it loads its page only once.
-                is Body.Page -> key(kind.withImages) { HtmlView(kind.html, kind.images, content.padding(top = 4.dp)) }
+                // A newsletter keeps the light page it was made for, as a card on the screen.
+                is Body.Page -> key(kind.withImages) {
+                    val page = if (kind.styled) {
+                        content.padding(start = 10.dp, end = 10.dp, top = 4.dp, bottom = 10.dp).clip(RoundedCornerShape(Radius.tile))
+                    } else {
+                        content.padding(top = 4.dp)
+                    }
+                    HtmlView(kind.html, kind.images, page)
+                }
                 is Body.Plain -> PlainText(kind.text, kind.quote, if (fill) content.verticalScroll(rememberScrollState()) else content)
                 is Body.Failed -> Text(stringResource(kind.text), color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = content.padding(Gap.screen))
                 Body.Loading -> Box(if (fill) content else content.height(96.dp), contentAlignment = Alignment.Center) {
@@ -322,28 +351,31 @@ private fun PlainText(text: String, quote: String, modifier: Modifier) {
     }
 }
 
-/**
- * The actions under the thumb, in four equal places as more will come; Done, the one used
- * most, takes the last.
- */
+/** The actions under the thumb, each in an equal place; Done, the one used most, takes the last. */
 @Composable
-private fun Actions(onDone: () -> Unit) {
-    val done = MaterialTheme.done
+private fun Actions(onDelete: () -> Unit, onMore: () -> Unit, onDone: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth().padding(horizontal = Gap.bar), horizontalArrangement = Arrangement.spacedBy(Gap.inBar)) {
-        repeat(3) { Spacer(Modifier.weight(1f)) }
-        Column(
-            Modifier
-                .weight(1f)
-                .clip(RoundedCornerShape(Radius.medium))
-                .background(done)
-                .clickable(role = Role.Button, onClick = onDone)
-                .padding(vertical = 6.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(3.dp),
-        ) {
-            Glyph(R.drawable.ic_done, null, Color.White)
-            Text(stringResource(R.string.action_done), color = Color.White, fontSize = 11.5.sp)
-        }
+        Action(R.drawable.ic_delete, R.string.action_delete, colors.onSurface, Color.Transparent, onDelete)
+        Action(R.drawable.ic_more, R.string.action_more, colors.onSurface, Color.Transparent, onMore)
+        Action(R.drawable.ic_done, R.string.action_done, Color.White, MaterialTheme.done, onDone)
+    }
+}
+
+@Composable
+private fun RowScope.Action(@DrawableRes icon: Int, @StringRes label: Int, tint: Color, background: Color, onClick: () -> Unit) {
+    Column(
+        Modifier
+            .weight(1f)
+            .height(52.dp)
+            .clip(RoundedCornerShape(Radius.medium))
+            .background(background)
+            .clickable(role = Role.Button, onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically),
+    ) {
+        Glyph(icon, null, tint, size = 21.dp)
+        Text(stringResource(label), color = tint, fontSize = 11.5.sp)
     }
 }
 
@@ -459,7 +491,7 @@ private fun Title(message: MessageItem) {
 /** What a message's body area shows. */
 private sealed interface Body {
     data object Loading : Body
-    data class Page(val html: String, val images: List<RemoteImage?>, val withImages: Boolean) : Body
+    data class Page(val html: String, val images: List<RemoteImage?>, val withImages: Boolean, val styled: Boolean) : Body
     data class Plain(val text: String, val quote: String) : Body
     data class Failed(val text: Int) : Body
 }

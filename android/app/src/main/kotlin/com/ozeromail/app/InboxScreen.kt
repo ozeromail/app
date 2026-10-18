@@ -155,6 +155,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         crash = withContext(Dispatchers.IO) { Crashes.last(context) }
     }
     val archived = stringResource(R.string.inbox_archived)
+    val trashed = stringResource(R.string.inbox_trashed)
     val undo = stringResource(R.string.action_undo)
     val sending = stringResource(R.string.inbox_sending)
 
@@ -266,11 +267,11 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         }
     }
 
-    /** Done: the message leaves the list at once; the toast can take it back for a moment. */
-    fun archive(message: MessageItem, reset: () -> Unit) {
+    /** The message leaves the list at once; the toast can take it back for a moment. */
+    fun remove(message: MessageItem, toast: String, move: suspend (MessageItem) -> List<Long>, reset: () -> Unit = {}) {
         scope.launch {
             val action = try {
-                mail.archive(message)
+                move(message)
             } catch (e: CoreException) {
                 error = e.text()
                 null
@@ -281,9 +282,12 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             }
             // Also after success: a list read before the archive may bring the row back.
             reset()
-            if (action != null && offerUndo(archived) && mail.undo(action)) load()
+            if (action != null && offerUndo(toast) && mail.undo(action)) load()
         }
     }
+
+    /** Done: into the archive. */
+    fun archive(message: MessageItem, reset: () -> Unit) = remove(message, archived, mail::archive, reset)
 
     val screen = screenOf(composing, open, addingAccount, searching)
     // Where back leads: the same screens with the top one gone.
@@ -353,6 +357,22 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                         replying = false
                                     }
                                 }
+                            }
+                        },
+                        onDelete = {
+                            open = null
+                            closeSearch()
+                            remove(shown.message, trashed, mail::trash)
+                        },
+                        onUnread = {
+                            open = null
+                            scope.launch {
+                                try {
+                                    mail.markRead(shown.message, seen = false)
+                                } catch (e: CoreException) {
+                                    error = e.text()
+                                }
+                                load()
                             }
                         },
                         onDone = {
