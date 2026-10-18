@@ -919,7 +919,7 @@ internal fun MessageRow(message: MessageItem, onClick: () -> Unit) {
                 // The sender and count take what is left, so the time always ends at the edge.
                 Row(Modifier.weight(1f).padding(end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        message.sender,
+                        message.participants(),
                         fontSize = 15.5.sp,
                         fontWeight = if (unread) FontWeight.Bold else FontWeight.Medium,
                         maxLines = 1,
@@ -987,6 +987,20 @@ internal fun MessageRow(message: MessageItem, onClick: () -> Unit) {
 /** The name, or the address when there is none. */
 val MessageItem.sender: String
     get() = fromName?.takeIf { it.isNotBlank() } ?: fromEmail
+
+/** Who wrote in a conversation, "Anna, me, Boris"; for one person, their whole name. */
+@Composable
+fun MessageItem.participants(): String {
+    if (senders.size < 2) return sender
+    val me = stringResource(R.string.message_me)
+    return senders.joinToString(", ") { if (it.me) me else firstName(it.name) }
+}
+
+/** "Anna" of "Anna Lee", "Lee, Anna" or "anna@x.com". */
+private fun firstName(name: String): String {
+    val given = name.substringBefore('@').substringAfter(", ").trim()
+    return given.substringBefore(' ').ifEmpty { name }
+}
 
 @Composable
 fun MessageItem.subjectText(): String = subject.ifBlank { stringResource(R.string.inbox_no_subject) }
