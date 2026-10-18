@@ -916,27 +916,29 @@ internal fun MessageRow(message: MessageItem, onClick: () -> Unit) {
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    message.sender,
-                    fontSize = 15.5.sp,
-                    fontWeight = if (unread) FontWeight.Bold else FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                if (message.threadCount > 1u) {
+                // The sender and count take what is left, so the time always ends at the edge.
+                Row(Modifier.weight(1f).padding(end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        message.threadCount.toString(),
-                        color = colors.onSurfaceVariant,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier
-                            .padding(start = 6.dp)
-                            .background(colors.surfaceContainerHighest, CircleShape)
-                            .padding(horizontal = 6.dp, vertical = 1.dp),
+                        message.sender,
+                        fontSize = 15.5.sp,
+                        fontWeight = if (unread) FontWeight.Bold else FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
+                    if (message.threadCount > 1u) {
+                        Text(
+                            message.threadCount.toString(),
+                            color = colors.onSurfaceVariant,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier
+                                .padding(start = 6.dp)
+                                .background(colors.surfaceContainerHighest, CircleShape)
+                                .padding(horizontal = 6.dp, vertical = 1.dp),
+                        )
+                    }
                 }
-                Spacer(Modifier.weight(1f).widthIn(min = 8.dp))
                 account?.let {
                     Text(
                         it.name,
