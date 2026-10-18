@@ -486,7 +486,7 @@ impl Store for SqliteStore {
             // The rest of the conversation only where it changes something.
             let changes = match action {
                 Action::Seen(seen) => (flags & SEEN != 0) != seen,
-                Action::Archive => true,
+                Action::Archive | Action::Trash => true,
             };
             if id == message.0 || changes {
                 ops.push(queue_one(&tx, MessageId(id), action, not_before)?);
@@ -712,7 +712,7 @@ impl Store for SqliteStore {
                     .query_row(params![op.id.0, value], |r| r.get(0))
                     .optional()
                     .map_err(storage)?;
-                if let (Some(message), Action::Archive) = (gone, op.action) {
+                if let (Some(message), Action::Archive | Action::Trash) = (gone, op.action) {
                     drop_message.execute([message]).map_err(storage)?;
                 }
             }
@@ -763,7 +763,24 @@ fn queue_one(
             (queued.unwrap_or(i64::from(flags & SEEN != 0)), None)
         }
         // Undone by dropping the op, which shows the message again.
-        Action::Archive => (0, Some(archive_folder(tx, message)?)),
+        Action::Archive => (
+            0,
+            Some(role_folder(
+                tx,
+                message,
+                FolderRole::Archive,
+                StoreError::NoArchive,
+            )?),
+        ),
+        Action::Trash => (
+            0,
+            Some(role_folder(
+                tx,
+                message,
+                FolderRole::Trash,
+                StoreError::NoTrash,
+            )?),
+        ),
     };
     // Kept even when it undoes itself: a push may be sending the older value right now.
     let id = tx
@@ -905,21 +922,24 @@ fn link_thread(
     Ok(())
 }
 
-/// The folder of the message's account that has the archive role.
-fn archive_folder(tx: &Transaction<'_>, message: MessageId) -> Result<i64, StoreError> {
+/// The folder of the message's account with `role`; `missing` when it has none.
+fn role_folder(
+    tx: &Transaction<'_>,
+    message: MessageId,
+    role: FolderRole,
+    missing: StoreError,
+) -> Result<i64, StoreError> {
     tx.prepare_cached(
         "SELECT a.id FROM message m JOIN folder f ON f.id = m.folder_id
          JOIN folder a ON a.account_id = f.account_id AND a.role = ?2
          WHERE m.id = ?1 ORDER BY a.id LIMIT 1",
     )
     .and_then(|mut s| {
-        s.query_row(params![message.0, role_str(FolderRole::Archive)], |r| {
-            r.get(0)
-        })
-        .optional()
+        s.query_row(params![message.0, role_str(role)], |r| r.get(0))
+            .optional()
     })
     .map_err(storage)?
-    .ok_or(StoreError::NoArchive)
+    .ok_or(missing)
 }
 
 /// Drops the op if `sql`, a `DELETE ... RETURNING message_id, kind, undo` with the op id
@@ -940,7 +960,7 @@ fn take_back(tx: &Transaction<'_>, sql: &str, op: OpId, arg: i64) -> Result<bool
     match kind.with(undo) {
         Action::Seen(seen) => set_seen(tx, message, seen)?,
         // Without its op the message shows in its folder again.
-        Action::Archive => {}
+        Action::Archive | Action::Trash => {}
     }
     Ok(true)
 }
@@ -991,7 +1011,7 @@ const SAVE_MESSAGE: &str = concat!(
     ")"
 );
 
-/// Lists leave out a message while its move to the archive is held.
+/// Lists leave out a message while its move to the archive or trash is held.
 macro_rules! not_archiving {
     () => {
         not_archiving!("m")
@@ -1000,7 +1020,7 @@ macro_rules! not_archiving {
         concat!(
             "NOT EXISTS (SELECT 1 FROM op WHERE op.message_id = ",
             $m,
-            ".id AND op.kind = 'archive')"
+            ".id AND op.kind IN ('archive', 'trash'))"
         )
     };
 }
@@ -1318,6 +1338,7 @@ struct Role(FolderRole);
 enum StoredAction {
     Seen,
     Archive,
+    Trash,
 }
 
 /// The kind and value columns of `op` for an action.
@@ -1325,6 +1346,7 @@ fn stored(action: Action) -> (&'static str, i64) {
     match action {
         Action::Seen(seen) => ("seen", i64::from(seen)),
         Action::Archive => ("archive", 1),
+        Action::Trash => ("trash", 1),
     }
 }
 
@@ -1333,6 +1355,7 @@ impl StoredAction {
         match self {
             Self::Seen => Action::Seen(value != 0),
             Self::Archive => Action::Archive,
+            Self::Trash => Action::Trash,
         }
     }
 }
@@ -1342,6 +1365,7 @@ impl FromSql for StoredAction {
         match value.as_str()? {
             "seen" => Ok(Self::Seen),
             "archive" => Ok(Self::Archive),
+            "trash" => Ok(Self::Trash),
             _ => Err(FromSqlError::InvalidType),
         }
     }

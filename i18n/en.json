@@ -76,5 +76,10 @@
   "signin_app_password_make": "Make an app password",
   "message_more": "%1$d more",
   "message_me": "me",
-  "message_quote": "Show the quoted text"
+  "message_quote": "Show the quoted text",
+  "error_no_trash": "This account has no Trash folder.",
+  "inbox_trashed": "Moved to Trash",
+  "action_delete": "Delete",
+  "action_more": "More",
+  "action_mark_unread": "Mark as unread"
 }

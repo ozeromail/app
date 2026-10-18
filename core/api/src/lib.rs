@@ -252,6 +252,14 @@ impl Core {
         Ok(ops.into_iter().map(|op| op.0).collect())
     }
 
+    /// As `archive`, into the trash. Fails with `NoTrash` if the account has no trash folder.
+    pub fn trash(&self, message: i64) -> Result<Vec<i64>, CoreError> {
+        let ops = self
+            .store
+            .queue(MessageId(message), Action::Trash, now() + HOLD)?;
+        Ok(ops.into_iter().map(|op| op.0).collect())
+    }
+
     /// An answer to `message` from the account that got it, `Re: ` once: to its sender, or
     /// with `all` to everyone it went to as well.
     pub fn reply(&self, message: MessageItem, all: bool) -> Result<DraftItem, CoreError> {
@@ -550,7 +558,10 @@ impl Core {
             })
             .collect();
         Ok(Some(ImagesPage {
-            html: sandboxed(&html::fold_quote(&html::with_images(&page.html, &sources))),
+            html: sandboxed(
+                &html::fold_quote(&html::with_images(&page.html, &sources)),
+                html::is_styled(&page.html),
+            ),
             images,
         }))
     }
@@ -1100,6 +1111,8 @@ pub struct MessageBody {
     /// A whole HTML document for a web view with JavaScript and network off, without its
     /// remote images; `message_images` loads them.
     pub html: Option<String>,
+    /// The page sets its own colours, so it stays light in a dark reader.
+    pub styled: bool,
     /// How many remote images the page holds back.
     pub remote_images: u32,
     /// The remote images load without asking: the mail is from a person, or the user chose
@@ -1115,7 +1128,8 @@ impl From<Body> for MessageBody {
             remote_images: page
                 .as_ref()
                 .map_or(0, |p| u32::try_from(p.images.len()).unwrap_or(u32::MAX)),
-            html: page.map(|p| sandboxed(&html::fold_quote(&p.html))),
+            styled: page.as_ref().is_some_and(|p| html::is_styled(&p.html)),
+            html: page.map(|p| sandboxed(&html::fold_quote(&p.html), html::is_styled(&p.html))),
             shows_images: false,
             text: text.to_owned(),
             quote: quote.to_owned(),
@@ -1152,8 +1166,9 @@ impl RemoteImage {
 }
 
 /// Wraps a message's HTML so the page can load nothing from outside, even if the
-/// web view's own blocking fails: no scripts, frames, forms or remote images.
-fn sandboxed(html: &str) -> String {
+/// web view's own blocking fails: no scripts, frames, forms or remote images. A `styled`
+/// page stays light; a plain one follows the reader's light or dark theme.
+fn sandboxed(html: &str, styled: bool) -> String {
     const HEAD: &str = concat!(
         "<!doctype html><html><head><meta charset=\"utf-8\">",
         "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; ",
@@ -1163,16 +1178,24 @@ fn sandboxed(html: &str) -> String {
         "base-uri 'none'; form-action 'none'\">",
         "<meta http-equiv=\"x-dns-prefetch-control\" content=\"off\">",
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
-        "<style>html{color-scheme:light;background:#fff}",
-        "body{margin:0;padding:0 16px 16px;overflow-wrap:break-word}",
+        "<style>body{margin:0;padding:0 16px 16px;overflow-wrap:break-word}",
         "img{max-width:100%;height:auto}",
         "details.ozero-quote>summary{list-style:none;display:inline-block;margin:10px 0;",
         "padding:0 10px;border-radius:9px;background:#eef0f3;color:#6b7280;",
         "font:700 13px/22px sans-serif;letter-spacing:1px}",
-        "details.ozero-quote>summary::-webkit-details-marker{display:none}</style>",
-        "</head><body dir=\"auto\">",
+        "details.ozero-quote>summary::-webkit-details-marker{display:none}",
     );
-    [HEAD, html, "</body></html>"].concat()
+    const LIGHT: &str = "html{color-scheme:light;background:#fff}";
+    // The app's own colours; the web view is clear, so the screen shows through.
+    const THEMED: &str = concat!(
+        "html{color-scheme:light dark;background:transparent;color:#1d1f24}",
+        "a{color:#2f7cf6}",
+        "@media(prefers-color-scheme:dark){html{color:#ececee}a{color:#4c8ff8}",
+        "details.ozero-quote>summary{background:#25272b;color:#8e939c}}",
+    );
+    const BODY: &str = "</style></head><body dir=\"auto\">";
+    let theme = if styled { LIGHT } else { THEMED };
+    [HEAD, theme, BODY, html, "</body></html>"].concat()
 }
 
 /// One row of a message list.
@@ -1246,6 +1269,8 @@ pub enum CoreError {
     Gone,
     /// The account has no folder marked as its archive.
     NoArchive,
+    /// The account has no folder marked as its trash.
+    NoTrash,
     /// A recipient is not an email address, or there is none.
     BadRecipients,
     /// The account has no SMTP server to send through.
@@ -1267,6 +1292,7 @@ impl fmt::Display for CoreError {
             Self::Server { detail } => write!(f, "server error: {detail}"),
             Self::Gone => write!(f, "the message is gone from the server"),
             Self::NoArchive => write!(f, "the account has no archive folder"),
+            Self::NoTrash => write!(f, "the account has no trash folder"),
             Self::BadRecipients => write!(f, "a recipient is not an email address"),
             Self::NoSmtp => write!(f, "the account has no SMTP server"),
             Self::Storage { detail } => write!(f, "storage error: {detail}"),
@@ -1282,6 +1308,7 @@ impl From<StoreError> for CoreError {
             StoreError::WrongKey => Self::WrongKey,
             StoreError::TooNew { .. } => Self::TooNew,
             StoreError::NoArchive => Self::NoArchive,
+            StoreError::NoTrash => Self::NoTrash,
             other => Self::Storage {
                 detail: other.to_string(),
             },

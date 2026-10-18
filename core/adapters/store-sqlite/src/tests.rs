@@ -606,6 +606,43 @@ fn archiving_hides_the_message_until_undo_or_the_server_has_it() {
 }
 
 #[test]
+fn trash_moves_the_message_like_archive() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let folder = inbox(&store, account);
+    store.save_messages(folder, &[message(1, 100)]).unwrap();
+    let id = list(&store, ListScope::Folder(folder), 10, None)[0].id;
+    assert_eq!(
+        store.queue(id, Action::Trash, 0).unwrap_err(),
+        StoreError::NoTrash
+    );
+
+    store
+        .save_folders(
+            account,
+            &[NewFolder {
+                remote_id: "Trash".into(),
+                name: "Trash".into(),
+                role: FolderRole::Trash,
+            }],
+        )
+        .unwrap();
+    let op = store.queue(id, Action::Trash, 50).unwrap();
+    assert!(list(&store, ListScope::Folder(folder), 10, None).is_empty());
+    assert!(store.undo(&op, 49).unwrap());
+    assert_eq!(list(&store, ListScope::Folder(folder), 10, None).len(), 1);
+
+    store.queue(id, Action::Trash, 0).unwrap();
+    let due = store.due(account, 0).unwrap();
+    assert_eq!(
+        (due[0].action, due[0].to.as_deref()),
+        (Action::Trash, Some("Trash"))
+    );
+    store.finish(&due).unwrap();
+    assert_eq!(store.location(id).unwrap_err(), StoreError::NotFound);
+}
+
+#[test]
 fn a_refused_archive_shows_the_message_again() {
     let store = store();
     let account = account(&store, "a@example.com");

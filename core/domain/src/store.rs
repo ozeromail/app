@@ -68,8 +68,8 @@ pub trait Store: Send + Sync {
     /// Applies the action to the message's conversation in its folder and inbox tab now, in one transaction,
     /// and queues it for the server from `not_before`: the message itself, and the others
     /// where it changes something. It replaces queued actions of the same kind. Lists leave
-    /// out a message being archived; archiving fails with `NoArchive` if the account has no
-    /// archive folder.
+    /// out a message being moved; a move fails with `NoArchive` or `NoTrash` if the account
+    /// has no such folder.
     fn queue(
         &self,
         message: MessageId,
@@ -122,6 +122,8 @@ pub enum StoreError {
     NotFound,
     /// The message's account has no folder with the archive role.
     NoArchive,
+    /// The message's account has no folder with the trash role.
+    NoTrash,
     /// Anything else from the storage engine, without message contents.
     Storage(String),
 }
@@ -135,6 +137,7 @@ impl fmt::Display for StoreError {
             }
             Self::NotFound => write!(f, "not found"),
             Self::NoArchive => write!(f, "the account has no archive folder"),
+            Self::NoTrash => write!(f, "the account has no trash folder"),
             Self::Storage(e) => write!(f, "storage error: {e}"),
         }
     }
