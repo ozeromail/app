@@ -6,11 +6,31 @@ import android.content.pm.PackageManager
 import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.PredictiveBackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.EnterExitState
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.ExperimentalAnimationApi
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.ExperimentalTransitionApi
+import androidx.compose.animation.core.SeekableTransitionState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.rememberTransition
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -22,6 +42,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -31,6 +52,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -82,9 +104,12 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -101,7 +126,7 @@ import uniffi.ozero_api.undoSeconds
  * The unified inbox: shows what is saved at once, then syncs; pull down to sync again.
  * [onNoAccounts] runs once the last account is removed.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalTransitionApi::class)
 @Composable
 fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var messages by remember { mutableStateOf(emptyList<MessageItem>()) }
@@ -261,170 +286,134 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         }
     }
 
-    val writing = composing
-    if (writing != null) {
-        ComposeScreen(mail, writing, onCancel = { composing = null }, onSent = ::sent)
-        return
+    val screen = screenOf(composing, open, addingAccount, searching)
+    // Where back leads: the same screens with the top one gone.
+    val behind: Screen? = when (screen) {
+        Screen.Inbox -> null
+        Screen.Search, Screen.AddAccount -> Screen.Inbox
+        is Screen.Read -> screenOf(null, null, addingAccount, searching)
+        is Screen.Write -> screenOf(null, open, addingAccount, searching)
     }
 
-    val opened = open
-    if (opened != null) {
-        // Back reloads the list: the message now has a snippet.
-        MessageScreen(
-            mail,
-            opened,
-            onBack = {
+    fun closeSearch() {
+        searching = false
+        query = ""
+    }
+
+    fun back() {
+        when (screen) {
+            Screen.Inbox -> Unit
+            Screen.Search -> closeSearch()
+            Screen.AddAccount -> addingAccount = false
+            // Back reloads the list: the message now has a snippet.
+            is Screen.Read -> {
                 open = null
                 scope.launch { load() }
-            },
-            onReply = { to, all ->
-                if (!replying) {
-                    replying = true
-                    scope.launch {
-                        try {
-                            composing = Composing(mail.reply(to, all), to)
-                        } catch (e: CoreException) {
-                            error = e.text()
-                        } finally {
-                            replying = false
-                        }
-                    }
-                }
-            },
-            onDone = {
-                open = null
-                // Back to the inbox, where the toast can undo it.
-                searching = false
-                query = ""
-                archive(opened) {}
-            },
-        )
-        return
+            }
+            is Screen.Write -> composing = null
+        }
     }
 
-    if (addingAccount) {
-        SignInScreen(
-            mail,
-            onSignedIn = {
-                addingAccount = false
-                scope.launch { sync() }
-            },
-            onCancel = { addingAccount = false },
-        )
-        return
-    }
-
-    if (searching) {
-        SearchScreen(
-            mail,
-            query,
-            onQuery = { query = it },
-            onOpen = { open = it },
-            onBack = {
-                searching = false
-                query = ""
-            },
-        )
-        return
+    // The screens follow the back gesture: the one on top slides away under the finger.
+    val screens = remember { SeekableTransitionState<Screen>(screen) }
+    LaunchedEffect(screen) { screens.animateTo(screen) }
+    val top by rememberUpdatedState(screen)
+    PredictiveBackHandler(enabled = behind != null) { progress ->
+        // Read as the gesture starts; a screen that opens meanwhile, say a reply, cancels it.
+        val from = top
+        val target = behind
+        fun still() = target != null && top == from
+        try {
+            progress.collect { if (still() && target != null) screens.seekTo(Motion.follow(it.progress), target) }
+            if (still()) back() else screens.animateTo(top)
+        } catch (e: CancellationException) {
+            // The gesture's own job is cancelled with it; the screen still has to slide back.
+            withContext(NonCancellable) { screens.animateTo(top) }
+            throw e
+        }
     }
 
     val colors = MaterialTheme.colorScheme
-    val density = LocalDensity.current
-    var dockHeight by remember { mutableStateOf(0.dp) }
-    val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    // The compact title shows once the large one has scrolled under the status bar.
-    val titleGone = with(density) { 24.dp.roundToPx() }
-    val scrolled by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > titleGone } }
-    val pull = rememberPullToRefreshState()
-    val mini by animateFloatAsState(if (scrolled) 1f else 0f, label = "title")
-    Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
-        PullToRefreshBox(
-            isRefreshing = syncing,
-            onRefresh = { scope.launch { sync() } },
-            modifier = Modifier.fillMaxSize(),
-            state = pull,
-            // Below the status bar, where the compact title would cover it.
-            indicator = {
-                PullToRefreshDefaults.Indicator(
-                    state = pull,
-                    isRefreshing = syncing,
-                    modifier = Modifier.align(Alignment.TopCenter).padding(top = top + 48.dp),
-                )
-            },
-        ) {
-            LazyColumn(
-                Modifier.fillMaxSize(),
-                state = listState,
-                contentPadding = PaddingValues(top = top, bottom = dockHeight + 16.dp),
-            ) {
-                item(key = "title") { Hero(accounts.size > 1) }
-                items(unsent, key = { "unsent-${it.id}" }) { failed ->
-                    UnsentRow(failed, onClick = {
-                        scope.launch {
-                            try {
-                                mail.undoSend(failed.id)?.let { composing = Composing(it) }
-                            } catch (e: CoreException) {
-                                error = e.text()
+    Box(Modifier.fillMaxSize()) {
+        rememberTransition(screens, label = "screen").AnimatedContent(transitionSpec = { slide() }) { shown ->
+            Box(Modifier.fillMaxSize().background(colors.background)) {
+                when (shown) {
+                    is Screen.Write -> ComposeScreen(mail, shown.composing, onCancel = ::back, onSent = ::sent)
+                    is Screen.Read -> MessageScreen(
+                        mail,
+                        shown.message,
+                        onReply = { to, all ->
+                            if (!replying) {
+                                replying = true
+                                scope.launch {
+                                    try {
+                                        composing = Composing(mail.reply(to, all), to)
+                                    } catch (e: CoreException) {
+                                        error = e.text()
+                                    } finally {
+                                        replying = false
+                                    }
+                                }
                             }
-                            counts()
-                        }
-                    })
+                        },
+                        onDone = {
+                            open = null
+                            // Back to the inbox, where the toast can undo it.
+                            closeSearch()
+                            archive(shown.message) {}
+                        },
+                    )
+                    Screen.AddAccount -> SignInScreen(
+                        mail,
+                        onSignedIn = {
+                            addingAccount = false
+                            scope.launch { sync() }
+                        },
+                        onCancel = ::back,
+                    )
+                    Screen.Search -> SearchScreen(
+                        mail,
+                        query,
+                        onQuery = { query = it },
+                        onOpen = { open = it },
+                        onBack = ::back,
+                    )
+                    Screen.Inbox -> InboxList(
+                        listState = listState,
+                        syncing = syncing,
+                        onSync = { scope.launch { sync() } },
+                        accounts = accounts,
+                        unsent = unsent,
+                        messages = messages,
+                        tab = tab,
+                        tabs = tabs,
+                        error = error,
+                        snackbar = snackbar,
+                        onUnsent = { failed ->
+                            scope.launch {
+                                try {
+                                    mail.undoSend(failed.id)?.let { composing = Composing(it) }
+                                } catch (e: CoreException) {
+                                    error = e.text()
+                                }
+                                counts()
+                            }
+                        },
+                        onOpen = { open = it },
+                        onArchive = ::archive,
+                        onTab = { tab = it },
+                        onAccounts = { accountsOpen = true },
+                        onSearch = { searching = true },
+                        onCompose = { composing = Composing(NEW_DRAFT) },
+                    )
                 }
-                if (messages.isEmpty() && !syncing && error == null) {
-                    item(key = "empty") { if (tab == Category.PEOPLE) InboxZero() else TabEmpty() }
-                }
-                itemsIndexed(messages, key = { _, it -> it.id }) { index, message ->
-                    if (index > 0) HorizontalDivider(Modifier.padding(start = 48.dp), color = colors.outlineVariant)
-                    SwipeToDone(onDone = { reset -> archive(message, reset) }) {
-                        MessageRow(message, onClick = { open = message })
-                    }
-                }
+                // A screen on its way out takes no more taps.
+                if (transition.targetState != EnterExitState.Visible) Box(Modifier.matchParentSize().blockTouches())
             }
         }
-        // The compact title, over the list once it scrolls.
-        if (mini > 0f) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .graphicsLayer { alpha = mini }
-                    .background(colors.bar)
-                    .padding(top = top)
-                    .height(48.dp)
-                    .hairline(colors.outlineVariant, top = false),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(stringResource(R.string.inbox_title), fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-            }
-        }
-        Column(Modifier.align(Alignment.BottomCenter)) {
-            // Low on the screen, in reach of the thumb that swiped.
-            Toast(snackbar, Modifier.padding(bottom = 8.dp))
-            error?.let {
-                Text(
-                    stringResource(it),
-                    color = colors.onSurfaceVariant,
-                    fontSize = 13.sp,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(colors.bar)
-                        .padding(horizontal = 20.dp, vertical = 8.dp),
-                )
-            }
-            Dock(
-                modifier = Modifier.onSizeChanged { dockHeight = with(density) { it.height.toDp() } },
-                tab = tab,
-                tabs = tabs,
-                accounts = accounts,
-                onTab = { tab = it },
-                onAccounts = { accountsOpen = true },
-                onSearch = { searching = true },
-                onCompose = { composing = Composing(NEW_DRAFT) },
-            )
-        }
-    }
-    if (accountsOpen) {
         AccountsSheet(
-            accounts,
+            visible = accountsOpen,
+            accounts = accounts,
             onAdd = {
                 accountsOpen = false
                 addingAccount = true
@@ -483,15 +472,171 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             title = { Text(stringResource(R.string.crash_title)) },
             text = { Text(stringResource(R.string.crash_text)) },
             containerColor = MaterialTheme.colorScheme.background,
-            shape = RoundedCornerShape(20.dp),
+            shape = RoundedCornerShape(Radius.dialog),
         )
+    }
+}
+
+/** The screen on top: a message being written, then one being read, then the rest. */
+private fun screenOf(composing: Composing?, open: MessageItem?, addingAccount: Boolean, searching: Boolean): Screen =
+    composing?.let { Screen.Write(it) }
+        ?: open?.let { Screen.Read(it) }
+        ?: when {
+            addingAccount -> Screen.AddAccount
+            searching -> Screen.Search
+            else -> Screen.Inbox
+        }
+
+/** What fills the screen; a deeper screen slides over the one it came from. */
+private sealed class Screen(val depth: Int) {
+    data object Inbox : Screen(0)
+    data object Search : Screen(1)
+    data object AddAccount : Screen(1)
+    data class Read(val message: MessageItem) : Screen(2)
+    data class Write(val composing: Composing) : Screen(3)
+}
+
+/**
+ * A screen pushed in from the right, as on iOS, with the one under it drifting left and
+ * dimming; a new message rises from the bottom. Back plays it in reverse.
+ */
+@OptIn(ExperimentalAnimationApi::class)
+private fun AnimatedContentTransitionScope<Screen>.slide(): ContentTransform {
+    val forward = targetState.depth > initialState.depth
+    val moving = if (forward) targetState else initialState
+    val move = Motion.calm<IntOffset>(Motion.SCREEN)
+    val fade = Motion.calm<Float>(Motion.SCREEN)
+    val drift = { width: Int -> -width * 28 / 100 }
+    return when {
+        moving is Screen.Write && forward ->
+            ContentTransform(slideInVertically(move) { it }, ExitTransition.KeepUntilTransitionsFinished, 1f, null)
+        moving is Screen.Write ->
+            ContentTransform(EnterTransition.None, slideOutVertically(move) { it }, -1f, null)
+        forward ->
+            ContentTransform(slideInHorizontally(move) { it }, slideOutHorizontally(move, drift) + fadeOut(fade, 0.6f), 1f, null)
+        else ->
+            ContentTransform(slideInHorizontally(move, drift) + fadeIn(fade, 0.6f), slideOutHorizontally(move) { it }, -1f, null)
+    }
+}
+
+/**
+ * The list under its large title, the compact title once it scrolls, and the dock with the
+ * toast and errors above it.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun InboxList(
+    listState: LazyListState,
+    syncing: Boolean,
+    onSync: () -> Unit,
+    accounts: List<AccountItem>,
+    unsent: List<UnsentItem>,
+    messages: List<MessageItem>,
+    tab: Category,
+    tabs: List<InboxTab>,
+    error: Int?,
+    snackbar: SnackbarHostState,
+    onUnsent: (UnsentItem) -> Unit,
+    onOpen: (MessageItem) -> Unit,
+    onArchive: (MessageItem, reset: () -> Unit) -> Unit,
+    onTab: (Category) -> Unit,
+    onAccounts: () -> Unit,
+    onSearch: () -> Unit,
+    onCompose: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val density = LocalDensity.current
+    var dockHeight by remember { mutableStateOf(0.dp) }
+    val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    // The compact title shows once the large one has scrolled under the status bar.
+    val titleGone = with(density) { 24.dp.roundToPx() }
+    val scrolled by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > titleGone } }
+    val pull = rememberPullToRefreshState()
+    val mini by animateFloatAsState(if (scrolled) 1f else 0f, Motion.calm(Motion.SMALL), label = "title")
+    Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
+        PullToRefreshBox(
+            isRefreshing = syncing,
+            onRefresh = onSync,
+            modifier = Modifier.fillMaxSize(),
+            state = pull,
+            // Below the status bar, where the compact title would cover it.
+            indicator = {
+                PullToRefreshDefaults.Indicator(
+                    state = pull,
+                    isRefreshing = syncing,
+                    modifier = Modifier.align(Alignment.TopCenter).padding(top = top + 48.dp),
+                )
+            },
+        ) {
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                state = listState,
+                contentPadding = PaddingValues(top = top, bottom = dockHeight + 16.dp),
+            ) {
+                item(key = "title") { Hero(accounts.size > 1) }
+                items(unsent, key = { "unsent-${it.id}" }) { failed ->
+                    UnsentRow(failed, rowMove(), onClick = { onUnsent(failed) })
+                }
+                if (messages.isEmpty() && !syncing && error == null) {
+                    item(key = "empty") { if (tab == Category.PEOPLE) InboxZero() else TabEmpty() }
+                }
+                itemsIndexed(messages, key = { _, it -> it.id }) { index, message ->
+                    Column(rowMove()) {
+                        if (index > 0) HorizontalDivider(Modifier.padding(start = 48.dp), color = colors.outlineVariant)
+                        SwipeToDone(onDone = { reset -> onArchive(message, reset) }) {
+                            MessageRow(message, onClick = { onOpen(message) })
+                        }
+                    }
+                }
+            }
+        }
+        // The compact title, over the list once it scrolls.
+        if (mini > 0f) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .graphicsLayer { alpha = mini }
+                    .background(colors.bar)
+                    .padding(top = top)
+                    .height(48.dp)
+                    .hairline(colors.outlineVariant, top = false),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(stringResource(R.string.inbox_title), fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+            }
+        }
+        Column(Modifier.align(Alignment.BottomCenter)) {
+            // Low on the screen, in reach of the thumb that swiped.
+            Toast(snackbar, Modifier.padding(bottom = 8.dp))
+            Reveal(error) {
+                Text(
+                    stringResource(it),
+                    color = colors.onSurfaceVariant,
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(colors.bar)
+                        .padding(horizontal = Gap.screen, vertical = 8.dp),
+                )
+            }
+            Dock(
+                modifier = Modifier.onSizeChanged { dockHeight = with(density) { it.height.toDp() } },
+                tab = tab,
+                tabs = tabs,
+                accounts = accounts,
+                onTab = onTab,
+                onAccounts = onAccounts,
+                onSearch = onSearch,
+                onCompose = onCompose,
+            )
+        }
     }
 }
 
 /** The large title at the top of the list, where it does not need the thumb. */
 @Composable
 private fun Hero(allAccounts: Boolean) {
-    Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 14.dp)) {
+    Column(Modifier.padding(start = Gap.screen, end = Gap.screen, top = 12.dp, bottom = 14.dp)) {
         LargeTitle(stringResource(R.string.inbox_title))
         if (allAccounts) {
             Text(
@@ -544,14 +689,15 @@ private fun Dock(
             .background(colors.bar)
             .hairline(colors.outlineVariant, top = true)
             .navigationBarsPadding()
-            .padding(top = 10.dp, bottom = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .padding(top = Gap.barTop, bottom = Gap.barBottom),
+        verticalArrangement = Arrangement.spacedBy(Gap.inBar),
     ) {
         Tabs(tab, tabs, onTab)
+        // The same edge as the tabs above, so the accounts button lines up with them.
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 10.dp),
+            Modifier.fillMaxWidth().padding(horizontal = Gap.bar),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
         ) {
             AccountsButton(accounts, onAccounts)
             Pill(stringResource(R.string.search_prompt), onSearch, Modifier.weight(1f), icon = R.drawable.ic_search)
@@ -574,7 +720,7 @@ private fun AccountsButton(accounts: List<AccountItem>, onClick: () -> Unit) {
     Box(
         Modifier
             .size(48.dp)
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(Radius.tile))
             .background(colors.surfaceVariant)
             .clickable(onClickLabel = label, role = Role.Button, onClick = onClick)
             .semantics { contentDescription = label },
@@ -595,52 +741,63 @@ private fun AccountsButton(accounts: List<AccountItem>, onClick: () -> Unit) {
     }
 }
 
-/** The inbox tabs as one segmented control, each with its unread count. */
+/** The inbox tabs as one segmented control, each with its unread count; the thumb slides to the one picked. */
 @Composable
 private fun Tabs(tab: Category, tabs: List<InboxTab>, onPick: (Category) -> Unit) {
     val colors = MaterialTheme.colorScheme
-    Row(
+    val thumb = RoundedCornerShape(Radius.thumb)
+    BoxWithConstraints(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp)
-            .clip(RoundedCornerShape(14.dp))
+            .padding(horizontal = Gap.bar)
+            .clip(RoundedCornerShape(Radius.medium))
             .background(colors.surfaceVariant)
-            .padding(3.dp)
-            .selectableGroup(),
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
+            .padding(3.dp),
     ) {
-        // Every tab shows at once; the counts come when the core has them.
-        Category.entries.forEach { category ->
-            val on = category == tab
-            val unread = tabs.find { it.category == category }?.unread ?: 0u
-            Row(
-                Modifier
-                    .weight(1f)
-                    .height(34.dp)
-                    .then(if (on) Modifier.shadow(1.dp, RoundedCornerShape(11.dp)) else Modifier)
-                    .clip(RoundedCornerShape(11.dp))
-                    .background(if (on) colors.background else Color.Transparent)
-                    .selectable(selected = on, role = Role.Tab, onClick = { onPick(category) }),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    stringResource(category.label()),
-                    color = if (on) colors.onSurface else colors.onSurfaceVariant,
-                    fontSize = 13.5.sp,
-                    fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                if (unread > 0u) {
+        val count = Category.entries.size
+        val gap = 2.dp
+        val width = (maxWidth - gap * (count - 1)) / count
+        val x by animateDpAsState((width + gap) * Category.entries.indexOf(tab), Motion.settle(), label = "thumb")
+        Box(
+            Modifier
+                .offset { IntOffset(x.roundToPx(), 0) }
+                .size(width, 34.dp)
+                .shadow(1.dp, thumb)
+                .background(colors.background, thumb),
+        )
+        Row(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(gap)) {
+            // Every tab shows at once; the counts come when the core has them.
+            Category.entries.forEach { category ->
+                val on = category == tab
+                val unread = tabs.find { it.category == category }?.unread ?: 0u
+                val label by animateColorAsState(if (on) colors.onSurface else colors.onSurfaceVariant, Motion.calm(Motion.SMALL), label = "tab")
+                Row(
+                    Modifier
+                        .weight(1f)
+                        .height(34.dp)
+                        .clip(thumb)
+                        .selectable(selected = on, role = Role.Tab, onClick = { onPick(category) }),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Text(
-                        unread.toString(),
-                        color = colors.primary,
-                        fontSize = 11.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(start = 6.dp),
+                        stringResource(category.label()),
+                        color = label,
+                        fontSize = 13.5.sp,
+                        fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
+                    if (unread > 0u) {
+                        Text(
+                            unread.toString(),
+                            color = colors.primary,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(start = 6.dp),
+                        )
+                    }
                 }
             }
         }
@@ -685,16 +842,16 @@ private fun SwipeToDone(onDone: (reset: () -> Unit) -> Unit, content: @Composabl
 
 /** A message the server refused; a tap opens it to fix. */
 @Composable
-private fun UnsentRow(unsent: UnsentItem, onClick: () -> Unit) {
+private fun UnsentRow(unsent: UnsentItem, modifier: Modifier, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     Column(
-        Modifier
+        modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp)
-            .clip(RoundedCornerShape(16.dp))
+            .padding(horizontal = Gap.card, vertical = 4.dp)
+            .clip(RoundedCornerShape(Radius.tile))
             .background(colors.error.copy(alpha = 0.1f))
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = Gap.inCard, vertical = 12.dp),
     ) {
         Text(stringResource(R.string.inbox_not_sent), color = colors.error, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp)
         Text(

@@ -1,6 +1,16 @@
 package com.ozeromail.app
 
 import androidx.annotation.DrawableRes
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -18,10 +28,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Snackbar
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -30,8 +42,13 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -49,7 +66,7 @@ fun IconTile(
     modifier: Modifier = Modifier,
     background: Color = Color.Transparent,
     tint: Color = MaterialTheme.colorScheme.onSurface,
-    shape: Shape = RoundedCornerShape(16.dp),
+    shape: Shape = RoundedCornerShape(Radius.tile),
     size: Dp = 48.dp,
     enabled: Boolean = true,
 ) {
@@ -201,18 +218,55 @@ fun EmptyNote(
     }
 }
 
-/** The undo toast: dark, rounded, low on the screen. */
+/** The undo toast: dark, rounded, low on the screen; it rises a little and fades in. */
 @Composable
 fun Toast(state: SnackbarHostState, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
-    SnackbarHost(state, modifier) { data ->
-        Snackbar(
-            data,
-            modifier = Modifier.padding(horizontal = 12.dp),
-            shape = RoundedCornerShape(14.dp),
-            containerColor = colors.inverseSurface,
-            contentColor = colors.inverseOnSurface,
-            actionColor = colors.primary,
-        )
+    val rise = with(LocalDensity.current) { 16.dp.roundToPx() }
+    AnimatedContent(
+        state.currentSnackbarData,
+        modifier,
+        transitionSpec = {
+            val enter = fadeIn(Motion.calm(Motion.SMALL)) + slideInVertically(Motion.calm(Motion.NOTE)) { rise }
+            val exit = fadeOut(Motion.calm(Motion.SMALL)) + slideOutVertically(Motion.calm(Motion.NOTE)) { rise }
+            (enter togetherWith exit).using(SizeTransform(clip = false) { _, _ -> Motion.calm(Motion.NOTE) })
+        },
+        label = "toast",
+    ) { data ->
+        if (data != null) {
+            Snackbar(
+                data,
+                modifier = Modifier.padding(horizontal = Gap.bar).semantics { liveRegion = LiveRegionMode.Polite },
+                shape = RoundedCornerShape(Radius.medium),
+                containerColor = colors.inverseSurface,
+                contentColor = colors.inverseOnSurface,
+                actionColor = colors.primary,
+            )
+        }
+    }
+}
+
+/**
+ * Shows [content] for [value] while there is one: it opens and fades in, then closes with
+ * the last value still in it.
+ */
+@Composable
+fun <T : Any> Reveal(value: T?, modifier: Modifier = Modifier, content: @Composable (T) -> Unit) {
+    val last = remember { mutableStateOf(value) }
+    SideEffect { if (value != null) last.value = value }
+    AnimatedVisibility(
+        value != null,
+        modifier,
+        enter = expandVertically(Motion.calm(Motion.NOTE)) + fadeIn(Motion.calm(Motion.NOTE)),
+        exit = shrinkVertically(Motion.calm(Motion.NOTE)) + fadeOut(Motion.calm(Motion.SMALL)),
+    ) {
+        (value ?: last.value)?.let { content(it) }
+    }
+}
+
+/** Takes every touch, so a screen on its way out cannot be tapped twice. */
+fun Modifier.blockTouches(): Modifier = pointerInput(Unit) {
+    awaitPointerEventScope {
+        while (true) awaitPointerEvent(PointerEventPass.Initial).changes.forEach { it.consume() }
     }
 }

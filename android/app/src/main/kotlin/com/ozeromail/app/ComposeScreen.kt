@@ -1,6 +1,5 @@
 package com.ozeromail.app
 
-import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -21,8 +20,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -68,7 +65,6 @@ data class Composing(val draft: DraftItem, val original: MessageItem? = null)
  */
 @Composable
 fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent: (Long, Composing) -> Unit) {
-    BackHandler(onBack = onCancel)
     val start = composing.draft
     var to by rememberSaveable { mutableStateOf(start.to) }
     var subject by rememberSaveable { mutableStateOf(start.subject) }
@@ -80,6 +76,7 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
     var accounts by remember { mutableStateOf(emptyList<AccountItem>()) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<Int?>(null) }
+    var picking by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -110,81 +107,98 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
     }
 
     val colors = MaterialTheme.colorScheme
-    Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
-        composing.original?.let { Original(it) }
-        Column(
-            Modifier.weight(1f).padding(horizontal = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
-        ) {
-            Spacer(Modifier.weight(1f))
-            Plain(
-                to,
-                { to = it },
-                R.string.compose_to,
-                TextStyle(fontSize = 15.sp),
-                KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next, autoCorrectEnabled = false),
-            )
-            HorizontalDivider(color = colors.outlineVariant)
-            Plain(
-                subject,
-                { subject = it },
-                R.string.compose_subject,
-                TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.44).sp),
-                KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Next),
-            )
-            Plain(
-                text,
-                { text = it },
-                R.string.compose_text,
-                TextStyle(fontSize = 15.5.sp, lineHeight = 24.sp),
-                KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                singleLine = false,
-                modifier = Modifier.weight(1f, fill = false),
-            )
-            val original = composing.original
-            if (quote.isNotEmpty()) {
-                Quote(quote, onRemove = { quote = "" })
-            } else if (original != null && quotable) {
-                Pill(stringResource(R.string.compose_add_quote), height = 32.dp, onClick = {
-                    val header = context.getString(R.string.compose_quote_header, longDate(context, original.date), original.sender)
-                    scope.launch {
-                        try {
-                            quote = mail.quote(original, header)
-                            // Nothing saved to quote.
-                            quotable = quote.isNotEmpty()
-                        } catch (e: CoreException) {
-                            error = e.text()
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
+            composing.original?.let { Original(it) }
+            Column(
+                Modifier.weight(1f).padding(horizontal = Gap.screen),
+                verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
+            ) {
+                Spacer(Modifier.weight(1f))
+                Plain(
+                    to,
+                    { to = it },
+                    R.string.compose_to,
+                    TextStyle(fontSize = 15.sp),
+                    KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next, autoCorrectEnabled = false),
+                )
+                HorizontalDivider(color = colors.outlineVariant)
+                Plain(
+                    subject,
+                    { subject = it },
+                    R.string.compose_subject,
+                    TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.44).sp),
+                    KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Next),
+                )
+                Plain(
+                    text,
+                    { text = it },
+                    R.string.compose_text,
+                    TextStyle(fontSize = 15.5.sp, lineHeight = 24.sp),
+                    KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                    singleLine = false,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                val original = composing.original
+                if (quote.isNotEmpty()) {
+                    Quote(quote, onRemove = { quote = "" })
+                } else if (original != null && quotable) {
+                    Pill(stringResource(R.string.compose_add_quote), height = 32.dp, onClick = {
+                        val header = context.getString(R.string.compose_quote_header, longDate(context, original.date), original.sender)
+                        scope.launch {
+                            try {
+                                quote = mail.quote(original, header)
+                                // Nothing saved to quote.
+                                quotable = quote.isNotEmpty()
+                            } catch (e: CoreException) {
+                                error = e.text()
+                            }
                         }
-                    }
-                })
+                    })
+                }
+            }
+            Reveal(error) {
+                Text(stringResource(it), color = colors.error, modifier = Modifier.padding(horizontal = Gap.screen, vertical = 8.dp))
+            }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .hairline(colors.outlineVariant, top = true)
+                    .padding(start = Gap.bar, end = Gap.bar, top = Gap.barTop, bottom = Gap.barBottom),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
+            ) {
+                IconTile(R.drawable.ic_close, stringResource(R.string.action_close), onCancel, shape = CircleShape)
+                Box(Modifier.weight(1f)) {
+                    if (from != null) Sender(from, enabled = accounts.size > 1, onClick = { picking = true })
+                }
+                val ready = !busy && from != null
+                IconTile(
+                    R.drawable.ic_send,
+                    stringResource(R.string.compose_send),
+                    ::send,
+                    Modifier.width(56.dp),
+                    background = colors.primary,
+                    tint = colors.onPrimary,
+                    shape = CircleShape,
+                    enabled = ready,
+                )
             }
         }
-        error?.let {
-            Text(stringResource(it), color = colors.error, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
-        }
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .hairline(colors.outlineVariant, top = true)
-                .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            IconTile(R.drawable.ic_close, stringResource(R.string.action_close), onCancel, shape = CircleShape)
-            Box(Modifier.weight(1f)) {
-                if (from != null) Sender(from, accounts, onPick = { accountId = it.id })
+        // Like every menu, the other accounts open in a sheet, low in reach of the thumb.
+        Sheet(visible = picking, onClose = { picking = false }) {
+            accounts.forEach { account ->
+                SheetRow(
+                    onClick = {
+                        picking = false
+                        accountId = account.id
+                    },
+                    lead = { AccountDot(account.tint, size = 12.dp) },
+                ) {
+                    Text(account.email, fontSize = 15.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    if (account.id == from?.id) Glyph(R.drawable.ic_done, null, colors.primary)
+                }
             }
-            val ready = !busy && from != null
-            IconTile(
-                R.drawable.ic_send,
-                stringResource(R.string.compose_send),
-                ::send,
-                Modifier.width(56.dp),
-                background = colors.primary,
-                tint = colors.onPrimary,
-                shape = CircleShape,
-                enabled = ready,
-            )
         }
     }
 }
@@ -196,9 +210,9 @@ private fun Original(message: MessageItem) {
     Column(
         Modifier
             .fillMaxWidth()
-            .padding(start = 16.dp, end = 16.dp, top = 12.dp)
-            .background(colors.surfaceVariant, RoundedCornerShape(16.dp))
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(start = Gap.card, end = Gap.card, top = 12.dp)
+            .background(colors.surfaceVariant, RoundedCornerShape(Radius.tile))
+            .padding(horizontal = Gap.inCard, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -249,35 +263,20 @@ private fun Quote(quote: String, onRemove: () -> Unit) {
 
 /** The account the message goes from, as a chip by Send; a tap lists the others. */
 @Composable
-private fun Sender(from: AccountItem, accounts: List<AccountItem>, onPick: (AccountItem) -> Unit) {
-    var open by remember { mutableStateOf(false) }
+private fun Sender(from: AccountItem, enabled: Boolean, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
-    Box {
-        Row(
-            Modifier
-                .height(44.dp)
-                .clip(CircleShape)
-                .background(colors.surfaceVariant)
-                .clickable(enabled = accounts.size > 1) { open = true }
-                .padding(start = 8.dp, end = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            AccountInitial(from.name, from.tint, 22.dp)
-            Text(from.email, fontSize = 14.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            accounts.forEach { account ->
-                DropdownMenuItem(
-                    text = { Text(account.email) },
-                    leadingIcon = { AccountDot(account.tint) },
-                    onClick = {
-                        open = false
-                        onPick(account)
-                    },
-                )
-            }
-        }
+    Row(
+        Modifier
+            .height(44.dp)
+            .clip(CircleShape)
+            .background(colors.surfaceVariant)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(start = 8.dp, end = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        AccountInitial(from.name, from.tint, 22.dp)
+        Text(from.email, fontSize = 14.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

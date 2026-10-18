@@ -30,6 +30,7 @@ private val Light = lightColorScheme(
     inverseOnSurface = Color.White,
     outlineVariant = Color(0xFFEEF0F2),
     error = Color(0xFFEF4A5C),
+    scrim = Color(0x610E1118),
 )
 
 private val Dark = darkColorScheme(
@@ -47,6 +48,7 @@ private val Dark = darkColorScheme(
     inverseOnSurface = Color(0xFF1B1C1F),
     outlineVariant = Color(0xFF2A2C30),
     error = Color(0xFFF2596A),
+    scrim = Color(0x8C000000),
 )
 
 /** Done and Inbox Zero: the one green, which Material has no slot for. */

@@ -1,6 +1,5 @@
 package com.ozeromail.app
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -39,7 +38,7 @@ private const val TYPING_PAUSE_MS = 150L
 
 /**
  * Search over the saved mail, newest first, as the user types. The field sits at the bottom,
- * in reach of the thumb; Cancel or system back returns to the inbox.
+ * in reach of the thumb; Close or back returns to the inbox.
  */
 @Composable
 fun SearchScreen(
@@ -49,7 +48,6 @@ fun SearchScreen(
     onOpen: (MessageItem) -> Unit,
     onBack: () -> Unit,
 ) {
-    BackHandler(onBack = onBack)
     // With the query they answer, so "No messages" never shows for a query still waiting.
     var found by remember { mutableStateOf<Pair<String, List<MessageItem>>?>(null) }
     var error by remember { mutableStateOf<Int?>(null) }
@@ -77,24 +75,26 @@ fun SearchScreen(
                 item { EmptyNote(R.drawable.ic_search, stringResource(R.string.inbox_empty)) }
             }
             itemsIndexed(messages, key = { _, it -> it.id }) { index, message ->
-                if (index > 0) HorizontalDivider(Modifier.padding(start = 48.dp), color = colors.outlineVariant)
-                MessageRow(message, onClick = { onOpen(message) })
+                Column(rowMove()) {
+                    if (index > 0) HorizontalDivider(Modifier.padding(start = 48.dp), color = colors.outlineVariant)
+                    MessageRow(message, onClick = { onOpen(message) })
+                }
             }
         }
-        error?.let {
+        Reveal(error) {
             Text(
                 stringResource(it),
                 color = colors.onSurfaceVariant,
                 style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                modifier = Modifier.padding(horizontal = Gap.screen, vertical = 8.dp),
             )
         }
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(start = 12.dp, end = 10.dp, top = 8.dp, bottom = 12.dp),
+                .padding(start = Gap.bar, end = Gap.bar, top = Gap.barTop, bottom = Gap.barBottom),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
         ) {
             PillBox(Modifier.weight(1f), icon = R.drawable.ic_search) {
                 Plain(
