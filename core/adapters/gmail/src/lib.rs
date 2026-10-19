@@ -36,6 +36,8 @@ const MAX_LIST: u32 = 500;
 /// a user's quota of 250 units a second, at 5 units a message.
 const MAX_BATCH: usize = 25;
 const BATCH_PACE: Duration = Duration::from_millis(500);
+/// How often `wait` asks whether the mailbox changed: one cheap call, but each wakes the radio.
+const POLL: Duration = Duration::from_secs(60);
 
 /// A Gmail mailbox, signed in with an access token.
 #[derive(Debug)]
@@ -383,6 +385,26 @@ impl MailProvider for GmailSession {
     async fn append(&mut self, folder: &str, message: &[u8]) -> Result<(), ProviderError> {
         let body = json!({"raw": base64url(message), "labelIds": label(folder).as_slice()});
         self.post("/messages", &body).await.map(|_| ())
+    }
+
+    async fn wait(
+        &mut self,
+        _folder: &str,
+        since: Checkpoint,
+        wait: Duration,
+    ) -> Result<bool, ProviderError> {
+        let until = Instant::now() + wait;
+        loop {
+            // Any change in the mailbox moves its history id on.
+            if self.history_id().await? > since.next {
+                return Ok(true);
+            }
+            let left = until.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Ok(false);
+            }
+            tokio::time::sleep(left.min(POLL)).await;
+        }
     }
 }
 

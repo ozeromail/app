@@ -9,7 +9,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ozero_app::ops::push_ops;
 use ozero_app::send::{SentCopy, push_sends};
-use ozero_app::sync::{SyncError, download_body, prefetch_bodies, sync_mail};
+use ozero_app::sync::{SyncError, download_body, prefetch_bodies, sync_mail, wait_for_mail};
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Body, Category, Changes, Checkpoint, Draft,
     FolderRole, ListQuery, ListScope, MailProvider, MessageId, MessageRow, NewAccount, NewFolder,
@@ -29,6 +29,8 @@ uniffi::setup_scaffolding!();
 const SYNC_LIMIT: u32 = 200;
 /// How many of the newest inbox messages `prefetch` downloads whole.
 const PREFETCH: u32 = 20;
+/// Longest wait for new mail on one connection; a mobile network may drop a quiet one sooner.
+const MAIL_WAIT: Duration = Duration::from_secs(5 * 60);
 /// Mail older than this many seconds is not announced: a day.
 const NEWS_AGE: i64 = 86_400;
 /// Milliseconds an archived or sent message waits before the server hears of it.
@@ -507,6 +509,20 @@ impl Core {
         self.refused(&account, fetched)
     }
 
+    /// Waits on its own connection until the account's inbox may have changed since the last
+    /// sync, at most a few minutes: true if it may have, so a sync is worth it. For the app on
+    /// screen, called again after each answer.
+    pub async fn wait_for_mail(&self, account: i64, secret: String) -> Result<bool, CoreError> {
+        let account = self.account(AccountId(account))?;
+        let mut slot = None;
+        let remote = self.remote(&mut slot, &account, &secret).await?;
+        let waited = wait_for_mail(&self.store, remote, account.id, MAIL_WAIT).await;
+        if let Some(remote) = slot {
+            remote.close().await;
+        }
+        self.refused(&account, waited)
+    }
+
     /// The message body: the saved one, or downloaded once and saved with its snippet.
     /// `secret` is the message's account's, as for `push_actions`.
     pub async fn message_body(
@@ -932,6 +948,18 @@ impl MailProvider for Remote {
         match self {
             Self::Imap(p) => p.append(folder, message).await,
             Self::Gmail(p) => p.append(folder, message).await,
+        }
+    }
+
+    async fn wait(
+        &mut self,
+        folder: &str,
+        since: Checkpoint,
+        wait: Duration,
+    ) -> Result<bool, ProviderError> {
+        match self {
+            Self::Imap(p) => p.wait(folder, since, wait).await,
+            Self::Gmail(p) => p.wait(folder, since, wait).await,
         }
     }
 }

@@ -2,6 +2,7 @@
 #![allow(clippy::unwrap_used)]
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use ozero_domain::{Changes, Checkpoint, FolderRole, MailProvider, ProviderError};
 use ozero_imap::ImapSession;
@@ -61,6 +62,7 @@ async fn lists_folders_with_roles_and_names() {
             ("INBOX", "INBOX", FolderRole::Inbox),
             ("Moves", "Moves", FolderRole::Custom),
             ("Sent", "Sent", FolderRole::Sent),
+            ("Waits", "Waits", FolderRole::Custom),
         ]
     );
     imap.logout().await.unwrap();
@@ -246,4 +248,36 @@ async fn appends_a_sent_copy_marked_read() {
         .find(|m| String::from_utf8_lossy(&m.header).contains("Subject: Sent copy"))
         .unwrap();
     assert!(copy.flags.seen);
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "needs tools/dovecot-test.sh"]
+async fn waits_in_idle_until_mail_arrives() {
+    let mut imap = session().await;
+    let synced = recent(&mut imap, "Waits", 10).await.checkpoint;
+
+    let quiet = Duration::from_secs(1);
+    assert!(!imap.wait("Waits", synced, quiet).await.unwrap());
+
+    let mut other = session().await;
+    let arrives = async {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        other
+            .append("Waits", b"Subject: New\r\n\r\nHi\r\n")
+            .await
+            .unwrap();
+    };
+    let start = Instant::now();
+    let (woke, ()) = tokio::join!(imap.wait("Waits", synced, Duration::from_secs(20)), arrives);
+    assert!(woke.unwrap());
+    assert!(start.elapsed() < Duration::from_secs(10));
+
+    // Mail that came before the wait began wakes it at once.
+    assert!(
+        imap.wait("Waits", synced, Duration::from_secs(20))
+            .await
+            .unwrap()
+    );
+    imap.logout().await.unwrap();
+    other.logout().await.unwrap();
 }

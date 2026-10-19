@@ -1,5 +1,6 @@
 use std::fmt;
 use std::future::Future;
+use std::time::Duration;
 
 use crate::{Address, Body, Flags, NewFolder, NewMessage, Outgoing};
 
@@ -98,6 +99,15 @@ pub trait MailProvider: Send {
         folder: &str,
         message: &[u8],
     ) -> impl Future<Output = Result<(), ProviderError>> + Send;
+
+    /// Waits until a folder may have changed since `since`, at most `wait`: true if it may
+    /// have, so a sync is worth it.
+    fn wait(
+        &mut self,
+        folder: &str,
+        since: Checkpoint,
+        wait: Duration,
+    ) -> impl Future<Output = Result<bool, ProviderError>> + Send;
 }
 
 /// Hands mail over for delivery: SMTP, or a provider's own send call.

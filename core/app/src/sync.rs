@@ -1,6 +1,7 @@
 //! Brings server state into the store.
 
 use std::fmt;
+use std::time::Duration;
 
 use ozero_domain::{
     AccountId, Body, Folder, FolderRole, MailProvider, MessageLocation, MessageParser,
@@ -20,16 +21,34 @@ pub async fn sync_mail(
 ) -> Result<(), SyncError> {
     let folders = provider.folders().await?;
     let folders = store.save_folders(account, &folders)?;
-    let inbox = folders
-        .iter()
-        .find(|f| f.role == FolderRole::Inbox)
-        .ok_or(SyncError::NoInbox)?;
+    let inbox = inbox(&folders)?;
     sync_folder(store, provider, parser, inbox, limit).await?;
     // Only context for conversations: a broken sent folder must not stop the inbox.
     if let Some(sent) = folders.iter().find(|f| f.role == FolderRole::Sent) {
         let _ = sync_folder(store, provider, parser, sent, limit / SENT_SHARE).await;
     }
     Ok(())
+}
+
+/// Waits until the account's inbox may have changed since its last sync, at most `wait`:
+/// true if it may have.
+pub async fn wait_for_mail(
+    store: &dyn Store,
+    provider: &mut impl MailProvider,
+    account: AccountId,
+    wait: Duration,
+) -> Result<bool, SyncError> {
+    let folders = store.folders(account)?;
+    let inbox = inbox(&folders)?;
+    let (since, _) = store.checkpoint(inbox.id)?;
+    Ok(provider.wait(&inbox.remote_id, since, wait).await?)
+}
+
+fn inbox(folders: &[Folder]) -> Result<&Folder, SyncError> {
+    folders
+        .iter()
+        .find(|f| f.role == FolderRole::Inbox)
+        .ok_or(SyncError::NoInbox)
 }
 
 /// The sent folder gets this fraction of the inbox's limit.

@@ -406,3 +406,17 @@ async fn reads_headers_in_batches() {
         .count();
     assert_eq!(busy, 2);
 }
+
+#[tokio::test]
+async fn waits_until_the_history_moves_on() {
+    let routes = vec![("/profile", 200, json!({"historyId": "12"}))];
+    let since = |next| Checkpoint { validity: 0, next };
+    let wait = Duration::from_millis(50);
+
+    let (mut gmail, _) = session(routes.clone()).await;
+    assert!(gmail.wait("INBOX", since(10), wait).await.unwrap());
+
+    let (mut gmail, seen) = session(routes).await;
+    assert!(!gmail.wait("INBOX", since(12), wait).await.unwrap());
+    assert!(seen.lock().unwrap().len() >= 2);
+}
