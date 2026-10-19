@@ -136,3 +136,46 @@ fn prefetches_bodies_past_gone_mail_until_one_fails() {
     // It stops at the failure, and saves only what came down.
     assert_eq!(store.bodies.lock().unwrap().len(), 1);
 }
+
+#[test]
+fn waits_on_the_inbox_from_its_checkpoint() {
+    let since = Checkpoint {
+        validity: 9,
+        next: 7,
+    };
+    let saved = |id, remote_id: &str, role| Folder {
+        id: FolderId(id),
+        account_id: AccountId(1),
+        remote_id: remote_id.into(),
+        name: remote_id.into(),
+        role,
+    };
+    let store = Memory {
+        folders: vec![
+            saved(1, "Sent", FolderRole::Sent),
+            saved(2, "INBOX", FolderRole::Inbox),
+        ],
+        checkpoint: (since, vec!["5".into()]),
+        ..Memory::default()
+    };
+    let mut server = Server::default();
+    let wait = Duration::from_secs(60);
+    assert!(run(wait_for_mail(&store, &mut server, AccountId(1), wait)).unwrap());
+    assert_eq!(server.waited, [("INBOX".to_string(), since, wait)]);
+}
+
+#[test]
+fn does_not_wait_without_an_inbox() {
+    let mut server = Server::default();
+    let wait = Duration::from_secs(60);
+    assert_eq!(
+        run(wait_for_mail(
+            &Memory::default(),
+            &mut server,
+            AccountId(1),
+            wait
+        )),
+        Err(SyncError::NoInbox)
+    );
+    assert!(server.waited.is_empty());
+}

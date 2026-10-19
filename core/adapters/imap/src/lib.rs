@@ -16,7 +16,7 @@ use imap_codec::imap_types::fetch::{MessageDataItem, MessageDataItemName, Sectio
 use imap_codec::imap_types::flag::{Flag, FlagFetch, FlagNameAttribute, StoreResponse, StoreType};
 use imap_codec::imap_types::mailbox::Mailbox;
 use imap_codec::imap_types::response::{
-    Code, Data, GreetingKind, Response, Status, StatusBody, StatusKind,
+    Capability, Code, Data, GreetingKind, Response, Status, StatusBody, StatusKind,
 };
 use imap_codec::imap_types::sequence::SequenceSet;
 use imap_codec::{CommandCodec, GreetingCodec, ResponseCodec};
@@ -36,6 +36,8 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RESPONSE: u32 = 16 * 1024 * 1024;
 /// How much of one message `body` downloads; text parts come first, big attachments last.
 const MAX_BODY: NonZeroU32 = NonZeroU32::MIN.saturating_add(4 * 1024 * 1024 - 1);
+/// How often `wait` looks at a folder on a server without IDLE.
+const POLL: Duration = Duration::from_secs(60);
 /// UIDs per STORE or MOVE command.
 const UID_CHUNK: usize = 500;
 /// Headers the message list, conversations, answers and the inbox tabs need.
@@ -162,8 +164,7 @@ impl ImapSession {
 
     /// Sends a command and collects untagged data until its tagged reply.
     async fn send(&mut self, body: CommandBody<'_>) -> Result<Reply, ProviderError> {
-        let tag = format!("o{}", self.next_tag);
-        self.next_tag += 1;
+        let tag = self.tag();
         let command = Command::new(tag.as_str(), body).map_err(|_| protocol("bad tag"))?;
         for fragment in CommandCodec::default().encode(&command) {
             match fragment {
@@ -185,6 +186,60 @@ impl ImapSession {
         self.collect(&tag, false)
             .await?
             .ok_or_else(|| protocol("unexpected continuation request"))
+    }
+
+    fn tag(&mut self) -> String {
+        let tag = format!("o{}", self.next_tag);
+        self.next_tag += 1;
+        tag
+    }
+
+    /// Whether the server has IDLE.
+    async fn can_idle(&mut self) -> Result<bool, ProviderError> {
+        Ok(self.run(CommandBody::Capability).await?.data.iter().any(
+            |d| matches!(d, Data::Capability(caps) if caps.as_ref().contains(&Capability::Idle)),
+        ))
+    }
+
+    /// Waits in IDLE (RFC 2177) until the server reports a change in the open folder, at
+    /// most `wait`: true if it did.
+    async fn idle(&mut self, wait: Duration) -> Result<bool, ProviderError> {
+        let tag = self.tag();
+        self.write(format!("{tag} IDLE\r\n").as_bytes()).await?;
+        timed(self.stream.flush()).await?;
+        let ours = |r: &Response<'_>| matches!(r, Response::Status(Status::Tagged(t)) if t.tag.inner() == tag);
+        // A change may come before the server agrees, too.
+        let mut changed = false;
+        loop {
+            match self.response().await? {
+                Response::CommandContinuationRequest(_) => break,
+                r if ours(&r) => return Err(protocol("IDLE refused")),
+                r => changed |= is_change(&r),
+            }
+        }
+        if !changed {
+            let news = async {
+                loop {
+                    // The outer timeout ends the wait first; this one never does.
+                    match self.response_within(wait + TIMEOUT).await? {
+                        // The server ended IDLE itself: there is nothing to end.
+                        r if ours(&r) => return Ok(None),
+                        r if is_change(&r) => return Ok(Some(true)),
+                        _ => {}
+                    }
+                }
+            };
+            match tokio::time::timeout(wait, news).await {
+                Ok(Ok(None)) => return Ok(false),
+                Ok(Ok(Some(news))) => changed = news,
+                Ok(Err(e)) => return Err(e),
+                Err(_) => {}
+            }
+        }
+        self.write(b"DONE\r\n").await?;
+        timed(self.stream.flush()).await?;
+        self.collect(&tag, false).await?;
+        Ok(changed)
     }
 
     /// Reads responses until the tagged reply to `tag`, or until a "+" when `until_continue`.
@@ -220,7 +275,15 @@ impl ImapSession {
     }
 
     async fn response(&mut self) -> Result<Response<'static>, ProviderError> {
-        self.read_message().await?;
+        self.response_within(TIMEOUT).await
+    }
+
+    /// The next response; fails if the server is silent for `limit`.
+    async fn response_within(
+        &mut self,
+        limit: Duration,
+    ) -> Result<Response<'static>, ProviderError> {
+        self.read_message_within(limit).await?;
         self.fragments
             .decode_message(&ResponseCodec::default())
             .map(IntoBoundedStatic::into_static)
@@ -229,13 +292,17 @@ impl ImapSession {
 
     /// Reads until the fragmentizer holds one whole message.
     async fn read_message(&mut self) -> Result<(), ProviderError> {
+        self.read_message_within(TIMEOUT).await
+    }
+
+    async fn read_message_within(&mut self, limit: Duration) -> Result<(), ProviderError> {
         let mut buf = [0u8; 16 * 1024];
         loop {
             match self.fragments.progress() {
                 Some(_) if self.fragments.is_message_complete() => return Ok(()),
                 Some(_) => {}
                 None => {
-                    let n = timed(self.stream.read(&mut buf)).await?;
+                    let n = timed_for(limit, self.stream.read(&mut buf)).await?;
                     if n == 0 {
                         return Err(ProviderError::Network("connection closed".into()));
                     }
@@ -533,6 +600,36 @@ impl MailProvider for ImapSession {
             .map_err(|_| protocol("bad APPEND"))?;
         self.run(append).await.map(|_| ())
     }
+
+    async fn wait(
+        &mut self,
+        folder: &str,
+        since: Checkpoint,
+        wait: Duration,
+    ) -> Result<bool, ProviderError> {
+        let idles = self.can_idle().await?;
+        let opened = self.open(folder, false).await?;
+        // Mail that came after the last sync. A server without UIDNEXT says nothing here.
+        if opened.validity != since.validity || u64::from(opened.next) > since.next {
+            return Ok(true);
+        }
+        if idles {
+            return self.idle(wait).await;
+        }
+        let until = tokio::time::Instant::now() + wait;
+        loop {
+            let left = until.saturating_duration_since(tokio::time::Instant::now());
+            if left.is_zero() {
+                return Ok(false);
+            }
+            tokio::time::sleep(left.min(POLL)).await;
+            let now = self.open(folder, false).await?;
+            if (now.validity, now.next, now.exists) != (opened.validity, opened.next, opened.exists)
+            {
+                return Ok(true);
+            }
+        }
+    }
 }
 
 impl ImapSession {
@@ -654,6 +751,14 @@ fn uid_flags<'a>(items: impl IntoIterator<Item = MessageDataItem<'a>>) -> Option
     uid.zip(flags)
 }
 
+/// An untagged response saying a message came, went or changed in the open folder.
+fn is_change(response: &Response<'_>) -> bool {
+    matches!(
+        response,
+        Response::Data(Data::Exists(_) | Data::Expunge(_) | Data::Fetch { .. })
+    )
+}
+
 /// RFC 5530 codes for a refusal that is not about the credentials.
 fn is_temporary(code: &Code<'_>) -> bool {
     let Code::Other(other) = code else {
@@ -686,7 +791,14 @@ fn parse_flags(flags: &[FlagFetch<'_>]) -> Flags {
 async fn timed<T, E: std::fmt::Display>(
     op: impl Future<Output = Result<T, E>>,
 ) -> Result<T, ProviderError> {
-    match tokio::time::timeout(TIMEOUT, op).await {
+    timed_for(TIMEOUT, op).await
+}
+
+async fn timed_for<T, E: std::fmt::Display>(
+    limit: Duration,
+    op: impl Future<Output = Result<T, E>>,
+) -> Result<T, ProviderError> {
+    match tokio::time::timeout(limit, op).await {
         Ok(result) => result.map_err(|e| ProviderError::Network(e.to_string())),
         Err(_) => Err(ProviderError::Network("timed out".into())),
     }

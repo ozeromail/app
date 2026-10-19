@@ -4,6 +4,7 @@ use std::future::{Future, ready};
 use std::pin::pin;
 use std::sync::Mutex;
 use std::task::{Context, Poll, Waker};
+use std::time::Duration;
 
 use ozero_domain::{
     Account, AccountId, Action, Address, Body, Category, Changes, Checkpoint, Correspondents,
@@ -31,6 +32,8 @@ pub struct Server {
     pub refuse: Vec<ProviderError>,
     pub moved_to: Vec<String>,
     pub appended: Vec<(String, Vec<u8>)>,
+    /// Each `wait` call: the folder, checkpoint and how long.
+    pub waited: Vec<(String, Checkpoint, Duration)>,
 }
 
 impl MailProvider for Server {
@@ -106,6 +109,16 @@ impl MailProvider for Server {
     ) -> impl Future<Output = Result<(), ProviderError>> + Send {
         self.appended.push((folder.into(), message.to_vec()));
         ready(Ok(()))
+    }
+
+    fn wait(
+        &mut self,
+        folder: &str,
+        since: Checkpoint,
+        wait: Duration,
+    ) -> impl Future<Output = Result<bool, ProviderError>> + Send {
+        self.waited.push((folder.into(), since, wait));
+        ready(Ok(true))
     }
 }
 
@@ -191,6 +204,8 @@ impl MessageParser for Parser {
 
 #[derive(Default)]
 pub struct Memory {
+    /// What `folders` returns.
+    pub folders: Vec<Folder>,
     /// What `checkpoint` returns, and each `save_changes`.
     pub checkpoint: (Checkpoint, Vec<String>),
     pub changes: Mutex<Vec<(FolderId, Changes<NewMessage>)>>,
@@ -253,7 +268,7 @@ impl Store for Memory {
     }
 
     fn folders(&self, _: AccountId) -> Result<Vec<Folder>, StoreError> {
-        Ok(vec![])
+        Ok(self.folders.clone())
     }
 
     fn checkpoint(&self, _: FolderId) -> Result<(Checkpoint, Vec<String>), StoreError> {
