@@ -50,8 +50,8 @@ async fn sync_folder(
     Ok(())
 }
 
-/// Downloads a saved message's body and returns it; saves it unless it has no text,
-/// so a message the parser could not read is tried again next time.
+/// Downloads a saved message's body and returns it; saves it unless the server sent
+/// nothing, so a message with only attachments is not downloaded again.
 pub async fn download_body(
     store: &dyn Store,
     provider: &mut impl MailProvider,
@@ -66,10 +66,29 @@ pub async fn download_body(
         )
         .await?;
     let body = parser.parse_body(&raw);
-    if !body.text.is_empty() {
+    if !raw.is_empty() {
         store.save_body(message.id, &body)?;
     }
     Ok(body)
+}
+
+/// Downloads the missing bodies among the account's `limit` newest inbox messages, so they
+/// open at once. A message gone from the server is skipped; any other failure stops it, and
+/// the reader downloads what is left.
+pub async fn prefetch_bodies(
+    store: &dyn Store,
+    provider: &mut impl MailProvider,
+    parser: &dyn MessageParser,
+    account: AccountId,
+    limit: u32,
+) -> Result<(), SyncError> {
+    for message in store.without_body(account, limit)? {
+        match download_body(store, provider, parser, &message).await {
+            Ok(_) | Err(SyncError::Provider(ProviderError::Gone)) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

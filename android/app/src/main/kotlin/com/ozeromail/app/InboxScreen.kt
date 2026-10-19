@@ -218,6 +218,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             error = e.text()
         }
         MailWorker.clearNotifications(context)
+        mail.prefetch()
         // The first read may have failed; a sync is a good moment to try again.
         if (accounts.isEmpty()) loadAccounts()
         try {

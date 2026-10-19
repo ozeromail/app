@@ -70,10 +70,11 @@ impl MailProvider for Server {
         remote_id: &str,
     ) -> impl Future<Output = Result<Vec<u8>, ProviderError>> + Send {
         self.asked.push((format!("{folder}/{remote_id}"), validity));
-        ready(if remote_id == "empty" {
-            Ok(vec![])
-        } else {
-            Ok(b"Hello".to_vec())
+        ready(match remote_id {
+            "empty" => Ok(vec![]),
+            "fail" => Err(ProviderError::Network("down".into())),
+            "gone" => Err(ProviderError::Gone),
+            _ => Ok(b"Hello".to_vec()),
         })
     }
 
@@ -194,6 +195,8 @@ pub struct Memory {
     pub checkpoint: (Checkpoint, Vec<String>),
     pub changes: Mutex<Vec<(FolderId, Changes<NewMessage>)>>,
     pub bodies: Mutex<Vec<(MessageId, Body)>>,
+    /// What `without_body` returns.
+    pub without_body: Vec<MessageLocation>,
     /// What `due` returns, and which ops were finished or reverted.
     pub ops: Vec<Op>,
     pub finished: Mutex<Vec<OpId>>,
@@ -292,6 +295,15 @@ impl Store for Memory {
 
     fn location(&self, _: MessageId) -> Result<MessageLocation, StoreError> {
         Err(StoreError::NotFound)
+    }
+
+    fn without_body(&self, _: AccountId, limit: u32) -> Result<Vec<MessageLocation>, StoreError> {
+        Ok(self
+            .without_body
+            .iter()
+            .take(limit as usize)
+            .cloned()
+            .collect())
     }
 
     fn save_body(&self, message: MessageId, body: &Body) -> Result<(), StoreError> {

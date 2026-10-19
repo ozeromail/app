@@ -91,7 +91,7 @@ fn downloads_a_body() {
 }
 
 #[test]
-fn does_not_save_a_body_without_text() {
+fn does_not_save_an_empty_download() {
     let store = Memory::default();
     let body = run(download_body(
         &store,
@@ -102,4 +102,37 @@ fn does_not_save_a_body_without_text() {
     .unwrap();
     assert_eq!(body.text, "");
     assert!(store.bodies.lock().unwrap().is_empty());
+}
+
+#[test]
+fn prefetches_bodies_past_gone_mail_until_one_fails() {
+    let store = Memory {
+        without_body: vec![
+            location("7"),
+            location("empty"),
+            location("gone"),
+            location("fail"),
+            location("8"),
+        ],
+        ..Memory::default()
+    };
+    let mut server = Server::default();
+    let done = run(prefetch_bodies(
+        &store,
+        &mut server,
+        &Parser,
+        AccountId(1),
+        5,
+    ));
+    assert_eq!(
+        done,
+        Err(SyncError::Provider(ProviderError::Network("down".into())))
+    );
+    let asked: Vec<_> = server.asked.iter().map(|(m, _)| m.as_str()).collect();
+    assert_eq!(
+        asked,
+        ["INBOX/7", "INBOX/empty", "INBOX/gone", "INBOX/fail"]
+    );
+    // It stops at the failure, and saves only what came down.
+    assert_eq!(store.bodies.lock().unwrap().len(), 1);
 }

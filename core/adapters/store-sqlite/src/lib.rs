@@ -430,6 +430,37 @@ impl Store for SqliteStore {
             .ok_or(StoreError::NotFound)
     }
 
+    fn without_body(
+        &self,
+        account: AccountId,
+        limit: u32,
+    ) -> Result<Vec<MessageLocation>, StoreError> {
+        self.conn()
+            .prepare_cached(
+                "SELECT m.id, f.remote_id, f.validity, m.remote_id
+                 FROM (SELECT id, folder_id, remote_id, date FROM message
+                       WHERE folder_id IN (SELECT id FROM folder WHERE account_id = ?1 AND role = 'inbox')
+                       ORDER BY date DESC, id DESC LIMIT ?2) m
+                 JOIN folder f ON f.id = m.folder_id
+                 WHERE NOT EXISTS (SELECT 1 FROM message_body b WHERE b.message_id = m.id)
+                   AND NOT EXISTS (SELECT 1 FROM op WHERE op.message_id = m.id AND op.kind IN ('archive', 'trash'))
+                 ORDER BY m.date DESC, m.id DESC",
+            )
+            .and_then(|mut s| {
+                s.query_map(params![account.0, limit], |r| {
+                    Ok(MessageLocation {
+                        id: MessageId(r.get(0)?),
+                        account_id: account,
+                        folder_remote_id: r.get(1)?,
+                        validity: r.get(2)?,
+                        remote_id: r.get(3)?,
+                    })
+                })?
+                .collect()
+            })
+            .map_err(storage)
+    }
+
     fn save_body(&self, message: MessageId, body: &Body) -> Result<(), StoreError> {
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(storage)?;
@@ -441,7 +472,8 @@ impl Store for SqliteStore {
         )
         .map_err(storage)?;
         tx.execute(
-            "UPDATE message SET snippet = ?2 WHERE id = ?1",
+            // A body without text keeps the snippet the list had.
+            "UPDATE message SET snippet = ?2 WHERE id = ?1 AND ?2 <> ''",
             params![message.0, body.snippet()],
         )
         .map_err(storage)?;

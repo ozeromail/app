@@ -196,6 +196,24 @@ class Mail(private val context: Context) {
         failures.firstNotNullOfOrNull { it }?.let { throw it }
     }
 
+    /**
+     * Downloads the newest inbox mail whole in the background, so it opens at once. Only for
+     * the app on screen: background checks stay light.
+     */
+    fun prefetch() {
+        background.launch {
+            for (account in core.accounts()) {
+                try {
+                    val password = vault.password(account.email) ?: continue
+                    core.prefetch(account.id, password)
+                } catch (e: CoreException) {
+                    // The reader downloads what is left when a message opens.
+                    Log.w("Ozero", "prefetch failed", e)
+                }
+            }
+        }
+    }
+
     private fun password(accountId: Long): String? =
         core.accounts().firstOrNull { it.id == accountId }?.let { vault.password(it.email) }
 
