@@ -34,6 +34,10 @@ android {
     }
 
     buildTypes {
+        // Every debug build would read 0.1.0; the commit tells which one a crash came from.
+        debug {
+            versionNameSuffix = "-dev" + (env("BUILD_COMMIT")?.take(7)?.let { ".$it" } ?: "")
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true

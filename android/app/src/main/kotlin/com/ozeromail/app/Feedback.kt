@@ -3,6 +3,7 @@ package com.ozeromail.app
 import android.content.Context
 import android.content.pm.PackageManager.PackageInfoFlags
 import android.os.Build
+import android.os.Debug
 import java.io.File
 import uniffi.ozero_api.DraftItem
 
@@ -49,11 +50,15 @@ object Crashes {
 
     /**
      * Where the code failed, without the errors' messages: they can hold a server's reply,
-     * an address or a subject.
+     * an address or a subject. Out of memory, the message holds only the Java heap's sizes;
+     * the native heap's size is added.
      */
     private fun report(error: Throwable): String =
         generateSequence(error) { it.cause }.take(8).joinToString("\nCaused by ") { e ->
-            e.javaClass.name + e.stackTrace.joinToString("") { "\n  at $it" }
+            val message = if (e !is OutOfMemoryError) "" else {
+                ": ${e.message}\nNative heap ${Debug.getNativeHeapAllocatedSize() / (1024 * 1024)} MB"
+            }
+            e.javaClass.name + message + e.stackTrace.joinToString("") { "\n  at $it" }
         }
 
     private fun file(context: Context) = File(context.filesDir, "crash.txt")

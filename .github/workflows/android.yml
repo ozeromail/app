@@ -58,6 +58,8 @@ jobs:
         # signed below.
         env:
           RELEASE: ${{ !startsWith(github.ref, 'refs/tags/v') && ':app:assembleRelease' || '' }}
+          # The debug version names it; a pull request's own head, not GitHub's merge commit.
+          BUILD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME" ./gradlew :app:assembleDebug :app:lintDebug $RELEASE
       - name: Show lint errors
         if: failure()
