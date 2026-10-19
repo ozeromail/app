@@ -39,6 +39,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -93,6 +94,7 @@ fun MessageScreen(
     var showAll by remember(message.id) { mutableStateOf(false) }
     // Loaded bodies, so a message opened again shows at once.
     val bodies = remember(message.id) { mutableStateMapOf<Long, MessageBody>() }
+    DisposableEffect(bodies) { onDispose { expectGone(bodies, "bodies of a closed conversation") } }
     LaunchedEffect(message.id) {
         try {
             thread = mail.thread(message)

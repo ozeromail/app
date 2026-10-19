@@ -33,7 +33,14 @@ fun HtmlView(html: String, images: List<RemoteImage?>, modifier: Modifier = Modi
                 loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
             }
         },
-        onRelease = { it.destroy() },
+        onRelease = { view ->
+            // Its client holds the loaded images; a web view kept by something else lets them go.
+            view.webViewClient = WebViewClient()
+            // A web view is destroyed only once out of the window.
+            (view.parent as? ViewGroup)?.removeView(view)
+            view.destroy()
+            expectGone(view, "WebView of a closed message")
+        },
     )
 }
 
