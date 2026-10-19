@@ -6,6 +6,7 @@ activity-compose = "1.10.1"
 jna = "5.17.0"
 coroutines = "1.10.2"
 work = "2.10.1"
+leakcanary = "2.14"
 
 [libraries]
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
@@ -16,6 +17,8 @@ jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
 coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 # Checks mail in the background, even after the app is closed or the phone restarts.
 work-runtime = { module = "androidx.work:work-runtime-ktx", version.ref = "work" }
+# Debug builds only: finds what keeps a closed screen in memory.
+leakcanary = { module = "com.squareup.leakcanary:leakcanary-android", version.ref = "leakcanary" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
