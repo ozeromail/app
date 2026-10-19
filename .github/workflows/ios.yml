@@ -1,12 +1,7 @@
 name: ios
 
-# macOS minutes cost 10x, so PRs run this only when the Swift API or iOS files change.
+# macOS minutes cost 10x and iOS waits until the Play release, so this runs only by hand.
 on:
-  push:
-    branches: [main]
-    paths: ["core/**", "ios/**", "i18n/**", "tools/build-xcframework.sh", "tools/gen-strings.py", ".github/workflows/ios.yml"]
-  pull_request:
-    paths: ["core/.cargo/**", "core/api/**", "ios/**", "tools/build-xcframework.sh", "tools/gen-strings.py", ".github/workflows/ios.yml"]
   workflow_dispatch:
 
 permissions:
