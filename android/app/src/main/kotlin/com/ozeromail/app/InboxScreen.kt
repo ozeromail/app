@@ -110,6 +110,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.LifecycleStartEffect
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -208,19 +209,22 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         counts()
     }
 
-    suspend fun sync() {
+    /** Syncs every account; false if one failed. One asked for while one runs follows it. */
+    suspend fun sync(): Boolean {
         if (syncing) {
             syncAgain = true
-            return
+            return true
         }
         syncing = true
         error = null
         val started = SystemClock.elapsedRealtime()
-        try {
+        val synced = try {
             mail.refresh()
             lastSync = started
+            true
         } catch (e: CoreException) {
             error = e.text()
+            false
         }
         // Whatever synced is on screen now, also when one account failed: no notification later.
         try {
@@ -239,10 +243,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         }
         if (syncAgain) {
             syncAgain = false
-            sync()
-        } else {
-            pulled = false
+            return sync()
         }
+        pulled = false
+        return synced
     }
 
     // Only change when one is added.
@@ -267,6 +271,13 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     // Not again right after one, as when back from the file picker or a link.
     LifecycleEventEffect(Lifecycle.Event.ON_START) {
         if (SystemClock.elapsedRealtime() - lastSync > RESYNC_MS) scope.launch { sync() }
+    }
+    // While the app is on screen, new mail shows as it arrives.
+    LifecycleStartEffect(accounts.map { it.id }) {
+        val watching = scope.launch {
+            mail.watch(accounts) { sync() }
+        }
+        onStopOrDispose { watching.cancel() }
     }
 
     /** Shows a toast for [undoSeconds]; true if Undo was tapped. One toast at a time. */
