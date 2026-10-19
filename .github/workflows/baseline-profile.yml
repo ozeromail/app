@@ -1,0 +1,66 @@
+name: baseline profile
+
+# Records a new baseline profile on an emulator and commits it to the branch it ran on. Runs
+# when the generator changes; run it by hand after big UI changes.
+on:
+  pull_request:
+    paths: ["android/baselineprofile/**", ".github/workflows/baseline-profile.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: baseline-profile-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  generate:
+    name: generate
+    # The branch must be in this repo to push to it.
+    if: ${{ !github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      BRANCH: ${{ github.head_ref || github.ref_name }}
+    steps:
+      # The branch itself, not GitHub's merge commit, so the profile can be pushed to it.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BRANCH }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Install Rust Android targets
+        working-directory: core
+        run: |
+          rustup toolchain install
+          rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-ndk
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          save-if: false
+      - uses: gradle/actions/setup-gradle@v4
+      # The emulator needs hardware acceleration.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Generate
+        working-directory: android
+        run: |
+          ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME" ./gradlew :app:generateReleaseBaselineProfile \
+            -Pandroid.testoptions.manageddevices.emulator.gpu=swiftshader_indirect
+      - name: Commit the profile
+        run: |
+          git config user.name "Khizri Makhmudov"
+          git config user.email "khizrim@khizrim.ru"
+          git add android/app/src/release/generated
+          git diff --cached --quiet && exit 0
+          git commit -m "perf(android): update the baseline profile"
+          git push origin "HEAD:$BRANCH"

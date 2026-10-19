@@ -22,4 +22,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "ozero-mail"
-include(":app")
+include(":app", ":baselineprofile")
