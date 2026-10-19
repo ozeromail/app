@@ -140,5 +140,6 @@ dependencies {
     implementation(libs.jna) { artifact { type = "aar" } }
     implementation(libs.coroutines.android)
     implementation(libs.work.runtime)
+    debugImplementation(libs.leakcanary)
     implementation(verifierVersion.map { "org.rustls:rustls-platform-verifier:$it" })
 }
