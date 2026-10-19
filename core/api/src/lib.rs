@@ -9,7 +9,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ozero_app::ops::push_ops;
 use ozero_app::send::{SentCopy, push_sends};
-use ozero_app::sync::{SyncError, download_body, sync_mail};
+use ozero_app::sync::{SyncError, download_body, prefetch_bodies, sync_mail};
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Body, Category, Changes, Checkpoint, Draft,
     FolderRole, ListQuery, ListScope, MailProvider, MessageId, MessageRow, NewAccount, NewFolder,
@@ -27,6 +27,8 @@ uniffi::setup_scaffolding!();
 
 /// How many new messages of the inbox and of the sent folder one sync brings in.
 const SYNC_LIMIT: u32 = 200;
+/// How many of the newest inbox messages `prefetch` downloads whole.
+const PREFETCH: u32 = 20;
 /// Mail older than this many seconds is not announced: a day.
 const NEWS_AGE: i64 = 86_400;
 /// Milliseconds an archived or sent message waits before the server hears of it.
@@ -489,6 +491,20 @@ impl Core {
             remote.close().await;
         }
         pushed
+    }
+
+    /// Downloads the missing bodies of the account's newest inbox mail, so it opens at once.
+    /// Runs apart from `sync`, so a sync and the actions waiting on it stay quick.
+    pub async fn prefetch(&self, account: i64, secret: String) -> Result<(), CoreError> {
+        let Some(account) = self.find(AccountId(account))? else {
+            return Ok(());
+        };
+        let mut slot = None;
+        let remote = self.remote(&mut slot, &account, &secret).await?;
+        let fetched =
+            prefetch_bodies(&self.store, remote, &self.parser, account.id, PREFETCH).await;
+        drop(slot);
+        self.refused(&account, fetched)
     }
 
     /// The message body: the saved one, or downloaded once and saved with its snippet.

@@ -61,7 +61,14 @@ pub trait Store: Send + Sync {
     /// Who the message came from and went to.
     fn correspondents(&self, message: MessageId) -> Result<Correspondents, StoreError>;
     fn location(&self, message: MessageId) -> Result<MessageLocation, StoreError>;
-    /// Saves the body and sets the message's snippet from it.
+    /// Those of the account's `limit` newest inbox messages that have no saved body and are
+    /// not being moved, newest first.
+    fn without_body(
+        &self,
+        account: AccountId,
+        limit: u32,
+    ) -> Result<Vec<MessageLocation>, StoreError>;
+    /// Saves the body and sets the message's snippet from its text, if it has any.
     fn save_body(&self, message: MessageId, body: &Body) -> Result<(), StoreError>;
     fn body(&self, message: MessageId) -> Result<Option<Body>, StoreError>;
 

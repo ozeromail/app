@@ -466,6 +466,40 @@ fn body_is_saved_with_its_snippet() {
     );
 }
 
+#[test]
+fn without_body_lists_the_newest_inbox_mail_left_to_download() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let folder = inbox(&store, account);
+    store
+        .save_messages(folder, &[message(1, 100), message(2, 300), message(3, 200)])
+        .unwrap();
+    let ids: Vec<_> = list(&store, ListScope::Folder(folder), 10, None)
+        .iter()
+        .map(|r| r.id)
+        .collect();
+    // Newest first: 2, then 3, then 1; 3 already has its body.
+    let body = Body {
+        text: "Hi".into(),
+        html: None,
+    };
+    store.save_body(ids[1], &body).unwrap();
+
+    let left = store.without_body(account, 10).unwrap();
+    let uids: Vec<_> = left.iter().map(|m| m.remote_id.as_str()).collect();
+    assert_eq!(uids, ["2", "1"]);
+    // Only the newest count: 1 is older than the two newest.
+    let newest: Vec<_> = store
+        .without_body(account, 2)
+        .unwrap()
+        .into_iter()
+        .map(|m| m.remote_id)
+        .collect();
+    assert_eq!(newest, ["2"]);
+    let other = self::account(&store, "b@example.com");
+    assert!(store.without_body(other, 10).unwrap().is_empty());
+}
+
 fn seen(store: &SqliteStore, folder: FolderId) -> Vec<bool> {
     list(store, ListScope::Folder(folder), 10, None)
         .iter()
