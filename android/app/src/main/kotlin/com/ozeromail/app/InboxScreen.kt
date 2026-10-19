@@ -3,6 +3,7 @@ package com.ozeromail.app
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.SystemClock
 import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -77,6 +78,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -106,6 +108,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -121,6 +125,9 @@ import uniffi.ozero_api.MessageItem
 import uniffi.ozero_api.UnsentItem
 import uniffi.ozero_api.undoSeconds
 
+/** How soon after a sync a return to the app syncs again. */
+private const val RESYNC_MS = 30_000L
+
 /**
  * The unified inbox: shows what is saved at once, then syncs; pull down to sync again.
  * [onNoAccounts] runs once the last account is removed.
@@ -132,6 +139,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var syncing by remember { mutableStateOf(false) }
     // A sync asked for while one runs, say for a new account, runs right after it.
     var syncAgain by remember { mutableStateOf(false) }
+    // When the last sync that went through began.
+    var lastSync by remember { mutableLongStateOf(-RESYNC_MS) }
     // Only a pull shows the spinner; syncs on their own stay quiet over the saved mail.
     var pulled by remember { mutableStateOf(false) }
     // Until the saved list is read, an empty one says nothing.
@@ -206,8 +215,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         }
         syncing = true
         error = null
+        val started = SystemClock.elapsedRealtime()
         try {
             mail.refresh()
+            lastSync = started
         } catch (e: CoreException) {
             error = e.text()
         }
@@ -251,7 +262,11 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         // Only once there is an account: without one a check has nothing to do.
         MailWorker.schedule(context)
         counts()
-        sync()
+    }
+    // On opening and on every return to the app: mail that came meanwhile shows without a pull.
+    // Not again right after one, as when back from the file picker or a link.
+    LifecycleEventEffect(Lifecycle.Event.ON_START) {
+        if (SystemClock.elapsedRealtime() - lastSync > RESYNC_MS) scope.launch { sync() }
     }
 
     /** Shows a toast for [undoSeconds]; true if Undo was tapped. One toast at a time. */

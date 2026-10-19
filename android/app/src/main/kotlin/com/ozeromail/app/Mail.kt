@@ -6,6 +6,7 @@ import androidx.annotation.StringRes
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -36,6 +37,7 @@ class Mail(private val context: Context) {
 
     /** Lives as long as the app, so an action still reaches the server after its screen closes. */
     private val background = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var prefetching: Job? = null
 
     suspend fun hasAccounts(): Boolean = io { core.accounts().isNotEmpty() }
 
@@ -201,7 +203,9 @@ class Mail(private val context: Context) {
      * the app on screen: background checks stay light.
      */
     fun prefetch() {
-        background.launch {
+        // One at a time: a second would download the same mail.
+        if (prefetching?.isActive == true) return
+        prefetching = background.launch {
             for (account in core.accounts()) {
                 try {
                     val password = vault.password(account.email) ?: continue
