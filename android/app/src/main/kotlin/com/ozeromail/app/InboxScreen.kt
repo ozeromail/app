@@ -132,6 +132,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var syncing by remember { mutableStateOf(false) }
     // A sync asked for while one runs, say for a new account, runs right after it.
     var syncAgain by remember { mutableStateOf(false) }
+    // Only a pull shows the spinner; syncs on their own stay quiet over the saved mail.
+    var pulled by remember { mutableStateOf(false) }
+    // Until the saved list is read, an empty one says nothing.
+    var listLoaded by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<Int?>(null) }
     var open by remember { mutableStateOf<MessageItem?>(null) }
     var composing by remember { mutableStateOf<Composing?>(null) }
@@ -170,6 +174,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             if (tab == shown) messages = emptyList()
             error = e.text()
         }
+        listLoaded = true
     }
 
     suspend fun counts() {
@@ -223,6 +228,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         if (syncAgain) {
             syncAgain = false
             sync()
+        } else {
+            pulled = false
         }
     }
 
@@ -400,7 +407,11 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                     Screen.Inbox -> InboxList(
                         listState = listState,
                         syncing = syncing,
-                        onSync = { scope.launch { sync() } },
+                        refreshing = pulled || (syncing && listLoaded && messages.isEmpty()),
+                        onSync = {
+                            pulled = true
+                            scope.launch { sync() }
+                        },
                         accounts = accounts,
                         unsent = unsent,
                         messages = messages,
@@ -547,6 +558,7 @@ private fun AnimatedContentTransitionScope<Screen>.slide(): ContentTransform {
 private fun InboxList(
     listState: LazyListState,
     syncing: Boolean,
+    refreshing: Boolean,
     onSync: () -> Unit,
     accounts: List<AccountItem>,
     unsent: List<UnsentItem>,
@@ -580,7 +592,7 @@ private fun InboxList(
     val mini by animateFloatAsState(if (scrolled) 1f else 0f, Motion.calm(Motion.SMALL), label = "title")
     Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
         PullToRefreshBox(
-            isRefreshing = syncing,
+            isRefreshing = refreshing,
             onRefresh = onSync,
             modifier = Modifier.fillMaxSize(),
             state = pull,
@@ -588,7 +600,7 @@ private fun InboxList(
             indicator = {
                 PullToRefreshDefaults.Indicator(
                     state = pull,
-                    isRefreshing = syncing,
+                    isRefreshing = refreshing,
                     modifier = Modifier.align(Alignment.TopCenter).padding(top = top + 48.dp),
                 )
             },
