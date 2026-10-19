@@ -1,6 +1,7 @@
 package com.ozeromail.app
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import androidx.annotation.StringRes
 import java.io.File
@@ -11,6 +12,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -218,6 +220,32 @@ class Mail(private val context: Context) {
         }
     }
 
+    /**
+     * Calls [onMail] each time an account's inbox may have changed, until cancelled: for the
+     * app on screen. [onMail] says whether its sync went through.
+     */
+    suspend fun watch(accounts: List<AccountItem>, onMail: suspend () -> Boolean) = coroutineScope {
+        for (account in accounts) {
+            launch {
+                val password = io { vault.password(account.email) } ?: return@launch
+                var pause = WATCH_PAUSE_MS
+                while (true) {
+                    val started = SystemClock.elapsedRealtime()
+                    val fine = try {
+                        !core.waitForMail(account.id, password) || onMail()
+                    } catch (e: CoreException) {
+                        Log.w("Ozero", "wait for mail failed", e)
+                        false
+                    }
+                    // A failure, or a server that keeps waking at once, waits longer each time.
+                    val quick = SystemClock.elapsedRealtime() - started < WATCH_PAUSE_MS
+                    pause = if (fine && !quick) WATCH_PAUSE_MS else (pause * 2).coerceAtMost(WATCH_PAUSE_MAX_MS)
+                    delay(pause)
+                }
+            }
+        }
+    }
+
     private fun password(accountId: Long): String? =
         core.accounts().firstOrNull { it.id == accountId }?.let { vault.password(it.email) }
 
@@ -228,6 +256,8 @@ class Mail(private val context: Context) {
         const val SMTPS_PORT = 465
         private const val INBOX_SIZE = 200u
         private const val SEARCH_SIZE = 100u
+        private const val WATCH_PAUSE_MS = 5_000L
+        private const val WATCH_PAUSE_MAX_MS = 5 * 60_000L
     }
 }
 
