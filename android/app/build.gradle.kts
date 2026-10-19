@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.baselineprofile)
 }
 
 android {
@@ -119,6 +120,11 @@ val generateStrings by tasks.registering(RunTool::class) {
 }
 
 androidComponents {
+    // The generator installs this release copy on an emulator; without the upload key it would
+    // be unsigned.
+    onVariants(selector().withBuildType("nonMinifiedRelease")) { variant ->
+        variant.signingConfig.setConfig(android.signingConfigs.getByName("debug"))
+    }
     onVariants { variant ->
         variant.sources.jniLibs?.addGeneratedSourceDirectory(buildCore, RunTool::outputDir)
         variant.sources.java?.addGeneratedSourceDirectory(generateBindings, RunTool::outputDir)
@@ -141,5 +147,6 @@ dependencies {
     implementation(libs.coroutines.android)
     implementation(libs.work.runtime)
     debugImplementation(libs.leakcanary)
+    baselineProfile(project(":baselineprofile"))
     implementation(verifierVersion.map { "org.rustls:rustls-platform-verifier:$it" })
 }
