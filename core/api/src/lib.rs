@@ -1,6 +1,6 @@
 //! Facade the Android and iOS apps call through UniFFI.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::hash::{BuildHasher, RandomState};
 use std::path::Path;
@@ -84,6 +84,16 @@ pub struct Core {
     /// Gmail access tokens and until when they work, by the wall clock: a monotonic one stops
     /// while the phone sleeps, and the token would look fresh for too long.
     tokens: Mutex<HashMap<AccountId, (String, SystemTime)>>,
+    /// The last pages read with all their images, newest last, so opening one again is
+    /// instant; up to `PAGES_KEPT` times `IMAGES_SIZE` in memory.
+    pages: Mutex<VecDeque<KeptPage>>,
+}
+
+/// A page with its images, and the message HTML it was made from.
+struct KeptPage {
+    message: MessageId,
+    source: String,
+    page: ImagesPage,
 }
 
 /// Marks an account as having a waiting push until dropped.
@@ -126,6 +136,7 @@ impl Core {
             busy: Mutex::default(),
             waiting: Mutex::default(),
             tokens: Mutex::default(),
+            pages: Mutex::default(),
         }))
     }
 
@@ -160,6 +171,7 @@ impl Core {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .remove(&account);
+        self.kept_pages().clear();
         Ok(())
     }
 
@@ -508,10 +520,73 @@ impl Core {
     /// The message's page with its remote images loaded now, for `MessageBody::html`; None
     /// when it has none. An image that does not load stays out.
     pub async fn message_images(&self, message: i64) -> Result<Option<ImagesPage>, CoreError> {
-        let Some(html) = self.store.body(MessageId(message))?.and_then(|b| b.html) else {
+        let message = MessageId(message);
+        let Some(source) = self.store.body(message)?.and_then(|b| b.html) else {
             return Ok(None);
         };
-        let page = html::clean(&html);
+        // The same id can come back for another message, so the page must match too.
+        let same = |k: &KeptPage| k.message == message && k.source == source;
+        {
+            let mut pages = self.kept_pages();
+            if let Some(kept) = pages.iter().position(same).and_then(|n| pages.remove(n)) {
+                let page = kept.page.clone();
+                pages.push_back(kept);
+                return Ok(Some(page));
+            }
+        }
+        let page = self.load_images(message, &source).await?;
+        // A page with an image missing tries again next time.
+        if let Some(page) = page
+            .as_ref()
+            .filter(|p| p.images.iter().all(Option::is_some))
+        {
+            let mut pages = self.kept_pages();
+            pages.retain(|k| k.message != message);
+            if pages.len() == PAGES_KEPT {
+                pages.pop_front();
+            }
+            pages.push_back(KeptPage {
+                message,
+                source,
+                page: page.clone(),
+            });
+        }
+        Ok(page)
+    }
+
+    /// From now on the remote images of mail from this message's sender load on their own.
+    pub fn allow_images(&self, message: i64) -> Result<(), CoreError> {
+        Ok(self.store.allow_images(MessageId(message))?)
+    }
+}
+
+/// How many remote images a message loads, how many at a time, and how many bytes in all.
+const IMAGES: usize = 48;
+const IMAGES_AT_ONCE: usize = 6;
+const IMAGES_SIZE: usize = 12 * 1024 * 1024;
+/// How many pages with their images stay in memory.
+const PAGES_KEPT: usize = 2;
+
+/// The host a page asks for its loaded images on; `.invalid` never reaches the network.
+macro_rules! image_host {
+    () => {
+        "images.ozero.invalid"
+    };
+}
+
+/// Where a page asks for its loaded image `N`: `{IMAGE_ADDRESS}{message}/{N}`. The app answers
+/// these from `ImagesPage::images`. The web view may keep images in memory by address across
+/// pages, so the message id keeps another message's image `N` from showing.
+const IMAGE_ADDRESS: &str = concat!("https://", image_host!(), "/");
+
+impl Core {
+    /// Downloads the page's remote images for `message_images`.
+    async fn load_images(
+        &self,
+        message: MessageId,
+        html: &str,
+    ) -> Result<Option<ImagesPage>, CoreError> {
+        let page = html::clean(html);
         if page.images.is_empty() {
             return Ok(None);
         }
@@ -548,7 +623,7 @@ impl Core {
             .map(|(n, image)| {
                 image
                     .as_ref()
-                    .map(|_| format!("{IMAGE_ADDRESS}{message}/{n}"))
+                    .map(|_| format!("{IMAGE_ADDRESS}{}/{n}", message.0))
             })
             .collect();
         Ok(Some(ImagesPage {
@@ -560,30 +635,10 @@ impl Core {
         }))
     }
 
-    /// From now on the remote images of mail from this message's sender load on their own.
-    pub fn allow_images(&self, message: i64) -> Result<(), CoreError> {
-        Ok(self.store.allow_images(MessageId(message))?)
+    fn kept_pages(&self) -> std::sync::MutexGuard<'_, VecDeque<KeptPage>> {
+        self.pages.lock().unwrap_or_else(|p| p.into_inner())
     }
-}
 
-/// How many remote images a message loads, how many at a time, and how many bytes in all.
-const IMAGES: usize = 48;
-const IMAGES_AT_ONCE: usize = 6;
-const IMAGES_SIZE: usize = 12 * 1024 * 1024;
-
-/// The host a page asks for its loaded images on; `.invalid` never reaches the network.
-macro_rules! image_host {
-    () => {
-        "images.ozero.invalid"
-    };
-}
-
-/// Where a page asks for its loaded image `N`: `{IMAGE_ADDRESS}{message}/{N}`. The app answers
-/// these from `ImagesPage::images`. The web view may keep images in memory by address across
-/// pages, so the message id keeps another message's image `N` from showing.
-const IMAGE_ADDRESS: &str = concat!("https://", image_host!(), "/");
-
-impl Core {
     /// Queues a move held for the undo time and returns its ops for `undo`.
     fn hold_move(&self, message: i64, action: Action) -> Result<Vec<i64>, CoreError> {
         let ops = self.store.queue(MessageId(message), action, now() + HOLD)?;

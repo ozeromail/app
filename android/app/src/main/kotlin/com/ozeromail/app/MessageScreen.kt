@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import uniffi.ozero_api.CoreException
@@ -309,11 +310,22 @@ private fun LetterBody(mail: Mail, message: MessageItem, bodies: MutableMap<Long
                 is Body.Plain -> PlainText(kind.text, kind.quote, if (fill) content.verticalScroll(rememberScrollState()) else content)
                 is Body.Failed -> Text(stringResource(kind.text), color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = content.padding(Gap.screen))
                 Body.Loading -> Box(if (fill) content else content.height(96.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
+                    SlowSpinner()
                 }
             }
         }
     }
+}
+
+/** A spinner only for a wait long enough to notice; a saved message shows without one. */
+@Composable
+private fun SlowSpinner() {
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(SPINNER_DELAY_MS)
+        shown = true
+    }
+    if (shown) CircularProgressIndicator()
 }
 
 /** The text, and the quote under it behind a mark that opens it. */
@@ -492,6 +504,9 @@ private sealed interface Body {
     data class Plain(val text: String, val quote: String) : Body
     data class Failed(val text: Int) : Body
 }
+
+/** How long a load runs before its spinner shows. */
+private const val SPINNER_DELAY_MS = 400L
 
 /** How long a page waits for its images before it shows without them. */
 private const val IMAGES_WAIT_MS = 2_000L
