@@ -163,6 +163,11 @@ impl Core {
         Ok(self.store.set_account_color(AccountId(account), color)?)
     }
 
+    /// Gives the account a name of the user's on this phone; empty goes back to the usual one.
+    pub fn set_account_label(&self, account: i64, label: String) -> Result<(), CoreError> {
+        Ok(self.store.set_account_label(AccountId(account), &label)?)
+    }
+
     /// Removes the account and all its mail from the device, once its sync is done; a sync or
     /// push that waited then finds nothing to do. The app forgets its secret.
     pub async fn remove_account(&self, account: i64) -> Result<(), CoreError> {
@@ -1148,6 +1153,10 @@ pub struct AccountItem {
     pub id: i64,
     pub email: String,
     pub display_name: String,
+    /// What to call the account: the user's name for it, else `display_name`, else `email`.
+    pub name: String,
+    /// The user's name for it; empty when none.
+    pub label: String,
     /// 0xRRGGBB.
     pub color: u32,
     /// The colour's place in `account_colors`.
@@ -1160,8 +1169,10 @@ impl From<Account> for AccountItem {
             id: a.id.0,
             color: rgb(a.color),
             color_index: a.color % ACCOUNT_COLORS.len() as u32,
+            name: a.name().to_owned(),
             email: a.email,
             display_name: a.display_name,
+            label: a.label,
         }
     }
 }
@@ -1195,7 +1206,7 @@ pub struct AccountMark {
 impl From<&Account> for AccountMark {
     fn from(a: &Account) -> Self {
         Self {
-            name: a.display_name.clone(),
+            name: a.name().to_owned(),
             color: rgb(a.color),
         }
     }

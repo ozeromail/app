@@ -14,6 +14,8 @@ pub trait Store: Send + Sync {
     fn remove_account(&self, account: AccountId) -> Result<(), StoreError>;
     /// Sets the account's colour, an index into the apps' palette.
     fn set_account_color(&self, account: AccountId, color: u32) -> Result<(), StoreError>;
+    /// Sets the user's name for the account; empty clears it.
+    fn set_account_label(&self, account: AccountId, label: &str) -> Result<(), StoreError>;
 
     /// Inserts new folders and updates known ones, matched by `remote_id`.
     fn save_folders(
