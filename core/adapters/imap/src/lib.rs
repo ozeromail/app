@@ -639,11 +639,16 @@ impl MailProvider for ImapSession {
         }
         let mut keep = uids(keep)?;
         keep.sort();
-        // Every UID but those to keep: the gaps between them, the last up to the highest UID
-        // there can be. Not `n:*`, which takes the newest message even when it is below `n`.
+        // Every UID but those to keep: the gaps between them, the last up to a UID far past
+        // any real one. Not `n:*`, which takes the newest message even when it is below `n`;
+        // imap-codec writes numbers near `u32::MAX` as `*`.
         let mut gaps = vec![];
         let mut from = 1;
-        for uid in keep.into_iter().map(NonZeroU32::get).chain([u32::MAX]) {
+        for uid in keep
+            .into_iter()
+            .map(NonZeroU32::get)
+            .chain([i32::MAX as u32])
+        {
             if let (Some(a), Some(b)) = (NonZeroU32::new(from), NonZeroU32::new(uid - 1))
                 && a <= b
             {
