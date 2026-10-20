@@ -125,6 +125,7 @@ import androidx.lifecycle.compose.LifecycleStartEffect
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -535,9 +536,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         refreshing = pulled,
                         // The first mail of an empty list is on its way: the water waits, without words.
                         waiting = syncing && listLoaded && messages.isEmpty(),
-                        onSync = {
-                            // Over an empty list the lake below ripples instead: one water, not two.
-                            pulled = messages.isNotEmpty()
+                        onSync = { spin ->
+                            pulled = spin
                             scope.launch { sync(mailbox) }
                         },
                         mailbox = mailbox,
@@ -712,7 +712,8 @@ private fun InboxList(
     syncing: Boolean,
     refreshing: Boolean,
     waiting: Boolean,
-    onSync: () -> Unit,
+    /** A pull asks for a sync, with the pull's own water unless the lake's drop answers it. */
+    onSync: (spin: Boolean) -> Unit,
     mailbox: Mailbox,
     title: String,
     owner: String?,
@@ -752,6 +753,9 @@ private fun InboxList(
     val titleGone = with(density) { 24.dp.roundToPx() }
     val scrolled by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > titleGone } }
     val pull = rememberPullToRefreshState()
+    // Over the lake of an empty list a pull gathers its drop and lets it fall: one water, not two.
+    val lake = messages.isEmpty() && (!syncing || waiting) && error == null
+    val drops = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
     // Where the tabs are between two of them, in tabs: the thumb and the list follow it.
     val glide = remember { Animatable(0f) }
     val glideScope = rememberCoroutineScope()
@@ -772,12 +776,15 @@ private fun InboxList(
     Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
         PullToRefreshBox(
             isRefreshing = refreshing,
-            onRefresh = onSync,
+            onRefresh = {
+                if (lake) drops.tryEmit(Unit)
+                onSync(!lake)
+            },
             modifier = Modifier.fillMaxSize(),
             state = pull,
             // The list moves down with the finger and still water shows in the gap it leaves.
             indicator = {
-                if (messages.isNotEmpty() || refreshing) {
+                if (!lake || refreshing) {
                     PullWater(
                         fraction = { pull.distanceFraction },
                         refreshing = refreshing,
@@ -799,7 +806,7 @@ private fun InboxList(
                 if (swipeTip && messages.isNotEmpty()) {
                     item(key = "tip") { Box(rowMove().then(slide)) { SwipeTip(swipes, onSwipeTip) } }
                 }
-                if (messages.isEmpty() && (!syncing || waiting) && error == null) {
+                if (lake) {
                     item(key = "empty") {
                         // New mail covers the water rather than cutting it off.
                         Box(Modifier.animateItem(fadeInSpec = null, placementSpec = null, fadeOutSpec = Motion.calm(Motion.SMALL)).then(if (allEmpty) Modifier else slide)) {
@@ -816,6 +823,8 @@ private fun InboxList(
                                     drawIn = hadMail && inbox,
                                     grey = !inbox,
                                     waiting = waiting,
+                                    pulled = { pull.distanceFraction },
+                                    drops = drops,
                                 )
                             }
                         }
