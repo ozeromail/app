@@ -28,8 +28,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarVisuals
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableStateOf
@@ -45,6 +48,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.liveRegion
@@ -56,6 +60,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import uniffi.ozero_api.Mailbox
 
 /** A square-ish button holding one icon, as in the bottom bars. */
 @Composable
@@ -223,9 +228,22 @@ private fun Note(title: String, text: String?, mark: @Composable () -> Unit) {
     }
 }
 
-/** The undo toast: dark, rounded, low on the screen; it rises a little and fades in. */
+/** A toast about mail that moved: besides Undo, it can [go] to the folder the mail is in now. */
+class MovedToast(
+    override val message: String,
+    override val actionLabel: String,
+    val go: Mailbox?,
+) : SnackbarVisuals {
+    override val withDismissAction = false
+    override val duration = SnackbarDuration.Indefinite
+}
+
+/**
+ * The undo toast: dark, rounded, low on the screen; it rises a little and fades in. A
+ * [MovedToast] also offers to show the folder, through [onGo].
+ */
 @Composable
-fun Toast(state: SnackbarHostState, modifier: Modifier = Modifier) {
+fun Toast(state: SnackbarHostState, onGo: (Mailbox) -> Unit, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
     val rise = with(LocalDensity.current) { 16.dp.roundToPx() }
     AnimatedContent(
@@ -239,14 +257,28 @@ fun Toast(state: SnackbarHostState, modifier: Modifier = Modifier) {
         label = "toast",
     ) { data ->
         if (data != null) {
+            val go = (data.visuals as? MovedToast)?.go
             Snackbar(
-                data,
                 modifier = Modifier.padding(horizontal = Gap.bar).semantics { liveRegion = LiveRegionMode.Polite },
+                action = {
+                    Row {
+                        if (go != null) {
+                            TextButton(
+                                onClick = {
+                                    data.dismiss()
+                                    onGo(go)
+                                },
+                            ) { Text(stringResource(R.string.action_show), color = colors.primary) }
+                        }
+                        data.visuals.actionLabel?.let { label ->
+                            TextButton(onClick = data::performAction) { Text(label, color = colors.primary) }
+                        }
+                    }
+                },
                 shape = RoundedCornerShape(Radius.medium),
                 containerColor = colors.inverseSurface,
                 contentColor = colors.inverseOnSurface,
-                actionColor = colors.primary,
-            )
+            ) { Text(data.visuals.message) }
         }
     }
 }
