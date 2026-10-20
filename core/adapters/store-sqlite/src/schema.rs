@@ -192,4 +192,8 @@ pub const MIGRATIONS: &[&str] = &[
     "
     CREATE TABLE image_sender (email TEXT PRIMARY KEY COLLATE NOCASE) WITHOUT ROWID;
     ",
+    // 18: the user's own name for an account.
+    "
+    ALTER TABLE account ADD COLUMN label TEXT NOT NULL DEFAULT '';
+    ",
 ];

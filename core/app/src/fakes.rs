@@ -249,6 +249,10 @@ impl Store for Memory {
         Ok(())
     }
 
+    fn set_account_label(&self, _: AccountId, _: &str) -> Result<(), StoreError> {
+        Ok(())
+    }
+
     fn save_folders(
         &self,
         account: AccountId,

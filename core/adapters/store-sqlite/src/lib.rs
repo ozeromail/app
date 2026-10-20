@@ -139,7 +139,7 @@ impl Store for SqliteStore {
         let mut stmt = conn
             .prepare_cached(
                 "SELECT id, kind, email, display_name, server_host, server_port, server_user,
-                        smtp_host, smtp_port, smtp_user, color
+                        smtp_host, smtp_port, smtp_user, color, label
                  FROM account ORDER BY id",
             )
             .map_err(storage)?;
@@ -158,6 +158,7 @@ impl Store for SqliteStore {
                 server: server(4)?,
                 smtp: server(7)?,
                 color: r.get(10)?,
+                label: r.get(11)?,
             })
         });
         rows.and_then(|rows| rows.collect()).map_err(storage)
@@ -177,6 +178,17 @@ impl Store for SqliteStore {
             .execute(
                 "UPDATE account SET color = ?2 WHERE id = ?1",
                 params![account.0, color],
+            )
+            .map_err(storage)?;
+        found(changed)
+    }
+
+    fn set_account_label(&self, account: AccountId, label: &str) -> Result<(), StoreError> {
+        let changed = self
+            .conn()
+            .execute(
+                "UPDATE account SET label = ?2 WHERE id = ?1",
+                params![account.0, label.trim()],
             )
             .map_err(storage)?;
         found(changed)

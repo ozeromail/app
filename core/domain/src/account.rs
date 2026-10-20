@@ -39,6 +39,20 @@ pub struct Account {
     pub smtp: Option<Server>,
     /// Which of the account colours marks its mail; the next one when it was added.
     pub color: u32,
+    /// The name the user gave the account on this phone; empty when none.
+    pub label: String,
+}
+
+impl Account {
+    /// What the apps call the account: the user's name for it, else the sender name, else
+    /// the address.
+    pub fn name(&self) -> &str {
+        [&self.label, &self.display_name, &self.email]
+            .into_iter()
+            .map(|n| n.trim())
+            .find(|n| !n.is_empty())
+            .unwrap_or_default()
+    }
 }
 
 /// The usual IMAP host for an email address (`imap.<domain>`), for sign-in to suggest.
@@ -73,6 +87,25 @@ pub fn saves_sent_itself(smtp_host: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn is_called_by_the_users_name_first() {
+        let mut account = Account {
+            id: AccountId(1),
+            kind: AccountKind::Imap,
+            email: "a@example.com".into(),
+            display_name: " ".into(),
+            server: None,
+            smtp: None,
+            color: 0,
+            label: String::new(),
+        };
+        assert_eq!(account.name(), "a@example.com");
+        account.display_name = "Anna".into();
+        assert_eq!(account.name(), "Anna");
+        account.label = "Work".into();
+        assert_eq!(account.name(), "Work");
+    }
 
     #[test]
     fn guesses_the_imap_host() {
