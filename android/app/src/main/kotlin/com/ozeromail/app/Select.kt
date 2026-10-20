@@ -19,7 +19,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerId
@@ -186,7 +185,7 @@ fun ChoiceMark(chosen: Boolean, shown: Float, modifier: Modifier = Modifier) {
             ),
         contentAlignment = Alignment.Center,
     ) {
-        if (chosen) Glyph(R.drawable.ic_done, null, Color.White, size = 14.dp)
+        if (chosen) Glyph(R.drawable.ic_done, null, colors.onPrimary, size = 14.dp)
     }
 }
 
@@ -212,6 +211,6 @@ fun ChoiceBar(done: Int, unread: Boolean, forever: Boolean, onCancel: () -> Unit
             onClick = onDelete,
         )
         BarAction(R.drawable.ic_more, stringResource(R.string.action_more), colors.onSurface, onClick = onMore)
-        onDone?.let { BarAction(R.drawable.ic_done, stringResource(R.string.action_done_count, done), Color.White, MaterialTheme.done, it) }
+        onDone?.let { BarAction(R.drawable.ic_done, stringResource(R.string.action_done_count, done), colors.onPrimary, colors.primary, it) }
     }
 }
