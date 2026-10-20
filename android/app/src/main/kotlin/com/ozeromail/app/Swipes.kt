@@ -105,12 +105,8 @@ data class Groups(val collapsed: Set<Long>, val expanded: Set<Long>) {
         if (open(group, many)) Groups(collapsed + group, expanded - group) else Groups(collapsed - group, expanded + group)
 }
 
-/** Where an action applies; Read always does, toggling the row. */
-fun SwipeAction.appliesTo(message: MessageItem): Boolean = when (this) {
-    SwipeAction.DONE -> message.canArchive
-    SwipeAction.DELETE -> message.canTrash
-    SwipeAction.READ -> true
-}
+/** Where an action applies: Done only where it files mail; Delete in the trash is for good. */
+fun SwipeAction.appliesTo(message: MessageItem): Boolean = this != SwipeAction.DONE || message.canArchive
 
 /**
  * A row that does [swipes] when swiped; a side whose action does not apply to [message] stays
@@ -147,7 +143,11 @@ fun SwipeRow(
         backgroundContent = {
             val left = state.dismissDirection == SwipeToDismissBoxValue.EndToStart
             val action = if (left) swipes.left else swipes.right
-            val label = if (action == SwipeAction.READ && message.threadUnread == 0u) R.string.action_unread else action.label
+            val label = when {
+                action == SwipeAction.READ && message.threadUnread == 0u -> R.string.action_unread
+                action == SwipeAction.DELETE && !message.canTrash -> R.string.action_delete_forever
+                else -> action.label
+            }
             Row(
                 Modifier.fillMaxSize().background(action.color()).padding(horizontal = 24.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp, if (left) Alignment.End else Alignment.Start),

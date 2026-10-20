@@ -106,5 +106,10 @@
   "folder_all_inbox": "Все входящие",
   "folder_all_flagged": "Все с флажком",
   "folder_all_sent": "Все отправленные",
-  "folder_all_archive": "Весь архив"
+  "folder_all_archive": "Весь архив",
+  "action_delete_forever": "Удалить навсегда",
+  "action_empty_trash": "Очистить корзину",
+  "action_empty_junk": "Очистить спам",
+  "inbox_deleted": "Удалено навсегда",
+  "inbox_emptied": "Папка очищена"
 }

@@ -83,7 +83,7 @@ fun MessageScreen(
     mail: Mail,
     message: MessageItem,
     onReply: (MessageItem, all: Boolean) -> Unit,
-    onDelete: (() -> Unit)?,
+    onDelete: () -> Unit,
     onUnread: () -> Unit,
     onDone: (() -> Unit)?,
 ) {
@@ -161,7 +161,7 @@ fun MessageScreen(
                         size = 46.dp,
                     )
                 }
-                Actions(onDelete = onDelete, onMore = { more = true }, onDone = onDone)
+                Actions(onDelete = onDelete, forever = !message.canTrash, onMore = { more = true }, onDone = onDone)
             }
         }
         // Like every menu, the rarer actions open in a sheet, low in reach of the thumb.
@@ -362,13 +362,15 @@ private fun PlainText(text: String, quote: String, modifier: Modifier) {
 
 /**
  * The actions under the thumb, each in an equal place; Done, the one used most, takes the last.
- * Delete and Done are null in a folder where they do not apply, such as Done in the archive.
+ * Delete and Done are null in a folder where they do not apply, such as Done in the archive;
+ * Delete is [forever] in the trash.
  */
 @Composable
-private fun Actions(onDelete: (() -> Unit)?, onMore: () -> Unit, onDone: (() -> Unit)?) {
+private fun Actions(onDelete: () -> Unit, forever: Boolean, onMore: () -> Unit, onDone: (() -> Unit)?) {
     val colors = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth().padding(horizontal = Gap.bar), horizontalArrangement = Arrangement.spacedBy(Gap.inBar)) {
-        onDelete?.let { Action(R.drawable.ic_delete, R.string.action_delete, colors.onSurface, onClick = it) }
+        val delete = if (forever) R.string.action_delete_forever else R.string.action_delete
+        Action(R.drawable.ic_delete, delete, colors.onSurface, onClick = onDelete)
         Action(R.drawable.ic_more, R.string.action_more, colors.onSurface, onClick = onMore)
         onDone?.let { Action(R.drawable.ic_done, R.string.action_done, Color.White, MaterialTheme.done, it) }
     }
