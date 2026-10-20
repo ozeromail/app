@@ -1,10 +1,8 @@
 name: baseline profile
 
-# Records a new baseline profile on an emulator and commits it to the branch it ran on. Runs
-# when the generator changes; run it by hand after big UI changes.
+# Records a new baseline profile on an emulator and commits it to the branch it ran on.
+# Run it by hand after big UI changes. Not on pull requests: its own commit would start it again.
 on:
-  pull_request:
-    paths: ["android/baselineprofile/**", ".github/workflows/baseline-profile.yml"]
   workflow_dispatch:
 
 permissions:
@@ -17,17 +15,12 @@ concurrency:
 jobs:
   generate:
     name: generate
-    # The branch must be in this repo to push to it.
-    if: ${{ !github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
-      BRANCH: ${{ github.head_ref || github.ref_name }}
+      BRANCH: ${{ github.ref_name }}
     steps:
-      # The branch itself, not GitHub's merge commit, so the profile can be pushed to it.
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.BRANCH }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
