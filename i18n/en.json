@@ -102,5 +102,9 @@
   "account_name": "Name",
   "account_name_hint": "Shown in the list and on your mail; only on this phone.",
   "action_expand": "Show folders",
-  "action_collapse": "Hide folders"
+  "action_collapse": "Hide folders",
+  "folder_all_inbox": "All inboxes",
+  "folder_all_flagged": "All flagged",
+  "folder_all_sent": "All sent",
+  "folder_all_archive": "All archived"
 }

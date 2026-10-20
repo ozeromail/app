@@ -158,7 +158,7 @@ private fun Folders(
         Group(stringResource(R.string.inbox_all_accounts), Settings.ALL_ACCOUNTS !in collapsed, { StackedDots(accounts) }, { onToggle(Settings.ALL_ACCOUNTS) }) {
             UNIFIED.filter { role -> role == FolderRole.INBOX || folders.any { it.role == role } }.forEach { role ->
                 val box = Mailbox.Unified(role)
-                FolderRow(role.icon(), role.title(""), box == mailbox) { onMailbox(box) }
+                FolderRow(role.icon(), role.allTitle(), box == mailbox) { onMailbox(box) }
             }
         }
     }
@@ -224,6 +224,15 @@ fun FolderRole.title(name: String): String = when (this) {
 @Composable
 fun FolderItem.title(): String = role.title(name)
 
+/** A mailbox of all accounts together, told apart from one account's folder. */
+@Composable
+private fun FolderRole.allTitle(): String = when (this) {
+    FolderRole.FLAGGED -> stringResource(R.string.folder_all_flagged)
+    FolderRole.SENT -> stringResource(R.string.folder_all_sent)
+    FolderRole.ARCHIVE -> stringResource(R.string.folder_all_archive)
+    else -> stringResource(R.string.folder_all_inbox)
+}
+
 /** A group's name, which hides or shows its folders, and with [onSettings] a way to its settings. */
 @Composable
 private fun Group(
@@ -243,17 +252,19 @@ private fun Group(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(Gap.slot), contentAlignment = Alignment.Center) { lead() }
-        Text(
-            text,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f, fill = false).padding(start = Gap.afterSlot),
-        )
-        // Points down while the folders show, to the side while they are hidden.
-        Glyph(R.drawable.ic_next, null, colors.onSurfaceVariant, Modifier.padding(start = 4.dp).rotate(if (open) 90f else 0f), size = 16.dp)
-        Box(Modifier.weight(1f))
+        // The name and its arrow take the free width, so the button keeps to the edge.
+        Row(Modifier.weight(1f).padding(start = Gap.afterSlot), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            // Points down while the folders show, to the side while they are hidden.
+            Glyph(R.drawable.ic_next, null, colors.onSurfaceVariant, Modifier.padding(start = 4.dp).rotate(if (open) 90f else 0f), size = 16.dp)
+        }
         if (onSettings != null) {
             IconTile(R.drawable.ic_more, stringResource(R.string.account_settings), onSettings, tint = colors.onSurfaceVariant, size = 40.dp)
         } else {
