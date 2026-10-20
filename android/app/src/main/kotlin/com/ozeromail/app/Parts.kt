@@ -4,8 +4,6 @@ import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -33,7 +31,6 @@ import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,16 +39,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PathMeasure
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -66,7 +56,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.launch
 
 /** A square-ish button holding one icon, as in the bottom bars. */
 @Composable
@@ -209,62 +198,6 @@ fun EmptyNote(@DrawableRes icon: Int, title: String, text: String? = null) {
         Box(Modifier.size(NOTE_RING).background(colors.surfaceVariant, CircleShape), contentAlignment = Alignment.Center) {
             Glyph(icon, null, colors.onSurfaceVariant, size = NOTE_GLYPH)
         }
-    }
-}
-
-/**
- * The note of a list with nothing left in it. With [drawIn] the ring grows in and the tick
- * draws itself, so the last message done turns into the mark.
- */
-@Composable
-fun DoneNote(
-    title: String,
-    text: String,
-    drawIn: Boolean,
-    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
-    ring: Color = MaterialTheme.colorScheme.surfaceVariant,
-) {
-    // Only as it first shows: the caller's flag turns off right after.
-    val animate = remember { drawIn }
-    val grow = remember { Animatable(if (animate) 0f else 1f) }
-    val draw = remember { Animatable(if (animate) 0f else 1f) }
-    if (animate) {
-        LaunchedEffect(Unit) {
-            launch { grow.animateTo(1f, Motion.calm(Motion.NOTE)) }
-            // A delay inside the animation, so the system's animation scale stretches it too.
-            draw.animateTo(1f, tween(Motion.NOTE, delayMillis = Motion.SMALL, easing = Motion.Ease))
-        }
-    }
-    Note(title, text) {
-        Box(
-            Modifier
-                .size(NOTE_RING)
-                .graphicsLayer {
-                    val scale = 0.6f + 0.4f * grow.value
-                    scaleX = scale
-                    scaleY = scale
-                    alpha = grow.value
-                }
-                .drawWithCache {
-                    // res/drawable/ic_done.xml's tick on its 24-unit grid; keep the two the same.
-                    val unit = NOTE_GLYPH.toPx() / 24f
-                    val edge = (size.width - NOTE_GLYPH.toPx()) / 2
-                    val tick = Path().apply {
-                        moveTo(edge + 5f * unit, edge + 12.5f * unit)
-                        lineTo(edge + 9.5f * unit, edge + 17f * unit)
-                        lineTo(edge + 19f * unit, edge + 7.5f * unit)
-                    }
-                    val measure = PathMeasure().apply { setPath(tick, false) }
-                    val part = Path()
-                    val stroke = Stroke(2.4f * unit, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                    onDrawBehind {
-                        drawCircle(ring)
-                        part.reset()
-                        measure.getSegment(0f, measure.length * draw.value, part, true)
-                        drawPath(part, tint, style = stroke)
-                    }
-                },
-        )
     }
 }
 

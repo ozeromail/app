@@ -854,19 +854,12 @@ private fun Hero(title: String, subtitle: String?) {
 
 @Composable
 private fun InboxZero(drawIn: Boolean) {
-    val done = MaterialTheme.done
-    DoneNote(
-        stringResource(R.string.inbox_zero_title),
-        stringResource(R.string.inbox_zero_text),
-        drawIn,
-        tint = done,
-        ring = done.copy(alpha = 0.14f),
-    )
+    LakeNote(stringResource(R.string.inbox_zero_title), stringResource(R.string.inbox_zero_text), drawIn)
 }
 
 @Composable
 private fun TabEmpty(drawIn: Boolean) {
-    DoneNote(stringResource(R.string.tab_empty_title), stringResource(R.string.tab_empty_text), drawIn)
+    LakeNote(stringResource(R.string.tab_empty_title), stringResource(R.string.tab_empty_text), drawIn)
 }
 
 /**
