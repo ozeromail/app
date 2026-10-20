@@ -274,6 +274,11 @@ impl Core {
             .collect())
     }
 
+    /// Whether every inbox tab is empty, so they can share one empty note.
+    pub fn inbox_is_empty(&self) -> Result<bool, CoreError> {
+        Ok(self.store.inbox_is_empty()?)
+    }
+
     /// Messages matching every word of `text`, newest first.
     pub fn search(&self, text: String, limit: u32) -> Result<Vec<MessageItem>, CoreError> {
         let rows = self.store.search(&text, limit)?;

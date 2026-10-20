@@ -340,6 +340,13 @@ impl Store for SqliteStore {
         rows.map_err(storage)
     }
 
+    fn inbox_is_empty(&self) -> Result<bool, StoreError> {
+        let conn = self.conn();
+        conn.prepare_cached(INBOX_EMPTY)
+            .and_then(|mut s| s.query_row([], |r| r.get(0)))
+            .map_err(storage)
+    }
+
     fn thread(&self, message: MessageId) -> Result<Vec<MessageRow>, StoreError> {
         let conn = self.conn();
         conn.prepare_cached(THREAD)
@@ -1267,6 +1274,13 @@ const INBOX_UNREAD: &str = concat!(
      WHERE m.folder_id IN (SELECT id FROM folder WHERE role = 'inbox') AND m.flags & 1 = 0 AND ",
     not_moving!(),
     " GROUP BY m.category"
+);
+// Stops at the first message found, so a full inbox costs no more than an empty one.
+const INBOX_EMPTY: &str = concat!(
+    "SELECT NOT EXISTS (SELECT 1 FROM message m
+     WHERE m.folder_id IN (SELECT id FROM folder WHERE role = 'inbox') AND ",
+    not_moving!(),
+    ")"
 );
 // The unary `+` keeps SQLite on the date index: rows come out in order and the scan stops at LIMIT.
 // Right for roles that hold most messages; a sparse role would scan the whole table this way.
