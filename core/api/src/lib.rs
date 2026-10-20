@@ -507,6 +507,17 @@ impl Core {
     /// Sends the account's queued actions and mail, then brings its folders and what changed
     /// in its inbox and sent folder into the database. `secret` as for `push_actions`.
     pub async fn sync(&self, account: i64, secret: String) -> Result<(), CoreError> {
+        self.sync_mailbox(account, secret, INBOX).await
+    }
+
+    /// As `sync` for the unified inbox; for another mailbox, brings in what changed in the
+    /// account's folders of it, as the last `sync` listed them.
+    pub async fn sync_mailbox(
+        &self,
+        account: i64,
+        secret: String,
+        mailbox: Mailbox,
+    ) -> Result<(), CoreError> {
         let id = AccountId(account);
         let lock = self.busy(id);
         let _busy = lock.lock().await;
@@ -514,52 +525,22 @@ impl Core {
         let Some(account) = self.find(id)? else {
             return Ok(());
         };
+        let folders: Vec<Folder> = if mailbox == INBOX {
+            vec![]
+        } else {
+            let all = self.store.folders(id)?;
+            all.into_iter().filter(|f| mailbox.holds(f)).collect()
+        };
         let mut slot = None;
         // A send that fails, say on a broken SMTP server, must not stop new mail coming in.
         let pushed = self.refused(&account, self.push_due(&account, &secret, &mut slot).await);
-        let remote = self.remote(&mut slot, &account, &secret).await?;
-        let synced = sync_mail(&self.store, remote, &self.parser, account.id, SYNC_LIMIT).await;
-        self.refused(&account, synced)?;
-        if let Some(remote) = slot {
-            remote.close().await;
-        }
-        pushed
-    }
-
-    /// Sends the account's queued actions and mail, then brings what changed in its folders
-    /// of `mailbox` into the database; the folders are those the last `sync` found. For the
-    /// unified inbox it is `sync`. `secret` as for `push_actions`.
-    pub async fn sync_mailbox(
-        &self,
-        account: i64,
-        secret: String,
-        mailbox: Mailbox,
-    ) -> Result<(), CoreError> {
-        if mailbox
-            == (Mailbox::Unified {
-                role: FolderRole::Inbox,
-            })
-        {
-            return self.sync(account, secret).await;
-        }
-        let id = AccountId(account);
-        let lock = self.busy(id);
-        let _busy = lock.lock().await;
-        let Some(account) = self.find(id)? else {
-            return Ok(());
-        };
-        let mut slot = None;
-        let pushed = self.refused(&account, self.push_due(&account, &secret, &mut slot).await);
-        let folders: Vec<Folder> = self
-            .store
-            .folders(id)?
-            .into_iter()
-            .filter(|f| mailbox.holds(f))
-            .collect();
-        if !folders.is_empty() {
+        if mailbox == INBOX || !folders.is_empty() {
             let remote = self.remote(&mut slot, &account, &secret).await?;
-            let synced =
-                sync_folders(&self.store, remote, &self.parser, &folders, SYNC_LIMIT).await;
+            let synced = if mailbox == INBOX {
+                sync_mail(&self.store, remote, &self.parser, id, SYNC_LIMIT).await
+            } else {
+                sync_folders(&self.store, remote, &self.parser, &folders, SYNC_LIMIT).await
+            };
             self.refused(&account, synced)?;
         }
         if let Some(remote) = slot {
@@ -1115,6 +1096,10 @@ pub enum Mailbox {
     Folder { id: i64 },
 }
 
+const INBOX: Mailbox = Mailbox::Unified {
+    role: FolderRole::Inbox,
+};
+
 impl Mailbox {
     fn holds(self, folder: &Folder) -> bool {
         match self {
@@ -1443,7 +1428,7 @@ pub struct MessageItem {
     pub sent: bool,
     /// Done can archive it: its folder holds mail not filed yet.
     pub can_archive: bool,
-    /// It can go to the trash: it is not there, nor in sent mail or drafts.
+    /// It can go to the trash: it is not there already.
     pub can_trash: bool,
     /// In mixed lists (the unified inbox, search), set when there is more than one account.
     pub account: Option<AccountMark>,
@@ -1464,7 +1449,7 @@ impl From<MessageRow> for MessageItem {
             thread_count: row.thread_count,
             thread_unread: row.thread_unread,
             senders: row.senders.into_iter().map(SenderItem::from).collect(),
-            sent: row.sent,
+            sent: row.role == FolderRole::Sent,
             can_archive: row.role.allows(Action::Archive),
             can_trash: row.role.allows(Action::Trash),
             account: None,

@@ -93,9 +93,7 @@ pub struct MessageRow {
     pub thread_unread: u32,
     /// Who wrote in the conversation, the user's replies included, oldest first, each once.
     pub senders: Vec<Sender>,
-    /// In the sent folder: the user wrote it.
-    pub sent: bool,
-    /// What its folder is.
+    /// What its folder is; in the sent folder, the user wrote it.
     pub role: crate::FolderRole,
 }
 

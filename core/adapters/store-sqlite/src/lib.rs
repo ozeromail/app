@@ -1131,7 +1131,7 @@ macro_rules! message_from {
             "SELECT m.id, f.account_id, m.from_name, m.from_email, m.subject, m.snippet, m.date,
                     m.flags, ",
             $thread,
-            ", f.role = 'sent', f.role",
+            ", f.role",
             " FROM message m JOIN folder f ON f.id = m.folder_id"
         )
     };
@@ -1332,8 +1332,7 @@ fn message_row(r: &Row<'_>) -> rusqlite::Result<MessageRow> {
         thread_unread: r.get(8)?,
         thread_count,
         senders,
-        sent: r.get(10)?,
-        role: r.get::<_, Role>(11)?.0,
+        role: r.get::<_, Role>(10)?.0,
     })
 }
 

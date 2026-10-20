@@ -1042,7 +1042,7 @@ fn a_conversation_shows_the_users_replies() {
     assert_eq!(senders, [("Anna", false), ("a@example.com", true)]);
     let thread = store.thread(rows[0].id).unwrap();
     assert_eq!(subjects(&thread), ["Subject 1", "Subject 2", "Subject 3"]);
-    let sent_flags: Vec<_> = thread.iter().map(|m| m.sent).collect();
+    let sent_flags: Vec<_> = thread.iter().map(|m| m.role == FolderRole::Sent).collect();
     assert_eq!(sent_flags, [false, true, false]);
     // A copy of an inbox message in sent shows once.
     store

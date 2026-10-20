@@ -36,13 +36,13 @@ impl FolderRole {
         Some(role)
     }
 
-    /// Whether `action` applies to a message in a folder with this role. Done archives only
-    /// mail that is not filed yet; sent mail and drafts stay, as Gmail does not let them go.
+    /// Whether `action` applies to a message in a folder with this role: Done archives only
+    /// mail that is not filed yet, and nothing goes to the trash from the trash.
     pub fn allows(self, action: Action) -> bool {
         match action {
             Action::Seen(_) => true,
             Action::Archive => matches!(self, Self::Inbox | Self::Custom),
-            Action::Trash => !matches!(self, Self::Trash | Self::Sent | Self::Drafts),
+            Action::Trash => self != Self::Trash,
         }
     }
 
@@ -95,7 +95,7 @@ mod tests {
         assert!(!FolderRole::Archive.allows(Action::Archive));
         assert!(FolderRole::Archive.allows(Action::Trash));
         assert!(!FolderRole::Trash.allows(Action::Trash));
-        assert!(!FolderRole::Sent.allows(Action::Trash));
+        assert!(!FolderRole::Sent.allows(Action::Archive));
         assert!(FolderRole::Sent.allows(Action::Seen(true)));
     }
 }

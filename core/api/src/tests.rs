@@ -249,7 +249,6 @@ fn rows_are_marked_only_with_several_accounts() {
         thread_count: 1,
         thread_unread: 0,
         senders: Vec::new(),
-        sent: false,
         role: FolderRole::Inbox,
     };
     let first = add("a@example.com");
