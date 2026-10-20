@@ -66,10 +66,14 @@ class Settings(context: Context) {
         get() = prefs.getBoolean(TIP, false)
         set(value) = prefs.edit().putBoolean(TIP, value).apply()
 
-    /** The groups of the accounts sheet shown without their folders: account ids, or [ALL_ACCOUNTS]. */
-    var collapsed: Set<Long>
-        get() = prefs.getStringSet(COLLAPSED, null).orEmpty().mapNotNull { it.toLongOrNull() }.toSet()
-        set(value) = prefs.edit().putStringSet(COLLAPSED, value.map { it.toString() }.toSet()).apply()
+    /** The groups of the accounts sheet the person closed or opened. */
+    var groups: Groups
+        get() = Groups(ids(COLLAPSED), ids(EXPANDED))
+        set(value) = prefs.edit().putStringSet(COLLAPSED, value.collapsed.strings()).putStringSet(EXPANDED, value.expanded.strings()).apply()
+
+    private fun ids(key: String) = prefs.getStringSet(key, null).orEmpty().mapNotNull { it.toLongOrNull() }.toSet()
+
+    private fun Set<Long>.strings() = map { it.toString() }.toSet()
 
     private fun action(name: String?) = SwipeAction.entries.find { it.name == name }
 
@@ -81,7 +85,24 @@ class Settings(context: Context) {
         private const val RIGHT = "swipe_right"
         private const val TIP = "swipe_tip_seen"
         private const val COLLAPSED = "collapsed_groups"
+        private const val EXPANDED = "expanded_groups"
     }
+}
+
+/**
+ * Which groups of the accounts sheet show their folders: account ids, or [Settings.ALL_ACCOUNTS].
+ * A group the person closed or opened stays so. One never touched starts open, but with
+ * [many] accounts each account's starts closed, so the sheet stays short.
+ */
+data class Groups(val collapsed: Set<Long>, val expanded: Set<Long>) {
+    fun open(group: Long, many: Boolean) = when (group) {
+        in collapsed -> false
+        in expanded -> true
+        else -> group == Settings.ALL_ACCOUNTS || !many
+    }
+
+    fun toggle(group: Long, many: Boolean) =
+        if (open(group, many)) Groups(collapsed + group, expanded - group) else Groups(collapsed - group, expanded + group)
 }
 
 /** Where an action applies; Read always does, toggling the row. */

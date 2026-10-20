@@ -79,6 +79,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -179,6 +180,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var replying by remember { mutableStateOf(false) }
     var tab by rememberSaveable { mutableStateOf(Category.PEOPLE) }
     var tabs by remember { mutableStateOf(emptyList<InboxTab>()) }
+    var inboxEmpty by remember { mutableStateOf(false) }
     var unsent by remember { mutableStateOf(emptyList<UnsentItem>()) }
     var searching by rememberSaveable { mutableStateOf(false) }
     var addingAccount by rememberSaveable { mutableStateOf(false) }
@@ -188,7 +190,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     val context = LocalContext.current
     val settings = remember { Settings(context) }
     var swipes by remember { mutableStateOf(settings.swipes) }
-    var collapsed by remember { mutableStateOf(settings.collapsed) }
+    var groups by remember { mutableStateOf(settings.groups) }
     var swipeTip by remember { mutableStateOf(!settings.swipeTipSeen) }
     var query by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -222,6 +224,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         try {
             tabs = mail.tabs()
             unsent = mail.unsent()
+            inboxEmpty = mail.inboxEmpty()
         } catch (e: CoreException) {
             error = e.text()
         }
@@ -529,7 +532,9 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                     Screen.Inbox -> InboxList(
                         listState = listState,
                         syncing = syncing,
-                        refreshing = pulled || (syncing && listLoaded && messages.isEmpty()),
+                        refreshing = pulled,
+                        // The first mail of an empty list is on its way: the water waits, without words.
+                        waiting = syncing && listLoaded && messages.isEmpty(),
                         onSync = {
                             pulled = true
                             scope.launch { sync(mailbox) }
@@ -548,6 +553,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         messages = messages,
                         tab = tab,
                         tabs = tabs,
+                        inboxEmpty = inboxEmpty,
                         error = error,
                         snackbar = snackbar,
                         onUnsent = { failed ->
@@ -586,10 +592,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 swipes = it
                 settings.swipes = it
             },
-            collapsed = collapsed,
-            onCollapsed = {
-                collapsed = it
-                settings.collapsed = it
+            groups = groups,
+            onGroups = {
+                groups = it
+                settings.groups = it
             },
             onAdd = {
                 accountsOpen = false
@@ -704,6 +710,7 @@ private fun InboxList(
     listState: LazyListState,
     syncing: Boolean,
     refreshing: Boolean,
+    waiting: Boolean,
     onSync: () -> Unit,
     mailbox: Mailbox,
     title: String,
@@ -716,6 +723,7 @@ private fun InboxList(
     messages: List<MessageItem>,
     tab: Category,
     tabs: List<InboxTab>,
+    inboxEmpty: Boolean,
     error: Int?,
     snackbar: SnackbarHostState,
     onUnsent: (UnsentItem) -> Unit,
@@ -733,6 +741,9 @@ private fun InboxList(
     // leaves, and not on opening the app or switching to an empty tab.
     // Right after a switch the list is still the old tab's, so it does not count.
     val oldTabList = remember(tab, mailbox) { messages }
+    // With nothing in any tab there is one lake under them all, which stays put as they change.
+    val inbox = mailbox == Mail.INBOX
+    val allEmpty = inbox && inboxEmpty
     var hadMail by remember(tab, mailbox) { mutableStateOf(false) }
     LaunchedEffect(messages) { hadMail = messages.isNotEmpty() && messages !== oldTabList }
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
@@ -785,14 +796,24 @@ private fun InboxList(
                 if (swipeTip && messages.isNotEmpty()) {
                     item(key = "tip") { Box(rowMove().then(slide)) { SwipeTip(swipes, onSwipeTip) } }
                 }
-                if (messages.isEmpty() && !syncing && error == null) {
+                if (messages.isEmpty() && (!syncing || waiting) && error == null) {
                     item(key = "empty") {
                         // New mail covers the water rather than cutting it off.
-                        Box(Modifier.animateItem(fadeInSpec = null, placementSpec = null, fadeOutSpec = Motion.calm(Motion.SMALL)).then(slide)) {
-                            when {
-                                mailbox != Mail.INBOX -> StillNote(stringResource(R.string.tab_empty_title), stringResource(R.string.folder_empty), drawIn = false, grey = true)
-                                tab == Category.PEOPLE -> InboxZero(hadMail)
-                                else -> TabEmpty(hadMail)
+                        Box(Modifier.animateItem(fadeInSpec = null, placementSpec = null, fadeOutSpec = Motion.calm(Motion.SMALL)).then(if (allEmpty) Modifier else slide)) {
+                            // The lake keeps its water as the tabs change, and stays put when every one is empty.
+                            key(mailbox) {
+                                val (title, text) = when {
+                                    !inbox -> R.string.tab_empty_title to R.string.folder_empty
+                                    allEmpty || tab == Category.PEOPLE -> R.string.inbox_zero_title to R.string.inbox_zero_text
+                                    else -> R.string.tab_empty_title to R.string.tab_empty_text
+                                }
+                                StillNote(
+                                    stringResource(title),
+                                    stringResource(text),
+                                    drawIn = hadMail && inbox,
+                                    grey = !inbox,
+                                    waiting = waiting,
+                                )
                             }
                         }
                     }
@@ -839,7 +860,7 @@ private fun InboxList(
             Dock(
                 modifier = Modifier.onSizeChanged { dockHeight = with(density) { it.height.toDp() } },
                 tab = tab,
-                tabs = tabs.takeIf { mailbox == Mail.INBOX },
+                tabs = tabs.takeIf { inbox },
                 glide = glide,
                 accounts = accounts,
                 onTab = pick,
@@ -882,16 +903,6 @@ private fun Hero(title: String, subtitle: String?) {
             )
         }
     }
-}
-
-@Composable
-private fun InboxZero(drawIn: Boolean) {
-    StillNote(stringResource(R.string.inbox_zero_title), stringResource(R.string.inbox_zero_text), drawIn)
-}
-
-@Composable
-private fun TabEmpty(drawIn: Boolean) {
-    StillNote(stringResource(R.string.tab_empty_title), stringResource(R.string.tab_empty_text), drawIn)
 }
 
 /**

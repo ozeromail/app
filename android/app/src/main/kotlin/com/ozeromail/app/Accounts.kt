@@ -74,8 +74,8 @@ fun AccountsSheet(
     swipes: Swipes,
     onMailbox: (Mailbox) -> Unit,
     onSwipes: (Swipes) -> Unit,
-    collapsed: Set<Long>,
-    onCollapsed: (Set<Long>) -> Unit,
+    groups: Groups,
+    onGroups: (Groups) -> Unit,
     onAdd: () -> Unit,
     onColor: (AccountItem, Int) -> Unit,
     onLabel: (AccountItem, String) -> Unit,
@@ -116,9 +116,9 @@ fun AccountsSheet(
                             accounts,
                             folders,
                             mailbox,
-                            collapsed,
+                            groups,
                             onMailbox,
-                            onToggle = { group -> onCollapsed(if (group in collapsed) collapsed - group else collapsed + group) },
+                            onToggle = { group -> onGroups(groups.toggle(group, accounts.size > 1)) },
                             onAccount = { page = it.id },
                         )
                         HorizontalDivider(Modifier.padding(vertical = 6.dp), color = colors.outlineVariant)
@@ -142,20 +142,22 @@ private const val SWIPES = -1L
 
 /**
  * With several accounts, their mailboxes together first; then each account under its name.
- * A group in [collapsed] shows only its name. The open mailbox is in the accent colour.
+ * A closed group shows only its name; [groups] says which are open. The open mailbox is in the
+ * accent colour.
  */
 @Composable
 private fun Folders(
     accounts: List<AccountItem>,
     folders: List<FolderItem>,
     mailbox: Mailbox,
-    collapsed: Set<Long>,
+    groups: Groups,
     onMailbox: (Mailbox) -> Unit,
     onToggle: (Long) -> Unit,
     onAccount: (AccountItem) -> Unit,
 ) {
+    fun open(group: Long) = groups.open(group, accounts.size > 1)
     if (accounts.size > 1) {
-        Group(stringResource(R.string.inbox_all_accounts), Settings.ALL_ACCOUNTS !in collapsed, { StackedDots(accounts) }, { onToggle(Settings.ALL_ACCOUNTS) }) {
+        Group(stringResource(R.string.inbox_all_accounts), open(Settings.ALL_ACCOUNTS), { StackedDots(accounts) }, { onToggle(Settings.ALL_ACCOUNTS) }) {
             UNIFIED.filter { role -> role == FolderRole.INBOX || folders.any { it.role == role } }.forEach { role ->
                 val box = Mailbox.Unified(role)
                 FolderRow(role.icon(), role.allTitle(), box == mailbox) { onMailbox(box) }
@@ -165,7 +167,7 @@ private fun Folders(
     accounts.forEach { account ->
         Group(
             account.name,
-            account.id !in collapsed,
+            open(account.id),
             lead = { AccountDot(account.tint, size = 12.dp) },
             onToggle = { onToggle(account.id) },
             onSettings = { onAccount(account) },

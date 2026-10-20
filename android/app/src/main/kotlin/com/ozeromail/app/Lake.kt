@@ -1,6 +1,7 @@
 package com.ozeromail.app
 
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -17,7 +18,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.MotionDurationScale
@@ -53,12 +56,20 @@ import kotlinx.coroutines.withTimeoutOrNull
  * The note of a list with nothing left in it: still water. A horizon, a soft reflection under
  * it, and rings that lie on the water in perspective. With [drawIn], as the last message leaves,
  * a drop lands on the water and the horizon comes out of its rings. A touch leaves rings too.
- * [grey] water is for plain empty folders: no drop, and it only moves when touched.
+ * [grey] water is for plain empty folders: no drop, and it only moves when touched. While
+ * [waiting] for a list's first mail, rings spread one after another and the words hold back.
  */
 @Composable
-fun StillNote(title: String, text: String, drawIn: Boolean, grey: Boolean = false) {
+fun StillNote(title: String, text: String, drawIn: Boolean, grey: Boolean = false, waiting: Boolean = false) {
     val colors = MaterialTheme.colorScheme
     val still = rememberStill(fall = drawIn, ambient = !grey)
+    // The words wait for the first sync only; once said, a later one just stirs the water.
+    var said by remember { mutableStateOf(!waiting) }
+    val words by animateFloatAsState(if (said) 1f else 0f, Motion.calm(Motion.SMALL), label = "words")
+    LaunchedEffect(waiting) {
+        still.beat = waiting
+        if (!waiting) said = true
+    }
     Column(
         Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 48.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -70,9 +81,9 @@ fun StillNote(title: String, text: String, drawIn: Boolean, grey: Boolean = fals
         }
         Column(
             Modifier.graphicsLayer {
-                val words = still.words()
-                alpha = words
-                translationY = (1f - words) * 8.dp.toPx()
+                val shown = still.words() * words
+                alpha = shown
+                translationY = (1f - shown) * 8.dp.toPx()
             },
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -98,10 +109,7 @@ fun PullWater(fraction: () -> Float, refreshing: Boolean, top: Dp, modifier: Mod
     val water = MaterialTheme.colorScheme.primary
     val pulled by remember { derivedStateOf { fraction() > 0f } }
     val still = rememberStill(fall = false, ambient = false, running = pulled || refreshing)
-    LaunchedEffect(refreshing) {
-        still.beat = refreshing
-        still.wake.trySend(Unit)
-    }
+    LaunchedEffect(refreshing) { still.beat = refreshing }
     Canvas(modifier) {
         val depth = pullGap(fraction())
         if (depth <= 0f) return@Canvas
@@ -198,6 +206,10 @@ private class Still(private var falling: Boolean, var ambient: Boolean) {
 
     /** Rings while the list refreshes. */
     var beat = false
+        set(value) {
+            field = value
+            wake.trySend(Unit)
+        }
 
     val ready get() = !frozen && level > 0.5f && width > 0f
 

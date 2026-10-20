@@ -78,6 +78,9 @@ class Mail(private val context: Context) {
     /** The inbox tabs in order, with their unread counts. */
     suspend fun tabs(): List<InboxTab> = io { core.inboxTabs() }
 
+    /** Whether every inbox tab is empty. */
+    suspend fun inboxEmpty(): Boolean = io { core.inboxIsEmpty() }
+
     /**
      * The core saves the account only after the server has accepted the login.
      * The password goes first, so a saved account always has one; never over a saved account's.
