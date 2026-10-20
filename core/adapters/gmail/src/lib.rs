@@ -378,7 +378,13 @@ impl MailProvider for GmailSession {
         remote_ids: &[String],
         to: &str,
     ) -> Result<(), ProviderError> {
-        let from = label(folder).filter(|l| !KEPT.contains(l));
+        // Into spam or the trash a message keeps its labels, as in Gmail itself, so it comes
+        // back where it was; meanwhile `has` shows it nowhere else.
+        let from = if APART.contains(&to) {
+            None
+        } else {
+            label(folder)
+        };
         self.modify(remote_ids, label(to).as_slice(), from.as_slice())
             .await
     }
@@ -472,8 +478,6 @@ fn label(folder: &str) -> Option<&str> {
 const APART: [&str; 2] = ["SPAM", "TRASH"];
 /// The other system labels, with their search names: mail in none of them is archived.
 const FILED: [(&str, &str); 3] = [("INBOX", "inbox"), ("SENT", "sent"), ("DRAFT", "drafts")];
-/// Labels a message keeps when it moves: Gmail does not let them be taken off.
-const KEPT: [&str; 2] = ["SENT", "DRAFT"];
 
 /// What lists a folder's messages: its label, or for the archive a search, which leaves spam
 /// and trash out as every list does unless asked.

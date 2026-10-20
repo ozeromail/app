@@ -330,7 +330,7 @@ async fn archives_by_taking_the_inbox_label_off() {
     let ids = ["a".to_owned(), "b".to_owned()];
     gmail.move_to("INBOX", 0, &ids, ARCHIVE).await.unwrap();
     gmail.set_seen("INBOX", 0, &ids, true).await.unwrap();
-    // Sent mail keeps its label in the trash.
+    // Into the trash a message keeps its labels.
     gmail.move_to("SENT", 0, &ids, "TRASH").await.unwrap();
     let seen = seen.lock().unwrap();
     let bodies: Vec<Value> = seen

@@ -196,8 +196,10 @@ class Mail(private val context: Context) {
      * finished.
      */
     suspend fun refresh(mailbox: Mailbox = INBOX) = io {
+        // A folder is one account's, so only that account syncs.
+        val owner = (mailbox as? Mailbox.Folder)?.let { box -> core.folders().find { it.id == box.id }?.accountId }
         val failures = coroutineScope {
-            core.accounts().mapNotNull { account ->
+            core.accounts().filter { owner == null || it.id == owner }.mapNotNull { account ->
                 val password = vault.password(account.email) ?: return@mapNotNull null
                 async {
                     try {

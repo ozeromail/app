@@ -154,7 +154,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var mailbox by rememberSaveable(stateSaver = MailboxSaver) { mutableStateOf<Mailbox>(Mail.INBOX) }
     var syncing by remember { mutableStateOf(false) }
     // A sync asked for while one runs, say for a new account, runs right after it.
-    var syncAgain by remember { mutableStateOf<Mailbox?>(null) }
+    var syncAgain by remember { mutableStateOf(emptySet<Mailbox>()) }
     // When the last sync that went through began.
     var lastSync by remember { mutableLongStateOf(-RESYNC_MS) }
     // Only a pull shows the spinner; syncs on their own stay quiet over the saved mail.
@@ -234,7 +234,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
      */
     suspend fun sync(box: Mailbox = Mail.INBOX): Boolean {
         if (syncing) {
-            syncAgain = box
+            syncAgain += box
             return true
         }
         syncing = true
@@ -265,8 +265,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         } finally {
             syncing = false
         }
-        syncAgain?.let {
-            syncAgain = null
+        syncAgain.firstOrNull()?.let {
+            syncAgain -= it
             return sync(it)
         }
         pulled = false
@@ -307,7 +307,12 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     // On opening and on every return to the app: mail that came meanwhile shows without a pull.
     // Not again right after one, as when back from the file picker or a link.
     LifecycleEventEffect(Lifecycle.Event.ON_START) {
-        if (SystemClock.elapsedRealtime() - lastSync > RESYNC_MS) scope.launch { sync() }
+        if (SystemClock.elapsedRealtime() - lastSync > RESYNC_MS) {
+            scope.launch {
+                sync()
+                if (mailbox != Mail.INBOX) sync(mailbox)
+            }
+        }
     }
     // While the app is on screen, new mail shows as it arrives.
     LifecycleStartEffect(accounts.map { it.id }) {
@@ -583,9 +588,9 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                     MailWorker.clearNotifications(context)
                     // Gone also when the list cannot be read again.
                     accounts = accounts.filterNot { it.id == account.id }
-                    if (folders.any { it.accountId == account.id && Mailbox.Folder(it.id) == mailbox }) {
-                        mailbox = Mail.INBOX
-                    }
+                    folders = folders.filterNot { it.accountId == account.id }
+                    // Its folders, and with them the mailboxes together, may be gone.
+                    mailbox = Mail.INBOX
                     loadAccounts()
                     if (accounts.isEmpty()) onNoAccounts() else load()
                 }
