@@ -1,6 +1,7 @@
 package com.ozeromail.app
 
 import androidx.compose.material3.Typography
+import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -23,6 +24,7 @@ object Weight {
     val Bold = FontWeight(700)
 }
 
+@OptIn(ExperimentalTextApi::class)
 private fun variable(font: Int, weights: List<FontWeight>, optical: TextUnit? = null) = FontFamily(
     weights.map { weight ->
         val axes = listOfNotNull(FontVariation.weight(weight.weight), optical?.let { FontVariation.opticalSizing(it) })
