@@ -9,12 +9,14 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ozero_app::ops::push_ops;
 use ozero_app::send::{SentCopy, push_sends};
-use ozero_app::sync::{SyncError, download_body, prefetch_bodies, sync_mail, wait_for_mail};
+use ozero_app::sync::{
+    SyncError, download_body, prefetch_bodies, sync_folders, sync_mail, wait_for_mail,
+};
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Body, Category, Changes, Checkpoint, Draft,
-    FolderRole, ListQuery, ListScope, MailProvider, MessageId, MessageRow, NewAccount, NewFolder,
-    OpId, OutboxId, ProviderError, Sender, Server, Store, StoreError, html, parse_recipients,
-    saves_sent_itself,
+    Folder, FolderId, FolderRole, ListQuery, ListScope, MailProvider, MessageId, MessageRow,
+    NewAccount, NewFolder, OpId, OutboxId, ProviderError, Sender, Server, Store, StoreError, html,
+    parse_recipients, saves_sent_itself,
 };
 use ozero_gmail::{GmailSession, oauth};
 use ozero_imap::ImapSession;
@@ -25,7 +27,8 @@ use ozero_store_sqlite::SqliteStore;
 
 uniffi::setup_scaffolding!();
 
-/// How many new messages of the inbox and of the sent folder one sync brings in.
+/// How many new messages of the inbox and of the sent folder one sync brings in; also of a
+/// folder the user opens.
 const SYNC_LIMIT: u32 = 200;
 /// How many of the newest inbox messages `prefetch` downloads whole.
 const PREFETCH: u32 = 20;
@@ -199,6 +202,34 @@ impl Core {
     pub fn unified_inbox(&self, tab: Category, limit: u32) -> Result<Vec<MessageItem>, CoreError> {
         let rows = self.store.list(&ListQuery {
             scope: ListScope::Inbox(tab),
+            limit,
+            after: None,
+        })?;
+        self.items(rows)
+    }
+
+    /// The folders of every account, in the order the server listed them first.
+    pub fn folders(&self) -> Result<Vec<FolderItem>, CoreError> {
+        let mut folders = vec![];
+        for account in self.store.accounts()? {
+            folders.extend(
+                self.store
+                    .folders(account.id)?
+                    .into_iter()
+                    .map(FolderItem::from),
+            );
+        }
+        Ok(folders)
+    }
+
+    /// The newest conversations of a mailbox, newest first, as `unified_inbox` without tabs.
+    pub fn mailbox(&self, mailbox: Mailbox, limit: u32) -> Result<Vec<MessageItem>, CoreError> {
+        let scope = match mailbox {
+            Mailbox::Unified { role } => ListScope::Unified(role),
+            Mailbox::Folder { id } => ListScope::Folder(FolderId(id)),
+        };
+        let rows = self.store.list(&ListQuery {
+            scope,
             limit,
             after: None,
         })?;
@@ -489,6 +520,48 @@ impl Core {
         let remote = self.remote(&mut slot, &account, &secret).await?;
         let synced = sync_mail(&self.store, remote, &self.parser, account.id, SYNC_LIMIT).await;
         self.refused(&account, synced)?;
+        if let Some(remote) = slot {
+            remote.close().await;
+        }
+        pushed
+    }
+
+    /// Sends the account's queued actions and mail, then brings what changed in its folders
+    /// of `mailbox` into the database; the folders are those the last `sync` found. For the
+    /// unified inbox it is `sync`. `secret` as for `push_actions`.
+    pub async fn sync_mailbox(
+        &self,
+        account: i64,
+        secret: String,
+        mailbox: Mailbox,
+    ) -> Result<(), CoreError> {
+        if mailbox
+            == (Mailbox::Unified {
+                role: FolderRole::Inbox,
+            })
+        {
+            return self.sync(account, secret).await;
+        }
+        let id = AccountId(account);
+        let lock = self.busy(id);
+        let _busy = lock.lock().await;
+        let Some(account) = self.find(id)? else {
+            return Ok(());
+        };
+        let mut slot = None;
+        let pushed = self.refused(&account, self.push_due(&account, &secret, &mut slot).await);
+        let folders: Vec<Folder> = self
+            .store
+            .folders(id)?
+            .into_iter()
+            .filter(|f| mailbox.holds(f))
+            .collect();
+        if !folders.is_empty() {
+            let remote = self.remote(&mut slot, &account, &secret).await?;
+            let synced =
+                sync_folders(&self.store, remote, &self.parser, &folders, SYNC_LIMIT).await;
+            self.refused(&account, synced)?;
+        }
         if let Some(remote) = slot {
             remote.close().await;
         }
@@ -1022,6 +1095,55 @@ mod android {
     }
 }
 
+/// What a folder means to the user, whatever the server calls it.
+#[uniffi::remote(Enum)]
+pub enum FolderRole {
+    Inbox,
+    Sent,
+    Drafts,
+    Archive,
+    Trash,
+    Junk,
+    Flagged,
+    Custom,
+}
+
+/// A list of mail: the folders of one role across all accounts, or one folder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum Mailbox {
+    Unified { role: FolderRole },
+    Folder { id: i64 },
+}
+
+impl Mailbox {
+    fn holds(self, folder: &Folder) -> bool {
+        match self {
+            Self::Unified { role } => folder.role == role,
+            Self::Folder { id } => folder.id.0 == id,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FolderItem {
+    pub id: i64,
+    pub account_id: i64,
+    /// As the server names it; apps name folders with a role themselves.
+    pub name: String,
+    pub role: FolderRole,
+}
+
+impl From<Folder> for FolderItem {
+    fn from(f: Folder) -> Self {
+        Self {
+            id: f.id.0,
+            account_id: f.account_id.0,
+            name: f.name,
+            role: f.role,
+        }
+    }
+}
+
 /// Inbox tab, sorted by rules on the device.
 #[uniffi::remote(Enum)]
 pub enum Category {
@@ -1319,6 +1441,10 @@ pub struct MessageItem {
     pub senders: Vec<SenderItem>,
     /// The user wrote it: it is in the sent folder.
     pub sent: bool,
+    /// Done can archive it: its folder holds mail not filed yet.
+    pub can_archive: bool,
+    /// It can go to the trash: it is not there, nor in sent mail or drafts.
+    pub can_trash: bool,
     /// In mixed lists (the unified inbox, search), set when there is more than one account.
     pub account: Option<AccountMark>,
 }
@@ -1339,6 +1465,8 @@ impl From<MessageRow> for MessageItem {
             thread_unread: row.thread_unread,
             senders: row.senders.into_iter().map(SenderItem::from).collect(),
             sent: row.sent,
+            can_archive: row.role.allows(Action::Archive),
+            can_trash: row.role.allows(Action::Trash),
             account: None,
         }
     }

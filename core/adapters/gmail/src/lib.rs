@@ -141,8 +141,8 @@ impl GmailSession {
     async fn newest(&mut self, label: &str, limit: u32) -> Result<Vec<RawMessage>, ProviderError> {
         let list = self
             .get(&format!(
-                "/messages?labelIds={}&maxResults={}&fields=messages/id",
-                percent(label),
+                "/messages?{}&maxResults={}&fields=messages/id",
+                listing(label),
                 limit.min(MAX_LIST)
             ))
             .await?;
@@ -467,9 +467,21 @@ fn label(folder: &str) -> Option<&str> {
     (folder != ARCHIVE).then_some(folder)
 }
 
+/// What lists a folder's messages: its label, spam and trash included as they have their own
+/// labels; for the archive, mail in none of the other system folders.
+fn listing(folder: &str) -> String {
+    if folder == ARCHIVE {
+        format!("q={}", percent("-in:inbox -in:sent -in:drafts"))
+    } else {
+        format!("labelIds={}&includeSpamTrash=true", percent(folder))
+    }
+}
+
 fn has(labels: &[String], folder: &str) -> bool {
     if folder == ARCHIVE {
-        !labels.iter().any(|l| l == "INBOX")
+        !labels
+            .iter()
+            .any(|l| ["INBOX", "SENT", "DRAFT", "SPAM", "TRASH"].contains(&l.as_str()))
     } else {
         labels.iter().any(|l| l == folder)
     }

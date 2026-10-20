@@ -49,6 +49,25 @@ fn saves_inbox_and_sent_changes_since_the_checkpoint() {
 }
 
 #[test]
+fn syncs_the_folders_asked_for() {
+    let store = Memory::default();
+    let mut server = Server::default();
+    let archive = Folder {
+        id: FolderId(4),
+        account_id: AccountId(1),
+        remote_id: "Archive".into(),
+        name: "Archive".into(),
+        role: FolderRole::Archive,
+    };
+    run(sync_folders(&store, &mut server, &Parser, &[archive], 50)).unwrap();
+
+    let synced: Vec<_> = server.synced.iter().map(|s| (s.0.as_str(), s.3)).collect();
+    assert_eq!(synced, [("Archive", 50)]);
+    let changes = store.changes.lock().unwrap();
+    assert_eq!(changes[0].0, FolderId(4));
+}
+
+#[test]
 fn fails_without_an_inbox() {
     let mut server = Server {
         folders: vec![folder("Sent", FolderRole::Sent)],

@@ -95,6 +95,8 @@ pub struct MessageRow {
     pub senders: Vec<Sender>,
     /// In the sent folder: the user wrote it.
     pub sent: bool,
+    /// What its folder is.
+    pub role: crate::FolderRole,
 }
 
 /// Someone who wrote in a conversation.

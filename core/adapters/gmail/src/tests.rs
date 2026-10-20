@@ -283,6 +283,48 @@ async fn starts_over_when_the_history_is_gone() {
 }
 
 #[tokio::test]
+async fn the_archive_is_mail_in_no_other_system_folder() {
+    let history = json!({
+        "historyId": "120",
+        "history": [
+            {"messagesAdded": [{"message": {"id": "in", "labelIds": ["INBOX"]}}]},
+            {"messagesAdded": [{"message": {"id": "mine", "labelIds": ["SENT"]}}]},
+            {"labelsAdded": [{"message": {"id": "binned", "labelIds": ["TRASH"]}, "labelIds": ["TRASH"]}]},
+            {"labelsRemoved": [{"message": {"id": "done", "labelIds": []}, "labelIds": ["INBOX"]}]},
+        ],
+    });
+    let (mut gmail, seen) = session(vec![
+        ("/profile", 200, json!({"historyId": "100"})),
+        (
+            "/messages?q=-in%3Ainbox%20-in%3Asent%20-in%3Adrafts&",
+            200,
+            json!({}),
+        ),
+        ("/history?startHistoryId=100", 200, history),
+        ("/messages/done?", 200, message("done", &[], 5_000, "Done")),
+    ])
+    .await;
+    let first = gmail
+        .changes(ARCHIVE, Checkpoint::default(), &[], 10)
+        .await
+        .unwrap();
+    assert!(first.new.is_empty());
+    let known = ["binned".to_owned()];
+    let changes = gmail
+        .changes(ARCHIVE, first.checkpoint, &known, 10)
+        .await
+        .unwrap();
+    assert_eq!(changes.new[0].remote_id, "done");
+    assert_eq!(changes.gone, ["binned"]);
+    let paths: Vec<String> = seen.lock().unwrap().iter().map(|s| s.1.clone()).collect();
+    assert!(
+        !paths
+            .iter()
+            .any(|p| p.starts_with("/messages/in?") || p.starts_with("/messages/mine?"))
+    );
+}
+
+#[tokio::test]
 async fn archives_by_taking_the_inbox_label_off() {
     let (mut gmail, seen) = session(vec![("/messages/batchModify", 204, Value::Null)]).await;
     let ids = ["a".to_owned(), "b".to_owned()];

@@ -76,7 +76,7 @@ pub trait Store: Send + Sync {
     /// and queues it for the server from `not_before`: the message itself, and the others
     /// where it changes something; marking unread leaves the others alone. It replaces queued actions of the same kind. Lists leave
     /// out a message being moved; a move fails with `NoArchive` or `NoTrash` if the account
-    /// has no such folder.
+    /// has no such folder, and with `NotAllowed` where the message's folder does not allow it.
     fn queue(
         &self,
         message: MessageId,
@@ -131,6 +131,8 @@ pub enum StoreError {
     NoArchive,
     /// The message's account has no folder with the trash role.
     NoTrash,
+    /// The action does not apply in the message's folder, like archiving from the archive.
+    NotAllowed,
     /// Anything else from the storage engine, without message contents.
     Storage(String),
 }
@@ -145,6 +147,7 @@ impl fmt::Display for StoreError {
             Self::NotFound => write!(f, "not found"),
             Self::NoArchive => write!(f, "the account has no archive folder"),
             Self::NoTrash => write!(f, "the account has no trash folder"),
+            Self::NotAllowed => write!(f, "the action does not apply in this folder"),
             Self::Storage(e) => write!(f, "storage error: {e}"),
         }
     }
