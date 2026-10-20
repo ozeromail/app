@@ -147,6 +147,16 @@ class Mail(private val context: Context) {
     /** As [archive], into the trash. */
     suspend fun trash(message: MessageItem): List<Long> = move(message) { core.trash(it) }
 
+    /** As [archive], but gone from the server for good: for mail in the trash. */
+    suspend fun deleteForever(message: MessageItem): List<Long> = move(message) { core.deleteForever(it) }
+
+    /** Empties a trash or spam [folder] for good, mail not loaded included, held like [archive]. */
+    suspend fun emptyFolder(folder: FolderItem): List<Long> {
+        val actions = io { core.emptyFolder(folder.id) }
+        push(folder.accountId)
+        return actions
+    }
+
     private suspend fun move(message: MessageItem, queue: (Long) -> List<Long>): List<Long> {
         val actions = io { queue(message.id) }
         push(message.accountId)

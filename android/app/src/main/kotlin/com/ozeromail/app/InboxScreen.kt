@@ -203,6 +203,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     }
     val archived = stringResource(R.string.inbox_archived)
     val trashed = stringResource(R.string.inbox_trashed)
+    val deleted = stringResource(R.string.inbox_deleted)
+    val emptied = stringResource(R.string.inbox_emptied)
     val undo = stringResource(R.string.action_undo)
     val sending = stringResource(R.string.inbox_sending)
 
@@ -375,10 +377,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     }
 
     /**
-     * The message leaves the list at once, for the account's folder of [role]; the toast can
-     * take it back for a moment, or show that folder.
+     * The message leaves the list at once, for the account's folder of [role] if it goes to one;
+     * the toast can take it back for a moment, or show that folder.
      */
-    fun remove(message: MessageItem, toast: String, role: FolderRole, move: suspend (MessageItem) -> List<Long>, reset: () -> Unit = {}) {
+    fun remove(message: MessageItem, toast: String, role: FolderRole?, move: suspend (MessageItem) -> List<Long>, reset: () -> Unit = {}) {
         val go = folders.find { it.accountId == message.accountId && it.role == role }?.let { Mailbox.Folder(it.id) }
         scope.launch {
             val action = try {
@@ -394,6 +396,29 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             // Also after success: a list read before the archive may bring the row back.
             reset()
             if (action != null && offerUndo(toast, go.takeIf { it != mailbox }) && mail.undo(action)) load()
+        }
+    }
+
+    /** Delete: into the trash, or for good from there. */
+    fun delete(message: MessageItem, reset: () -> Unit = {}) = if (message.canTrash) {
+        remove(message, trashed, FolderRole.TRASH, mail::trash, reset)
+    } else {
+        remove(message, deleted, null, mail::deleteForever, reset)
+    }
+
+    /** Empties a trash or spam folder for good, on the server too; the toast can take it back for a moment. */
+    fun empty(folder: FolderItem) {
+        val from = mailbox
+        scope.launch {
+            val actions = try {
+                mail.emptyFolder(folder)
+            } catch (e: CoreException) {
+                error = e.text()
+                return@launch
+            }
+            if (mailbox == from) messages = emptyList()
+            counts()
+            if (offerUndo(emptied) && mail.undo(actions)) load()
         }
     }
 
@@ -419,7 +444,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
 
     fun swiped(message: MessageItem, action: SwipeAction, reset: () -> Unit) = when (action) {
         SwipeAction.DONE -> archive(message, reset)
-        SwipeAction.DELETE -> remove(message, trashed, FolderRole.TRASH, mail::trash, reset)
+        SwipeAction.DELETE -> delete(message, reset)
         SwipeAction.READ -> toggleRead(message, reset)
     }
 
@@ -501,8 +526,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         onDelete = {
                             open = null
                             closeSearch()
-                            remove(shown.message, trashed, FolderRole.TRASH, mail::trash)
-                        }.takeIf { shown.message.canTrash },
+                            delete(shown.message)
+                        },
                         onUnread = {
                             open = null
                             scope.launch {
@@ -580,6 +605,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         onSearch = { searching = true },
                         onCompose = { composing = Composing(NEW_DRAFT) },
                         onGo = { mailbox = it },
+                        empty = openFolder?.let { folder -> folder.role.emptyLabel()?.let { it to { empty(folder) } } },
                     )
                 }
                 // A screen on its way out takes no more taps.
@@ -743,6 +769,7 @@ private fun InboxList(
     onSearch: () -> Unit,
     onCompose: () -> Unit,
     onGo: (Mailbox) -> Unit,
+    empty: Pair<Int, () -> Unit>?,
 ) {
     val colors = MaterialTheme.colorScheme
     val density = LocalDensity.current
@@ -887,6 +914,7 @@ private fun InboxList(
                 onAccounts = onAccounts,
                 onSearch = onSearch,
                 onCompose = onCompose,
+                empty = empty.takeIf { messages.isNotEmpty() },
             )
         }
     }
@@ -940,6 +968,7 @@ private fun Dock(
     onAccounts: () -> Unit,
     onSearch: () -> Unit,
     onCompose: () -> Unit,
+    empty: Pair<Int, () -> Unit>?,
 ) {
     val colors = MaterialTheme.colorScheme
     Column(
@@ -952,6 +981,7 @@ private fun Dock(
         verticalArrangement = Arrangement.spacedBy(Gap.inBar),
     ) {
         tabs?.let { Tabs(tab, it, glide, onTab) }
+        empty?.let { (label, onClick) -> EmptyButton(stringResource(label), onClick) }
         // The same edge as the tabs above, so the accounts button lines up with them.
         Row(
             Modifier.fillMaxWidth().padding(horizontal = Gap.bar),
@@ -969,6 +999,31 @@ private fun Dock(
             )
         }
     }
+}
+
+/** Empties the open trash or spam for good, where the inbox has its tabs. */
+@Composable
+private fun EmptyButton(label: String, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Gap.bar)
+            .height(40.dp)
+            .clip(RoundedCornerShape(Radius.medium))
+            .background(colors.surfaceVariant)
+            .clickable(role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, color = colors.error, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+/** What the button that empties a folder says; only the trash and spam can be emptied. */
+private fun FolderRole.emptyLabel(): Int? = when (this) {
+    FolderRole.TRASH -> R.string.action_empty_trash
+    FolderRole.JUNK -> R.string.action_empty_junk
+    else -> null
 }
 
 /** The accounts' colours, as the logo has them; opens the accounts. */
