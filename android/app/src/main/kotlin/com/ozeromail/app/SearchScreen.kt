@@ -25,10 +25,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.MessageItem
@@ -101,7 +99,7 @@ fun SearchScreen(
                     query,
                     onQuery,
                     R.string.search_prompt,
-                    TextStyle(fontSize = 15.sp),
+                    Type.Body,
                     KeyboardOptions(imeAction = ImeAction.Done),
                     modifier = Modifier.weight(1f).focusRequester(focus),
                 )

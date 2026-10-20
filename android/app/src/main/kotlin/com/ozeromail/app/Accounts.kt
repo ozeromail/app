@@ -48,12 +48,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import uniffi.ozero_api.AccountItem
 import uniffi.ozero_api.FolderItem
 import uniffi.ozero_api.FolderRole
@@ -124,8 +122,8 @@ fun AccountsSheet(
                         HorizontalDivider(Modifier.padding(vertical = 6.dp), color = colors.outlineVariant)
                         SheetRow(onClick = { page = SWIPES }, lead = { Glyph(R.drawable.ic_swipe, null, colors.primary) }) {
                             Column(Modifier.weight(1f)) {
-                                Text(stringResource(R.string.swipes_title), fontSize = 15.5.sp, fontWeight = FontWeight.Medium)
-                                Text(swipes.summary(), color = colors.onSurfaceVariant, fontSize = 13.sp)
+                                Text(stringResource(R.string.swipes_title), style = Type.Row)
+                                Text(swipes.summary(), color = colors.onSurfaceVariant, style = Type.Caption)
                             }
                         }
                         SheetAction(R.drawable.ic_add, stringResource(R.string.inbox_add_account), colors.primary, onAdd)
@@ -258,8 +256,8 @@ private fun Group(
         Row(Modifier.weight(1f).padding(start = Gap.afterSlot), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold,
+                style = Type.Row,
+                fontWeight = Weight.Strong,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false),
@@ -289,8 +287,8 @@ private fun FolderRow(@DrawableRes icon: Int, title: String, open: Boolean, onCl
         Text(
             title,
             color = if (open) colors.primary else colors.onSurface,
-            fontSize = 15.5.sp,
-            fontWeight = if (open) FontWeight.SemiBold else FontWeight.Normal,
+            style = Type.Row,
+            fontWeight = if (open) Weight.SemiBold else Weight.Regular,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
@@ -337,7 +335,7 @@ private fun AccountSettings(
     Text(
         stringResource(R.string.account_color),
         color = colors.onSurfaceVariant,
-        fontSize = 13.sp,
+        style = Type.Caption,
         modifier = Modifier.padding(start = Gap.sheet, end = Gap.sheet, top = 8.dp, bottom = 12.dp),
     )
     Swatches(account.colorIndex.toInt(), onColor)
@@ -438,6 +436,6 @@ private fun hueOrder(color: UInt): Float {
 @Composable
 fun SheetAction(@DrawableRes icon: Int, text: String, color: Color, onClick: () -> Unit) {
     SheetRow(onClick, lead = { Glyph(icon, null, color) }) {
-        Text(text, color = color, fontSize = 15.5.sp, fontWeight = FontWeight.Medium)
+        Text(text, color = color, style = Type.Row)
     }
 }

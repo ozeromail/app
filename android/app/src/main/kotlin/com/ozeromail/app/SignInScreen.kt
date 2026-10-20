@@ -53,14 +53,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.Endpoint
@@ -207,7 +205,6 @@ private fun Choose(busy: Boolean, onCancel: (() -> Unit)?, onGoogle: () -> Unit,
         Text(
             stringResource(R.string.signin_text),
             color = colors.onSurfaceVariant,
-            lineHeight = 21.sp,
             modifier = Modifier.padding(top = 6.dp),
         )
         Spacer(Modifier.weight(1f))
@@ -238,7 +235,7 @@ private fun Choice(label: String, enabled: Boolean, onClick: () -> Unit, waiting
             .padding(horizontal = Gap.card),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(label, fontSize = 16.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+        Text(label, style = Type.Row, modifier = Modifier.weight(1f))
         if (waiting) {
             Spinner(MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
@@ -295,7 +292,7 @@ private fun Credentials(
         )
         LargeTitle(stringResource(provider?.label ?: R.string.signin_other))
         if (provider != null) {
-            Text(stringResource(R.string.signin_app_password_text), color = colors.onSurfaceVariant, lineHeight = 21.sp)
+            Text(stringResource(R.string.signin_app_password_text), color = colors.onSurfaceVariant)
             TextButton(
                 onClick = { onAppPasswords(provider.appPasswords) },
                 enabled = !busy,

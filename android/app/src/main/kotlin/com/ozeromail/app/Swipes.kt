@@ -35,9 +35,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import uniffi.ozero_api.MessageItem
 
@@ -155,7 +153,7 @@ fun SwipeRow(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Glyph(action.icon, null, Color.White)
-                Text(stringResource(label), color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                Text(stringResource(label), color = Color.White, style = Type.Text, fontWeight = Weight.SemiBold)
             }
         },
     ) {
@@ -190,11 +188,10 @@ fun SwipeTip(swipes: Swipes, onDismiss: () -> Unit) {
     ) {
         Text(
             stringResource(R.string.swipes_tip, stringResource(swipes.left.label), stringResource(swipes.right.label)),
-            fontSize = 13.5.sp,
-            lineHeight = 18.6.sp,
+            style = Type.Text,
             modifier = Modifier.weight(1f),
         )
-        TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_got_it), fontWeight = FontWeight.SemiBold) }
+        TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_got_it)) }
     }
 }
 
@@ -211,7 +208,7 @@ private fun Side(@StringRes title: Int, picked: SwipeAction, onPick: (SwipeActio
     Text(
         stringResource(title),
         color = colors.onSurfaceVariant,
-        fontSize = 13.sp,
+        style = Type.Caption,
         modifier = Modifier.padding(start = Gap.sheet, end = Gap.sheet, top = 8.dp, bottom = 8.dp),
     )
     Row(
@@ -234,7 +231,7 @@ private fun Side(@StringRes title: Int, picked: SwipeAction, onPick: (SwipeActio
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Glyph(action.icon, null, if (on) colors.primary else colors.onSurfaceVariant, size = 18.dp)
-                Text(stringResource(action.label), color = tint, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                Text(stringResource(action.label), color = tint, style = Type.Text, fontWeight = Weight.Medium, maxLines = 1)
             }
         }
     }

@@ -53,13 +53,11 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import uniffi.ozero_api.Mailbox
 
 /** A square-ish button holding one icon, as in the bottom bars. */
@@ -121,21 +119,21 @@ fun Pill(
     height: Dp = 48.dp,
 ) {
     PillBox(modifier.clip(CircleShape).clickable(role = Role.Button, onClick = onClick), icon, height) {
-        Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant, style = Type.Body, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
 /** A screen's large title, set high where it needs no reach. */
 @Composable
 fun LargeTitle(text: String, modifier: Modifier = Modifier) {
-    Text(text, modifier, fontSize = 32.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.8).sp)
+    Text(text, modifier, style = Type.Display)
 }
 
 /** An account's colour with the first letter of its name. */
 @Composable
 fun AccountInitial(name: String, color: Color, size: Dp) {
     Box(Modifier.size(size).background(color, CircleShape), contentAlignment = Alignment.Center) {
-        Text(initials(name).take(1), color = Color.White, fontSize = fixedSp(size / 2), fontWeight = FontWeight.Bold)
+        Text(initials(name).take(1), color = Color.White, fontSize = fixedSp(size / 2), fontWeight = Weight.Bold)
     }
 }
 
@@ -165,7 +163,7 @@ fun Avatar(name: String, key: String, modifier: Modifier = Modifier, size: Dp = 
         Text(
             initials(name),
             color = Color.White,
-            fontWeight = FontWeight.SemiBold,
+            fontWeight = Weight.SemiBold,
             fontSize = fixedSp(size * 0.36f),
         )
     }
@@ -215,13 +213,12 @@ private fun Note(title: String, text: String?, mark: @Composable () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         mark()
-        Text(title, fontWeight = FontWeight.Bold, fontSize = 20.sp, textAlign = TextAlign.Center)
+        Text(title, style = Type.Heading, textAlign = TextAlign.Center)
         text?.let {
             Text(
                 it,
                 color = colors.onSurfaceVariant,
                 textAlign = TextAlign.Center,
-                lineHeight = 21.sp,
                 modifier = Modifier.widthIn(max = 280.dp),
             )
         }
