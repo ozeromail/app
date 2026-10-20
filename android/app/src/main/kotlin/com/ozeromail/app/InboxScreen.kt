@@ -1142,7 +1142,7 @@ private fun FolderRole.emptyLabel(): Int? = when (this) {
     else -> null
 }
 
-/** The accounts' colours, as the logo has them; opens the accounts. */
+/** The accounts' colours, overlapping; opens the accounts. */
 @Composable
 private fun AccountsButton(accounts: List<AccountItem>, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
