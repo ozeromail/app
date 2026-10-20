@@ -1463,15 +1463,16 @@ fn sandboxed(html: &str, styled: bool) -> String {
         "details.ozero-quote>summary::-webkit-details-marker{display:none}",
     );
     const LIGHT: &str = "html{color-scheme:light;background:#fff}";
-    // The app's own colours and reading type, kept in step with the Android Theme.kt and Type.kt;
-    // the web view is clear, so the screen shows through.
+    // The app's own colours and reading type, kept in step with the Android Theme.kt and Type.kt
+    // (Literata at its default optical size; where the app does not serve it, the system serif).
+    // The web view is clear, so the screen shows through.
     const THEMED: &str = concat!(
         "@font-face{font-family:Literata;font-weight:200 900;src:url(https://",
         font_host!(),
         "/literata.ttf)}",
         "html{color-scheme:light dark;background:transparent;color:#1d1f24}",
-        "body{padding:0 20px 16px;font:17.5px/28px Literata,Georgia,serif;",
-        "hyphens:auto;text-wrap:pretty}",
+        "body{padding-inline:20px;font:17.5px/28px Literata,ui-serif,Georgia,serif;",
+        "font-optical-sizing:none;text-wrap:pretty}",
         "p,ul,ol,blockquote,pre,table{margin:0 0 14px}",
         "h1,h2,h3{font-weight:650;line-height:1.3;margin:22px 0 10px}",
         "a{color:#2f7cf6;text-decoration-thickness:1px;text-underline-offset:3px}",
