@@ -45,6 +45,8 @@ pub trait Store: Send + Sync {
     /// Unread messages in each tab of the unified inbox, leaving out those being archived.
     /// A tab without any is missing.
     fn inbox_unread(&self) -> Result<Vec<(Category, u32)>, StoreError>;
+    /// Whether no tab of the unified inbox has a message, leaving out those being archived.
+    fn inbox_is_empty(&self) -> Result<bool, StoreError>;
     /// Messages, newest first, whose subject, sender or body has every word of `text`, each
     /// as a word or the start of one, case and accents aside. Trash, junk and what is being
     /// archived are left out; empty `text` finds nothing.

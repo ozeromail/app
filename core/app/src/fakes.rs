@@ -292,6 +292,10 @@ impl Store for Memory {
         Ok(vec![])
     }
 
+    fn inbox_is_empty(&self) -> Result<bool, StoreError> {
+        Ok(true)
+    }
+
     fn take_fresh(&self, _: i64) -> Result<Vec<MessageRow>, StoreError> {
         Ok(vec![])
     }

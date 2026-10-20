@@ -694,6 +694,19 @@ fn moves_only_leave_folders_that_allow_them() {
 }
 
 #[test]
+fn an_inbox_with_only_mail_being_archived_is_empty() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let folder = inbox(&store, account);
+    archive_folder(&store, account);
+    store.save_messages(folder, &[message(1, 100)]).unwrap();
+    assert!(!store.inbox_is_empty().unwrap());
+    let id = list(&store, ListScope::Folder(folder), 10, None)[0].id;
+    store.queue(id, Action::Archive, 0).unwrap();
+    assert!(store.inbox_is_empty().unwrap());
+}
+
+#[test]
 fn a_refused_archive_shows_the_message_again() {
     let store = store();
     let account = account(&store, "a@example.com");
@@ -717,6 +730,7 @@ fn a_refused_archive_shows_the_message_again() {
 fn tabs_list_and_count_their_own_messages() {
     let store = store();
     let folder = inbox(&store, account(&store, "a@example.com"));
+    assert!(store.inbox_is_empty().unwrap());
     let mut news = message(2, 200);
     news.category = Category::Newsletters;
     store
@@ -733,6 +747,7 @@ fn tabs_list_and_count_their_own_messages() {
     let mut unread = store.inbox_unread().unwrap();
     unread.sort_by_key(|(c, _)| Category::ALL.iter().position(|a| a == c));
     assert_eq!(unread, [(Category::People, 1), (Category::Newsletters, 1)]);
+    assert!(!store.inbox_is_empty().unwrap());
 
     // A resync sorts a known message again.
     news.category = Category::Notifications;
