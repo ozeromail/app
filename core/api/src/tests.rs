@@ -72,6 +72,13 @@ fn lets_the_page_load_its_images() {
 }
 
 #[test]
+fn lets_a_plain_page_load_the_reading_font() {
+    let page = sandboxed("", false);
+    assert!(page.contains(concat!("font-src data: https://", font_host!(), ";")));
+    assert!(page.contains(concat!("url(https://", font_host!(), "/literata.ttf)")));
+}
+
+#[test]
 fn rejects_a_short_key() {
     assert_eq!(
         Core::open(TempDb::new("short-key").0.clone(), vec![1; 16]).unwrap_err(),

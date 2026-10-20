@@ -1,5 +1,6 @@
 package com.ozeromail.app
 
+import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.Color
@@ -59,13 +60,17 @@ private fun WebView.configure(images: List<RemoteImage?>) {
     webViewClient = object : WebViewClient() {
         // The page's own loaded images, from images.ozero.invalid/<message>/<n>, and the reading font.
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-            if (request.url.host == FONTS_HOST && request.url.path == "/literata.ttf") {
-                return WebResourceResponse("font/ttf", null, view.resources.openRawResource(R.font.literata))
+            when (request.url.host) {
+                // The page's origin is opaque, so the font is a cross-origin load and needs CORS.
+                FONTS_HOST -> if (request.url.path == "/literata.ttf") {
+                    return WebResourceResponse("font/ttf", null, 200, "OK", mapOf("Access-Control-Allow-Origin" to "*"), view.literata())
+                }
+                IMAGES_HOST -> request.url.lastPathSegment?.toIntOrNull()?.let(images::getOrNull)?.let {
+                    return WebResourceResponse(it.mime, null, ByteArrayInputStream(it.data))
+                }
+                else -> return null
             }
-            if (request.url.host != IMAGES_HOST) return null
-            val image = request.url.lastPathSegment?.toIntOrNull()?.let(images::getOrNull)
-                ?: return WebResourceResponse("text/plain", null, 404, "Not Found", null, ByteArrayInputStream(ByteArray(0)))
-            return WebResourceResponse(image.mime, null, ByteArrayInputStream(image.data))
+            return WebResourceResponse("text/plain", null, 404, "Not Found", null, ByteArrayInputStream(ByteArray(0)))
         }
 
         // Only a tap opens a link; a page cannot redirect on its own.
@@ -83,6 +88,10 @@ private fun WebView.configure(images: List<RemoteImage?>) {
         }
     }
 }
+
+/** The reading font, a plain file in res/font. */
+@SuppressLint("ResourceType")
+private fun WebView.literata() = resources.openRawResource(R.font.literata)
 
 private const val IMAGES_HOST = "images.ozero.invalid"
 private const val FONTS_HOST = "fonts.ozero.invalid"

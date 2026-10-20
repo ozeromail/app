@@ -1,7 +1,6 @@
 package com.ozeromail.app
 
 import androidx.compose.material3.Typography
-import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -24,7 +23,6 @@ object Weight {
     val Bold = FontWeight(700)
 }
 
-@OptIn(ExperimentalTextApi::class)
 private fun variable(font: Int, weights: List<FontWeight>, optical: TextUnit? = null) = FontFamily(
     weights.map { weight ->
         val axes = listOfNotNull(FontVariation.weight(weight.weight), optical?.let { FontVariation.opticalSizing(it) })
@@ -35,23 +33,31 @@ private fun variable(font: Int, weights: List<FontWeight>, optical: TextUnit? = 
 private val UiWeights = with(Weight) { listOf(Regular, Medium, Firm, SemiBold, Strong, Bold) }
 
 /** Inter for everything but what is read at length, at its text optical size. */
-val Inter = variable(R.font.inter, UiWeights)
+private val Inter = variable(R.font.inter, UiWeights)
 
 /** Inter cut for large sizes: tighter, with finer details. */
 private val InterDisplay = variable(R.font.inter, listOf(Weight.Strong, Weight.Bold), optical = 32.sp)
 
-/** Literata for reading messages. */
-val Literata = variable(R.font.literata, listOf(Weight.Regular, Weight.SemiBold, Weight.Bold))
+/** Literata for reading messages, at its default optical size, as in the web view. */
+private val Literata = variable(R.font.literata, listOf(Weight.Regular, Weight.SemiBold, Weight.Bold))
 
 private val Even = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None)
 
-private fun ui(size: Float, line: Float, weight: FontWeight = Weight.Regular, tracking: Float = 0f, family: FontFamily = Inter) = TextStyle(
+private fun ui(
+    size: Float,
+    line: Float,
+    weight: FontWeight = Weight.Regular,
+    tracking: Float = 0f,
+    family: FontFamily = Inter,
+    lineBreak: LineBreak = LineBreak.Unspecified,
+) = TextStyle(
     fontFamily = family,
     fontSize = size.sp,
     lineHeight = line.sp,
     fontWeight = weight,
     letterSpacing = tracking.em,
     lineHeightStyle = Even,
+    lineBreak = lineBreak,
 )
 
 /** Figures that line up, for times, dates and counts. */
@@ -63,26 +69,19 @@ private fun TextStyle.tabular() = copy(fontFeatureSettings = "tnum")
  */
 object Type {
     /** Screen titles: Inbox, a folder. */
-    val Display = ui(32f, 38f, Weight.Bold, -0.022f, InterDisplay).copy(lineBreak = LineBreak.Heading)
+    val Display = ui(32f, 38f, Weight.Bold, -0.022f, InterDisplay, LineBreak.Heading)
 
     /** An open message's subject, and the subject being written. */
-    val Title = ui(24f, 30f, Weight.Strong, -0.017f, InterDisplay).copy(lineBreak = LineBreak.Heading)
+    val Title = ui(24f, 30f, Weight.Strong, -0.017f, InterDisplay, LineBreak.Heading)
 
     /** Titles of sheets and notes. */
-    val Heading = ui(19f, 25f, Weight.Strong, -0.01f).copy(lineBreak = LineBreak.Heading)
+    val Heading = ui(19f, 25f, Weight.Strong, -0.01f, lineBreak = LineBreak.Heading)
 
     /** A message's text. */
-    val Reading = TextStyle(
-        fontFamily = Literata,
-        fontSize = 17.5.sp,
-        lineHeight = 28.sp,
-        lineHeightStyle = Even,
-        hyphens = Hyphens.Auto,
-        lineBreak = LineBreak.Paragraph,
-    )
+    val Reading = ui(17.5f, 28f, family = Literata, lineBreak = LineBreak.Paragraph).copy(hyphens = Hyphens.Auto)
 
-    /** Text being written: Inter at the size it will be read at. */
-    val Writing = ui(17f, 27f).copy(hyphens = Hyphens.None, lineBreak = LineBreak.Paragraph)
+    /** Text being written: Inter at the size it will be read at; lines do not reflow while typing. */
+    val Writing = ui(17f, 27f, lineBreak = LineBreak.Simple)
 
     /** Quoted text under a message, a step quieter. */
     val Quote = Reading.copy(fontSize = 15.5.sp, lineHeight = 24.sp)
