@@ -19,7 +19,8 @@ import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.ExperimentalTransitionApi
 import androidx.compose.animation.core.SeekableTransitionState
-import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.rememberTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -76,6 +77,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.input.pointer.util.addPointerInputChange
+import androidx.compose.ui.platform.LocalHapticFeedback
+import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.floor
+import kotlin.math.roundToInt
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -729,6 +740,22 @@ private fun InboxList(
     val titleGone = with(density) { 24.dp.roundToPx() }
     val scrolled by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > titleGone } }
     val pull = rememberPullToRefreshState()
+    // Where the tabs are between two of them, in tabs: the thumb and the list follow it.
+    val glide = remember { Animatable(0f) }
+    val glideScope = rememberCoroutineScope()
+    val pick: (Category, Float) -> Unit = { next, from ->
+        onTab(next)
+        glideScope.launch {
+            glide.snapTo(from)
+            glide.animateTo(0f, Motion.settle())
+        }
+    }
+    // The list leaves to the side the thumb moves away from, and the next one comes in from the other.
+    val slide = Modifier.graphicsLayer {
+        val at = glide.value
+        translationX = -at * size.width * 0.35f
+        alpha = 1f - (abs(at) * 1.2f).coerceAtMost(1f)
+    }
     val mini by animateFloatAsState(if (scrolled) 1f else 0f, Motion.calm(Motion.SMALL), label = "title")
     Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
         PullToRefreshBox(
@@ -752,22 +779,24 @@ private fun InboxList(
             ) {
                 item(key = "title") { Hero(title, owner) }
                 items(unsent, key = { "unsent-${it.id}" }) { failed ->
-                    UnsentRow(failed, rowMove(), onClick = { onUnsent(failed) })
+                    UnsentRow(failed, rowMove().then(slide), onClick = { onUnsent(failed) })
                 }
                 if (swipeTip && messages.isNotEmpty()) {
-                    item(key = "tip") { Box(rowMove()) { SwipeTip(swipes, onSwipeTip) } }
+                    item(key = "tip") { Box(rowMove().then(slide)) { SwipeTip(swipes, onSwipeTip) } }
                 }
                 if (messages.isEmpty() && !syncing && error == null) {
                     item(key = "empty") {
-                        when {
-                            mailbox != Mail.INBOX -> EmptyNote(R.drawable.ic_inbox, stringResource(R.string.tab_empty_title), stringResource(R.string.folder_empty))
-                            tab == Category.PEOPLE -> InboxZero(hadMail)
-                            else -> TabEmpty(hadMail)
+                        Box(slide) {
+                            when {
+                                mailbox != Mail.INBOX -> EmptyNote(R.drawable.ic_inbox, stringResource(R.string.tab_empty_title), stringResource(R.string.folder_empty))
+                                tab == Category.PEOPLE -> InboxZero(hadMail)
+                                else -> TabEmpty(hadMail)
+                            }
                         }
                     }
                 }
                 itemsIndexed(messages, key = { _, it -> it.id }) { index, message ->
-                    Column(rowMove()) {
+                    Column(rowMove().then(slide)) {
                         if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.screen), color = colors.outlineVariant)
                         SwipeRow(message, swipes, onSwipe = { action, reset -> onSwipe(message, action, reset) }) {
                             MessageRow(message, onClick = { onOpen(message) })
@@ -809,8 +838,9 @@ private fun InboxList(
                 modifier = Modifier.onSizeChanged { dockHeight = with(density) { it.height.toDp() } },
                 tab = tab,
                 tabs = tabs.takeIf { mailbox == Mail.INBOX },
+                glide = glide,
                 accounts = accounts,
-                onTab = onTab,
+                onTab = pick,
                 onAccounts = onAccounts,
                 onSearch = onSearch,
                 onCompose = onCompose,
@@ -878,8 +908,9 @@ private fun Dock(
     modifier: Modifier,
     tab: Category,
     tabs: List<InboxTab>?,
+    glide: Animatable<Float, AnimationVector1D>,
     accounts: List<AccountItem>,
-    onTab: (Category) -> Unit,
+    onTab: (Category, from: Float) -> Unit,
     onAccounts: () -> Unit,
     onSearch: () -> Unit,
     onCompose: () -> Unit,
@@ -894,7 +925,7 @@ private fun Dock(
             .padding(top = Gap.barTop, bottom = Gap.barBottom),
         verticalArrangement = Arrangement.spacedBy(Gap.inBar),
     ) {
-        tabs?.let { Tabs(tab, it, onTab) }
+        tabs?.let { Tabs(tab, it, glide, onTab) }
         // The same edge as the tabs above, so the accounts button lines up with them.
         Row(
             Modifier.fillMaxWidth().padding(horizontal = Gap.bar),
@@ -943,11 +974,19 @@ private fun AccountsButton(accounts: List<AccountItem>, onClick: () -> Unit) {
     }
 }
 
-/** The inbox tabs as one segmented control, each with its unread count; the thumb slides to the one picked. */
+/**
+ * The inbox tabs as one segmented control, each with its unread count. The thumb follows a
+ * finger dragged across them and settles on the nearest tab, or the next one on a flick; a tap
+ * glides it there. [onPick] gets the tab and where the thumb is from it, in tabs.
+ */
 @Composable
-private fun Tabs(tab: Category, tabs: List<InboxTab>, onPick: (Category) -> Unit) {
+private fun Tabs(tab: Category, tabs: List<InboxTab>, glide: Animatable<Float, AnimationVector1D>, onPick: (Category, from: Float) -> Unit) {
     val colors = MaterialTheme.colorScheme
     val thumb = RoundedCornerShape(Radius.thumb)
+    val scope = rememberCoroutineScope()
+    val haptics = LocalHapticFeedback.current
+    val index = Category.entries.indexOf(tab)
+    val last = Category.entries.size - 1
     BoxWithConstraints(
         Modifier
             .fillMaxWidth()
@@ -959,15 +998,52 @@ private fun Tabs(tab: Category, tabs: List<InboxTab>, onPick: (Category) -> Unit
         val count = Category.entries.size
         val gap = 2.dp
         val width = (maxWidth - gap * (count - 1)) / count
-        val x by animateDpAsState((width + gap) * Category.entries.indexOf(tab), Motion.settle(), label = "thumb")
+        val step = width + gap
         Box(
             Modifier
-                .offset { IntOffset(x.roundToPx(), 0) }
+                .offset { IntOffset(((index + glide.value) * step.toPx()).roundToInt(), 0) }
                 .size(width, 34.dp)
                 .shadow(1.dp, thumb)
                 .background(colors.background, thumb),
         )
-        Row(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(gap)) {
+        Row(
+            Modifier
+                .selectableGroup()
+                .pointerInput(index, step) {
+                    val stepPx = step.toPx()
+                    val velocity = VelocityTracker()
+                    var at = 0f
+                    detectHorizontalDragGestures(
+                        onDragStart = {
+                            velocity.resetTracking()
+                            at = glide.value
+                        },
+                        onDragEnd = {
+                            val flick = velocity.calculateVelocity().x / stepPx
+                            val pos = index + at
+                            val target = when {
+                                flick > 2f -> floor(pos) + 1
+                                flick < -2f -> ceil(pos) - 1
+                                else -> pos.roundToInt().toFloat()
+                            }.toInt().coerceIn(0, last)
+                            if (target == index) {
+                                scope.launch { glide.animateTo(0f, Motion.settle()) }
+                            } else {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onPick(Category.entries[target], pos - target)
+                            }
+                        },
+                        onDragCancel = { scope.launch { glide.animateTo(0f, Motion.settle()) } },
+                    ) { change, dx ->
+                        change.consume()
+                        velocity.addPointerInputChange(change)
+                        // A little past the first and last tab, then no further.
+                        at = (at + dx / stepPx).coerceIn(-index - 0.15f, last - index + 0.15f)
+                        scope.launch { glide.snapTo(at) }
+                    }
+                },
+            horizontalArrangement = Arrangement.spacedBy(gap),
+        ) {
             // Every tab shows at once; the counts come when the core has them.
             Category.entries.forEach { category ->
                 val on = category == tab
@@ -978,7 +1054,7 @@ private fun Tabs(tab: Category, tabs: List<InboxTab>, onPick: (Category) -> Unit
                         .weight(1f)
                         .height(34.dp)
                         .clip(thumb)
-                        .selectable(selected = on, role = Role.Tab, onClick = { onPick(category) }),
+                        .selectable(selected = on, role = Role.Tab, onClick = { if (!on) onPick(category, (index - Category.entries.indexOf(category)).toFloat()) }),
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
