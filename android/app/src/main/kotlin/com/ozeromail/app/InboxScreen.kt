@@ -536,7 +536,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         // The first mail of an empty list is on its way: the water waits, without words.
                         waiting = syncing && listLoaded && messages.isEmpty(),
                         onSync = {
-                            pulled = true
+                            // Over an empty list the lake below ripples instead: one water, not two.
+                            pulled = messages.isNotEmpty()
                             scope.launch { sync(mailbox) }
                         },
                         mailbox = mailbox,
@@ -776,12 +777,14 @@ private fun InboxList(
             state = pull,
             // The list moves down with the finger and still water shows in the gap it leaves.
             indicator = {
-                PullWater(
-                    fraction = { pull.distanceFraction },
-                    refreshing = refreshing,
-                    top = top,
-                    modifier = Modifier.fillMaxSize(),
-                )
+                if (messages.isNotEmpty() || refreshing) {
+                    PullWater(
+                        fraction = { pull.distanceFraction },
+                        refreshing = refreshing,
+                        top = top,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
             },
         ) {
             LazyColumn(
