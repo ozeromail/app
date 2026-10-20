@@ -57,7 +57,7 @@ val MaterialTheme.done: Color
 
 @Composable
 fun OzeroTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = if (isSystemInDarkTheme()) Dark else Light, content = content)
+    MaterialTheme(colorScheme = if (isSystemInDarkTheme()) Dark else Light, typography = Type.Material, content = content)
 }
 
 /** One of the app's line icons, in [tint]. */

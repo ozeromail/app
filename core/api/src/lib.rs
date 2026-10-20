@@ -688,6 +688,13 @@ macro_rules! image_host {
 /// pages, so the message id keeps another message's image `N` from showing.
 const IMAGE_ADDRESS: &str = concat!("https://", image_host!(), "/");
 
+/// The host a plain page asks for the app's reading font on: `{FONT_HOST}/literata.ttf`.
+macro_rules! font_host {
+    () => {
+        "fonts.ozero.invalid"
+    };
+}
+
 impl Core {
     /// Downloads the page's remote images for `message_images`.
     async fn load_images(
@@ -1442,7 +1449,9 @@ fn sandboxed(html: &str, styled: bool) -> String {
         "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; ",
         "img-src data: https://",
         image_host!(),
-        "; style-src 'unsafe-inline'; font-src data:; ",
+        "; style-src 'unsafe-inline'; font-src data: https://",
+        font_host!(),
+        "; ",
         "base-uri 'none'; form-action 'none'\">",
         "<meta http-equiv=\"x-dns-prefetch-control\" content=\"off\">",
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
@@ -1454,11 +1463,22 @@ fn sandboxed(html: &str, styled: bool) -> String {
         "details.ozero-quote>summary::-webkit-details-marker{display:none}",
     );
     const LIGHT: &str = "html{color-scheme:light;background:#fff}";
-    // The app's own colours, kept in step with the Android Theme.kt; the web view is clear, so the screen shows through.
+    // The app's own colours and reading type, kept in step with the Android Theme.kt and Type.kt;
+    // the web view is clear, so the screen shows through.
     const THEMED: &str = concat!(
+        "@font-face{font-family:Literata;font-weight:200 900;src:url(https://",
+        font_host!(),
+        "/literata.ttf)}",
         "html{color-scheme:light dark;background:transparent;color:#1d1f24}",
-        "a{color:#2f7cf6}",
+        "body{padding:0 20px 16px;font:17.5px/28px Literata,Georgia,serif;",
+        "hyphens:auto;text-wrap:pretty}",
+        "p,ul,ol,blockquote,pre,table{margin:0 0 14px}",
+        "h1,h2,h3{font-weight:650;line-height:1.3;margin:22px 0 10px}",
+        "a{color:#2f7cf6;text-decoration-thickness:1px;text-underline-offset:3px}",
+        "blockquote{padding-left:14px;border-left:2px solid #e3e5e9;color:#6b7280}",
+        "li::marker{color:#8a8f99}",
         "@media(prefers-color-scheme:dark){html{color:#ececee}a{color:#4c8ff8}",
+        "blockquote{border-color:#3a3d42;color:#8e939c}",
         "details.ozero-quote>summary{background:#25272b;color:#8e939c}}",
     );
     const BODY: &str = "</style></head><body dir=\"auto\">";

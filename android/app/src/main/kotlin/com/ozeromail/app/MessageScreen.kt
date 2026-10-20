@@ -56,7 +56,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -198,8 +197,8 @@ private fun More(count: Int, onClick: () -> Unit) {
         Text(
             stringResource(R.string.message_more, count),
             color = colors.primary,
-            fontSize = 13.5.sp,
-            fontWeight = FontWeight.SemiBold,
+            style = Type.Text,
+            fontWeight = Weight.SemiBold,
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(role = Role.Button, onClick = onClick)
@@ -334,14 +333,14 @@ private fun PlainText(text: String, quote: String, modifier: Modifier) {
     val colors = MaterialTheme.colorScheme
     SelectionContainer(modifier.padding(start = Gap.screen, end = Gap.screen, top = 6.dp, bottom = 18.dp)) {
         Column(Modifier.widthIn(max = 620.dp)) {
-            if (text.isNotEmpty()) Text(text, fontSize = 15.5.sp, lineHeight = 24.8.sp)
+            if (text.isNotEmpty()) Text(text, style = Type.Reading)
             if (quote.isNotEmpty()) {
                 val label = stringResource(R.string.message_quote)
                 Text(
                     "•••",
                     color = colors.onSurfaceVariant,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
+                    style = Type.Caption,
+                    fontWeight = Weight.Bold,
                     letterSpacing = 1.sp,
                     modifier = Modifier
                         .padding(top = 10.dp)
@@ -352,7 +351,7 @@ private fun PlainText(text: String, quote: String, modifier: Modifier) {
                         .padding(horizontal = 10.dp, vertical = 1.dp),
                 )
                 Reveal(quote.takeIf { showQuote }) {
-                    Text(it, color = colors.onSurfaceVariant, fontSize = 14.5.sp, lineHeight = 22.sp, modifier = Modifier.padding(top = 10.dp))
+                    Text(it, color = colors.onSurfaceVariant, style = Type.Quote, modifier = Modifier.padding(top = 10.dp))
                 }
             }
         }
@@ -389,7 +388,7 @@ fun RowScope.BarAction(@DrawableRes icon: Int, label: String, tint: Color, backg
         verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically),
     ) {
         Glyph(icon, null, tint, size = 21.dp)
-        Text(label, color = tint, fontSize = 11.5.sp, maxLines = 1)
+        Text(label, color = tint, style = Type.Label, maxLines = 1)
     }
 }
 
@@ -409,15 +408,14 @@ private fun HiddenImages(note: Int, onShow: () -> Unit) {
         Text(
             stringResource(note),
             color = colors.onSurfaceVariant,
-            fontSize = 13.sp,
-            lineHeight = 17.5.sp,
+            style = Type.Caption,
             modifier = Modifier.weight(1f),
         )
         Text(
             stringResource(R.string.action_show),
             color = colors.primary,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
+            style = Type.Caption,
+            fontWeight = Weight.SemiBold,
             modifier = Modifier
                 .clip(CircleShape)
                 .background(colors.background)
@@ -452,20 +450,20 @@ private fun From(message: MessageItem, open: Boolean, onToggle: (() -> Unit)? = 
         Column(Modifier.weight(1f)) {
             Text(
                 message.sender,
-                fontWeight = if (unread) FontWeight.Bold else FontWeight.SemiBold,
-                fontSize = 15.sp,
+                style = Type.Row,
+                fontWeight = if (unread) Weight.Bold else Weight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             if (detail.isNotBlank()) {
-                Text(detail, color = colors.onSurfaceVariant, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(detail, color = colors.onSurfaceVariant, style = Type.Caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         val context = LocalContext.current
         Text(
             if (open) longDate(context, message.date) else shortDate(context, message.date),
             color = colors.onSurfaceVariant,
-            fontSize = 12.5.sp,
+            style = Type.Caption,
             modifier = Modifier.align(Alignment.Top).padding(top = 2.dp),
         )
     }
@@ -479,10 +477,7 @@ private fun Title(message: MessageItem) {
         Column {
             Text(
                 message.subjectText(),
-                fontSize = 23.sp,
-                lineHeight = 28.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = (-0.46).sp,
+                style = Type.Title,
                 modifier = Modifier.padding(start = Gap.screen, end = Gap.screen, bottom = 10.dp),
             )
             message.account?.let { account ->
@@ -495,7 +490,7 @@ private fun Title(message: MessageItem) {
                     horizontalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
                     AccountDot(account.tint, size = 8.dp)
-                    Text(account.name, color = colors.onSurfaceVariant, fontSize = 12.5.sp, fontWeight = FontWeight.Medium)
+                    Text(account.name, color = colors.onSurfaceVariant, style = Type.Caption, fontWeight = Weight.Medium)
                 }
             }
         }

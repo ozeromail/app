@@ -37,12 +37,10 @@ import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import kotlin.math.PI
 import kotlin.math.hypot
 import kotlin.math.min
@@ -101,12 +99,11 @@ fun StillNote(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text(title, fontWeight = FontWeight.SemiBold, fontSize = 18.sp, textAlign = TextAlign.Center)
+            Text(title, style = Type.Heading, textAlign = TextAlign.Center)
             Text(
                 text,
                 color = colors.onSurfaceVariant,
                 textAlign = TextAlign.Center,
-                lineHeight = 21.sp,
                 modifier = Modifier.widthIn(max = 280.dp).padding(horizontal = 32.dp),
             )
         }

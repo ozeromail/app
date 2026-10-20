@@ -112,13 +112,11 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.LifecycleStartEffect
@@ -952,7 +950,7 @@ private fun InboxList(
                     .hairline(colors.outlineVariant, top = false),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(shownTitle, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(shownTitle, style = Type.Row, fontWeight = Weight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         Column(Modifier.align(Alignment.BottomCenter)) {
@@ -962,7 +960,7 @@ private fun InboxList(
                 Text(
                     stringResource(it),
                     color = colors.onSurfaceVariant,
-                    fontSize = 13.sp,
+                    style = Type.Caption,
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(colors.bar)
@@ -1038,8 +1036,8 @@ private fun Hero(title: String, subtitle: String?) {
             Text(
                 subtitle,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 13.5.sp,
-                modifier = Modifier.padding(top = 4.dp),
+                style = Type.Caption,
+                modifier = Modifier.padding(top = 2.dp),
             )
         }
     }
@@ -1133,7 +1131,7 @@ private fun EmptyButton(label: String, onClick: () -> Unit) {
             .clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, color = colors.error, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+        Text(label, color = colors.error, style = Type.Text, fontWeight = Weight.Medium)
     }
 }
 
@@ -1260,8 +1258,8 @@ private fun Tabs(tab: Category, tabs: List<InboxTab>, glide: Animatable<Float, A
                     Text(
                         stringResource(category.label()),
                         color = label,
-                        fontSize = 13.5.sp,
-                        fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium,
+                        style = Type.Text,
+                        fontWeight = if (on) Weight.SemiBold else Weight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
@@ -1270,8 +1268,8 @@ private fun Tabs(tab: Category, tabs: List<InboxTab>, glide: Animatable<Float, A
                         Text(
                             unread.toString(),
                             color = colors.primary,
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.Bold,
+                            style = Type.Badge,
+                            fontWeight = Weight.Bold,
                             modifier = Modifier.padding(start = 6.dp),
                         )
                     }
@@ -1300,11 +1298,11 @@ private fun UnsentRow(unsent: UnsentItem, modifier: Modifier, onClick: () -> Uni
             .clickable(onClick = onClick)
             .padding(horizontal = Gap.inCard, vertical = 12.dp),
     ) {
-        Text(stringResource(R.string.inbox_not_sent), color = colors.error, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp)
+        Text(stringResource(R.string.inbox_not_sent), color = colors.error, style = Type.Subject, fontWeight = Weight.SemiBold)
         Text(
             unsent.subject.ifBlank { stringResource(R.string.inbox_no_subject) },
             color = colors.onSurfaceVariant,
-            fontSize = 13.5.sp,
+            style = Type.Text,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -1371,8 +1369,8 @@ private fun MessageLine(message: MessageItem, unread: Boolean, dot: Float, accou
                 Row(Modifier.weight(1f).padding(end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         message.participants(),
-                        fontSize = 15.5.sp,
-                        fontWeight = if (unread) FontWeight.Bold else FontWeight.Medium,
+                        style = Type.Row,
+                        fontWeight = if (unread) Weight.Strong else Weight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier
@@ -1389,8 +1387,7 @@ private fun MessageLine(message: MessageItem, unread: Boolean, dot: Float, accou
                         Text(
                             message.threadCount.toString(),
                             color = colors.onSurfaceVariant,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            style = Type.Badge,
                             modifier = Modifier
                                 .padding(start = 6.dp)
                                 .background(colors.surfaceContainerHighest, CircleShape)
@@ -1402,7 +1399,7 @@ private fun MessageLine(message: MessageItem, unread: Boolean, dot: Float, accou
                     Text(
                         it.name,
                         color = colors.onSurfaceVariant,
-                        fontSize = 11.5.sp,
+                        style = Type.Label,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.widthIn(max = 70.dp).padding(end = 8.dp),
@@ -1411,13 +1408,13 @@ private fun MessageLine(message: MessageItem, unread: Boolean, dot: Float, accou
                 Text(
                     shortDate(LocalContext.current, message.date),
                     color = if (unread) colors.onSurface else colors.onSurfaceVariant,
-                    fontSize = 12.5.sp,
+                    style = Type.Caption,
                 )
             }
             Text(
                 message.subjectText(),
-                fontSize = 14.5.sp,
-                fontWeight = if (unread) FontWeight.SemiBold else FontWeight.Normal,
+                style = Type.Subject,
+                fontWeight = if (unread) Weight.Firm else Weight.Regular,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -1425,8 +1422,7 @@ private fun MessageLine(message: MessageItem, unread: Boolean, dot: Float, accou
                 Text(
                     message.snippet,
                     color = colors.onSurfaceVariant,
-                    fontSize = 13.5.sp,
-                    lineHeight = 18.6.sp,
+                    style = Type.Text,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )

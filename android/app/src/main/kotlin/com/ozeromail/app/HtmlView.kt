@@ -57,8 +57,11 @@ private fun WebView.configure(images: List<RemoteImage?>) {
         displayZoomControls = false
     }
     webViewClient = object : WebViewClient() {
-        // The page's own loaded images, from images.ozero.invalid/<message>/<n>.
+        // The page's own loaded images, from images.ozero.invalid/<message>/<n>, and the reading font.
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+            if (request.url.host == FONTS_HOST && request.url.path == "/literata.ttf") {
+                return WebResourceResponse("font/ttf", null, view.resources.openRawResource(R.font.literata))
+            }
             if (request.url.host != IMAGES_HOST) return null
             val image = request.url.lastPathSegment?.toIntOrNull()?.let(images::getOrNull)
                 ?: return WebResourceResponse("text/plain", null, 404, "Not Found", null, ByteArrayInputStream(ByteArray(0)))
@@ -82,4 +85,5 @@ private fun WebView.configure(images: List<RemoteImage?>) {
 }
 
 private const val IMAGES_HOST = "images.ozero.invalid"
+private const val FONTS_HOST = "fonts.ozero.invalid"
 private val LINK_SCHEMES = setOf("http", "https", "mailto")

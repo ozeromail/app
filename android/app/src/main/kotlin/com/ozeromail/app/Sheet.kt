@@ -54,11 +54,9 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
@@ -189,8 +187,7 @@ private fun SheetBody(visible: Boolean, onClose: () -> Unit, content: @Composabl
 fun SheetTitle(text: String, modifier: Modifier = Modifier.padding(start = Gap.sheet, end = Gap.sheet, bottom = 10.dp)) {
     Text(
         text,
-        fontSize = 18.sp,
-        fontWeight = FontWeight.Bold,
+        style = Type.Heading,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         modifier = modifier,

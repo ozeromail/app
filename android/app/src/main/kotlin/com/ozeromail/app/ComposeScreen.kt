@@ -46,13 +46,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import uniffi.ozero_api.AccountItem
 import uniffi.ozero_api.CoreException
@@ -131,7 +129,7 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
                     to,
                     { to = it },
                     R.string.compose_to,
-                    TextStyle(fontSize = 15.sp),
+                    Type.Body,
                     KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next, autoCorrectEnabled = false),
                 )
                 HorizontalDivider(color = colors.outlineVariant)
@@ -139,14 +137,14 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
                     subject,
                     { subject = it },
                     R.string.compose_subject,
-                    TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.44).sp),
+                    Type.Title,
                     KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Next),
                 )
                 Plain(
                     text,
                     { text = it },
                     R.string.compose_text,
-                    TextStyle(fontSize = 15.5.sp, lineHeight = 24.sp),
+                    Type.Writing,
                     KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                     singleLine = false,
                     // Room for a few lines from the start, less while the keyboard takes the screen.
@@ -207,7 +205,7 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
                     },
                     lead = { AccountDot(account.tint, size = 12.dp) },
                 ) {
-                    Text(account.email, fontSize = 15.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    Text(account.email, style = Type.Row, fontWeight = Weight.Regular, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                     if (account.id == from?.id) Glyph(R.drawable.ic_done, null, colors.primary)
                 }
             }
@@ -237,19 +235,18 @@ private fun Original(mail: Mail, message: MessageItem, modifier: Modifier) {
         Row(Modifier.padding(start = Gap.inCard, end = Gap.inCard, top = 12.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 message.sender,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 14.sp,
+                style = Type.Text,
+                fontWeight = Weight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            Text(shortDate(LocalContext.current, message.date), color = colors.onSurfaceVariant, fontSize = 12.5.sp)
+            Text(shortDate(LocalContext.current, message.date), color = colors.onSurfaceVariant, style = Type.Caption)
         }
         Text(
             text,
             color = colors.onSurfaceVariant,
-            fontSize = 14.sp,
-            lineHeight = 21.sp,
+            style = Type.Quote,
             modifier = Modifier
                 .weight(1f, fill = false)
                 .verticalScroll(rememberScrollState())
@@ -266,8 +263,7 @@ private fun Quote(quote: String, onRemove: () -> Unit) {
         Text(
             quote,
             color = colors.onSurfaceVariant,
-            fontSize = 13.5.sp,
-            lineHeight = 19.5.sp,
+            style = Type.Text,
             maxLines = 6,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier
@@ -294,7 +290,7 @@ private fun Sender(from: AccountItem, enabled: Boolean, onClick: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         AccountInitial(from.name, from.tint, 22.dp)
-        Text(from.email, fontSize = 14.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(from.email, style = Type.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
