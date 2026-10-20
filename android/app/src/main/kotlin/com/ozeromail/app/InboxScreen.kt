@@ -7,6 +7,7 @@ import android.os.SystemClock
 import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedContentTransitionScope
@@ -66,14 +67,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
-import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -83,6 +81,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -121,7 +120,10 @@ import uniffi.ozero_api.AccountItem
 import uniffi.ozero_api.AccountMark
 import uniffi.ozero_api.Category
 import uniffi.ozero_api.CoreException
+import uniffi.ozero_api.FolderItem
+import uniffi.ozero_api.FolderRole
 import uniffi.ozero_api.InboxTab
+import uniffi.ozero_api.Mailbox
 import uniffi.ozero_api.MessageItem
 import uniffi.ozero_api.UnsentItem
 import uniffi.ozero_api.undoSeconds
@@ -129,17 +131,30 @@ import uniffi.ozero_api.undoSeconds
 /** How soon after a sync a return to the app syncs again. */
 private const val RESYNC_MS = 30_000L
 
+/** A folder by its id, which is positive; the unified mailboxes as their role below zero. */
+private val MailboxSaver = Saver<Mailbox, Long>(
+    save = {
+        when (it) {
+            is Mailbox.Folder -> it.id
+            is Mailbox.Unified -> -1L - it.role.ordinal
+        }
+    },
+    restore = { if (it >= 0) Mailbox.Folder(it) else Mailbox.Unified(FolderRole.entries[(-1L - it).toInt()]) },
+)
+
 /**
- * The unified inbox: shows what is saved at once, then syncs; pull down to sync again.
- * [onNoAccounts] runs once the last account is removed.
+ * The unified inbox, or another mailbox picked in the accounts sheet: shows what is saved at
+ * once, then syncs; pull down to sync again. [onNoAccounts] runs once the last account is
+ * removed.
  */
 @OptIn(ExperimentalTransitionApi::class)
 @Composable
 fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var messages by remember { mutableStateOf(emptyList<MessageItem>()) }
+    var mailbox by rememberSaveable(stateSaver = MailboxSaver) { mutableStateOf<Mailbox>(Mail.INBOX) }
     var syncing by remember { mutableStateOf(false) }
     // A sync asked for while one runs, say for a new account, runs right after it.
-    var syncAgain by remember { mutableStateOf(false) }
+    var syncAgain by remember { mutableStateOf<Mailbox?>(null) }
     // When the last sync that went through began.
     var lastSync by remember { mutableLongStateOf(-RESYNC_MS) }
     // Only a pull shows the spinner; syncs on their own stay quiet over the saved mail.
@@ -158,10 +173,14 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var addingAccount by rememberSaveable { mutableStateOf(false) }
     var accountsOpen by rememberSaveable { mutableStateOf(false) }
     var accounts by remember { mutableStateOf(emptyList<AccountItem>()) }
+    var folders by remember { mutableStateOf(emptyList<FolderItem>()) }
+    val context = LocalContext.current
+    val settings = remember { Settings(context) }
+    var swipes by remember { mutableStateOf(settings.swipes) }
+    var swipeTip by remember { mutableStateOf(!settings.swipeTipSeen) }
     var query by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     // The report of the crash that closed the app last time, until the person decides.
     var crash by remember { mutableStateOf<String?>(null) }
@@ -174,14 +193,14 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     val sending = stringResource(R.string.inbox_sending)
 
     suspend fun loadList() {
-        val shown = tab
+        val shown = tab to mailbox
         try {
-            val found = mail.inbox(shown)
-            // A tab picked meanwhile loads its own list.
-            if (tab == shown) messages = found
+            val found = if (mailbox == Mail.INBOX) mail.inbox(tab) else mail.mailbox(mailbox)
+            // A tab or mailbox picked meanwhile loads its own list.
+            if (tab to mailbox == shown) messages = found
         } catch (e: CoreException) {
-            // Never leave the last tab's messages under the new one.
-            if (tab == shown) messages = emptyList()
+            // Never leave the last list's messages under the new one.
+            if (tab to mailbox == shown) messages = emptyList()
             error = e.text()
         }
         listLoaded = true
@@ -209,31 +228,36 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         counts()
     }
 
-    /** Syncs every account; false if one failed. One asked for while one runs follows it. */
-    suspend fun sync(): Boolean {
+    /**
+     * Syncs [box] in every account; false if one failed. One asked for while one runs follows
+     * it.
+     */
+    suspend fun sync(box: Mailbox = Mail.INBOX): Boolean {
         if (syncing) {
-            syncAgain = true
+            syncAgain = box
             return true
         }
         syncing = true
         error = null
         val started = SystemClock.elapsedRealtime()
         val synced = try {
-            mail.refresh()
-            lastSync = started
+            mail.refresh(box)
+            if (box == Mail.INBOX) lastSync = started
             true
         } catch (e: CoreException) {
             error = e.text()
             false
         }
-        // Whatever synced is on screen now, also when one account failed: no notification later.
-        try {
-            mail.forgetNewMail()
-        } catch (e: CoreException) {
-            error = e.text()
+        if (box == Mail.INBOX) {
+            // Whatever synced is on screen now, also when one account failed: no notification later.
+            try {
+                mail.forgetNewMail()
+            } catch (e: CoreException) {
+                error = e.text()
+            }
+            MailWorker.clearNotifications(context)
+            mail.prefetch()
         }
-        MailWorker.clearNotifications(context)
-        mail.prefetch()
         // The first read may have failed; a sync is a good moment to try again.
         if (accounts.isEmpty()) loadAccounts()
         try {
@@ -241,9 +265,9 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         } finally {
             syncing = false
         }
-        if (syncAgain) {
-            syncAgain = false
-            return sync()
+        syncAgain?.let {
+            syncAgain = null
+            return sync(it)
         }
         pulled = false
         return synced
@@ -253,9 +277,21 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     LaunchedEffect(addingAccount) {
         if (!addingAccount) loadAccounts()
     }
-    LaunchedEffect(tab) {
+    LaunchedEffect(tab, mailbox) {
         loadList()
         listState.scrollToItem(0)
+    }
+    // Another mailbox brings in what changed in it; the inbox keeps itself up to date.
+    LaunchedEffect(mailbox) {
+        if (mailbox != Mail.INBOX) sync(mailbox)
+    }
+    // Folders show once a sync has listed them, so they are read each time the sheet opens.
+    LaunchedEffect(accountsOpen) {
+        try {
+            folders = mail.folders()
+        } catch (e: CoreException) {
+            error = e.text()
+        }
     }
     val askToNotify = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     LaunchedEffect(Unit) {
@@ -323,6 +359,29 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     /** Done: into the archive. */
     fun archive(message: MessageItem, reset: () -> Unit) = remove(message, archived, mail::archive, reset)
 
+    /** Marks the row read, or unread if it is read; it stays in the list either way. */
+    fun toggleRead(message: MessageItem, reset: () -> Unit) {
+        val read = message.threadUnread > 0u
+        scope.launch {
+            try {
+                mail.markRead(message, seen = read)
+                messages = messages.map {
+                    if (it.id == message.id) it.copy(seen = read, threadUnread = if (read) 0u else 1u) else it
+                }
+                counts()
+            } catch (e: CoreException) {
+                error = e.text()
+            }
+            reset()
+        }
+    }
+
+    fun swiped(message: MessageItem, action: SwipeAction, reset: () -> Unit) = when (action) {
+        SwipeAction.DONE -> archive(message, reset)
+        SwipeAction.DELETE -> remove(message, trashed, mail::trash, reset)
+        SwipeAction.READ -> toggleRead(message, reset)
+    }
+
     val screen = screenOf(composing, open, addingAccount, searching)
     // Where back leads: the same screens with the top one gone.
     val behind: Screen? = when (screen) {
@@ -370,6 +429,9 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         }
     }
 
+    // Back from another mailbox leads to the inbox.
+    BackHandler(enabled = screen == Screen.Inbox && mailbox != Mail.INBOX && !accountsOpen) { mailbox = Mail.INBOX }
+
     val colors = MaterialTheme.colorScheme
     Box(Modifier.fillMaxSize()) {
         rememberTransition(screens, label = "screen").AnimatedContent(transitionSpec = { slide() }) { shown ->
@@ -397,7 +459,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                             open = null
                             closeSearch()
                             remove(shown.message, trashed, mail::trash)
-                        },
+                        }.takeIf { shown.message.canTrash },
                         onUnread = {
                             open = null
                             scope.launch {
@@ -411,10 +473,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         },
                         onDone = {
                             open = null
-                            // Back to the inbox, where the toast can undo it.
+                            // Back to the list, where the toast can undo it.
                             closeSearch()
                             archive(shown.message) {}
-                        },
+                        }.takeIf { shown.message.canArchive },
                     )
                     Screen.AddAccount -> SignInScreen(
                         mail,
@@ -437,10 +499,19 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         refreshing = pulled || (syncing && listLoaded && messages.isEmpty()),
                         onSync = {
                             pulled = true
-                            scope.launch { sync() }
+                            scope.launch { sync(mailbox) }
                         },
+                        mailbox = mailbox,
+                        title = mailboxTitle(mailbox, folders),
+                        owner = mailboxOwner(mailbox, folders, accounts),
                         accounts = accounts,
-                        unsent = unsent,
+                        unsent = if (mailbox == Mail.INBOX) unsent else emptyList(),
+                        swipes = swipes,
+                        swipeTip = swipeTip,
+                        onSwipeTip = {
+                            swipeTip = false
+                            settings.swipeTipSeen = true
+                        },
                         messages = messages,
                         tab = tab,
                         tabs = tabs,
@@ -457,7 +528,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                             }
                         },
                         onOpen = { open = it },
-                        onArchive = ::archive,
+                        onSwipe = ::swiped,
                         onTab = { tab = it },
                         onAccounts = { accountsOpen = true },
                         onSearch = { searching = true },
@@ -471,6 +542,17 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         AccountsSheet(
             visible = accountsOpen,
             accounts = accounts,
+            folders = folders,
+            mailbox = mailbox,
+            swipes = swipes,
+            onMailbox = {
+                accountsOpen = false
+                mailbox = it
+            },
+            onSwipes = {
+                swipes = it
+                settings.swipes = it
+            },
             onAdd = {
                 accountsOpen = false
                 addingAccount = true
@@ -498,6 +580,9 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                     MailWorker.clearNotifications(context)
                     // Gone also when the list cannot be read again.
                     accounts = accounts.filterNot { it.id == account.id }
+                    if (folders.any { it.accountId == account.id && Mailbox.Folder(it.id) == mailbox }) {
+                        mailbox = Mail.INBOX
+                    }
                     loadAccounts()
                     if (accounts.isEmpty()) onNoAccounts() else load()
                 }
@@ -587,8 +672,14 @@ private fun InboxList(
     syncing: Boolean,
     refreshing: Boolean,
     onSync: () -> Unit,
+    mailbox: Mailbox,
+    title: String,
+    owner: String?,
     accounts: List<AccountItem>,
     unsent: List<UnsentItem>,
+    swipes: Swipes,
+    swipeTip: Boolean,
+    onSwipeTip: () -> Unit,
     messages: List<MessageItem>,
     tab: Category,
     tabs: List<InboxTab>,
@@ -596,7 +687,7 @@ private fun InboxList(
     snackbar: SnackbarHostState,
     onUnsent: (UnsentItem) -> Unit,
     onOpen: (MessageItem) -> Unit,
-    onArchive: (MessageItem, reset: () -> Unit) -> Unit,
+    onSwipe: (MessageItem, SwipeAction, reset: () -> Unit) -> Unit,
     onTab: (Category) -> Unit,
     onAccounts: () -> Unit,
     onSearch: () -> Unit,
@@ -608,8 +699,8 @@ private fun InboxList(
     // Whether this tab just had mail: then the done note draws itself in as the last message
     // leaves, and not on opening the app or switching to an empty tab.
     // Right after a switch the list is still the old tab's, so it does not count.
-    val oldTabList = remember(tab) { messages }
-    var hadMail by remember(tab) { mutableStateOf(false) }
+    val oldTabList = remember(tab, mailbox) { messages }
+    var hadMail by remember(tab, mailbox) { mutableStateOf(false) }
     LaunchedEffect(messages) { hadMail = messages.isNotEmpty() && messages !== oldTabList }
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     // The compact title shows once the large one has scrolled under the status bar.
@@ -637,17 +728,26 @@ private fun InboxList(
                 state = listState,
                 contentPadding = PaddingValues(top = top, bottom = dockHeight + 16.dp),
             ) {
-                item(key = "title") { Hero(accounts.size > 1) }
+                item(key = "title") { Hero(title, owner) }
                 items(unsent, key = { "unsent-${it.id}" }) { failed ->
                     UnsentRow(failed, rowMove(), onClick = { onUnsent(failed) })
                 }
+                if (swipeTip && messages.isNotEmpty()) {
+                    item(key = "tip") { Box(rowMove()) { SwipeTip(swipes, onSwipeTip) } }
+                }
                 if (messages.isEmpty() && !syncing && error == null) {
-                    item(key = "empty") { if (tab == Category.PEOPLE) InboxZero(hadMail) else TabEmpty(hadMail) }
+                    item(key = "empty") {
+                        when {
+                            mailbox != Mail.INBOX -> EmptyNote(R.drawable.ic_inbox, stringResource(R.string.tab_empty_title), stringResource(R.string.folder_empty))
+                            tab == Category.PEOPLE -> InboxZero(hadMail)
+                            else -> TabEmpty(hadMail)
+                        }
+                    }
                 }
                 itemsIndexed(messages, key = { _, it -> it.id }) { index, message ->
                     Column(rowMove()) {
                         if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.screen), color = colors.outlineVariant)
-                        SwipeToDone(onDone = { reset -> onArchive(message, reset) }) {
+                        SwipeRow(message, swipes, onSwipe = { action, reset -> onSwipe(message, action, reset) }) {
                             MessageRow(message, onClick = { onOpen(message) })
                         }
                     }
@@ -666,7 +766,7 @@ private fun InboxList(
                     .hairline(colors.outlineVariant, top = false),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(stringResource(R.string.inbox_title), fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                Text(title, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         Column(Modifier.align(Alignment.BottomCenter)) {
@@ -686,7 +786,7 @@ private fun InboxList(
             Dock(
                 modifier = Modifier.onSizeChanged { dockHeight = with(density) { it.height.toDp() } },
                 tab = tab,
-                tabs = tabs,
+                tabs = tabs.takeIf { mailbox == Mail.INBOX },
                 accounts = accounts,
                 onTab = onTab,
                 onAccounts = onAccounts,
@@ -697,14 +797,31 @@ private fun InboxList(
     }
 }
 
+/** The mailbox's name: ours for a role, the server's for an account's own folder. */
+@Composable
+private fun mailboxTitle(mailbox: Mailbox, folders: List<FolderItem>): String = when (mailbox) {
+    is Mailbox.Unified -> mailbox.role.title("")
+    is Mailbox.Folder -> folders.find { it.id == mailbox.id }?.title().orEmpty()
+}
+
+/** Whose mail it is, when there are several accounts: all of theirs, or one's. */
+@Composable
+private fun mailboxOwner(mailbox: Mailbox, folders: List<FolderItem>, accounts: List<AccountItem>): String? {
+    if (accounts.size < 2) return null
+    return when (mailbox) {
+        is Mailbox.Unified -> stringResource(R.string.inbox_all_accounts)
+        is Mailbox.Folder -> folders.find { it.id == mailbox.id }?.let { f -> accounts.find { it.id == f.accountId } }?.name
+    }
+}
+
 /** The large title at the top of the list, where it does not need the thumb. */
 @Composable
-private fun Hero(allAccounts: Boolean) {
+private fun Hero(title: String, subtitle: String?) {
     Column(Modifier.padding(start = Gap.screen, end = Gap.screen, top = 12.dp, bottom = 14.dp)) {
-        LargeTitle(stringResource(R.string.inbox_title))
-        if (allAccounts) {
+        LargeTitle(title)
+        if (subtitle != null) {
             Text(
-                stringResource(R.string.inbox_all_accounts),
+                subtitle,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 13.5.sp,
                 modifier = Modifier.padding(top = 4.dp),
@@ -731,14 +848,14 @@ private fun TabEmpty(drawIn: Boolean) {
 }
 
 /**
- * Everything the thumb needs, along the bottom: the tabs, then the accounts button, search
- * and a new message.
+ * Everything the thumb needs, along the bottom: the inbox's tabs (null elsewhere), then the
+ * accounts button, search and a new message.
  */
 @Composable
 private fun Dock(
     modifier: Modifier,
     tab: Category,
-    tabs: List<InboxTab>,
+    tabs: List<InboxTab>?,
     accounts: List<AccountItem>,
     onTab: (Category) -> Unit,
     onAccounts: () -> Unit,
@@ -755,7 +872,7 @@ private fun Dock(
             .padding(top = Gap.barTop, bottom = Gap.barBottom),
         verticalArrangement = Arrangement.spacedBy(Gap.inBar),
     ) {
-        Tabs(tab, tabs, onTab)
+        tabs?.let { Tabs(tab, it, onTab) }
         // The same edge as the tabs above, so the accounts button lines up with them.
         Row(
             Modifier.fillMaxWidth().padding(horizontal = Gap.bar),
@@ -871,36 +988,6 @@ private fun Category.label(): Int = when (this) {
     Category.PEOPLE -> R.string.tab_people
     Category.NOTIFICATIONS -> R.string.tab_notifications
     Category.NEWSLETTERS -> R.string.tab_newsletters
-}
-
-/** A swipe to the left marks the row done; [onDone] gets a way to bring the row back. */
-@Composable
-private fun SwipeToDone(onDone: (reset: () -> Unit) -> Unit, content: @Composable () -> Unit) {
-    val scope = rememberCoroutineScope()
-    val state = rememberSwipeToDismissBoxState()
-    val done by rememberUpdatedState(onDone)
-    LaunchedEffect(state.currentValue) {
-        if (state.currentValue == SwipeToDismissBoxValue.EndToStart) {
-            done { scope.launch { state.reset() } }
-        }
-    }
-    val colors = MaterialTheme.colorScheme
-    SwipeToDismissBox(
-        state = state,
-        enableDismissFromStartToEnd = false,
-        backgroundContent = {
-            Row(
-                Modifier.fillMaxSize().background(MaterialTheme.done).padding(horizontal = 24.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Glyph(R.drawable.ic_done, null, Color.White)
-                Text(stringResource(R.string.action_done), color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-            }
-        },
-    ) {
-        Box(Modifier.background(colors.background)) { content() }
-    }
 }
 
 /** A message the server refused; a tap opens it to fix. */

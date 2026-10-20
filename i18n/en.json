@@ -81,5 +81,22 @@
   "inbox_trashed": "Moved to Trash",
   "action_delete": "Delete",
   "action_more": "More",
-  "action_mark_unread": "Mark as unread"
+  "action_mark_unread": "Mark as unread",
+  "folders_title": "Accounts and folders",
+  "folder_sent": "Sent",
+  "folder_drafts": "Drafts",
+  "folder_archive": "Archive",
+  "folder_trash": "Trash",
+  "folder_junk": "Spam",
+  "folder_flagged": "Flagged",
+  "folder_empty": "No mail here yet.",
+  "account_settings": "Account settings",
+  "swipes_title": "Swipes",
+  "swipes_left": "Swipe left",
+  "swipes_right": "Swipe right",
+  "swipes_summary": "Left: %1$s, right: %2$s",
+  "swipes_tip": "Swipe left: %1$s, right: %2$s. Change it in Accounts → Swipes.",
+  "action_got_it": "Got it",
+  "action_read": "Read",
+  "action_unread": "Unread"
 }

@@ -83,9 +83,9 @@ fun MessageScreen(
     mail: Mail,
     message: MessageItem,
     onReply: (MessageItem, all: Boolean) -> Unit,
-    onDelete: () -> Unit,
+    onDelete: (() -> Unit)?,
     onUnread: () -> Unit,
-    onDone: () -> Unit,
+    onDone: (() -> Unit)?,
 ) {
     var more by remember(message.id) { mutableStateOf(false) }
     var thread by remember(message.id) { mutableStateOf(listOf(message)) }
@@ -360,14 +360,17 @@ private fun PlainText(text: String, quote: String, modifier: Modifier) {
     }
 }
 
-/** The actions under the thumb, each in an equal place; Done, the one used most, takes the last. */
+/**
+ * The actions under the thumb, each in an equal place; Done, the one used most, takes the last.
+ * Delete and Done are null in a folder where they do not apply, such as Done in the archive.
+ */
 @Composable
-private fun Actions(onDelete: () -> Unit, onMore: () -> Unit, onDone: () -> Unit) {
+private fun Actions(onDelete: (() -> Unit)?, onMore: () -> Unit, onDone: (() -> Unit)?) {
     val colors = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth().padding(horizontal = Gap.bar), horizontalArrangement = Arrangement.spacedBy(Gap.inBar)) {
-        Action(R.drawable.ic_delete, R.string.action_delete, colors.onSurface, onClick = onDelete)
+        onDelete?.let { Action(R.drawable.ic_delete, R.string.action_delete, colors.onSurface, onClick = it) }
         Action(R.drawable.ic_more, R.string.action_more, colors.onSurface, onClick = onMore)
-        Action(R.drawable.ic_done, R.string.action_done, Color.White, MaterialTheme.done, onDone)
+        onDone?.let { Action(R.drawable.ic_done, R.string.action_done, Color.White, MaterialTheme.done, it) }
     }
 }
 
