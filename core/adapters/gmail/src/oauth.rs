@@ -14,8 +14,10 @@ use crate::codec::{base64url, form, query_value};
 
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_HOST: &str = "oauth2.googleapis.com";
-/// Read, label and send mail; not delete for good.
-pub const SCOPE: &str = "https://www.googleapis.com/auth/gmail.modify";
+/// All of Gmail: deleting for good needs it.
+pub const SCOPE: &str = "https://mail.google.com/";
+/// What older sign-ins have: everything but deleting for good, which Gmail then refuses.
+const OLD_SCOPE: &str = "https://www.googleapis.com/auth/gmail.modify";
 
 /// A sign-in under way: the browser opens `url`, and the app keeps the rest until the
 /// browser comes back.
@@ -145,7 +147,7 @@ async fn token(tls: Arc<ClientConfig>, pairs: &[(&str, &str)]) -> Result<Tokens,
 fn tokens(json: &Value) -> Result<Tokens, ProviderError> {
     // The person can untick Gmail on the consent screen and still sign in.
     if let Some(scope) = json["scope"].as_str()
-        && !scope.split(' ').any(|s| s == SCOPE)
+        && !scope.split(' ').any(|s| s == SCOPE || s == OLD_SCOPE)
     {
         return Err(ProviderError::Auth);
     }
@@ -221,6 +223,8 @@ mod tests {
                 refresh: Some("r".into())
             })
         );
+        let older = json!({"access_token": "a", "scope": OLD_SCOPE});
+        assert!(tokens(&older).is_ok());
         let without = json!({"access_token": "a", "scope": "openid"});
         assert_eq!(tokens(&without), Err(ProviderError::Auth));
     }

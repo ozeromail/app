@@ -311,6 +311,19 @@ impl Core {
         self.hold_move(message, Action::Trash)
     }
 
+    /// As `archive`, but gone from the server for good: for mail in the trash only.
+    pub fn delete_forever(&self, message: i64) -> Result<Vec<i64>, CoreError> {
+        self.hold_move(message, Action::Delete)
+    }
+
+    /// Empties a trash or spam folder for good, held like `archive`: on the server too, mail
+    /// the app has not loaded included. Returns the actions for `undo`.
+    pub fn empty_folder(&self, folder: i64) -> Result<Vec<i64>, CoreError> {
+        Ok(ids(self
+            .store
+            .queue_empty(FolderId(folder), now() + HOLD)?))
+    }
+
     /// An answer to `message` from the account that got it, `Re: ` once: to its sender, or
     /// with `all` to everyone it went to as well.
     pub fn reply(&self, message: MessageItem, all: bool) -> Result<DraftItem, CoreError> {
@@ -737,8 +750,11 @@ impl Core {
 
     /// Queues a move held for the undo time and returns its ops for `undo`.
     fn hold_move(&self, message: i64, action: Action) -> Result<Vec<i64>, CoreError> {
-        let ops = self.store.queue(MessageId(message), action, now() + HOLD)?;
-        Ok(ops.into_iter().map(|op| op.0).collect())
+        Ok(ids(self.store.queue(
+            MessageId(message),
+            action,
+            now() + HOLD,
+        )?))
     }
 
     /// List rows, marked with their account when there is more than one.
@@ -1008,6 +1024,30 @@ impl MailProvider for Remote {
         }
     }
 
+    async fn delete(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_ids: &[String],
+    ) -> Result<(), ProviderError> {
+        match self {
+            Self::Imap(p) => p.delete(folder, validity, remote_ids).await,
+            Self::Gmail(p) => p.delete(folder, validity, remote_ids).await,
+        }
+    }
+
+    async fn empty(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        keep: &[String],
+    ) -> Result<(), ProviderError> {
+        match self {
+            Self::Imap(p) => p.empty(folder, validity, keep).await,
+            Self::Gmail(p) => p.empty(folder, validity, keep).await,
+        }
+    }
+
     async fn append(&mut self, folder: &str, message: &[u8]) -> Result<(), ProviderError> {
         match self {
             Self::Imap(p) => p.append(folder, message).await,
@@ -1104,6 +1144,11 @@ pub enum FolderRole {
 pub enum Mailbox {
     Unified { role: FolderRole },
     Folder { id: i64 },
+}
+
+/// Held actions as the apps pass them back to `undo`.
+fn ids(ops: Vec<OpId>) -> Vec<i64> {
+    ops.into_iter().map(|op| op.0).collect()
 }
 
 const INBOX: Mailbox = Mailbox::Unified {
@@ -1444,7 +1489,7 @@ pub struct MessageItem {
     pub sent: bool,
     /// Done can archive it: its folder holds mail not filed yet.
     pub can_archive: bool,
-    /// It can go to the trash: it is not there already.
+    /// It can go to the trash: it is not there already; delete there is for good.
     pub can_trash: bool,
     /// In mixed lists (the unified inbox, search), set when there is more than one account.
     pub account: Option<AccountMark>,

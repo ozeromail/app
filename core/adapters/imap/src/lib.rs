@@ -18,7 +18,7 @@ use imap_codec::imap_types::mailbox::Mailbox;
 use imap_codec::imap_types::response::{
     Capability, Code, Data, GreetingKind, Response, Status, StatusBody, StatusKind,
 };
-use imap_codec::imap_types::sequence::SequenceSet;
+use imap_codec::imap_types::sequence::{SeqOrUid, Sequence, SequenceSet};
 use imap_codec::{CommandCodec, GreetingCodec, ResponseCodec};
 use ozero_domain::{
     Changes, Checkpoint, Flags, FolderRole, MailProvider, NewFolder, ProviderError, RawMessage,
@@ -196,9 +196,22 @@ impl ImapSession {
 
     /// Whether the server has IDLE.
     async fn can_idle(&mut self) -> Result<bool, ProviderError> {
-        Ok(self.run(CommandBody::Capability).await?.data.iter().any(
-            |d| matches!(d, Data::Capability(caps) if caps.as_ref().contains(&Capability::Idle)),
-        ))
+        Ok(self.capabilities().await?.contains(&Capability::Idle))
+    }
+
+    /// What the server can do, as CAPABILITY lists it now.
+    async fn capabilities(&mut self) -> Result<Vec<Capability<'static>>, ProviderError> {
+        Ok(self
+            .run(CommandBody::Capability)
+            .await?
+            .data
+            .into_iter()
+            .filter_map(|d| match d {
+                Data::Capability(caps) => Some(caps.into_inner()),
+                _ => None,
+            })
+            .flatten()
+            .collect())
     }
 
     /// Waits in IDLE (RFC 2177) until the server reports a change in the open folder, at
@@ -594,6 +607,58 @@ impl MailProvider for ImapSession {
         .await
     }
 
+    async fn delete(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_ids: &[String],
+    ) -> Result<(), ProviderError> {
+        let uids = uids(remote_ids)?;
+        if uids.is_empty() {
+            return Ok(());
+        }
+        if self.open(folder, true).await?.validity != validity {
+            return Err(ProviderError::Gone);
+        }
+        let sets = uids
+            .chunks(UID_CHUNK)
+            .map(SequenceSet::try_from)
+            .collect::<Result<_, _>>()
+            .map_err(|_| protocol("bad UID set"))?;
+        self.purge(sets).await
+    }
+
+    async fn empty(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        keep: &[String],
+    ) -> Result<(), ProviderError> {
+        if self.open(folder, true).await?.validity != validity {
+            return Err(ProviderError::Gone);
+        }
+        let mut keep = uids(keep)?;
+        keep.sort();
+        // Every UID but those to keep: the gaps between them, the last up to the highest UID
+        // there can be. Not `n:*`, which takes the newest message even when it is below `n`.
+        let mut gaps = vec![];
+        let mut from = 1;
+        for uid in keep.into_iter().map(NonZeroU32::get).chain([u32::MAX]) {
+            if let (Some(a), Some(b)) = (NonZeroU32::new(from), NonZeroU32::new(uid - 1))
+                && a <= b
+            {
+                gaps.push(Sequence::Range(SeqOrUid::Value(a), SeqOrUid::Value(b)));
+            }
+            from = uid.saturating_add(1);
+        }
+        let sets = gaps
+            .chunks(UID_CHUNK)
+            .map(|chunk| SequenceSet::try_from(chunk.to_vec()))
+            .collect::<Result<_, _>>()
+            .map_err(|_| protocol("bad UID set"))?;
+        self.purge(sets).await
+    }
+
     async fn append(&mut self, folder: &str, message: &[u8]) -> Result<(), ProviderError> {
         let mailbox = Mailbox::try_from(folder).map_err(|_| protocol("bad folder name"))?;
         let append = CommandBody::append(mailbox, vec![Flag::Seen], None, message.to_vec())
@@ -633,6 +698,33 @@ impl MailProvider for ImapSession {
 }
 
 impl ImapSession {
+    /// Removes the messages in `sets` of the open folder for good.
+    async fn purge(&mut self, sets: Vec<SequenceSet>) -> Result<(), ProviderError> {
+        if sets.is_empty() {
+            return Ok(());
+        }
+        for set in &sets {
+            let store = CommandBody::store(
+                set.clone(),
+                StoreType::Add,
+                StoreResponse::Silent,
+                vec![Flag::Deleted],
+                true,
+            )
+            .map_err(|_| protocol("bad STORE"))?;
+            self.run(store).await?;
+        }
+        // RFC 4315 UID EXPUNGE removes only these; without it, EXPUNGE takes whatever else in
+        // the folder is marked deleted, which in the trash is thrown away already.
+        if !self.capabilities().await?.contains(&Capability::UidPlus) {
+            return self.run(CommandBody::Expunge).await.map(|_| ());
+        }
+        for sequence_set in sets {
+            self.run(CommandBody::ExpungeUid { sequence_set }).await?;
+        }
+        Ok(())
+    }
+
     /// Opens `folder` for writing and runs one command per chunk of its UIDs.
     /// A UID that was expunged meanwhile is skipped by the server.
     async fn each_chunk<'a>(
@@ -642,11 +734,7 @@ impl ImapSession {
         remote_ids: &[String],
         command: impl Fn(&[NonZeroU32]) -> Result<CommandBody<'a>, ProviderError>,
     ) -> Result<(), ProviderError> {
-        let uids = remote_ids
-            .iter()
-            .map(|id| id.parse::<NonZeroU32>())
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| protocol("bad UID"))?;
+        let uids = uids(remote_ids)?;
         if uids.is_empty() {
             return Ok(());
         }
@@ -659,6 +747,15 @@ impl ImapSession {
         }
         Ok(())
     }
+}
+
+/// Message ids as IMAP UIDs.
+fn uids(remote_ids: &[String]) -> Result<Vec<NonZeroU32>, ProviderError> {
+    remote_ids
+        .iter()
+        .map(|id| id.parse::<NonZeroU32>())
+        .collect::<Result<_, _>>()
+        .map_err(|_| protocol("bad UID"))
 }
 
 /// The message bytes of a FETCH reply for `uid`.

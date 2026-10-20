@@ -352,6 +352,44 @@ async fn archives_by_taking_the_inbox_label_off() {
 }
 
 #[tokio::test]
+async fn deletes_for_good_only_what_is_still_in_the_folder() {
+    let (mut gmail, seen) = session(vec![
+        (
+            "/messages?labelIds=TRASH&includeSpamTrash=true",
+            200,
+            json!({"messages": [{"id": "a"}, {"id": "c"}]}),
+        ),
+        ("/messages/batchDelete", 204, Value::Null),
+    ])
+    .await;
+    // "b" was taken out of the trash elsewhere since the last sync.
+    gmail
+        .delete("TRASH", 0, &["a".to_owned(), "b".to_owned()])
+        .await
+        .unwrap();
+    let seen = seen.lock().unwrap();
+    let body: Value = serde_json::from_str(&seen[1].2).unwrap();
+    assert_eq!(body, json!({"ids": ["a"]}));
+}
+
+#[tokio::test]
+async fn empties_everything_but_what_to_keep() {
+    let (mut gmail, seen) = session(vec![
+        (
+            "/messages?labelIds=SPAM&includeSpamTrash=true",
+            200,
+            json!({"messages": [{"id": "a"}, {"id": "b"}, {"id": "c"}]}),
+        ),
+        ("/messages/batchDelete", 204, Value::Null),
+    ])
+    .await;
+    gmail.empty("SPAM", 0, &["b".to_owned()]).await.unwrap();
+    let seen = seen.lock().unwrap();
+    let body: Value = serde_json::from_str(&seen[1].2).unwrap();
+    assert_eq!(body, json!({"ids": ["a", "c"]}));
+}
+
+#[tokio::test]
 async fn sends_and_reads_raw_messages() {
     let raw = b"Subject: Hi\r\n\r\n\xff\xfe body";
     let (mut gmail, seen) = session(vec![

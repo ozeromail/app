@@ -57,6 +57,7 @@ async fn lists_folders_with_roles_and_names() {
             ("&BB4EQgRHBFEEQgRL-", "Отчёты", FolderRole::Custom),
             ("Archive", "Archive", FolderRole::Archive),
             ("Changes", "Changes", FolderRole::Custom),
+            ("Deletes", "Deletes", FolderRole::Custom),
             ("Empty", "Empty", FolderRole::Custom),
             ("Gone", "Gone", FolderRole::Custom),
             ("INBOX", "INBOX", FolderRole::Inbox),
@@ -147,6 +148,32 @@ async fn moves_messages_to_another_folder() {
     assert!(header.contains("Subject: Move me"), "{header}");
     // The inbox tabs need the list headers.
     assert!(header.contains("List-Unsubscribe:"), "{header}");
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "needs tools/dovecot-test.sh"]
+async fn deletes_and_empties_for_good() {
+    // Its own folder, so other tests keep their messages.
+    let mut imap = session().await;
+    let validity = recent(&mut imap, "Deletes", 1).await.checkpoint.validity;
+    imap.delete("Deletes", validity, &["1".into()])
+        .await
+        .unwrap();
+    assert_eq!(left(&mut imap).await, ["2", "3", "4"]);
+    // The newest is kept too, which `n:*` would take.
+    imap.empty("Deletes", validity, &["4".into()])
+        .await
+        .unwrap();
+    assert_eq!(left(&mut imap).await, ["4"]);
+}
+
+async fn left(imap: &mut ImapSession) -> Vec<String> {
+    recent(imap, "Deletes", 10)
+        .await
+        .new
+        .into_iter()
+        .map(|m| m.remote_id)
+        .collect()
 }
 
 #[tokio::test(flavor = "current_thread")]

@@ -9,6 +9,11 @@ pub enum Action {
     Archive,
     /// Moves the message out of its folder into the account's trash.
     Trash,
+    /// Removes the message from the server for good: from the trash only.
+    Delete,
+    /// Empties the trash or spam the message is in, for good: everything the server has
+    /// there but the messages the app still keeps. Queued on each message the person saw go.
+    Empty,
 }
 
 /// Local id of a queued action.

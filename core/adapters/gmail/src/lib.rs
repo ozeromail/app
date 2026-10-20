@@ -267,15 +267,52 @@ impl GmailSession {
         add: &[&str],
         remove: &[&str],
     ) -> Result<(), ProviderError> {
+        self.each_batch(
+            "/messages/batchModify",
+            ids,
+            |chunk| json!({"ids": chunk, "addLabelIds": add, "removeLabelIds": remove}),
+        )
+        .await
+    }
+
+    /// Posts `body` for each batch of `ids` the API takes at once.
+    async fn each_batch(
+        &mut self,
+        path: &str,
+        ids: &[String],
+        body: impl Fn(&[String]) -> Value,
+    ) -> Result<(), ProviderError> {
         for chunk in ids.chunks(MAX_MODIFY) {
-            let body = json!({"ids": chunk, "addLabelIds": add, "removeLabelIds": remove});
-            match self.post("/messages/batchModify", &body).await {
+            match self.post(path, &body(chunk)).await {
                 // Undone on the device rather than retried forever.
                 Err(ProviderError::Rejected(e)) => return Err(ProviderError::Protocol(e)),
                 other => other?,
             };
         }
         Ok(())
+    }
+
+    /// The ids of every message in a folder now.
+    async fn ids_in(&mut self, folder: &str) -> Result<HashSet<String>, ProviderError> {
+        let mut ids = HashSet::new();
+        let mut page = String::new();
+        loop {
+            let json = self
+                .get(&format!(
+                    "/messages?{}&maxResults=500{page}",
+                    listing(folder)
+                ))
+                .await?;
+            for m in json["messages"].as_array().into_iter().flatten() {
+                if let Some(id) = m["id"].as_str() {
+                    ids.insert(id.to_owned());
+                }
+            }
+            match json["nextPageToken"].as_str() {
+                Some(token) => page = format!("&pageToken={}", percent(token)),
+                None => return Ok(ids),
+            }
+        }
     }
 }
 
@@ -386,6 +423,37 @@ impl MailProvider for GmailSession {
             label(folder)
         };
         self.modify(remote_ids, label(to).as_slice(), from.as_slice())
+            .await
+    }
+
+    async fn delete(
+        &mut self,
+        folder: &str,
+        _validity: u32,
+        remote_ids: &[String],
+    ) -> Result<(), ProviderError> {
+        // Only what is still in the folder: mail taken out of the trash elsewhere since the
+        // last sync stays.
+        let there = self.ids_in(folder).await?;
+        let ids: Vec<_> = remote_ids
+            .iter()
+            .filter(|id| there.contains(id.as_str()))
+            .cloned()
+            .collect();
+        self.each_batch("/messages/batchDelete", &ids, |chunk| json!({"ids": chunk}))
+            .await
+    }
+
+    async fn empty(
+        &mut self,
+        folder: &str,
+        _validity: u32,
+        keep: &[String],
+    ) -> Result<(), ProviderError> {
+        let mut ids: Vec<_> = self.ids_in(folder).await?.into_iter().collect();
+        ids.retain(|id| !keep.contains(id));
+        ids.sort();
+        self.each_batch("/messages/batchDelete", &ids, |chunk| json!({"ids": chunk}))
             .await
     }
 

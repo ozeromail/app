@@ -93,6 +93,23 @@ pub trait MailProvider: Send {
         to: &str,
     ) -> impl Future<Output = Result<(), ProviderError>> + Send;
 
+    /// Removes messages of a folder from the server for good, like `set_seen` otherwise.
+    fn delete(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_ids: &[String],
+    ) -> impl Future<Output = Result<(), ProviderError>> + Send;
+
+    /// Removes everything in a folder from the server for good but the `keep` messages,
+    /// mail the app has not seen included.
+    fn empty(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        keep: &[String],
+    ) -> impl Future<Output = Result<(), ProviderError>> + Send;
+
     /// Saves a message into a folder, marked read: a sent copy into Sent.
     fn append(
         &mut self,
