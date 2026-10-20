@@ -98,5 +98,9 @@
   "swipes_tip": "Swipe left: %1$s, right: %2$s. Change it in Accounts and folders → Swipes.",
   "action_got_it": "Got it",
   "action_read": "Read",
-  "action_unread": "Unread"
+  "action_unread": "Unread",
+  "account_name": "Name",
+  "account_name_hint": "Shown in the list and on your mail; only on this phone.",
+  "action_expand": "Show folders",
+  "action_collapse": "Hide folders"
 }

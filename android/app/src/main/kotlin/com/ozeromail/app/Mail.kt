@@ -52,6 +52,9 @@ class Mail(private val context: Context) {
     /** [color] is a place in [accountColors]. */
     suspend fun setAccountColor(account: AccountItem, color: Int) = io { core.setAccountColor(account.id, color.toUInt()) }
 
+    /** The person's own name for [account]; empty goes back to the usual one. */
+    suspend fun setAccountLabel(account: AccountItem, label: String) = io { core.setAccountLabel(account.id, label) }
+
     /** Removes the account and its mail from the phone, then its secret. */
     suspend fun removeAccount(account: AccountItem) = io {
         core.removeAccount(account.id)

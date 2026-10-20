@@ -177,6 +177,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     val context = LocalContext.current
     val settings = remember { Settings(context) }
     var swipes by remember { mutableStateOf(settings.swipes) }
+    var collapsed by remember { mutableStateOf(settings.collapsed) }
     var swipeTip by remember { mutableStateOf(!settings.swipeTipSeen) }
     var query by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -226,6 +227,19 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     suspend fun load() {
         loadList()
         counts()
+    }
+
+    /** Saves a change to an account, then shows it in the sheet and on the rows. */
+    fun changeAccount(change: suspend () -> Unit) {
+        scope.launch {
+            try {
+                change()
+            } catch (e: CoreException) {
+                error = e.text()
+            }
+            loadAccounts()
+            loadList()
+        }
     }
 
     /**
@@ -561,20 +575,20 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 swipes = it
                 settings.swipes = it
             },
+            collapsed = collapsed,
+            onCollapsed = {
+                collapsed = it
+                settings.collapsed = it
+            },
             onAdd = {
                 accountsOpen = false
                 addingAccount = true
             },
             onColor = { account, color ->
-                scope.launch {
-                    try {
-                        mail.setAccountColor(account, color)
-                    } catch (e: CoreException) {
-                        error = e.text()
-                    }
-                    loadAccounts()
-                    loadList()
-                }
+                changeAccount { mail.setAccountColor(account, color) }
+            },
+            onLabel = { account, label ->
+                changeAccount { mail.setAccountLabel(account, label) }
             },
             onRemove = { account ->
                 accountsOpen = false
@@ -1028,10 +1042,6 @@ val AccountMark.tint: Color
 
 val AccountItem.tint: Color
     get() = rgb(color)
-
-/** The account's name, or its address when it has none. */
-val AccountItem.name: String
-    get() = displayName.ifBlank { email }
 
 fun rgb(color: UInt) = Color(0xFF000000 or color.toLong())
 

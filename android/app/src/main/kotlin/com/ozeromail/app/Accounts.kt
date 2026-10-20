@@ -2,9 +2,12 @@ package com.ozeromail.app
 
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -21,24 +24,33 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -50,8 +62,8 @@ import uniffi.ozero_api.accountColors
 
 /**
  * The mailboxes of all accounts together, then each account's folders, and below them the
- * swipes and a way to add an account. A tap on an account's name, or on Swipes, opens its
- * settings in the same sheet, which grows or shrinks to fit.
+ * swipes and a way to add an account. A tap on a group's name hides or shows its folders; its
+ * More button, or Swipes, opens the settings in the same sheet, which grows or shrinks to fit.
  */
 @Composable
 fun AccountsSheet(
@@ -62,8 +74,11 @@ fun AccountsSheet(
     swipes: Swipes,
     onMailbox: (Mailbox) -> Unit,
     onSwipes: (Swipes) -> Unit,
+    collapsed: Set<Long>,
+    onCollapsed: (Set<Long>) -> Unit,
     onAdd: () -> Unit,
     onColor: (AccountItem, Int) -> Unit,
+    onLabel: (AccountItem, String) -> Unit,
     onRemove: (AccountItem) -> Unit,
     onWrite: () -> Unit,
     onClose: () -> Unit,
@@ -92,11 +107,20 @@ fun AccountsSheet(
                         account,
                         onBack = { page = null },
                         onColor = { onColor(account, it) },
+                        onLabel = { onLabel(account, it) },
                         onRemove = { onRemove(account) },
                     )
                     else -> {
                         SheetTitle(stringResource(R.string.folders_title))
-                        Folders(accounts, folders, mailbox, onMailbox, onAccount = { page = it.id })
+                        Folders(
+                            accounts,
+                            folders,
+                            mailbox,
+                            collapsed,
+                            onMailbox,
+                            onToggle = { group -> onCollapsed(if (group in collapsed) collapsed - group else collapsed + group) },
+                            onAccount = { page = it.id },
+                        )
                         HorizontalDivider(Modifier.padding(vertical = 6.dp), color = colors.outlineVariant)
                         SheetRow(onClick = { page = SWIPES }, lead = { Glyph(R.drawable.ic_swipe, null, colors.primary) }) {
                             Column(Modifier.weight(1f)) {
@@ -117,30 +141,40 @@ fun AccountsSheet(
 private const val SWIPES = -1L
 
 /**
- * With several accounts, their mailboxes together first; then each account under its name,
- * which opens its settings. The open mailbox is in the accent colour.
+ * With several accounts, their mailboxes together first; then each account under its name.
+ * A group in [collapsed] shows only its name. The open mailbox is in the accent colour.
  */
 @Composable
 private fun Folders(
     accounts: List<AccountItem>,
     folders: List<FolderItem>,
     mailbox: Mailbox,
+    collapsed: Set<Long>,
     onMailbox: (Mailbox) -> Unit,
+    onToggle: (Long) -> Unit,
     onAccount: (AccountItem) -> Unit,
 ) {
     if (accounts.size > 1) {
-        GroupLabel(stringResource(R.string.inbox_all_accounts), lead = { StackedDots(accounts) })
-        UNIFIED.filter { role -> role == FolderRole.INBOX || folders.any { it.role == role } }.forEach { role ->
-            val box = Mailbox.Unified(role)
-            FolderRow(role.icon(), role.title(""), box == mailbox) { onMailbox(box) }
+        Group(stringResource(R.string.inbox_all_accounts), Settings.ALL_ACCOUNTS !in collapsed, { StackedDots(accounts) }, { onToggle(Settings.ALL_ACCOUNTS) }) {
+            UNIFIED.filter { role -> role == FolderRole.INBOX || folders.any { it.role == role } }.forEach { role ->
+                val box = Mailbox.Unified(role)
+                FolderRow(role.icon(), role.title(""), box == mailbox) { onMailbox(box) }
+            }
         }
     }
     accounts.forEach { account ->
-        GroupLabel(account.name, lead = { AccountDot(account.tint, size = 12.dp) }, onClick = { onAccount(account) })
-        folders.filter { it.accountId == account.id && it.role != FolderRole.DRAFTS }.sortedWith(FOLDER_ORDER).forEach { folder ->
-            // With one account its inbox is the unified one, which keeps the tabs.
-            val box = if (folder.role == FolderRole.INBOX && accounts.size == 1) Mail.INBOX else Mailbox.Folder(folder.id)
-            FolderRow(folder.role.icon(), folder.title(), box == mailbox) { onMailbox(box) }
+        Group(
+            account.name,
+            account.id !in collapsed,
+            lead = { AccountDot(account.tint, size = 12.dp) },
+            onToggle = { onToggle(account.id) },
+            onSettings = { onAccount(account) },
+        ) {
+            folders.filter { it.accountId == account.id && it.role != FolderRole.DRAFTS }.sortedWith(FOLDER_ORDER).forEach { folder ->
+                // With one account its inbox is the unified one, which keeps the tabs.
+                val box = if (folder.role == FolderRole.INBOX && accounts.size == 1) Mail.INBOX else Mailbox.Folder(folder.id)
+                FolderRow(folder.role.icon(), folder.title(), box == mailbox) { onMailbox(box) }
+            }
         }
     }
 }
@@ -190,14 +224,22 @@ fun FolderRole.title(name: String): String = when (this) {
 @Composable
 fun FolderItem.title(): String = role.title(name)
 
+/** A group's name, which hides or shows its folders, and with [onSettings] a way to its settings. */
 @Composable
-private fun GroupLabel(text: String, lead: @Composable () -> Unit, onClick: (() -> Unit)? = null) {
+private fun Group(
+    text: String,
+    open: Boolean,
+    lead: @Composable () -> Unit,
+    onToggle: () -> Unit,
+    onSettings: (() -> Unit)? = null,
+    folders: @Composable () -> Unit,
+) {
     val colors = MaterialTheme.colorScheme
     Row(
         Modifier
             .fillMaxWidth()
-            .then(if (onClick == null) Modifier else Modifier.clickable(onClickLabel = stringResource(R.string.account_settings), onClick = onClick))
-            .padding(start = Gap.sheet, end = Gap.sheet, top = 14.dp, bottom = 4.dp),
+            .clickable(onClickLabel = stringResource(if (open) R.string.action_collapse else R.string.action_expand), onClick = onToggle)
+            .padding(start = Gap.sheet, end = Gap.sheet - 12.dp, top = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(Gap.slot), contentAlignment = Alignment.Center) { lead() }
@@ -207,9 +249,23 @@ private fun GroupLabel(text: String, lead: @Composable () -> Unit, onClick: (() 
             fontWeight = FontWeight.Bold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f).padding(start = Gap.afterSlot),
+            modifier = Modifier.weight(1f, fill = false).padding(start = Gap.afterSlot),
         )
-        if (onClick != null) Glyph(R.drawable.ic_next, null, colors.onSurfaceVariant, size = 18.dp)
+        // Points down while the folders show, to the side while they are hidden.
+        Glyph(R.drawable.ic_next, null, colors.onSurfaceVariant, Modifier.padding(start = 4.dp).rotate(if (open) 90f else 0f), size = 16.dp)
+        Box(Modifier.weight(1f))
+        if (onSettings != null) {
+            IconTile(R.drawable.ic_more, stringResource(R.string.account_settings), onSettings, tint = colors.onSurfaceVariant, size = 40.dp)
+        } else {
+            Box(Modifier.size(40.dp))
+        }
+    }
+    AnimatedVisibility(
+        open,
+        enter = expandVertically(Motion.calm(Motion.NOTE)) + fadeIn(Motion.calm(Motion.NOTE)),
+        exit = shrinkVertically(Motion.calm(Motion.NOTE)) + fadeOut(Motion.calm(Motion.SMALL)),
+    ) {
+        Column { folders() }
     }
 }
 
@@ -252,12 +308,19 @@ private fun SubPage(title: String, onBack: () -> Unit) {
     }
 }
 
-/** One account: its colour, and a way to remove it from the phone. */
+/** One account: its name and colour, and a way to remove it from the phone. */
 @Composable
-private fun AccountSettings(account: AccountItem, onBack: () -> Unit, onColor: (Int) -> Unit, onRemove: () -> Unit) {
+private fun AccountSettings(
+    account: AccountItem,
+    onBack: () -> Unit,
+    onColor: (Int) -> Unit,
+    onLabel: (String) -> Unit,
+    onRemove: () -> Unit,
+) {
     var confirming by rememberSaveable { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
     SubPage(account.name, onBack)
+    LabelField(account, onLabel)
     Text(
         stringResource(R.string.account_color),
         color = colors.onSurfaceVariant,
@@ -286,6 +349,35 @@ private fun AccountSettings(account: AccountItem, onBack: () -> Unit, onColor: (
             shape = RoundedCornerShape(Radius.dialog),
         )
     }
+}
+
+/** The person's own name for the account, saved on Done and when the page closes. */
+@Composable
+private fun LabelField(account: AccountItem, onLabel: (String) -> Unit) {
+    var label by rememberSaveable(account.id) { mutableStateOf(account.label) }
+    val saved by rememberUpdatedState(account.label)
+    val latest by rememberUpdatedState(label)
+    val save by rememberUpdatedState(onLabel)
+    val focus = LocalFocusManager.current
+    DisposableEffect(account.id) {
+        onDispose { if (latest.trim() != saved) save(latest) }
+    }
+    OutlinedTextField(
+        value = label,
+        onValueChange = { label = it },
+        label = { Text(stringResource(R.string.account_name)) },
+        // What the account is called without a name of its own.
+        placeholder = { Text(account.displayName.ifBlank { account.email }) },
+        supportingText = { Text(stringResource(R.string.account_name_hint)) },
+        shape = RoundedCornerShape(Radius.medium),
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(onDone = {
+            focus.clearFocus()
+            if (label.trim() != account.label) onLabel(label)
+        }),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = Gap.sheet).padding(top = 8.dp),
+    )
 }
 
 /** The account colours in two rows; the current one has a ring. */

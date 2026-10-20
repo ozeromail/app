@@ -63,12 +63,21 @@ class Settings(context: Context) {
         get() = prefs.getBoolean(TIP, false)
         set(value) = prefs.edit().putBoolean(TIP, value).apply()
 
+    /** The groups of the accounts sheet shown without their folders: account ids, or [ALL_ACCOUNTS]. */
+    var collapsed: Set<Long>
+        get() = prefs.getStringSet(COLLAPSED, null).orEmpty().mapNotNull { it.toLongOrNull() }.toSet()
+        set(value) = prefs.edit().putStringSet(COLLAPSED, value.map { it.toString() }.toSet()).apply()
+
     private fun action(name: String?) = SwipeAction.entries.find { it.name == name }
 
-    private companion object {
-        const val LEFT = "swipe_left"
-        const val RIGHT = "swipe_right"
-        const val TIP = "swipe_tip_seen"
+    companion object {
+        /** The group of the mailboxes of all accounts together; account ids are positive. */
+        const val ALL_ACCOUNTS = 0L
+
+        private const val LEFT = "swipe_left"
+        private const val RIGHT = "swipe_right"
+        private const val TIP = "swipe_tip_seen"
+        private const val COLLAPSED = "collapsed_groups"
     }
 }
 
