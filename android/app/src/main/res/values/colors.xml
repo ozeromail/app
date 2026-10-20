@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="window_night">#FF1B1C1F</color>
+    <!-- The dark Theme.kt background, so a cold start does not flash. -->
+    <color name="window_night">#FF141923</color>
 </resources>

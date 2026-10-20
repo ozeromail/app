@@ -370,7 +370,7 @@ private fun Actions(onDelete: () -> Unit, forever: Boolean, onMore: () -> Unit, 
         val delete = if (forever) R.string.action_delete_forever else R.string.action_delete
         BarAction(R.drawable.ic_delete, stringResource(delete), colors.onSurface, onClick = onDelete)
         BarAction(R.drawable.ic_more, stringResource(R.string.action_more), colors.onSurface, onClick = onMore)
-        onDone?.let { BarAction(R.drawable.ic_done, stringResource(R.string.action_done), Color.White, MaterialTheme.done, it) }
+        onDone?.let { BarAction(R.drawable.ic_done, stringResource(R.string.action_done), colors.onPrimary, colors.primary, it) }
     }
 }
 

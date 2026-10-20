@@ -147,13 +147,14 @@ fun SwipeRow(
                 action == SwipeAction.DELETE && !message.canTrash -> R.string.action_delete_forever
                 else -> action.label
             }
+            val (background, content) = action.colors()
             Row(
-                Modifier.fillMaxSize().background(action.color()).padding(horizontal = 24.dp),
+                Modifier.fillMaxSize().background(background).padding(horizontal = 24.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp, if (left) Alignment.End else Alignment.Start),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Glyph(action.icon, null, Color.White)
-                Text(stringResource(label), color = Color.White, style = Type.Text, fontWeight = Weight.SemiBold)
+                Glyph(action.icon, null, content)
+                Text(stringResource(label), color = content, style = Type.Text, fontWeight = Weight.SemiBold)
             }
         },
     ) {
@@ -161,12 +162,14 @@ fun SwipeRow(
     }
 }
 
-/** Done is green, as everywhere; Read takes the accent, Delete the warning red. */
+/** The fill and what sits on it: Done the accent, as everywhere; Read the quiet slate, Delete the warning red. */
 @Composable
-private fun SwipeAction.color(): Color = when (this) {
-    SwipeAction.DONE -> MaterialTheme.done
-    SwipeAction.READ -> MaterialTheme.colorScheme.primary
-    SwipeAction.DELETE -> MaterialTheme.colorScheme.error
+private fun SwipeAction.colors(): Pair<Color, Color> = with(MaterialTheme.colorScheme) {
+    when (this@colors) {
+        SwipeAction.DONE -> primary to onPrimary
+        SwipeAction.READ -> secondary to onSecondary
+        SwipeAction.DELETE -> error to onError
+    }
 }
 
 /** "Left: Done, right: Read". */

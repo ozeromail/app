@@ -1275,10 +1275,10 @@ pub fn account_colors() -> Vec<u32> {
     ACCOUNT_COLORS.to_vec()
 }
 
-/// Account colours in the order accounts get them: the logo's three first.
+/// Account colours in the order accounts get them: cut paper of one brightness, coral first.
 const ACCOUNT_COLORS: [u32; 10] = [
-    0xEF_4A_5C, 0x14_A3_8B, 0x8A_5C_F6, 0xE8_90_2A, 0xE8_B5_2A, 0x43_A9_5A, 0x2F_8C_F0, 0x4F_5B_D5,
-    0xD1_48_9A, 0x5F_6B_85,
+    0xE2_60_5A, 0x1F_9C_8A, 0x7B_66_E0, 0xE3_90_2F, 0xCF_A3_2A, 0x4E_9E_5F, 0x3D_8B_E8, 0x4F_5B_CB,
+    0xCC_52_94, 0x64_70_8A,
 ];
 
 fn rgb(color: u32) -> u32 {
@@ -1458,7 +1458,7 @@ fn sandboxed(html: &str, styled: bool) -> String {
         "<style>body{margin:0;padding:0 16px 16px;overflow-wrap:break-word}",
         "img{max-width:100%;height:auto}",
         "details.ozero-quote>summary{list-style:none;display:inline-block;margin:10px 0;",
-        "padding:0 10px;border-radius:9px;background:#eef0f3;color:#6b7280;",
+        "padding:0 10px;border-radius:9px;background:#e9eef5;color:#6c7890;",
         "font:700 13px/22px sans-serif;letter-spacing:1px}",
         "details.ozero-quote>summary::-webkit-details-marker{display:none}",
     );
@@ -1470,17 +1470,17 @@ fn sandboxed(html: &str, styled: bool) -> String {
         "@font-face{font-family:Literata;font-weight:200 900;src:url(https://",
         font_host!(),
         "/literata.ttf)}",
-        "html{color-scheme:light dark;background:transparent;color:#1d1f24}",
+        "html{color-scheme:light dark;background:transparent;color:#142036}",
         "body{padding-inline:20px;font:17.5px/28px Literata,ui-serif,Georgia,serif;",
         "font-optical-sizing:none;text-wrap:pretty}",
         "p,ul,ol,blockquote,pre,table{margin:0 0 14px}",
         "h1,h2,h3{font-weight:650;line-height:1.3;margin:22px 0 10px}",
-        "a{color:#2f7cf6;text-decoration-thickness:1px;text-underline-offset:3px}",
-        "blockquote{padding-left:14px;border-left:2px solid #e3e5e9;color:#6b7280}",
-        "li::marker{color:#8a8f99}",
-        "@media(prefers-color-scheme:dark){html{color:#ececee}a{color:#4c8ff8}",
-        "blockquote{border-color:#3a3d42;color:#8e939c}",
-        "details.ozero-quote>summary{background:#25272b;color:#8e939c}}",
+        "a{color:#1f5ccd;text-decoration-thickness:1px;text-underline-offset:3px}",
+        "blockquote{padding-left:14px;border-left:2px solid #e3e9f2;color:#76829a}",
+        "li::marker{color:#76829a}",
+        "@media(prefers-color-scheme:dark){html{color:#e5e9f1}a{color:#6aa3f9}",
+        "blockquote{border-color:#2b3343;color:#8792a7}",
+        "details.ozero-quote>summary{background:#1f2532;color:#8792a7}}",
     );
     const BODY: &str = "</style></head><body dir=\"auto\">";
     let theme = if styled { LIGHT } else { THEMED };

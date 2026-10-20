@@ -183,7 +183,7 @@ fun initials(name: String): String =
         .ifEmpty { "?" }
 
 private val AVATAR_COLORS = listOf(
-    0xFF5B6C8F, 0xFF4F8A8B, 0xFF8A6FB0, 0xFFB0775A, 0xFF5E8F5E, 0xFF9A6A87, 0xFF6F7F96,
+    0xFF5A6B8E, 0xFF4D8789, 0xFF7D6CAE, 0xFFA87458, 0xFF5B8C62, 0xFF93688A, 0xFF6A7B96,
 ).map(::Color)
 
 /** The same colour every time for one sender. */
