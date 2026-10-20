@@ -287,6 +287,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     }
     // Folders show once a sync has listed them, so they are read each time the sheet opens.
     LaunchedEffect(accountsOpen) {
+        if (!accountsOpen && folders.isNotEmpty()) return@LaunchedEffect
         try {
             folders = mail.folders()
         } catch (e: CoreException) {
@@ -429,6 +430,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         }
     }
 
+    val openFolder = (mailbox as? Mailbox.Folder)?.let { box -> folders.find { it.id == box.id } }
+
     // Back from another mailbox leads to the inbox.
     BackHandler(enabled = screen == Screen.Inbox && mailbox != Mail.INBOX && !accountsOpen) { mailbox = Mail.INBOX }
 
@@ -502,8 +505,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                             scope.launch { sync(mailbox) }
                         },
                         mailbox = mailbox,
-                        title = mailboxTitle(mailbox, folders),
-                        owner = mailboxOwner(mailbox, folders, accounts),
+                        title = mailboxTitle(mailbox, openFolder),
+                        owner = mailboxOwner(mailbox, openFolder, accounts),
                         accounts = accounts,
                         unsent = if (mailbox == Mail.INBOX) unsent else emptyList(),
                         swipes = swipes,
@@ -797,20 +800,20 @@ private fun InboxList(
     }
 }
 
-/** The mailbox's name: ours for a role, the server's for an account's own folder. */
+/** The mailbox's name: ours for a role, the server's for [folder], an account's own. */
 @Composable
-private fun mailboxTitle(mailbox: Mailbox, folders: List<FolderItem>): String = when (mailbox) {
+private fun mailboxTitle(mailbox: Mailbox, folder: FolderItem?): String = when (mailbox) {
     is Mailbox.Unified -> mailbox.role.title("")
-    is Mailbox.Folder -> folders.find { it.id == mailbox.id }?.title().orEmpty()
+    is Mailbox.Folder -> folder?.title().orEmpty()
 }
 
-/** Whose mail it is, when there are several accounts: all of theirs, or one's. */
+/** Whose mail it is, when there are several accounts: all of theirs, or [folder]'s account's. */
 @Composable
-private fun mailboxOwner(mailbox: Mailbox, folders: List<FolderItem>, accounts: List<AccountItem>): String? {
+private fun mailboxOwner(mailbox: Mailbox, folder: FolderItem?, accounts: List<AccountItem>): String? {
     if (accounts.size < 2) return null
     return when (mailbox) {
         is Mailbox.Unified -> stringResource(R.string.inbox_all_accounts)
-        is Mailbox.Folder -> folders.find { it.id == mailbox.id }?.let { f -> accounts.find { it.id == f.accountId } }?.name
+        is Mailbox.Folder -> accounts.find { it.id == folder?.accountId }?.name
     }
 }
 

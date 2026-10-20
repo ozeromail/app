@@ -53,10 +53,9 @@ class Settings(context: Context) {
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
     var swipes: Swipes
-        get() = Swipes(
-            left = action(prefs.getString(LEFT, null)) ?: SwipeAction.DONE,
-            right = action(prefs.getString(RIGHT, null)) ?: SwipeAction.READ,
-        )
+        get() = Swipes().let {
+            Swipes(action(prefs.getString(LEFT, null)) ?: it.left, action(prefs.getString(RIGHT, null)) ?: it.right)
+        }
         set(value) = prefs.edit().putString(LEFT, value.left.name).putString(RIGHT, value.right.name).apply()
 
     /** The tip about swipes was read, so it does not show again. */

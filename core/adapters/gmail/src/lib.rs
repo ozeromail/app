@@ -378,7 +378,8 @@ impl MailProvider for GmailSession {
         remote_ids: &[String],
         to: &str,
     ) -> Result<(), ProviderError> {
-        self.modify(remote_ids, label(to).as_slice(), label(folder).as_slice())
+        let from = label(folder).filter(|l| !KEPT.contains(l));
+        self.modify(remote_ids, label(to).as_slice(), from.as_slice())
             .await
     }
 
@@ -467,23 +468,36 @@ fn label(folder: &str) -> Option<&str> {
     (folder != ARCHIVE).then_some(folder)
 }
 
-/// What lists a folder's messages: its label, spam and trash included as they have their own
-/// labels; for the archive, mail in none of the other system folders.
+/// Labels whose mail shows in no other folder.
+const APART: [&str; 2] = ["SPAM", "TRASH"];
+/// The other system labels, with their search names: mail in none of them is archived.
+const FILED: [(&str, &str); 3] = [("INBOX", "inbox"), ("SENT", "sent"), ("DRAFT", "drafts")];
+/// Labels a message keeps when it moves: Gmail does not let them be taken off.
+const KEPT: [&str; 2] = ["SENT", "DRAFT"];
+
+/// What lists a folder's messages: its label, or for the archive a search, which leaves spam
+/// and trash out as every list does unless asked.
 fn listing(folder: &str) -> String {
     if folder == ARCHIVE {
-        format!("q={}", percent("-in:inbox -in:sent -in:drafts"))
-    } else {
+        let filed: Vec<_> = FILED.iter().map(|(_, n)| format!("-in:{n}")).collect();
+        format!("q={}", percent(&filed.join(" ")))
+    } else if APART.contains(&folder) {
         format!("labelIds={}&includeSpamTrash=true", percent(folder))
+    } else {
+        format!("labelIds={}", percent(folder))
     }
 }
 
 fn has(labels: &[String], folder: &str) -> bool {
-    if folder == ARCHIVE {
-        !labels
-            .iter()
-            .any(|l| ["INBOX", "SENT", "DRAFT", "SPAM", "TRASH"].contains(&l.as_str()))
+    let is = |l: &str| labels.iter().any(|x| x == l);
+    if APART.contains(&folder) {
+        is(folder)
+    } else if APART.iter().any(|l| is(l)) {
+        false
+    } else if folder == ARCHIVE {
+        !FILED.iter().any(|(l, _)| is(l))
     } else {
-        labels.iter().any(|l| l == folder)
+        is(folder)
     }
 }
 
