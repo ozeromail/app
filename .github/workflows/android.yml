@@ -24,6 +24,21 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      # A fixed debug key lets each new APK install over the last one. It stays a secret: in a
+      # public repo anyone could sign an update that reads the installed debug app's data.
+      # Pull requests from forks get no secrets, so only they build with a throwaway key.
+      - name: Use the shared debug key
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_DEBUG_KEYSTORE }}
+          LEVEL: ${{ github.event_name == 'pull_request' && 'warning' || 'error' }}
+        run: |
+          if [ -n "$KEYSTORE" ]; then
+            mkdir -p ~/.android
+            echo "$KEYSTORE" | base64 -d > ~/.android/debug.keystore
+          else
+            echo "::$LEVEL::ANDROID_DEBUG_KEYSTORE is not set; this APK will not install over earlier builds"
+            [ "$LEVEL" = warning ]
+          fi
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -41,17 +56,6 @@ jobs:
           workspaces: core
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: gradle/actions/setup-gradle@v4
-      # A fixed debug key lets each new APK install over the last one.
-      - name: Use the shared debug key
-        env:
-          KEYSTORE: ${{ secrets.ANDROID_DEBUG_KEYSTORE }}
-        run: |
-          if [ -n "$KEYSTORE" ]; then
-            mkdir -p ~/.android
-            echo "$KEYSTORE" | base64 -d > ~/.android/debug.keystore
-          else
-            echo "::warning::ANDROID_DEBUG_KEYSTORE is not set; this APK will not install over earlier builds"
-          fi
       - name: Build and lint
         working-directory: android
         # The release build checks that R8 keeps what the core bindings need; a tag builds it
