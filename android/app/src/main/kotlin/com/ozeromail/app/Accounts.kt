@@ -8,11 +8,13 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.selectable
@@ -41,16 +43,25 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import uniffi.ozero_api.AccountItem
+import uniffi.ozero_api.FolderItem
+import uniffi.ozero_api.FolderRole
+import uniffi.ozero_api.Mailbox
 import uniffi.ozero_api.accountColors
 
 /**
- * The accounts and a way to add one, in a sheet; a tap on an account opens its settings in
- * the same sheet, which grows or shrinks to fit.
+ * The mailboxes of all accounts together, then each account's folders, and below them the
+ * swipes and a way to add an account. A tap on an account's name, or on Swipes, opens its
+ * settings in the same sheet, which grows or shrinks to fit.
  */
 @Composable
 fun AccountsSheet(
     visible: Boolean,
     accounts: List<AccountItem>,
+    folders: List<FolderItem>,
+    mailbox: Mailbox,
+    swipes: Swipes,
+    onMailbox: (Mailbox) -> Unit,
+    onSwipes: (Swipes) -> Unit,
     onAdd: () -> Unit,
     onColor: (AccountItem, Int) -> Unit,
     onRemove: (AccountItem) -> Unit,
@@ -59,43 +70,185 @@ fun AccountsSheet(
 ) {
     val colors = MaterialTheme.colorScheme
     Sheet(visible, onClose) {
-        // Inside the sheet, so it opens on the list again next time.
-        var editing by rememberSaveable { mutableStateOf<Long?>(null) }
+        // Inside the sheet, so it opens on the list again next time: an account's id, or
+        // SWIPES.
+        var page by rememberSaveable { mutableStateOf<Long?>(null) }
         AnimatedContent(
-            accounts.find { it.id == editing },
+            page.takeIf { it == SWIPES || accounts.any { a -> a.id == it } },
             transitionSpec = {
                 (fadeIn(Motion.calm(Motion.SMALL)) togetherWith fadeOut(Motion.calm(Motion.SMALL)))
                     .using(SizeTransform { _, _ -> Motion.settle() })
             },
-            contentKey = { it?.id },
             label = "accounts",
-        ) { account ->
+        ) { shown ->
             Column {
-                if (account != null) {
-                    AccountSettings(
+                val account = accounts.find { it.id == shown }
+                when {
+                    shown == SWIPES -> {
+                        SubPage(stringResource(R.string.swipes_title), onBack = { page = null })
+                        SwipeSettings(swipes, onSwipes)
+                    }
+                    account != null -> AccountSettings(
                         account,
-                        onBack = { editing = null },
+                        onBack = { page = null },
                         onColor = { onColor(account, it) },
                         onRemove = { onRemove(account) },
                     )
-                } else {
-                    SheetTitle(stringResource(R.string.accounts_title))
-                    accounts.forEach { item ->
-                        SheetRow(onClick = { editing = item.id }, lead = { AccountDot(item.tint, size = 12.dp) }) {
+                    else -> {
+                        SheetTitle(stringResource(R.string.folders_title))
+                        Folders(accounts, folders, mailbox, onMailbox, onAccount = { page = it.id })
+                        HorizontalDivider(Modifier.padding(vertical = 6.dp), color = colors.outlineVariant)
+                        SheetRow(onClick = { page = SWIPES }, lead = { Glyph(R.drawable.ic_swipe, null, colors.primary) }) {
                             Column(Modifier.weight(1f)) {
-                                Text(item.name, fontSize = 15.5.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                if (item.name != item.email) {
-                                    Text(item.email, color = colors.onSurfaceVariant, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                }
+                                Text(stringResource(R.string.swipes_title), fontSize = 15.5.sp, fontWeight = FontWeight.Medium)
+                                Text(swipes.summary(), color = colors.onSurfaceVariant, fontSize = 13.sp)
                             }
                         }
+                        SheetAction(R.drawable.ic_add, stringResource(R.string.inbox_add_account), colors.primary, onAdd)
+                        SheetAction(R.drawable.ic_compose, stringResource(R.string.feedback_write), colors.onSurface, onWrite)
                     }
-                    SheetAction(R.drawable.ic_add, stringResource(R.string.inbox_add_account), colors.primary, onAdd)
-                    HorizontalDivider(Modifier.padding(vertical = 6.dp), color = colors.outlineVariant)
-                    SheetAction(R.drawable.ic_compose, stringResource(R.string.feedback_write), colors.onSurface, onWrite)
                 }
             }
         }
+    }
+}
+
+/** The page of the sheet with the swipes; account pages are named by their ids, which are positive. */
+private const val SWIPES = -1L
+
+/**
+ * With several accounts, their mailboxes together first; then each account under its name,
+ * which opens its settings. The open mailbox is in the accent colour.
+ */
+@Composable
+private fun Folders(
+    accounts: List<AccountItem>,
+    folders: List<FolderItem>,
+    mailbox: Mailbox,
+    onMailbox: (Mailbox) -> Unit,
+    onAccount: (AccountItem) -> Unit,
+) {
+    if (accounts.size > 1) {
+        GroupLabel(stringResource(R.string.inbox_all_accounts), lead = { StackedDots(accounts) })
+        UNIFIED.filter { role -> role == FolderRole.INBOX || folders.any { it.role == role } }.forEach { role ->
+            val box = Mailbox.Unified(role)
+            FolderRow(role.icon(), role.title(""), box == mailbox) { onMailbox(box) }
+        }
+    }
+    accounts.forEach { account ->
+        GroupLabel(account.name, lead = { AccountDot(account.tint, size = 12.dp) }, onClick = { onAccount(account) })
+        folders.filter { it.accountId == account.id && it.role != FolderRole.DRAFTS }.sortedWith(FOLDER_ORDER).forEach { folder ->
+            // With one account its inbox is the unified one, which keeps the tabs.
+            val box = if (folder.role == FolderRole.INBOX && accounts.size == 1) Mail.INBOX else Mailbox.Folder(folder.id)
+            FolderRow(folder.role.icon(), folder.title(), box == mailbox) { onMailbox(box) }
+        }
+    }
+}
+
+/** The mailboxes shared by all accounts, in order. */
+private val UNIFIED = listOf(FolderRole.INBOX, FolderRole.FLAGGED, FolderRole.SENT, FolderRole.ARCHIVE)
+
+/** System folders first in the usual order, then the account's own by name. */
+private val FOLDER_ORDER = compareBy<FolderItem>({ it.role.rank() }, { it.name.lowercase() })
+
+private fun FolderRole.rank(): Int = when (this) {
+    FolderRole.INBOX -> 0
+    FolderRole.FLAGGED -> 1
+    FolderRole.SENT -> 2
+    FolderRole.DRAFTS -> 3
+    FolderRole.ARCHIVE -> 4
+    FolderRole.JUNK -> 5
+    FolderRole.TRASH -> 6
+    FolderRole.CUSTOM -> 7
+}
+
+@DrawableRes
+fun FolderRole.icon(): Int = when (this) {
+    FolderRole.INBOX -> R.drawable.ic_inbox
+    FolderRole.FLAGGED -> R.drawable.ic_flag
+    FolderRole.SENT -> R.drawable.ic_send
+    FolderRole.DRAFTS -> R.drawable.ic_compose
+    FolderRole.ARCHIVE -> R.drawable.ic_archive
+    FolderRole.JUNK -> R.drawable.ic_spam
+    FolderRole.TRASH -> R.drawable.ic_delete
+    FolderRole.CUSTOM -> R.drawable.ic_folder
+}
+
+/** Ours for a system folder; [name], the server's, for the account's own. */
+@Composable
+fun FolderRole.title(name: String): String = when (this) {
+    FolderRole.INBOX -> stringResource(R.string.inbox_title)
+    FolderRole.FLAGGED -> stringResource(R.string.folder_flagged)
+    FolderRole.SENT -> stringResource(R.string.folder_sent)
+    FolderRole.DRAFTS -> stringResource(R.string.folder_drafts)
+    FolderRole.ARCHIVE -> stringResource(R.string.folder_archive)
+    FolderRole.JUNK -> stringResource(R.string.folder_junk)
+    FolderRole.TRASH -> stringResource(R.string.folder_trash)
+    FolderRole.CUSTOM -> name
+}
+
+@Composable
+fun FolderItem.title(): String = role.title(name)
+
+@Composable
+private fun GroupLabel(text: String, lead: @Composable () -> Unit, onClick: (() -> Unit)? = null) {
+    val colors = MaterialTheme.colorScheme
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .then(if (onClick == null) Modifier else Modifier.clickable(onClickLabel = stringResource(R.string.account_settings), onClick = onClick))
+            .padding(start = Gap.sheet, end = Gap.sheet, top = 14.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(Gap.slot), contentAlignment = Alignment.Center) { lead() }
+        Text(
+            text,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).padding(start = Gap.afterSlot),
+        )
+        if (onClick != null) Glyph(R.drawable.ic_next, null, colors.onSurfaceVariant, size = 18.dp)
+    }
+}
+
+@Composable
+private fun FolderRow(@DrawableRes icon: Int, title: String, open: Boolean, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    SheetRow(onClick, lead = { Glyph(icon, null, colors.primary) }) {
+        Text(
+            title,
+            color = if (open) colors.primary else colors.onSurface,
+            fontSize = 15.5.sp,
+            fontWeight = if (open) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+/** Up to three account colours overlapping, as the logo has them. */
+@Composable
+private fun StackedDots(accounts: List<AccountItem>) {
+    val ring = MaterialTheme.colorScheme.background
+    Box(Modifier.size(Gap.slot, 11.dp)) {
+        accounts.take(3).forEachIndexed { i, account ->
+            AccountDot(account.tint, Modifier.offset(x = 6.5.dp * i).border(1.5.dp, ring, CircleShape), size = 11.dp)
+        }
+    }
+}
+
+/** A sheet page's title with a way back to the list. */
+@Composable
+private fun SubPage(title: String, onBack: () -> Unit) {
+    // The back arrow is centred on the rows' icon slot, so the title starts where their labels do.
+    val back = 44.dp
+    val overhang = (back - Gap.slot) / 2
+    Row(Modifier.padding(start = Gap.sheet - overhang, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconTile(R.drawable.ic_back, stringResource(R.string.folders_title), onBack, size = back)
+        SheetTitle(title, Modifier.weight(1f).padding(start = Gap.afterSlot - overhang, end = Gap.sheet))
     }
 }
 
@@ -104,13 +257,7 @@ fun AccountsSheet(
 private fun AccountSettings(account: AccountItem, onBack: () -> Unit, onColor: (Int) -> Unit, onRemove: () -> Unit) {
     var confirming by rememberSaveable { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
-    // The back arrow is centred on the rows' icon slot, so the name starts where their labels do.
-    val back = 44.dp
-    val overhang = (back - Gap.slot) / 2
-    Row(Modifier.padding(start = Gap.sheet - overhang, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconTile(R.drawable.ic_back, stringResource(R.string.accounts_title), onBack, size = back)
-        SheetTitle(account.name, Modifier.weight(1f).padding(start = Gap.afterSlot - overhang, end = Gap.sheet))
-    }
+    SubPage(account.name, onBack)
     Text(
         stringResource(R.string.account_color),
         color = colors.onSurfaceVariant,

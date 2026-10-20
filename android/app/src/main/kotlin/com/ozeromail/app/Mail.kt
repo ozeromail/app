@@ -22,8 +22,11 @@ import uniffi.ozero_api.Core
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.DraftItem
 import uniffi.ozero_api.Endpoint
+import uniffi.ozero_api.FolderItem
+import uniffi.ozero_api.FolderRole
 import uniffi.ozero_api.ImagesPage
 import uniffi.ozero_api.InboxTab
+import uniffi.ozero_api.Mailbox
 import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
 import uniffi.ozero_api.UnsentItem
@@ -56,6 +59,12 @@ class Mail(private val context: Context) {
     }
 
     suspend fun inbox(tab: Category): List<MessageItem> = io { core.unifiedInbox(tab, INBOX_SIZE) }
+
+    /** A mailbox other than the unified inbox, which [inbox] shows by tab. */
+    suspend fun mailbox(mailbox: Mailbox): List<MessageItem> = io { core.mailbox(mailbox, INBOX_SIZE) }
+
+    /** Every account's folders; they show once the account's first sync has listed them. */
+    suspend fun folders(): List<FolderItem> = io { core.folders() }
 
     /** Unread mail in People that came since the last call, for a notification. */
     suspend fun newMail(): List<MessageItem> = io { core.takeNewMail() }
@@ -182,14 +191,17 @@ class Mail(private val context: Context) {
         }
     }
 
-    /** Syncs all accounts at once; the first failure is thrown once every one has finished. */
-    suspend fun refresh() = io {
+    /**
+     * Syncs [mailbox] in all accounts at once; the first failure is thrown once every one has
+     * finished.
+     */
+    suspend fun refresh(mailbox: Mailbox = INBOX) = io {
         val failures = coroutineScope {
             core.accounts().mapNotNull { account ->
                 val password = vault.password(account.email) ?: return@mapNotNull null
                 async {
                     try {
-                        core.sync(account.id, password)
+                        core.syncMailbox(account.id, password, mailbox)
                         null
                     } catch (e: CoreException) {
                         e
@@ -252,6 +264,7 @@ class Mail(private val context: Context) {
     private suspend fun <T> io(block: suspend () -> T): T = withContext(Dispatchers.IO) { block() }
 
     companion object {
+        val INBOX: Mailbox = Mailbox.Unified(FolderRole.INBOX)
         const val IMAPS_PORT = 993
         const val SMTPS_PORT = 465
         private const val INBOX_SIZE = 200u

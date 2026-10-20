@@ -81,5 +81,22 @@
   "inbox_trashed": "Перенесено в корзину",
   "action_delete": "Удалить",
   "action_more": "Ещё",
-  "action_mark_unread": "Отметить непрочитанным"
+  "action_mark_unread": "Отметить непрочитанным",
+  "folders_title": "Аккаунты и папки",
+  "folder_sent": "Отправленные",
+  "folder_drafts": "Черновики",
+  "folder_archive": "Архив",
+  "folder_trash": "Корзина",
+  "folder_junk": "Спам",
+  "folder_flagged": "С флажком",
+  "folder_empty": "Здесь пока нет писем.",
+  "account_settings": "Настройки аккаунта",
+  "swipes_title": "Свайпы",
+  "swipes_left": "Свайп влево",
+  "swipes_right": "Свайп вправо",
+  "swipes_summary": "Влево: %1$s, вправо: %2$s",
+  "swipes_tip": "Свайп влево: %1$s, вправо: %2$s. Поменять можно в Аккаунтах → Свайпы.",
+  "action_got_it": "Понятно",
+  "action_read": "Прочитано",
+  "action_unread": "Не прочитано"
 }
