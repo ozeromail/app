@@ -28,7 +28,10 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.core.SpringSpec
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.calculateTargetValue
+import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -71,7 +74,6 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -84,8 +86,6 @@ import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import androidx.compose.ui.platform.LocalHapticFeedback
 import kotlin.math.abs
-import kotlin.math.ceil
-import kotlin.math.floor
 import kotlin.math.roundToInt
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -743,11 +743,11 @@ private fun InboxList(
     // Where the tabs are between two of them, in tabs: the thumb and the list follow it.
     val glide = remember { Animatable(0f) }
     val glideScope = rememberCoroutineScope()
-    val pick: (Category, Float) -> Unit = { next, from ->
+    val pick: (Category, Float, Float) -> Unit = { next, from, velocity ->
         onTab(next)
         glideScope.launch {
             glide.snapTo(from)
-            glide.animateTo(0f, Motion.settle())
+            glide.animateTo(0f, thumbSpring(velocity), velocity)
         }
     }
     // The list leaves to the side the thumb moves away from, and the next one comes in from the other.
@@ -763,17 +763,18 @@ private fun InboxList(
             onRefresh = onSync,
             modifier = Modifier.fillMaxSize(),
             state = pull,
-            // Below the status bar, where the compact title would cover it.
+            // The list moves down with the finger and still water shows in the gap it leaves.
             indicator = {
-                PullToRefreshDefaults.Indicator(
-                    state = pull,
-                    isRefreshing = refreshing,
-                    modifier = Modifier.align(Alignment.TopCenter).padding(top = top + 48.dp),
+                PullWater(
+                    fraction = { pull.distanceFraction },
+                    refreshing = refreshing,
+                    top = top,
+                    modifier = Modifier.fillMaxSize(),
                 )
             },
         ) {
             LazyColumn(
-                Modifier.fillMaxSize(),
+                Modifier.fillMaxSize().graphicsLayer { translationY = pullGap(pull.distanceFraction) },
                 state = listState,
                 contentPadding = PaddingValues(top = top, bottom = dockHeight + 16.dp),
             ) {
@@ -786,9 +787,10 @@ private fun InboxList(
                 }
                 if (messages.isEmpty() && !syncing && error == null) {
                     item(key = "empty") {
-                        Box(slide) {
+                        // New mail covers the water rather than cutting it off.
+                        Box(Modifier.animateItem(fadeInSpec = null, placementSpec = null, fadeOutSpec = Motion.calm(Motion.SMALL)).then(slide)) {
                             when {
-                                mailbox != Mail.INBOX -> EmptyNote(R.drawable.ic_inbox, stringResource(R.string.tab_empty_title), stringResource(R.string.folder_empty))
+                                mailbox != Mail.INBOX -> StillNote(stringResource(R.string.tab_empty_title), stringResource(R.string.folder_empty), drawIn = false, grey = true)
                                 tab == Category.PEOPLE -> InboxZero(hadMail)
                                 else -> TabEmpty(hadMail)
                             }
@@ -884,12 +886,12 @@ private fun Hero(title: String, subtitle: String?) {
 
 @Composable
 private fun InboxZero(drawIn: Boolean) {
-    LakeNote(stringResource(R.string.inbox_zero_title), stringResource(R.string.inbox_zero_text), drawIn)
+    StillNote(stringResource(R.string.inbox_zero_title), stringResource(R.string.inbox_zero_text), drawIn)
 }
 
 @Composable
 private fun TabEmpty(drawIn: Boolean) {
-    LakeNote(stringResource(R.string.tab_empty_title), stringResource(R.string.tab_empty_text), drawIn)
+    StillNote(stringResource(R.string.tab_empty_title), stringResource(R.string.tab_empty_text), drawIn)
 }
 
 /**
@@ -903,7 +905,7 @@ private fun Dock(
     tabs: List<InboxTab>?,
     glide: Animatable<Float, AnimationVector1D>,
     accounts: List<AccountItem>,
-    onTab: (Category, from: Float) -> Unit,
+    onTab: (Category, from: Float, velocity: Float) -> Unit,
     onAccounts: () -> Unit,
     onSearch: () -> Unit,
     onCompose: () -> Unit,
@@ -970,10 +972,10 @@ private fun AccountsButton(accounts: List<AccountItem>, onClick: () -> Unit) {
 /**
  * The inbox tabs as one segmented control, each with its unread count. The thumb follows a
  * finger dragged across them and settles on the nearest tab, or the next one on a flick; a tap
- * glides it there. [onPick] gets the tab and where the thumb is from it, in tabs.
+ * glides it there. [onPick] gets the tab, where the thumb is from it and how fast it goes, in tabs.
  */
 @Composable
-private fun Tabs(tab: Category, tabs: List<InboxTab>, glide: Animatable<Float, AnimationVector1D>, onPick: (Category, from: Float) -> Unit) {
+private fun Tabs(tab: Category, tabs: List<InboxTab>, glide: Animatable<Float, AnimationVector1D>, onPick: (Category, from: Float, velocity: Float) -> Unit) {
     val colors = MaterialTheme.colorScheme
     val thumb = RoundedCornerShape(Radius.thumb)
     val scope = rememberCoroutineScope()
@@ -1014,16 +1016,16 @@ private fun Tabs(tab: Category, tabs: List<InboxTab>, glide: Animatable<Float, A
                         onDragEnd = {
                             val flick = velocity.calculateVelocity().x / stepPx
                             val pos = index + at
-                            val target = when {
-                                flick > 2f -> floor(pos) + 1
-                                flick < -2f -> ceil(pos) - 1
-                                else -> pos.roundToInt().toFloat()
-                            }.toInt().coerceIn(0, last)
+                            // Where the thumb would coast to decides the tab, so a flick carries on.
+                            val coast = exponentialDecay<Float>().calculateTargetValue(pos, flick).roundToInt()
+                            val target = coast.coerceIn(0, last)
+                            // Flung past the first or last tab, the edge takes the speed.
+                            val speed = if (coast == target) flick else 0f
                             if (target == index) {
-                                scope.launch { glide.animateTo(0f, Motion.settle()) }
+                                scope.launch { glide.animateTo(0f, thumbSpring(speed), speed) }
                             } else {
                                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                onPick(Category.entries[target], pos - target)
+                                onPick(Category.entries[target], pos - target, speed)
                             }
                         },
                         onDragCancel = { scope.launch { glide.animateTo(0f, Motion.settle()) } },
@@ -1047,7 +1049,7 @@ private fun Tabs(tab: Category, tabs: List<InboxTab>, glide: Animatable<Float, A
                         .weight(1f)
                         .height(34.dp)
                         .clip(thumb)
-                        .selectable(selected = on, role = Role.Tab, onClick = { if (!on) onPick(category, (index - Category.entries.indexOf(category)).toFloat()) }),
+                        .selectable(selected = on, role = Role.Tab, onClick = { if (!on) onPick(category, (index - Category.entries.indexOf(category)).toFloat(), 0f) }),
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -1123,6 +1125,8 @@ internal fun MessageRow(message: MessageItem, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val account = message.account
     val unread = message.threadUnread > 0u
+    // The dot goes out quickly and in place: read is the most frequent change there is.
+    val dot by animateFloatAsState(if (unread) 1f else 0f, Motion.calm(Motion.QUICK), label = "dot")
     Row(
         Modifier
             .fillMaxWidth()
@@ -1161,9 +1165,9 @@ internal fun MessageRow(message: MessageItem, onClick: () -> Unit) {
                             .weight(1f, fill = false)
                             // The unread dot hangs in the margin, so text lines up with the title.
                             .drawBehind {
-                                if (unread) {
+                                if (dot > 0f) {
                                     val x = if (layoutDirection == LayoutDirection.Ltr) -9.dp.toPx() else size.width + 9.dp.toPx()
-                                    drawCircle(colors.primary, 4.dp.toPx(), Offset(x, size.height / 2))
+                                    drawCircle(colors.primary.copy(alpha = dot), 4.dp.toPx() * (0.4f + 0.6f * dot), Offset(x, size.height / 2))
                                 }
                             },
                     )
@@ -1255,3 +1259,9 @@ fun longDate(context: Context, seconds: Long): String = DateUtils.formatDateTime
     seconds * 1000,
     DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_SHOW_TIME or DateUtils.FORMAT_ABBREV_MONTH,
 )
+
+/** A released thumb: a little give after a fling, since the finger threw it; flat otherwise. */
+private fun thumbSpring(velocity: Float): SpringSpec<Float> = if (abs(velocity) > FLING) Motion.fling() else Motion.settle()
+
+/** Tabs a second past which a released thumb was flung. */
+private const val FLING = 2f

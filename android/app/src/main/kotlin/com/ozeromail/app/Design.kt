@@ -68,6 +68,9 @@ object Motion {
     /** Toasts and notes that come and go. */
     const val NOTE = 400
 
+    /** The quickest changes, for what happens all day: a read dot going out. */
+    const val QUICK = 150
+
     /** Small changes in place: a title fading, a colour, a body showing. */
     const val SMALL = 250
 
@@ -77,7 +80,10 @@ object Motion {
     fun <T> calm(ms: Int): FiniteAnimationSpec<T> = tween(ms, easing = Ease)
 
     /** For what follows a finger or moves in place: no bounce, interrupted without a jump. */
-    fun <T> settle(): SpringSpec<T> = spring(dampingRatio = 1f, stiffness = 500f)
+    fun <T> settle(): SpringSpec<T> = spring(dampingRatio = 1f, stiffness = 700f)
+
+    /** After a fling: the same spring with a little give, since the finger threw it. */
+    fun <T> fling(): SpringSpec<T> = spring(dampingRatio = 0.85f, stiffness = 500f)
 
     /**
      * How far into a [SCREEN] animation to seek so the screen sits where a back gesture at
