@@ -68,7 +68,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
@@ -351,13 +350,16 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         onStopOrDispose { watching.cancel() }
     }
 
-    /** Shows a toast for [undoSeconds]; true if Undo was tapped. One toast at a time. */
-    suspend fun offerUndo(text: String): Boolean {
+    /**
+     * Shows a toast for [undoSeconds]; true if Undo was tapped. One toast at a time. With [go],
+     * it can also show that folder.
+     */
+    suspend fun offerUndo(text: String, go: Mailbox? = null): Boolean {
         // The older toast is past undo anyway.
         snackbar.currentSnackbarData?.dismiss()
         // Closes before the core sends, so Undo is never too late.
         val result = withTimeoutOrNull(undoSeconds().toLong() * 1000) {
-            snackbar.showSnackbar(text, undo, duration = SnackbarDuration.Indefinite)
+            snackbar.showSnackbar(MovedToast(text, undo, go))
         }
         return result == SnackbarResult.ActionPerformed
     }
@@ -372,8 +374,12 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         }
     }
 
-    /** The message leaves the list at once; the toast can take it back for a moment. */
-    fun remove(message: MessageItem, toast: String, move: suspend (MessageItem) -> List<Long>, reset: () -> Unit = {}) {
+    /**
+     * The message leaves the list at once, for the account's folder of [role]; the toast can
+     * take it back for a moment, or show that folder.
+     */
+    fun remove(message: MessageItem, toast: String, role: FolderRole, move: suspend (MessageItem) -> List<Long>, reset: () -> Unit = {}) {
+        val go = folders.find { it.accountId == message.accountId && it.role == role }?.let { Mailbox.Folder(it.id) }
         scope.launch {
             val action = try {
                 move(message)
@@ -387,12 +393,12 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             }
             // Also after success: a list read before the archive may bring the row back.
             reset()
-            if (action != null && offerUndo(toast) && mail.undo(action)) load()
+            if (action != null && offerUndo(toast, go.takeIf { it != mailbox }) && mail.undo(action)) load()
         }
     }
 
     /** Done: into the archive. */
-    fun archive(message: MessageItem, reset: () -> Unit) = remove(message, archived, mail::archive, reset)
+    fun archive(message: MessageItem, reset: () -> Unit) = remove(message, archived, FolderRole.ARCHIVE, mail::archive, reset)
 
     /** Marks the row read, or unread if it is read; it stays in the list either way. */
     fun toggleRead(message: MessageItem, reset: () -> Unit) {
@@ -413,7 +419,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
 
     fun swiped(message: MessageItem, action: SwipeAction, reset: () -> Unit) = when (action) {
         SwipeAction.DONE -> archive(message, reset)
-        SwipeAction.DELETE -> remove(message, trashed, mail::trash, reset)
+        SwipeAction.DELETE -> remove(message, trashed, FolderRole.TRASH, mail::trash, reset)
         SwipeAction.READ -> toggleRead(message, reset)
     }
 
@@ -495,7 +501,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         onDelete = {
                             open = null
                             closeSearch()
-                            remove(shown.message, trashed, mail::trash)
+                            remove(shown.message, trashed, FolderRole.TRASH, mail::trash)
                         }.takeIf { shown.message.canTrash },
                         onUnread = {
                             open = null
@@ -573,6 +579,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         onAccounts = { accountsOpen = true },
                         onSearch = { searching = true },
                         onCompose = { composing = Composing(NEW_DRAFT) },
+                        onGo = { mailbox = it },
                     )
                 }
                 // A screen on its way out takes no more taps.
@@ -735,6 +742,7 @@ private fun InboxList(
     onAccounts: () -> Unit,
     onSearch: () -> Unit,
     onCompose: () -> Unit,
+    onGo: (Mailbox) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
     val density = LocalDensity.current
@@ -857,7 +865,7 @@ private fun InboxList(
         }
         Column(Modifier.align(Alignment.BottomCenter)) {
             // Low on the screen, in reach of the thumb that swiped.
-            Toast(snackbar, Modifier.padding(bottom = 8.dp))
+            Toast(snackbar, onGo = onGo, modifier = Modifier.padding(bottom = 8.dp))
             Reveal(error) {
                 Text(
                     stringResource(it),
