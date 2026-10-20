@@ -116,6 +116,30 @@ fn trash_moves_to_its_own_folder() {
 }
 
 #[test]
+fn deletes_for_good() {
+    let store = store(vec![op(1, "Trash", "5", Action::Delete)]);
+    let mut server = Server::default();
+    run(push_ops(&store, &mut server, store.ops.clone())).unwrap();
+    assert_eq!(server.applied[0].3, Action::Delete);
+    assert!(server.moved_to.is_empty());
+    assert_eq!(store.finished.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn empties_first_and_keeps_what_the_folder_still_has() {
+    let mut trash = op(1, "INBOX", "4", Action::Trash);
+    trash.to = Some("Trash".into());
+    let mut store = store(vec![trash, op(2, "Trash", "5", Action::Empty)]);
+    store.checkpoint.1 = vec!["5".into(), "6".into()];
+    let mut server = Server::default();
+    run(push_ops(&store, &mut server, store.ops.clone())).unwrap();
+    assert_eq!(server.applied[0].2, ["6"]);
+    assert_eq!(server.applied[0].3, Action::Empty);
+    assert_eq!(server.moved_to, ["Trash"]);
+    assert_eq!(store.finished.lock().unwrap().len(), 2);
+}
+
+#[test]
 fn archiving_without_an_archive_folder_is_reverted() {
     let mut no_folder = op(1, "INBOX", "5", Action::Archive);
     no_folder.to = None;

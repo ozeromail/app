@@ -2,6 +2,7 @@
 
 mod schema;
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
@@ -455,16 +456,7 @@ impl Store for SqliteStore {
         limit: u32,
     ) -> Result<Vec<MessageLocation>, StoreError> {
         self.conn()
-            .prepare_cached(
-                "SELECT m.id, f.remote_id, f.validity, m.remote_id
-                 FROM (SELECT id, folder_id, remote_id, date FROM message
-                       WHERE folder_id IN (SELECT id FROM folder WHERE account_id = ?1 AND role = 'inbox')
-                       ORDER BY date DESC, id DESC LIMIT ?2) m
-                 JOIN folder f ON f.id = m.folder_id
-                 WHERE NOT EXISTS (SELECT 1 FROM message_body b WHERE b.message_id = m.id)
-                   AND NOT EXISTS (SELECT 1 FROM op WHERE op.message_id = m.id AND op.kind IN ('archive', 'trash'))
-                 ORDER BY m.date DESC, m.id DESC",
-            )
+            .prepare_cached(WITHOUT_BODY)
             .and_then(|mut s| {
                 s.query_map(params![account.0, limit], |r| {
                     Ok(MessageLocation {
@@ -532,9 +524,7 @@ impl Store for SqliteStore {
         if ids.is_empty() {
             return Err(StoreError::NotFound);
         }
-        if matches!(action, Action::Archive | Action::Trash)
-            && !folder_role(&tx, message)?.allows(action)
-        {
+        if !matches!(action, Action::Seen(_)) && !folder_role(&tx, message)?.allows(action) {
             return Err(StoreError::NotAllowed);
         }
         let mut ops = vec![];
@@ -543,7 +533,7 @@ impl Store for SqliteStore {
             // only the message itself.
             let changes = match action {
                 Action::Seen(seen) => seen && flags & SEEN == 0,
-                Action::Archive | Action::Trash => true,
+                Action::Archive | Action::Trash | Action::Delete | Action::Empty => true,
             };
             if id == message.0 || changes {
                 ops.push(queue_one(&tx, MessageId(id), action, not_before)?);
@@ -551,6 +541,55 @@ impl Store for SqliteStore {
         }
         tx.commit().map_err(storage)?;
         Ok(ops)
+    }
+
+    fn queue_empty(&self, folder: FolderId, not_before: i64) -> Result<Vec<OpId>, StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        let role = tx
+            .prepare_cached("SELECT role FROM folder WHERE id = ?1")
+            .and_then(|mut s| s.query_row([folder.0], |r| r.get::<_, Role>(0)).optional())
+            .map_err(storage)?
+            .ok_or(StoreError::NotFound)?;
+        if !role.0.allows(Action::Empty) {
+            return Err(StoreError::NotAllowed);
+        }
+        let ids = tx
+            .prepare_cached(FOLDER_MESSAGES)
+            .and_then(|mut s| {
+                s.query_map([folder.0], |r| r.get(0))?
+                    .collect::<Result<Vec<i64>, _>>()
+            })
+            .map_err(storage)?;
+        let ops = ids
+            .into_iter()
+            .map(|id| queue_one(&tx, MessageId(id), Action::Empty, not_before))
+            .collect::<Result<Vec<_>, _>>()?;
+        tx.commit().map_err(storage)?;
+        Ok(ops)
+    }
+
+    fn others(&self, ops: &[Op]) -> Result<Vec<String>, StoreError> {
+        let Some(first) = ops.first() else {
+            return Ok(vec![]);
+        };
+        let mut ids = self
+            .conn()
+            .prepare_cached(
+                "SELECT m.remote_id FROM message m JOIN folder f ON f.id = m.folder_id
+                 WHERE f.account_id = ?1 AND f.remote_id = ?2",
+            )
+            .and_then(|mut s| {
+                s.query_map(
+                    params![first.location.account_id.0, first.location.folder_remote_id],
+                    |r| r.get(0),
+                )?
+                .collect::<Result<Vec<String>, _>>()
+            })
+            .map_err(storage)?;
+        let taken: HashSet<_> = ops.iter().map(|o| &o.location.remote_id).collect();
+        ids.retain(|id| !taken.contains(id));
+        Ok(ids)
     }
 
     fn undo(&self, ops: &[OpId], now: i64) -> Result<bool, StoreError> {
@@ -769,7 +808,11 @@ impl Store for SqliteStore {
                     .query_row(params![op.id.0, value], |r| r.get(0))
                     .optional()
                     .map_err(storage)?;
-                if let (Some(message), Action::Archive | Action::Trash) = (gone, op.action) {
+                if let (
+                    Some(message),
+                    Action::Archive | Action::Trash | Action::Delete | Action::Empty,
+                ) = (gone, op.action)
+                {
                     drop_message.execute([message]).map_err(storage)?;
                 }
             }
@@ -822,6 +865,7 @@ fn queue_one(
         // Undone by dropping the op, which shows the message again.
         Action::Archive => (0, Some(role_folder(tx, message, FolderRole::Archive)?)),
         Action::Trash => (0, Some(role_folder(tx, message, FolderRole::Trash)?)),
+        Action::Delete | Action::Empty => (0, None),
     };
     // Kept even when it undoes itself: a push may be sending the older value right now.
     let id = tx
@@ -1014,7 +1058,7 @@ fn take_back(tx: &Transaction<'_>, sql: &str, op: OpId, arg: i64) -> Result<bool
     match kind.with(undo) {
         Action::Seen(seen) => set_seen(tx, message, seen)?,
         // Without its op the message shows in its folder again.
-        Action::Archive | Action::Trash => {}
+        Action::Archive | Action::Trash | Action::Delete | Action::Empty => {}
     }
     Ok(true)
 }
@@ -1074,7 +1118,7 @@ macro_rules! not_moving {
         concat!(
             "NOT EXISTS (SELECT 1 FROM op WHERE op.message_id = ",
             $m,
-            ".id AND op.kind IN ('archive', 'trash'))"
+            ".id AND op.kind IN ('archive', 'trash', 'delete', 'empty'))"
         )
     };
 }
@@ -1275,6 +1319,24 @@ const INBOX_UNREAD: &str = concat!(
     not_moving!(),
     " GROUP BY m.category"
 );
+// The messages of a folder, leaving out those on their way out.
+/// Inbox mail of an account, newest `?2` of it, still without a body and staying.
+const WITHOUT_BODY: &str = concat!(
+    "SELECT m.id, f.remote_id, f.validity, m.remote_id
+     FROM (SELECT id, folder_id, remote_id, date FROM message
+           WHERE folder_id IN (SELECT id FROM folder WHERE account_id = ?1 AND role = 'inbox')
+           ORDER BY date DESC, id DESC LIMIT ?2) m
+     JOIN folder f ON f.id = m.folder_id
+     WHERE NOT EXISTS (SELECT 1 FROM message_body b WHERE b.message_id = m.id) AND ",
+    not_moving!(),
+    " ORDER BY m.date DESC, m.id DESC"
+);
+
+const FOLDER_MESSAGES: &str = concat!(
+    "SELECT m.id FROM message m WHERE m.folder_id = ?1 AND ",
+    not_moving!()
+);
+
 // Stops at the first message found, so a full inbox costs no more than an empty one.
 const INBOX_EMPTY: &str = concat!(
     "SELECT NOT EXISTS (SELECT 1 FROM message m
@@ -1400,6 +1462,8 @@ enum StoredAction {
     Seen,
     Archive,
     Trash,
+    Delete,
+    Empty,
 }
 
 /// The kind and value columns of `op` for an action.
@@ -1408,6 +1472,8 @@ fn stored(action: Action) -> (&'static str, i64) {
         Action::Seen(seen) => ("seen", i64::from(seen)),
         Action::Archive => ("archive", 1),
         Action::Trash => ("trash", 1),
+        Action::Delete => ("delete", 1),
+        Action::Empty => ("empty", 1),
     }
 }
 
@@ -1417,6 +1483,8 @@ impl StoredAction {
             Self::Seen => Action::Seen(value != 0),
             Self::Archive => Action::Archive,
             Self::Trash => Action::Trash,
+            Self::Delete => Action::Delete,
+            Self::Empty => Action::Empty,
         }
     }
 }
@@ -1427,6 +1495,8 @@ impl FromSql for StoredAction {
             "seen" => Ok(Self::Seen),
             "archive" => Ok(Self::Archive),
             "trash" => Ok(Self::Trash),
+            "delete" => Ok(Self::Delete),
+            "empty" => Ok(Self::Empty),
             _ => Err(FromSqlError::InvalidType),
         }
     }

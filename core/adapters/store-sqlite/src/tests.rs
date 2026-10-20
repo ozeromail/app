@@ -677,6 +677,68 @@ fn trash_moves_the_message_like_archive() {
 }
 
 #[test]
+fn deletes_for_good_only_from_the_trash() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let folders = store
+        .save_folders(
+            account,
+            &[
+                NewFolder {
+                    remote_id: "INBOX".into(),
+                    name: "Inbox".into(),
+                    role: FolderRole::Inbox,
+                },
+                NewFolder {
+                    remote_id: "Trash".into(),
+                    name: "Trash".into(),
+                    role: FolderRole::Trash,
+                },
+            ],
+        )
+        .unwrap();
+    let (inbox, trash) = (folders[0].id, folders[1].id);
+    store.save_messages(inbox, &[message(1, 100)]).unwrap();
+    store
+        .save_messages(trash, &[message(2, 200), message(3, 300)])
+        .unwrap();
+    let kept = list(&store, ListScope::Folder(inbox), 10, None)[0].id;
+    assert_eq!(
+        store.queue(kept, Action::Delete, 0).unwrap_err(),
+        StoreError::NotAllowed
+    );
+    assert_eq!(
+        store.queue_empty(inbox, 0).unwrap_err(),
+        StoreError::NotAllowed
+    );
+
+    // Held like a move: gone from the list, back on undo.
+    let one = list(&store, ListScope::Folder(trash), 10, None)[0].id;
+    let op = store.queue(one, Action::Delete, 50).unwrap();
+    assert_eq!(list(&store, ListScope::Folder(trash), 10, None).len(), 1);
+    assert!(store.undo(&op, 49).unwrap());
+
+    // Emptying takes every message of the folder.
+    let all = store.queue_empty(trash, 0).unwrap();
+    assert_eq!(all.len(), 2);
+    assert!(list(&store, ListScope::Folder(trash), 10, None).is_empty());
+    let due = store.due(account, 0).unwrap();
+    assert!(
+        due.iter()
+            .all(|o| o.action == Action::Empty && o.to.is_none())
+    );
+    // What the server must keep there: whatever the ops leave out.
+    assert_eq!(
+        store.others(&due[..1]).unwrap(),
+        [due[1].location.remote_id.clone()]
+    );
+    assert!(store.others(&due).unwrap().is_empty());
+    store.finish(&due).unwrap();
+    assert_eq!(store.location(one).unwrap_err(), StoreError::NotFound);
+    assert_eq!(list(&store, ListScope::Folder(inbox), 10, None).len(), 1);
+}
+
+#[test]
 fn moves_only_leave_folders_that_allow_them() {
     let store = store();
     let account = account(&store, "a@example.com");

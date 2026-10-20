@@ -37,12 +37,15 @@ impl FolderRole {
     }
 
     /// Whether `action` applies to a message in a folder with this role: Done archives only
-    /// mail that is not filed yet, and nothing goes to the trash from the trash.
+    /// mail that is not filed yet, nothing goes to the trash from the trash, a delete in the
+    /// trash is for good, and only the trash and spam are emptied.
     pub fn allows(self, action: Action) -> bool {
         match action {
             Action::Seen(_) => true,
             Action::Archive => matches!(self, Self::Inbox | Self::Custom),
             Action::Trash => self != Self::Trash,
+            Action::Delete => self == Self::Trash,
+            Action::Empty => matches!(self, Self::Trash | Self::Junk),
         }
     }
 
@@ -95,6 +98,10 @@ mod tests {
         assert!(!FolderRole::Archive.allows(Action::Archive));
         assert!(FolderRole::Archive.allows(Action::Trash));
         assert!(!FolderRole::Trash.allows(Action::Trash));
+        assert!(FolderRole::Trash.allows(Action::Delete));
+        assert!(!FolderRole::Junk.allows(Action::Delete));
+        assert!(FolderRole::Junk.allows(Action::Empty));
+        assert!(!FolderRole::Inbox.allows(Action::Empty));
         assert!(!FolderRole::Sent.allows(Action::Archive));
         assert!(FolderRole::Sent.allows(Action::Seen(true)));
     }

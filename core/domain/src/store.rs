@@ -87,6 +87,11 @@ pub trait Store: Send + Sync {
         action: Action,
         not_before: i64,
     ) -> Result<Vec<OpId>, StoreError>;
+    /// Queues `Action::Empty` on every message of a folder, as `queue` would one by one.
+    /// Fails with `NotAllowed` for any folder but the trash or spam.
+    fn queue_empty(&self, folder: FolderId, not_before: i64) -> Result<Vec<OpId>, StoreError>;
+    /// The `remote_id`s of the messages saved in the folder of `ops` that they leave out.
+    fn others(&self, ops: &[Op]) -> Result<Vec<String>, StoreError>;
     /// Takes back actions that are still held (their `not_before` is after `now`), so the
     /// server never sees them: all of them, or none if any may already be on its way.
     fn undo(&self, ops: &[OpId], now: i64) -> Result<bool, StoreError>;

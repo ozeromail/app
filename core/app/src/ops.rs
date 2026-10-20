@@ -16,6 +16,7 @@ pub async fn push_ops(
     let mut batches: BTreeMap<_, Vec<Op>> = BTreeMap::new();
     for op in ops {
         let key = (
+            op.action != Action::Empty,
             op.location.folder_remote_id.clone(),
             op.location.validity,
             op.action,
@@ -23,13 +24,20 @@ pub async fn push_ops(
         );
         batches.entry(key).or_default().push(op);
     }
-    // Read state goes before moves, so it is set while the messages are still here.
-    for ((folder, validity, action, to), ops) in batches {
+    // Emptying goes first, so what is still on its way into the folder stays; read state
+    // goes before moves, so it is set while the messages are still here.
+    for ((_, folder, validity, action, to), ops) in batches {
         let ids: Vec<_> = ops.iter().map(|o| o.location.remote_id.clone()).collect();
         let sent = match (action, to) {
             (Action::Seen(seen), _) => provider.set_seen(&folder, validity, &ids, seen).await,
             (Action::Archive | Action::Trash, Some(to)) => {
                 provider.move_to(&folder, validity, &ids, &to).await
+            }
+            (Action::Delete, _) => provider.delete(&folder, validity, &ids).await,
+            (Action::Empty, _) => {
+                provider
+                    .empty(&folder, validity, &store.others(&ops)?)
+                    .await
             }
             (Action::Archive | Action::Trash, None) => {
                 Err(ProviderError::Protocol("no folder to move to".into()))

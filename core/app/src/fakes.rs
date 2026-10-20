@@ -102,6 +102,24 @@ impl MailProvider for Server {
         ready(self.apply(folder, validity, remote_ids, Action::Archive))
     }
 
+    fn delete(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_ids: &[String],
+    ) -> impl Future<Output = Result<(), ProviderError>> + Send {
+        ready(self.apply(folder, validity, remote_ids, Action::Delete))
+    }
+
+    fn empty(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        keep: &[String],
+    ) -> impl Future<Output = Result<(), ProviderError>> + Send {
+        ready(self.apply(folder, validity, keep, Action::Empty))
+    }
+
     fn append(
         &mut self,
         folder: &str,
@@ -206,7 +224,7 @@ impl MessageParser for Parser {
 pub struct Memory {
     /// What `folders` returns.
     pub folders: Vec<Folder>,
-    /// What `checkpoint` returns, and each `save_changes`.
+    /// What `checkpoint` returns, and each `save_changes`; `others` leaves out of it.
     pub checkpoint: (Checkpoint, Vec<String>),
     pub changes: Mutex<Vec<(FolderId, Changes<NewMessage>)>>,
     pub bodies: Mutex<Vec<(MessageId, Body)>>,
@@ -340,6 +358,17 @@ impl Store for Memory {
 
     fn queue(&self, _: MessageId, _: Action, _: i64) -> Result<Vec<OpId>, StoreError> {
         Ok(vec![OpId(1)])
+    }
+
+    fn queue_empty(&self, _: FolderId, _: i64) -> Result<Vec<OpId>, StoreError> {
+        Ok(vec![])
+    }
+
+    /// The `checkpoint` messages that `ops` leave out.
+    fn others(&self, ops: &[Op]) -> Result<Vec<String>, StoreError> {
+        let mut ids = self.checkpoint.1.clone();
+        ids.retain(|id| ops.iter().all(|o| &o.location.remote_id != id));
+        Ok(ids)
     }
 
     fn undo(&self, _: &[OpId], _: i64) -> Result<bool, StoreError> {
