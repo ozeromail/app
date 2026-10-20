@@ -296,7 +296,7 @@ private fun FolderRow(@DrawableRes icon: Int, title: String, open: Boolean, onCl
     }
 }
 
-/** Up to three account colours overlapping, as the logo has them. */
+/** Up to three account colours overlapping. */
 @Composable
 private fun StackedDots(accounts: List<AccountItem>) {
     val ring = MaterialTheme.colorScheme.background

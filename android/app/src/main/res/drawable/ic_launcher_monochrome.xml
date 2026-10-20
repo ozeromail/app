@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The logo's window as lines: the frame, the sun and three sheets of water. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M30.797,54a23.203,23.203 0 1,0 46.406,0a23.203,23.203 0 1,0 -46.406,0"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="3.375" />
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M53.297,49.781a4.078,4.078 0 1,0 8.156,0a4.078,4.078 0 1,0 -8.156,0" />
+    <path
+        android:pathData="M34.313,57.094Q54,57.797 73.688,57.094"
+        android:strokeAlpha="0.9"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.266" />
+    <path
+        android:pathData="M33.609,60.75Q54,61.734 74.391,60.75"
+        android:strokeAlpha="0.7"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.055" />
+    <path
+        android:pathData="M32.906,65.531Q54,66.797 75.094,65.531"
+        android:strokeAlpha="0.5"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeWidth="0.844" />
+</vector>

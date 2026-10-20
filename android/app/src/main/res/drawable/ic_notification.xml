@@ -1,11 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The logo's three overlapping circles, in one color as the status bar needs. -->
+<!-- The logo's window in one color as the status bar needs: frame, sun and water. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
     <path
+        android:pathData="M1.3,12a10.7,10.7 0 1,0 21.4,0a10.7,10.7 0 1,0 -21.4,0"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2" />
+    <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M8.304,8.061A4.714,4.714 0 1,0 8.304,15.939A5.402,5.402 0 0,1 8.304,8.061ZM14.59,8.061A4.714,4.714 0 1,0 14.59,15.939A5.402,5.402 0 0,1 14.59,8.061ZM13.571,12a4.714,4.714 0 1,0 9.429,0a4.714,4.714 0 1,0 -9.429,0Z" />
+        android:pathData="M11.557,10.054a2,2 0 1,0 4,0a2,2 0 1,0 -4,0" />
+    <path
+        android:pathData="M4.2,13.6H19.8M6.6,16.4H17.4"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.6" />
 </vector>
