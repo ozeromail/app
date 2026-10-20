@@ -1,15 +1,9 @@
 package com.ozeromail.app
 
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.Easing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -20,83 +14,63 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PathMeasure
-import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.PI
+import kotlin.math.hypot
+import kotlin.math.min
+import kotlin.math.sin
+import kotlin.math.sqrt
+import kotlin.random.Random
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * The note of a list with nothing left in it: three still lines, a lake. With [drawIn], as the
- * last message leaves, a drop falls in, rings spread past the screen's edges and settle into
- * the lines, then the words come; in one movement, with no pause.
+ * The note of a list with nothing left in it: still water. A horizon, a soft reflection under
+ * it, and rings that lie on the water in perspective. With [drawIn], as the last message leaves,
+ * a drop lands on the water and the horizon comes out of its rings. A touch leaves rings too.
+ * [grey] water is for plain empty folders: no drop, and it only moves when touched.
  */
 @Composable
-fun LakeNote(title: String, text: String, drawIn: Boolean) {
+fun StillNote(title: String, text: String, drawIn: Boolean, grey: Boolean = false) {
     val colors = MaterialTheme.colorScheme
-    // Only as it first shows: the caller's flag turns off right after.
-    val animate = remember { drawIn }
-    val time = remember { Animatable(if (animate) 0f else END) }
-    if (animate) {
-        LaunchedEffect(Unit) { time.animateTo(END, tween(END.toInt(), easing = LinearEasing)) }
-    }
-    // The lines drift a little, each at its own pace, so the water looks alive but quiet.
-    val drift = rememberInfiniteTransition(label = "lake")
-    val drifts = listOf(6000, 7000, 8000).mapIndexed { i, ms ->
-        drift.animateFloat(
-            if (i == 1) 1f else -1f,
-            if (i == 1) -1f else 1f,
-            infiniteRepeatable(tween(ms, easing = Calm), RepeatMode.Reverse),
-            label = "drift$i",
-        )
-    }
-    val water = colors.primary
+    val still = rememberStill(fall = drawIn, ambient = !grey)
     Column(
-        Modifier.fillMaxWidth().padding(top = 24.dp, bottom = 48.dp),
+        Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 48.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Canvas(Modifier.fillMaxWidth().height(LAKE_HEIGHT)) {
-            val t = time.value
-            val center = Offset(size.width / 2, size.height / 2)
-            drop(t, center, water)
-            RINGS.forEachIndexed { i, start ->
-                val p = phase(t, start, RING_MS, Spread)
-                if (p > 0f && p < 1f) {
-                    // In over the first tenth, then fading as it spreads.
-                    val alpha = if (p < 0.1f) p / 0.1f * 0.75f else 0.75f * (1f - p) / 0.9f
-                    val rx = RING_RX.toPx() * p
-                    val ry = RING_RY.toPx() * p
-                    drawOval(
-                        water.copy(alpha = alpha),
-                        Offset(center.x - rx, center.y - ry),
-                        Size(rx * 2, ry * 2),
-                        style = Stroke((1.4f - 0.2f * i).dp.toPx()),
-                    )
-                }
-            }
-            LINES.forEachIndexed { i, line ->
-                val p = phase(t, line.start, LINE_MS, Spread)
-                val shift = drifts[i].value * 5.dp.toPx() * phase(t, END - 400f, 400f, LinearEasing)
-                line(line, Offset(center.x + shift, center.y), p, water)
-            }
+        val water = if (grey) colors.outline else colors.primary
+        Canvas(Modifier.fillMaxWidth().height(LAKE_HEIGHT).touches(still)) {
+            still.draw(this, water, HORIZON.toPx(), size.height)
         }
-        val words = phase(time.value, WORDS, WORDS_MS, Calm)
         Column(
             Modifier.graphicsLayer {
+                val words = still.words()
                 alpha = words
                 translationY = (1f - words) * 8.dp.toPx()
             },
@@ -115,66 +89,269 @@ fun LakeNote(title: String, text: String, drawIn: Boolean) {
     }
 }
 
-/** The drop: from where the message left, on a curve to the middle, then flat into the water. */
-private fun DrawScope.drop(t: Float, center: Offset, color: Color) {
-    val p = phase(t, DROP, DROP_MS, LinearEasing)
-    if (p <= 0f || p >= 1f) return
-    val x = center.x + 90.dp.toPx() * (1f - Glide.transform(p))
-    val y = center.y - 80.dp.toPx() * (1f - Fall.transform(p))
-    // Grows in, then spreads flat as it touches the surface.
-    val alpha = if (p < 0.2f) p / 0.2f else if (p > 0.85f) (1f - p) / 0.15f else 1f
-    val r = 3.dp.toPx()
-    val flat = if (p > 0.85f) (p - 0.85f) / 0.15f else 0f
-    drawOval(color.copy(alpha = alpha), Offset(x - r * (1 + 1.4f * flat), y - r * (1 - 0.7f * flat)), Size(2 * r * (1 + 1.4f * flat), 2 * r * (1 - 0.7f * flat)))
+/**
+ * The same water in the gap a pulled list opens, under the status bar at [top]: the horizon
+ * stretches with [fraction], and while [refreshing], quiet rings spread one after another.
+ */
+@Composable
+fun PullWater(fraction: () -> Float, refreshing: Boolean, top: Dp, modifier: Modifier = Modifier) {
+    val water = MaterialTheme.colorScheme.primary
+    val pulled by remember { derivedStateOf { fraction() > 0f } }
+    val still = rememberStill(fall = false, ambient = false, running = pulled || refreshing)
+    LaunchedEffect(refreshing) {
+        still.beat = refreshing
+        still.wake.trySend(Unit)
+    }
+    Canvas(modifier) {
+        val depth = pullGap(fraction())
+        if (depth <= 0f) return@Canvas
+        still.level = if (refreshing) 1f else fraction().coerceIn(0f, 1f)
+        translate(top = top.toPx()) { still.draw(this, water, depth * 0.42f, depth) }
+    }
 }
 
-/** One line of the surface, drawn from its middle out to both ends as [p] goes to 1. */
-private fun DrawScope.line(line: Line, center: Offset, p: Float, color: Color) {
-    if (p <= 0f) return
-    val half = line.half.toPx()
-    val step = 20.dp.toPx()
-    val amp = line.amp.toPx()
-    val y = center.y + line.dy.toPx()
-    val path = Path().apply {
-        var x = center.x - half
-        moveTo(x, y)
-        var up = true
-        while (x < center.x + half - 0.5f) {
-            quadraticTo(x + step / 2, if (up) y - amp else y + amp, x + step, y)
-            x += step
-            up = !up
+/** How far a pull of [fraction] moves the list: with the finger up to the threshold, then less and less. */
+fun Density.pullGap(fraction: Float): Float {
+    val full = PULL_GAP.toPx()
+    return if (fraction <= 1f) full * fraction else full * (1f + 0.6f * (1f - 1f / fraction))
+}
+
+/**
+ * Runs the water's clock while [running]: every frame while something moves, a few times a
+ * second for living water at rest, and not at all for water nobody touches. With the system's
+ * animations off, the water stands still.
+ */
+@Composable
+private fun rememberStill(fall: Boolean, ambient: Boolean, running: Boolean = true): Still {
+    // Only as it first shows: the caller's flag turns off right after.
+    val still = remember { Still(fall, ambient) }
+    LaunchedEffect(still, running) {
+        if (coroutineContext[MotionDurationScale]?.scaleFactor == 0f) {
+            still.hold()
+            return@LaunchedEffect
+        }
+        if (!running) return@LaunchedEffect
+        while (true) {
+            withFrameMillis { still.now = it }
+            when {
+                still.busy -> Unit
+                // Living water breathes a few times a second, and a touch wakes it at once.
+                still.ambient -> withTimeoutOrNull(IDLE_MS) { still.wake.receive() }
+                else -> still.wake.receive()
+            }
         }
     }
-    val measure = PathMeasure().apply { setPath(path, false) }
-    val length = measure.length
-    val part = Path()
-    measure.getSegment(length / 2 * (1f - p), length / 2 * (1f + p), part, true)
-    drawPath(part, color.copy(alpha = line.alpha), style = Stroke(1.8.dp.toPx(), cap = StrokeCap.Round))
+    return still
 }
 
-/** How far a part that starts at [start] and lasts [ms] has got at [t], eased. */
-private fun phase(t: Float, start: Float, ms: Float, easing: Easing): Float =
-    easing.transform(((t - start) / ms).coerceIn(0f, 1f))
+/** A touch on the water leaves a ring and a softer one behind it; a finger moving, a wake. */
+private fun Modifier.touches(still: Still) = pointerInput(still) {
+    val trail = 14.dp.toPx()
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        if (!still.ready) return@awaitEachGesture
+        still.touch(down.position, 1f, echo = true)
+        var last = down.position
+        var at = still.now
+        while (true) {
+            val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+            if (!change.pressed) break
+            val p = change.position
+            if (hypot(p.x - last.x, p.y - last.y) > trail && still.now - at > 60) {
+                still.touch(p, 0.4f, echo = false)
+                last = p
+                at = still.now
+            }
+        }
+    }
+}
 
-private class Line(val half: Dp, val dy: Dp, val amp: Dp, val alpha: Float, val start: Float)
+/** A ring on the water; one made by a touch starts on the next frame, [after] it. */
+private class Ring(val x: Float, val y: Float, val size: Float, var start: Long, val after: Long = 0)
 
-private val LAKE_HEIGHT = 72.dp
-private val RING_RX = 240.dp
-private val RING_RY = 54.dp
+/** The water's state. Not snapshot state: [now] is, and every frame redraws from it. */
+private class Still(private var falling: Boolean, var ambient: Boolean) {
+    private val clock = mutableLongStateOf(0L)
+    var now: Long
+        get() = clock.longValue
+        set(value) {
+            if (begun < 0) begin(value)
+            clock.longValue = value
+        }
 
-private const val DROP = 150f
-private const val DROP_MS = 750f
-private val RINGS = listOf(720f, 860f, 1000f, 1140f)
-private const val RING_MS = 2400f
-private val LINES = listOf(
-    Line(120.dp, (-10).dp, 5.dp, 0.6f, 850f),
-    Line(90.dp, 0.dp, 4.dp, 0.38f, 1000f),
-    Line(60.dp, 10.dp, 3.dp, 0.22f, 1150f),
+    /** Wakes the clock of water at rest when it is touched. */
+    val wake = Channel<Unit>(Channel.CONFLATED)
+
+    var level = if (falling) 0f else 1f
+    private val rings = ArrayList<Ring>()
+    private var frozen = false
+    private var begun = -1L
+    private var drop = -1L
+    private var land = -1L
+    private var next = 0L
+    private var lastBeat = 0L
+    private var horizon = 0f
+    private var width = 0f
+    private var tint = Color.Unspecified
+    private var line: Brush = SolidColor(Color.Transparent)
+    private var glow: Brush = SolidColor(Color.Transparent)
+
+    /** Rings while the list refreshes. */
+    var beat = false
+
+    val ready get() = !frozen && level > 0.5f && width > 0f
+
+    /** Whether something on the water is moving, so every frame counts. */
+    val busy get() = beat || drop >= 0 || land >= 0 || rings.isNotEmpty() || (falling && now - begun < WORDS + WORDS_MS)
+
+    private fun begin(at: Long) {
+        begun = at
+        next = at + 9000
+        if (falling) {
+            drop = at
+            level = 0f
+        }
+    }
+
+    /** Water that never moves, for when the system's animations are off. */
+    fun hold() {
+        frozen = true
+        falling = false
+        ambient = false
+        drop = -1
+        level = 1f
+        now = 1
+    }
+
+    /** How far the words have come in: after the drop when it falls, at once otherwise. */
+    fun words(): Float {
+        if (!falling) return 1f
+        val t = now - begun
+        return if (begun < 0) 0f else Calm.transform(((t - WORDS) / WORDS_MS).coerceIn(0f, 1f))
+    }
+
+    /** The clock may be asleep, so its time is old: the ring starts when the next frame comes. */
+    fun touch(at: Offset, size: Float, echo: Boolean) {
+        ring(at.x, at.y, size, NEXT_FRAME, echo)
+        wake.trySend(Unit)
+    }
+
+    private fun ring(x: Float, y: Float, size: Float, start: Long, echo: Boolean) {
+        val onWater = maxOf(y, horizon + 4f)
+        rings += Ring(x, onWater, size, start)
+        if (echo) rings += Ring(x, onWater, size * 0.65f, start, after = 150)
+        while (rings.size > MAX_RINGS) rings.removeAt(0)
+    }
+
+    /** Brushes one unit across, scaled into place, so a frame makes no new shaders. */
+    private fun paint(color: Color) {
+        if (color == tint) return
+        tint = color
+        line = Brush.horizontalGradient(listOf(Color.Transparent, color, Color.Transparent), -1f, 1f)
+        glow = Brush.radialGradient(listOf(color, Color.Transparent), Offset.Zero, 1f)
+    }
+
+    fun draw(scope: DrawScope, color: Color, hz: Float, bottom: Float) = with(scope) {
+        val t = now
+        horizon = hz
+        width = size.width
+        paint(color)
+        val cx = size.width / 2
+        if (drop >= 0) {
+            val p = ((t - drop) / DROP_MS).coerceIn(0f, 1f)
+            val landY = hz + 40.dp.toPx()
+            if (p < 1f) {
+                val x = cx + 60.dp.toPx() * (1f - Glide.transform(p))
+                val y = landY - 120.dp.toPx() * (1f - Fall.transform(p))
+                drawCircle(color.copy(alpha = min(1f, p * 5f)), 2.6.dp.toPx(), Offset(x, y))
+            } else {
+                drop = -1
+                land = t
+                next = t + 8000
+                for (i in LANDING.indices) ring(cx, landY, LANDING[i], t + i * 180L, echo = false)
+            }
+        }
+        if (land >= 0) {
+            level = Calm.transform(((t - land) / LEVEL_MS).coerceIn(0f, 1f))
+            if (level >= 1f) land = -1
+        }
+        val lv = level
+        val breath = 0.85f + 0.15f * sin(t / 12000f * 2 * PI.toFloat())
+        val stroke = 1.dp.toPx()
+        clipRect(top = hz, bottom = bottom) {
+            if (lv > 0f) {
+                // The reflection: a soft glow under the horizon, flattened by perspective.
+                val r = 150.dp.toPx() * lv + 1f
+                withTransform({
+                    translate(cx, hz)
+                    scale(r, r * 0.32f, Offset.Zero)
+                }) {
+                    drawRect(glow, Offset(-1f, 0f), Size(2f, (bottom - hz) / (r * 0.32f)), alpha = 0.15f * breath)
+                }
+                STREAKS.forEachIndexed { i, s ->
+                    val w = s.half.toPx() * lv * (0.88f + 0.12f * sin(t / (5000f + 1300 * i) + i))
+                    val x0 = cx + 6.dp.toPx() * sin(t / (9000f + 1700 * i) + i * 2)
+                    faded(s.alpha * breath, x0, w, hz + s.dy.toPx(), stroke)
+                }
+            }
+            val far = 300.dp.toPx()
+            rings.removeAll { r ->
+                if (r.start == NEXT_FRAME) r.start = t
+                val age = t - r.start - r.after
+                if (age < 0) return@removeAll false
+                val p = age / (2200f + 900f * r.size)
+                if (p >= 1f) return@removeAll true
+                // Nearer the viewer, a ring is rounder and spreads wider.
+                val d = ((r.y - hz) / far).coerceIn(0f, 1f)
+                val rx = (60f + 150f * d).dp.toPx() * r.size * Spread.transform(p) + 1f
+                val ry = rx * (0.1f + 0.35f * d)
+                val alpha = 0.5f * min(1f, sqrt(r.size)) * (1f - p) * min(1f, p * 10f)
+                drawOval(color.copy(alpha = alpha), Offset(r.x - rx, r.y - ry), Size(rx * 2, ry * 2), style = Stroke(stroke))
+                false
+            }
+        }
+        if (lv > 0f) faded(0.55f, cx, 150.dp.toPx() * lv, hz, stroke)
+        if (ambient && lv >= 1f && t > next) {
+            ring(cx + (Random.nextFloat() - 0.5f) * 180.dp.toPx(), hz + (18 + Random.nextFloat() * 70).dp.toPx(), 0.5f + Random.nextFloat() * 0.25f, t, echo = true)
+            next = t + 7000 + Random.nextLong(6000)
+        }
+        if (beat && t - lastBeat > 650) {
+            lastBeat = t
+            ring(cx + (Random.nextFloat() - 0.5f) * 60.dp.toPx(), hz + (bottom - hz) * 0.55f, 0.55f, t, echo = false)
+        }
+    }
+
+    /** A hairline [half] to each side of [x], fading out at both ends. */
+    private fun DrawScope.faded(alpha: Float, x: Float, half: Float, y: Float, width: Float) {
+        if (half < 0.5f) return
+        withTransform({
+            translate(x, y)
+            scale(half, 1f, Offset.Zero)
+        }) {
+            drawLine(line, Offset(-1f, 0f), Offset(1f, 0f), width, alpha = alpha)
+        }
+    }
+}
+
+private class Streak(val dy: Dp, val half: Dp, val alpha: Float)
+
+private val LAKE_HEIGHT = 124.dp
+private val HORIZON = 40.dp
+private val STREAKS = listOf(
+    Streak(9.dp, 104.dp, 0.1f),
+    Streak(20.dp, 84.dp, 0.075f),
+    Streak(35.dp, 62.dp, 0.055f),
+    Streak(55.dp, 40.dp, 0.035f),
 )
-private const val LINE_MS = 1500f
+private val PULL_GAP = 72.dp
+private val LANDING = floatArrayOf(2.2f, 1.5f, 1f)
+private const val MAX_RINGS = 48
+private const val IDLE_MS = 250L
+private const val NEXT_FRAME = -1L
+private const val DROP_MS = 750f
+private const val LEVEL_MS = 1900f
 private const val WORDS = 1300f
 private const val WORDS_MS = 1000f
-private const val END = 3600f
 
 private val Glide = CubicBezierEasing(0.2f, 0.6f, 0.3f, 1f)
 private val Fall = CubicBezierEasing(0.6f, 0f, 0.9f, 0.4f)
