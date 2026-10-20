@@ -111,5 +111,10 @@
   "action_empty_trash": "Empty Trash",
   "action_empty_junk": "Empty Spam",
   "inbox_deleted": "Deleted forever",
-  "inbox_emptied": "Folder emptied"
+  "inbox_emptied": "Folder emptied",
+  "select_count": "%1$d selected",
+  "select_hint": "Tap to add or remove",
+  "action_select_all": "Select all",
+  "action_all_from": "All from %1$s",
+  "action_done_count": "Done %1$d"
 }

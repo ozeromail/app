@@ -1,7 +1,6 @@
 package com.ozeromail.app
 
 import androidx.annotation.DrawableRes
-import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -370,14 +369,15 @@ private fun Actions(onDelete: () -> Unit, forever: Boolean, onMore: () -> Unit, 
     val colors = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth().padding(horizontal = Gap.bar), horizontalArrangement = Arrangement.spacedBy(Gap.inBar)) {
         val delete = if (forever) R.string.action_delete_forever else R.string.action_delete
-        Action(R.drawable.ic_delete, delete, colors.onSurface, onClick = onDelete)
-        Action(R.drawable.ic_more, R.string.action_more, colors.onSurface, onClick = onMore)
-        onDone?.let { Action(R.drawable.ic_done, R.string.action_done, Color.White, MaterialTheme.done, it) }
+        BarAction(R.drawable.ic_delete, stringResource(delete), colors.onSurface, onClick = onDelete)
+        BarAction(R.drawable.ic_more, stringResource(R.string.action_more), colors.onSurface, onClick = onMore)
+        onDone?.let { BarAction(R.drawable.ic_done, stringResource(R.string.action_done), Color.White, MaterialTheme.done, it) }
     }
 }
 
+/** One of the big buttons along the bottom of a screen: an icon over its name. */
 @Composable
-private fun RowScope.Action(@DrawableRes icon: Int, @StringRes label: Int, tint: Color, background: Color = Color.Transparent, onClick: () -> Unit) {
+fun RowScope.BarAction(@DrawableRes icon: Int, label: String, tint: Color, background: Color = Color.Transparent, onClick: () -> Unit) {
     Column(
         Modifier
             .weight(1f)
@@ -389,7 +389,7 @@ private fun RowScope.Action(@DrawableRes icon: Int, @StringRes label: Int, tint:
         verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically),
     ) {
         Glyph(icon, null, tint, size = 21.dp)
-        Text(stringResource(label), color = tint, fontSize = 11.5.sp)
+        Text(label, color = tint, fontSize = 11.5.sp, maxLines = 1)
     }
 }
 

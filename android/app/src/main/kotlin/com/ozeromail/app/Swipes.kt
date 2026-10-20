@@ -110,12 +110,13 @@ fun SwipeAction.appliesTo(message: MessageItem): Boolean = this != SwipeAction.D
 
 /**
  * A row that does [swipes] when swiped; a side whose action does not apply to [message] stays
- * still. [onSwipe] gets a way to bring the row back.
+ * still, as the whole row does unless [enabled]. [onSwipe] gets a way to bring the row back.
  */
 @Composable
 fun SwipeRow(
     message: MessageItem,
     swipes: Swipes,
+    enabled: Boolean,
     onSwipe: (SwipeAction, reset: () -> Unit) -> Unit,
     content: @Composable () -> Unit,
 ) {
@@ -138,8 +139,8 @@ fun SwipeRow(
     val colors = MaterialTheme.colorScheme
     SwipeToDismissBox(
         state = state,
-        enableDismissFromStartToEnd = swipes.right.appliesTo(message),
-        enableDismissFromEndToStart = swipes.left.appliesTo(message),
+        enableDismissFromStartToEnd = enabled && swipes.right.appliesTo(message),
+        enableDismissFromEndToStart = enabled && swipes.left.appliesTo(message),
         backgroundContent = {
             val left = state.dismissDirection == SwipeToDismissBoxValue.EndToStart
             val action = if (left) swipes.left else swipes.right
