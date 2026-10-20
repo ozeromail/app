@@ -513,7 +513,9 @@ impl Store for SqliteStore {
         if ids.is_empty() {
             return Err(StoreError::NotFound);
         }
-        if !folder_role(&tx, message)?.allows(action) {
+        if matches!(action, Action::Archive | Action::Trash)
+            && !folder_role(&tx, message)?.allows(action)
+        {
             return Err(StoreError::NotAllowed);
         }
         let mut ops = vec![];
