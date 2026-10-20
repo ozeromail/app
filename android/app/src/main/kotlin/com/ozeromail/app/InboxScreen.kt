@@ -114,6 +114,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -193,6 +194,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var groups by remember { mutableStateOf(settings.groups) }
     var swipeTip by remember { mutableStateOf(!settings.swipeTipSeen) }
     var query by rememberSaveable { mutableStateOf("") }
+    // Messages chosen to act on together, in the order they were chosen.
+    var chosen by remember { mutableStateOf(emptySet<Long>()) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -308,6 +311,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         if (!addingAccount) loadAccounts()
     }
     LaunchedEffect(tab, mailbox) {
+        chosen = emptySet()
         loadList()
         listState.scrollToItem(0)
     }
@@ -377,33 +381,38 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     }
 
     /**
-     * The message leaves the list at once, for the account's folder of [role] if it goes to one;
-     * the toast can take it back for a moment, or show that folder.
+     * The messages leave the list at once, for their account's folder of [role] if they go to
+     * one; the toast can take them all back for a moment, or show that folder.
      */
-    fun remove(message: MessageItem, toast: String, role: FolderRole?, move: suspend (MessageItem) -> List<Long>, reset: () -> Unit = {}) {
-        val go = folders.find { it.accountId == message.accountId && it.role == role }?.let { Mailbox.Folder(it.id) }
+    fun remove(gone: List<MessageItem>, toast: String, role: FolderRole?, move: suspend (MessageItem) -> List<Long>, reset: () -> Unit = {}) {
+        val account = gone.map { it.accountId }.distinct().singleOrNull()
+        val go = folders.find { it.accountId == account && it.role == role }?.let { Mailbox.Folder(it.id) }
         scope.launch {
-            val action = try {
-                move(message)
-            } catch (e: CoreException) {
-                error = e.text()
-                null
+            val moved = mutableSetOf<Long>()
+            val actions = mutableListOf<Long>()
+            for (message in gone) {
+                try {
+                    actions += move(message)
+                    moved += message.id
+                } catch (e: CoreException) {
+                    error = e.text()
+                }
             }
-            if (action != null) {
-                messages = messages.filterNot { it.id == message.id }
+            if (moved.isNotEmpty()) {
+                messages = messages.filterNot { it.id in moved }
                 counts()
             }
             // Also after success: a list read before the archive may bring the row back.
             reset()
-            if (action != null && offerUndo(toast, go.takeIf { it != mailbox }) && mail.undo(action)) load()
+            if (moved.isNotEmpty() && offerUndo(toast, go.takeIf { it != mailbox }) && mail.undo(actions)) load()
         }
     }
 
     /** Delete: into the trash, or for good from there. */
-    fun delete(message: MessageItem, reset: () -> Unit = {}) = if (message.canTrash) {
-        remove(message, trashed, FolderRole.TRASH, mail::trash, reset)
-    } else {
-        remove(message, deleted, null, mail::deleteForever, reset)
+    fun delete(gone: List<MessageItem>, reset: () -> Unit = {}) {
+        val forever = gone.none { it.canTrash }
+        val move: suspend (MessageItem) -> List<Long> = { if (it.canTrash) mail.trash(it) else mail.deleteForever(it) }
+        remove(gone, if (forever) deleted else trashed, FolderRole.TRASH.takeUnless { forever }, move, reset)
     }
 
     /** Empties a trash or spam folder for good, on the server too; the toast can take it back for a moment. */
@@ -423,29 +432,40 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     }
 
     /** Done: into the archive. */
-    fun archive(message: MessageItem, reset: () -> Unit) = remove(message, archived, FolderRole.ARCHIVE, mail::archive, reset)
+    fun archive(gone: List<MessageItem>, reset: () -> Unit = {}) = remove(gone, archived, FolderRole.ARCHIVE, mail::archive, reset)
 
-    /** Marks the row read, or unread if it is read; it stays in the list either way. */
-    fun toggleRead(message: MessageItem, reset: () -> Unit) {
-        val read = message.threadUnread > 0u
+    /** Marks the rows [read] or unread; they stay in the list either way. */
+    fun setRead(rows: List<MessageItem>, read: Boolean, reset: () -> Unit = {}) {
         scope.launch {
-            try {
-                mail.markRead(message, seen = read)
-                messages = messages.map {
-                    if (it.id == message.id) it.copy(seen = read, threadUnread = if (read) 0u else 1u) else it
+            val marked = mutableSetOf<Long>()
+            for (row in rows) {
+                try {
+                    mail.markRead(row, seen = read)
+                    marked += row.id
+                } catch (e: CoreException) {
+                    error = e.text()
                 }
-                counts()
-            } catch (e: CoreException) {
-                error = e.text()
             }
+            messages = messages.map {
+                if (it.id in marked) it.copy(seen = read, threadUnread = if (read) 0u else 1u) else it
+            }
+            counts()
             reset()
         }
     }
 
     fun swiped(message: MessageItem, action: SwipeAction, reset: () -> Unit) = when (action) {
-        SwipeAction.DONE -> archive(message, reset)
-        SwipeAction.DELETE -> delete(message, reset)
-        SwipeAction.READ -> toggleRead(message, reset)
+        SwipeAction.DONE -> archive(listOf(message), reset)
+        SwipeAction.DELETE -> delete(listOf(message), reset)
+        // Read if it is unread, unread if it is read.
+        SwipeAction.READ -> setRead(listOf(message), message.threadUnread > 0u, reset)
+    }
+
+    /** The chosen messages, as the list shows them; acting on them ends the choosing. */
+    fun choice(act: (List<MessageItem>) -> Unit) {
+        val rows = messages.filter { it.id in chosen }
+        chosen = emptySet()
+        act(rows)
     }
 
     val screen = screenOf(composing, open, addingAccount, searching)
@@ -526,7 +546,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         onDelete = {
                             open = null
                             closeSearch()
-                            delete(shown.message)
+                            delete(listOf(shown.message))
                         },
                         onUnread = {
                             open = null
@@ -543,7 +563,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                             open = null
                             // Back to the list, where the toast can undo it.
                             closeSearch()
-                            archive(shown.message) {}
+                            archive(listOf(shown.message))
                         }.takeIf { shown.message.canArchive },
                     )
                     Screen.AddAccount -> SignInScreen(
@@ -606,6 +626,11 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         onCompose = { composing = Composing(NEW_DRAFT) },
                         onGo = { mailbox = it },
                         empty = openFolder?.let { folder -> folder.role.emptyLabel()?.let { it to { empty(folder) } } },
+                        chosen = chosen,
+                        onChoose = { chosen = it },
+                        onRead = { read -> choice { setRead(it, read) } },
+                        onDelete = { choice { delete(it) } },
+                        onDone = { choice { rows -> archive(rows.filter { it.canArchive }) } },
                     )
                 }
                 // A screen on its way out takes no more taps.
@@ -770,9 +795,29 @@ private fun InboxList(
     onCompose: () -> Unit,
     onGo: (Mailbox) -> Unit,
     empty: Pair<Int, () -> Unit>?,
+    /** Messages chosen to act on together; acting on them ends the choosing. */
+    chosen: Set<Long>,
+    onChoose: (Set<Long>) -> Unit,
+    onRead: (read: Boolean) -> Unit,
+    onDelete: () -> Unit,
+    onDone: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
     val density = LocalDensity.current
+    val haptics = LocalHapticFeedback.current
+    // Only what the list still shows: a sync may take a chosen message away.
+    val picked = messages.filter { it.id in chosen }
+    val choosing = picked.isNotEmpty()
+    val mode by animateFloatAsState(if (choosing) 1f else 0f, Motion.settle(), label = "choosing")
+    var more by remember { mutableStateOf(false) }
+    BackHandler(enabled = choosing) { onChoose(emptySet()) }
+    // The gestures outlive a composition; they read the list as it is now.
+    val rowsNow by rememberUpdatedState(messages)
+    val chosenNow by rememberUpdatedState(chosen)
+    val chooseNow by rememberUpdatedState(onChoose)
+    val shownTitle = if (choosing) stringResource(R.string.select_count, picked.size) else title
+    // The hint only stands in for a line that is there anyway: the rows must not move under the finger.
+    val shownOwner = if (choosing && owner != null) stringResource(R.string.select_hint) else owner
     var dockHeight by remember { mutableStateOf(0.dp) }
     // Whether this tab just had mail: then the done note draws itself in as the last message
     // leaves, and not on opening the app or switching to an empty tab.
@@ -830,11 +875,20 @@ private fun InboxList(
             },
         ) {
             LazyColumn(
-                Modifier.fillMaxSize().graphicsLayer { translationY = pullGap(pull.distanceFraction) },
+                Modifier
+                    .fillMaxSize()
+                    .chooseRows(
+                        listState,
+                        rows = { rowsNow.map { it.id } },
+                        chosen = { chosenNow.filterTo(LinkedHashSet()) { id -> rowsNow.any { it.id == id } } },
+                        onChoose = { chooseNow(it) },
+                        onHold = { haptics.performHapticFeedback(HapticFeedbackType.LongPress) },
+                    )
+                    .graphicsLayer { translationY = pullGap(pull.distanceFraction) },
                 state = listState,
                 contentPadding = PaddingValues(top = top, bottom = dockHeight + 16.dp),
             ) {
-                item(key = "title") { Hero(title, owner) }
+                item(key = "title") { Hero(shownTitle, shownOwner) }
                 items(unsent, key = { "unsent-${it.id}" }) { failed ->
                     UnsentRow(failed, rowMove().then(slide), onClick = { onUnsent(failed) })
                 }
@@ -868,8 +922,19 @@ private fun InboxList(
                 itemsIndexed(messages, key = { _, it -> it.id }) { index, message ->
                     Column(rowMove().then(slide)) {
                         if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.screen), color = colors.outlineVariant)
-                        SwipeRow(message, swipes, onSwipe = { action, reset -> onSwipe(message, action, reset) }) {
-                            MessageRow(message, onClick = { onOpen(message) })
+                        SwipeRow(message, swipes, enabled = !choosing, onSwipe = { action, reset -> onSwipe(message, action, reset) }) {
+                            MessageRow(
+                                message,
+                                choosing = mode,
+                                chosen = message.id in chosen,
+                                onClick = {
+                                    when {
+                                        !choosing -> onOpen(message)
+                                        message.id in chosen -> onChoose(chosen - message.id)
+                                        else -> onChoose(chosen + message.id)
+                                    }
+                                },
+                            )
                         }
                     }
                 }
@@ -887,7 +952,7 @@ private fun InboxList(
                     .hairline(colors.outlineVariant, top = false),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(title, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(shownTitle, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         Column(Modifier.align(Alignment.BottomCenter)) {
@@ -914,8 +979,35 @@ private fun InboxList(
                 onAccounts = onAccounts,
                 onSearch = onSearch,
                 onCompose = onCompose,
-                empty = empty.takeIf { messages.isNotEmpty() },
+                empty = empty.takeIf { messages.isNotEmpty() && !choosing },
+                choosing = mode,
+                choiceBar = {
+                    ChoiceBar(
+                        done = picked.count { it.canArchive },
+                        unread = picked.any { it.threadUnread > 0u },
+                        forever = picked.isNotEmpty() && picked.none { it.canTrash },
+                        onCancel = { onChoose(emptySet()) },
+                        onRead = { onRead(picked.any { it.threadUnread > 0u }) },
+                        onDelete = onDelete,
+                        onMore = { more = true },
+                        onDone = onDone.takeIf { picked.any { it.canArchive } },
+                    )
+                },
             )
+        }
+        // The rarer ways to choose, in a sheet like every menu.
+        Sheet(visible = more, onClose = { more = false }) {
+            SheetAction(R.drawable.ic_done, stringResource(R.string.action_select_all), colors.onSurface) {
+                more = false
+                onChoose(chosen + messages.map { it.id })
+            }
+            // The sender of the message chosen last.
+            messages.find { it.id == chosen.lastOrNull() }?.let { last ->
+                SheetAction(R.drawable.ic_inbox, stringResource(R.string.action_all_from, last.sender), colors.onSurface) {
+                    more = false
+                    onChoose(chosen + messages.filter { it.fromEmail == last.fromEmail }.map { it.id })
+                }
+            }
         }
     }
 }
@@ -969,8 +1061,12 @@ private fun Dock(
     onSearch: () -> Unit,
     onCompose: () -> Unit,
     empty: Pair<Int, () -> Unit>?,
+    /** From 0 to 1 as choosing begins: [choiceBar] takes the place of search. */
+    choosing: Float,
+    choiceBar: @Composable () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
+    val rise = with(LocalDensity.current) { 16.dp.toPx() }
     Column(
         modifier
             .fillMaxWidth()
@@ -982,21 +1078,43 @@ private fun Dock(
     ) {
         tabs?.let { Tabs(tab, it, glide, onTab) }
         empty?.let { (label, onClick) -> EmptyButton(stringResource(label), onClick) }
-        // The same edge as the tabs above, so the accounts button lines up with them.
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = Gap.bar),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
-        ) {
-            AccountsButton(accounts, onAccounts)
-            Pill(stringResource(R.string.search_prompt), onSearch, Modifier.weight(1f), icon = R.drawable.ic_search)
-            IconTile(
-                R.drawable.ic_compose,
-                stringResource(R.string.compose_new),
-                onCompose,
-                background = colors.primary,
-                tint = colors.onPrimary,
-            )
+        // As tall as the taller of the two, so the dock keeps its height as they change.
+        Box(Modifier.height(52.dp), contentAlignment = Alignment.Center) {
+            if (choosing < 1f) {
+                // The same edge as the tabs above, so the accounts button lines up with them.
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .graphicsLayer {
+                            alpha = 1f - choosing
+                            translationY = rise * choosing
+                        }
+                        .then(if (choosing > 0.5f) Modifier.blockTouches() else Modifier)
+                        .padding(horizontal = Gap.bar),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
+                ) {
+                    AccountsButton(accounts, onAccounts)
+                    Pill(stringResource(R.string.search_prompt), onSearch, Modifier.weight(1f), icon = R.drawable.ic_search)
+                    IconTile(
+                        R.drawable.ic_compose,
+                        stringResource(R.string.compose_new),
+                        onCompose,
+                        background = colors.primary,
+                        tint = colors.onPrimary,
+                    )
+                }
+            }
+            if (choosing > 0f) {
+                Box(
+                    Modifier
+                        .graphicsLayer {
+                            alpha = choosing
+                            translationY = rise * (1f - choosing)
+                        }
+                        .then(if (choosing < 0.5f) Modifier.blockTouches() else Modifier),
+                ) { choiceBar() }
+            }
         }
     }
 }
@@ -1204,19 +1322,29 @@ fun rgb(color: UInt) = Color(0xFF000000 or color.toLong())
 
 /**
  * A row of a list. Unread shows as a blue dot and bold text; with several accounts, a strip
- * of the account's colour on the left and its name by the time mark it.
+ * of the account's colour on the left and its name by the time mark it. While [choosing]
+ * (0 to 1 as it begins), the row moves over for its mark, filled when [chosen].
  */
 @Composable
-internal fun MessageRow(message: MessageItem, onClick: () -> Unit) {
+internal fun MessageRow(message: MessageItem, onClick: () -> Unit, choosing: Float = 0f, chosen: Boolean = false) {
     val colors = MaterialTheme.colorScheme
     val account = message.account
     val unread = message.threadUnread > 0u
     // The dot goes out quickly and in place: read is the most frequent change there is.
     val dot by animateFloatAsState(if (unread) 1f else 0f, Motion.calm(Motion.QUICK), label = "dot")
+    val tint by animateColorAsState(if (chosen) colors.primary.copy(alpha = 0.08f) else Color.Transparent, Motion.calm(Motion.QUICK), label = "chosen")
+    Box(Modifier.fillMaxWidth().background(tint)) {
+        if (choosing > 0f) ChoiceMark(chosen, choosing, Modifier.align(Alignment.CenterStart).padding(start = 14.dp))
+        MessageLine(message, unread, dot, account, MARK_ROOM * choosing, Modifier.clickable(onClick = onClick))
+    }
+}
+
+@Composable
+private fun MessageLine(message: MessageItem, unread: Boolean, dot: Float, account: AccountMark?, shift: Dp, modifier: Modifier) {
+    val colors = MaterialTheme.colorScheme
     Row(
-        Modifier
+        modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
             .then(
                 if (account == null) {
                     Modifier
@@ -1234,7 +1362,7 @@ internal fun MessageRow(message: MessageItem, onClick: () -> Unit) {
                     }
                 },
             )
-            .padding(start = Gap.screen, end = 16.dp, top = 12.dp, bottom = 12.dp),
+            .padding(start = Gap.screen + shift, end = 16.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.Top,
     ) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
