@@ -513,6 +513,9 @@ impl Store for SqliteStore {
         if ids.is_empty() {
             return Err(StoreError::NotFound);
         }
+        if !folder_role(&tx, message)?.allows(action) {
+            return Err(StoreError::NotAllowed);
+        }
         let mut ops = vec![];
         for (id, flags) in ids {
             // The rest of the conversation only where it changes something; unread is
@@ -963,6 +966,15 @@ fn role_folder(
     .ok_or(missing)
 }
 
+fn folder_role(tx: &Transaction<'_>, message: MessageId) -> Result<FolderRole, StoreError> {
+    tx.prepare_cached(
+        "SELECT f.role FROM message m JOIN folder f ON f.id = m.folder_id WHERE m.id = ?1",
+    )
+    .and_then(|mut s| s.query_row([message.0], |r| r.get::<_, Role>(0)))
+    .map(|role| role.0)
+    .map_err(storage)
+}
+
 /// Drops the op if `sql`, a `DELETE ... RETURNING message_id, kind, undo` with the op id
 /// as `?1` and `arg` as `?2`, finds it, and restores what it changed on the device.
 fn take_back(tx: &Transaction<'_>, sql: &str, op: OpId, arg: i64) -> Result<bool, StoreError> {
@@ -1119,7 +1131,7 @@ macro_rules! message_from {
             "SELECT m.id, f.account_id, m.from_name, m.from_email, m.subject, m.snippet, m.date,
                     m.flags, ",
             $thread,
-            ", f.role = 'sent'",
+            ", f.role = 'sent', f.role",
             " FROM message m JOIN folder f ON f.id = m.folder_id"
         )
     };
@@ -1321,6 +1333,7 @@ fn message_row(r: &Row<'_>) -> rusqlite::Result<MessageRow> {
         thread_count,
         senders,
         sent: r.get(10)?,
+        role: r.get::<_, Role>(11)?.0,
     })
 }
 

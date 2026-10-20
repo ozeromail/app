@@ -30,6 +30,21 @@ pub async fn sync_mail(
     Ok(())
 }
 
+/// Brings what changed in these folders into the store, up to `limit` new messages each:
+/// a folder the user opens. The folder list is the one the last `sync_mail` saved.
+pub async fn sync_folders(
+    store: &dyn Store,
+    provider: &mut impl MailProvider,
+    parser: &dyn MessageParser,
+    folders: &[Folder],
+    limit: u32,
+) -> Result<(), SyncError> {
+    for folder in folders {
+        sync_folder(store, provider, parser, folder, limit).await?;
+    }
+    Ok(())
+}
+
 /// Waits until the account's inbox may have changed since its last sync, at most `wait`:
 /// true if it may have.
 pub async fn wait_for_mail(

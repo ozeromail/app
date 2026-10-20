@@ -250,6 +250,7 @@ fn rows_are_marked_only_with_several_accounts() {
         thread_unread: 0,
         senders: Vec::new(),
         sent: false,
+        role: FolderRole::Inbox,
     };
     let first = add("a@example.com");
     assert_eq!(core.items(vec![row(first)]).unwrap()[0].account, None);

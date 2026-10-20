@@ -1,4 +1,4 @@
-use crate::AccountId;
+use crate::{AccountId, Action};
 
 /// Local id of a folder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -34,6 +34,16 @@ impl FolderRole {
             _ => return None,
         };
         Some(role)
+    }
+
+    /// Whether `action` applies to a message in a folder with this role. Done archives only
+    /// mail that is not filed yet; sent mail and drafts stay, as Gmail does not let them go.
+    pub fn allows(self, action: Action) -> bool {
+        match action {
+            Action::Seen(_) => true,
+            Action::Archive => matches!(self, Self::Inbox | Self::Custom),
+            Action::Trash => !matches!(self, Self::Trash | Self::Sent | Self::Drafts),
+        }
     }
 
     /// Messages in these folders take part in Inbox Zero counters.
@@ -77,5 +87,15 @@ mod tests {
         // \All holds every message, so it is not an archive.
         assert_eq!(FolderRole::from_special_use("\\All"), None);
         assert_eq!(FolderRole::from_special_use("\\Noselect"), None);
+    }
+
+    #[test]
+    fn moves_only_where_they_mean_something() {
+        assert!(FolderRole::Inbox.allows(Action::Archive));
+        assert!(!FolderRole::Archive.allows(Action::Archive));
+        assert!(FolderRole::Archive.allows(Action::Trash));
+        assert!(!FolderRole::Trash.allows(Action::Trash));
+        assert!(!FolderRole::Sent.allows(Action::Trash));
+        assert!(FolderRole::Sent.allows(Action::Seen(true)));
     }
 }

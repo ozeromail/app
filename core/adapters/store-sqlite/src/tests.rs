@@ -677,6 +677,23 @@ fn trash_moves_the_message_like_archive() {
 }
 
 #[test]
+fn moves_only_leave_folders_that_allow_them() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    archive_folder(&store, account);
+    let archive = store.folders(account).unwrap()[1].id;
+    store.save_messages(archive, &[message(1, 100)]).unwrap();
+    let row = &list(&store, ListScope::Folder(archive), 10, None)[0];
+    assert_eq!(row.role, FolderRole::Archive);
+    assert_eq!(
+        store.queue(row.id, Action::Archive, 0).unwrap_err(),
+        StoreError::NotAllowed
+    );
+    assert!(store.due(account, 0).unwrap().is_empty());
+    store.queue(row.id, Action::Seen(true), 0).unwrap();
+}
+
+#[test]
 fn a_refused_archive_shows_the_message_again() {
     let store = store();
     let account = account(&store, "a@example.com");
