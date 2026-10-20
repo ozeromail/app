@@ -50,17 +50,29 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.random.Random
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The note of a list with nothing left in it: still water. A horizon, a soft reflection under
  * it, and rings that lie on the water in perspective. With [drawIn], as the last message leaves,
  * a drop lands on the water and the horizon comes out of its rings. A touch leaves rings too.
- * [grey] water is for plain empty folders: no drop, and it only moves when touched. While
+ * [grey] water is for plain empty folders: it never draws in, and only moves when touched. While
  * [waiting] for a list's first mail, rings spread one after another and the words hold back.
+ * As the list is [pulled], a drop gathers over the water, full at the threshold, and falls on
+ * each of [drops].
  */
 @Composable
-fun StillNote(title: String, text: String, drawIn: Boolean, grey: Boolean = false, waiting: Boolean = false) {
+fun StillNote(
+    title: String,
+    text: String,
+    drawIn: Boolean,
+    grey: Boolean = false,
+    waiting: Boolean = false,
+    pulled: () -> Float = { 0f },
+    drops: Flow<Unit> = emptyFlow(),
+) {
     val colors = MaterialTheme.colorScheme
     val still = rememberStill(fall = drawIn, ambient = !grey)
     // The words wait for the first sync only; once said, a later one just stirs the water.
@@ -70,6 +82,7 @@ fun StillNote(title: String, text: String, drawIn: Boolean, grey: Boolean = fals
         still.beat = waiting
         if (!waiting) said = true
     }
+    LaunchedEffect(drops) { drops.collect { still.release() } }
     Column(
         Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 48.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -77,7 +90,7 @@ fun StillNote(title: String, text: String, drawIn: Boolean, grey: Boolean = fals
     ) {
         val water = if (grey) colors.outline else colors.primary
         Canvas(Modifier.fillMaxWidth().height(LAKE_HEIGHT).touches(still)) {
-            still.draw(this, water, HORIZON.toPx(), size.height)
+            still.draw(this, water, HORIZON.toPx(), size.height, pulled())
         }
         Column(
             Modifier.graphicsLayer {
@@ -184,6 +197,8 @@ private class Still(private var falling: Boolean, var ambient: Boolean) {
         get() = clock.longValue
         set(value) {
             if (begun < 0) begin(value)
+            // A released drop falls from the first fresh frame: a draw before it may see an old time.
+            if (pullDrop == RELEASED) pullDrop = value
             clock.longValue = value
         }
 
@@ -195,6 +210,7 @@ private class Still(private var falling: Boolean, var ambient: Boolean) {
     private var frozen = false
     private var begun = -1L
     private var drop = -1L
+    private var pullDrop = -1L
     private var land = -1L
     private var next = 0L
     private var lastBeat = 0L
@@ -214,7 +230,7 @@ private class Still(private var falling: Boolean, var ambient: Boolean) {
     val ready get() = !frozen && level > 0.5f && width > 0f
 
     /** Whether something on the water is moving, so every frame counts. */
-    val busy get() = beat || drop >= 0 || land >= 0 || rings.isNotEmpty() || (falling && now - begun < WORDS + WORDS_MS)
+    val busy get() = beat || drop >= 0 || pullDrop != -1L || land >= 0 || rings.isNotEmpty() || (falling && now - begun < WORDS + WORDS_MS)
 
     private fun begin(at: Long) {
         begun = at
@@ -242,6 +258,13 @@ private class Still(private var falling: Boolean, var ambient: Boolean) {
         return if (begun < 0) 0f else Calm.transform(((t - WORDS) / WORDS_MS).coerceIn(0f, 1f))
     }
 
+    /** The gathered drop lets go and falls on the water, from the next frame; one at a time. */
+    fun release() {
+        if (!ready || pullDrop != -1L) return
+        pullDrop = RELEASED
+        wake.trySend(Unit)
+    }
+
     /** The clock may be asleep, so its time is old: the ring starts when the next frame comes. */
     fun touch(at: Offset, size: Float, echo: Boolean) {
         ring(at.x, at.y, size, NEXT_FRAME, echo)
@@ -263,15 +286,15 @@ private class Still(private var falling: Boolean, var ambient: Boolean) {
         glow = Brush.radialGradient(listOf(color, Color.Transparent), Offset.Zero, 1f)
     }
 
-    fun draw(scope: DrawScope, color: Color, hz: Float, bottom: Float) = with(scope) {
+    fun draw(scope: DrawScope, color: Color, hz: Float, bottom: Float, pulled: Float = 0f) = with(scope) {
         val t = now
         horizon = hz
         width = size.width
         paint(color)
         val cx = size.width / 2
+        val landY = hz + 40.dp.toPx()
         if (drop >= 0) {
             val p = ((t - drop) / DROP_MS).coerceIn(0f, 1f)
-            val landY = hz + 40.dp.toPx()
             if (p < 1f) {
                 val x = cx + 60.dp.toPx() * (1f - Glide.transform(p))
                 val y = landY - 120.dp.toPx() * (1f - Fall.transform(p))
@@ -282,6 +305,26 @@ private class Still(private var falling: Boolean, var ambient: Boolean) {
                 next = t + 8000
                 for (i in LANDING.indices) ring(cx, landY, LANDING[i], t + i * 180L, echo = false)
             }
+        }
+        val hangY = hz - HANG.toPx()
+        if (pullDrop >= 0) {
+            val p = ((t - pullDrop) / DROP_MS).coerceIn(0f, 1f)
+            if (p < 1f) {
+                val r = SWOLLEN.toPx()
+                val y = hangY + (landY - hangY) * Fall.transform(p)
+                bead(color, cx, y, r, 1.35f + 0.1f * p)
+            } else {
+                pullDrop = -1
+                // The rings of the landing first, then the quiet ones of the wait.
+                lastBeat = t + 850
+                for (i in PULL_LANDING.indices) ring(cx, landY, PULL_LANDING[i], t + i * 170L, echo = false)
+            }
+        } else if ((pulled > 0.01f || pullDrop == RELEASED) && !frozen) {
+            // The drop gathers with the pull and stretches, ready to fall, at the threshold.
+            val p = if (pullDrop == RELEASED) 1f else pulled.coerceAtMost(1f)
+            val r = SWOLLEN.toPx() * sqrt(p)
+            val stretch = if (p >= 1f) 1.35f else 1f + 0.2f * p
+            bead(color.copy(alpha = 0.35f + 0.65f * p), cx, hangY, r, stretch)
         }
         if (land >= 0) {
             level = Calm.transform(((t - land) / LEVEL_MS).coerceIn(0f, 1f))
@@ -327,11 +370,15 @@ private class Still(private var falling: Boolean, var ambient: Boolean) {
             ring(cx + (Random.nextFloat() - 0.5f) * 180.dp.toPx(), hz + (18 + Random.nextFloat() * 70).dp.toPx(), 0.5f + Random.nextFloat() * 0.25f, t, echo = true)
             next = t + 7000 + Random.nextLong(6000)
         }
-        if (beat && t - lastBeat > 650) {
+        if (beat && pullDrop == -1L && t - lastBeat > 650) {
             lastBeat = t
             ring(cx + (Random.nextFloat() - 0.5f) * 60.dp.toPx(), hz + (bottom - hz) * 0.55f, 0.55f, t, echo = false)
         }
     }
+
+    /** A drop of radius [r] around [x], [y], drawn out tall by [stretch]. */
+    private fun DrawScope.bead(color: Color, x: Float, y: Float, r: Float, stretch: Float) =
+        drawOval(color, Offset(x - r, y - r * stretch), Size(r * 2, r * 2 * stretch))
 
     /** A hairline [half] to each side of [x], fading out at both ends. */
     private fun DrawScope.faded(alpha: Float, x: Float, half: Float, y: Float, width: Float) {
@@ -357,9 +404,13 @@ private val STREAKS = listOf(
 )
 private val PULL_GAP = 72.dp
 private val LANDING = floatArrayOf(2.2f, 1.5f, 1f)
+private val PULL_LANDING = floatArrayOf(1.6f, 1.1f, 0.75f)
+private val HANG = 32.dp
+private val SWOLLEN = 3.2.dp
 private const val MAX_RINGS = 48
 private const val IDLE_MS = 250L
 private const val NEXT_FRAME = -1L
+private const val RELEASED = -2L
 private const val DROP_MS = 750f
 private const val LEVEL_MS = 1900f
 private const val WORDS = 1300f
