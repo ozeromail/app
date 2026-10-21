@@ -86,12 +86,10 @@ private fun openInbox(context: Context) = PendingIntent.getActivity(
     PendingIntent.FLAG_IMMUTABLE,
 )
 
-private fun allowed(context: Context) =
-    context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-
 /** Asks to sign in to each account again; a tap opens the inbox, where its card is. */
 private fun notifySignIn(context: Context, accounts: List<AccountItem>) {
-    if (accounts.isEmpty() || !allowed(context)) return
+    if (accounts.isEmpty()) return
+    if (context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
     val manager = NotificationManagerCompat.from(context)
     manager.createNotificationChannel(
         NotificationChannel(SIGN_IN_CHANNEL, context.getString(R.string.notify_sign_in_channel), NotificationManager.IMPORTANCE_DEFAULT),
@@ -113,7 +111,8 @@ private fun notifySignIn(context: Context, accounts: List<AccountItem>) {
 
 /** One notification per message, newest first, grouped under a summary; a tap opens the inbox. */
 private fun notify(context: Context, messages: List<MessageItem>) {
-    if (messages.isEmpty() || !allowed(context)) return
+    if (messages.isEmpty()) return
+    if (context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
     val manager = NotificationManagerCompat.from(context)
     manager.createNotificationChannel(
         NotificationChannel(CHANNEL, context.getString(R.string.notify_channel), NotificationManager.IMPORTANCE_DEFAULT),
