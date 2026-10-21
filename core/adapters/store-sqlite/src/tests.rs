@@ -841,6 +841,7 @@ fn draft(account: AccountId) -> Draft {
         text: "Hello".into(),
         reply_to: None,
         quote: String::new(),
+        forward: None,
     }
 }
 
@@ -854,6 +855,7 @@ fn saved(draft: &Draft, now: i64) -> SavedDraft {
         text: draft.text.clone(),
         reply_to: draft.reply_to,
         quote: draft.quote.clone(),
+        forward: draft.forward,
         saved: now,
     }
 }
@@ -938,6 +940,37 @@ fn a_reply_answers_the_message_id() {
         store.queue_send(&gone, None, "3@example.com", 100, 100),
         Err(StoreError::NotFound)
     );
+}
+
+#[test]
+fn a_forward_keeps_its_message_through_the_outbox() {
+    let store = store();
+    let a = account(&store, "a@example.com");
+    store
+        .save_messages(inbox(&store, a), &[message(1, 100)])
+        .unwrap();
+    let original = list(&store, ListScope::Folder(inbox(&store, a)), 10, None)[0].id;
+    let forward = Draft {
+        forward: Some(original),
+        ..draft(a)
+    };
+    let id = store
+        .queue_send(&forward, None, "2@example.com", 100, 105)
+        .unwrap();
+    assert_eq!(store.due_sends(a, 105).unwrap()[0].forward, Some(original));
+    // Taken back, the draft still forwards it.
+    assert_eq!(taken_back(&store, id, 104), Some(saved(&forward, 104)));
+    assert_eq!(store.drafts().unwrap()[0].forward, Some(original));
+
+    // A message gone since leaves only the text to send.
+    let gone = Draft {
+        forward: Some(MessageId(999)),
+        ..draft(a)
+    };
+    store
+        .queue_send(&gone, None, "3@example.com", 100, 100)
+        .unwrap();
+    assert_eq!(store.due_sends(a, 100).unwrap()[0].forward, None);
 }
 
 #[test]
@@ -1484,6 +1517,7 @@ fn a_draft_is_kept_until_it_is_sent_or_thrown_away() {
         text: "Hel".into(),
         reply_to: None,
         quote: String::new(),
+        forward: None,
         saved: 100,
     };
     let id = store.save_draft(&draft).unwrap();
@@ -1533,10 +1567,12 @@ fn a_draft_outlives_its_answered_message_but_not_its_account() {
         text: "Hello".into(),
         reply_to: Some(MessageId(999)),
         quote: String::new(),
+        forward: Some(MessageId(999)),
         saved: 100,
     };
     store.save_draft(&draft).unwrap();
     assert_eq!(store.drafts().unwrap()[0].reply_to, None);
+    assert_eq!(store.drafts().unwrap()[0].forward, None);
     let gone = SavedDraft {
         account_id: Some(AccountId(999)),
         ..draft.clone()

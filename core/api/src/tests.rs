@@ -220,6 +220,7 @@ fn syncs_an_imap_inbox_into_the_list() {
         .unwrap();
     assert_eq!(forward.subject, "Fwd: Message 2");
     assert!(forward.to.is_empty() && forward.reply_to.is_none());
+    assert_eq!(forward.forward, Some(inbox[1].id));
     assert!(
         forward.quote.starts_with("Forwarded\nFrom: "),
         "{}",
@@ -261,6 +262,7 @@ fn syncs_an_imap_inbox_into_the_list() {
             reply_to: Some(first),
             quote: "Anna wrote:\n> Hi".into(),
             saved: 0,
+            forward: None,
         })
         .unwrap()
     };
@@ -271,12 +273,19 @@ fn syncs_an_imap_inbox_into_the_list() {
     assert_eq!(core.drafts().unwrap(), std::slice::from_ref(&draft));
     core.send(draft).unwrap();
     assert!(core.drafts().unwrap().is_empty());
+    // A forward reads the message's files from the server as it goes.
+    core.send(DraftItem {
+        to: "cat@example.net".into(),
+        ..forward
+    })
+    .unwrap();
     runtime
         .block_on(core.push_actions(account, "pass".into()))
         .unwrap();
     let received = mailpit_messages();
     assert!(received.contains("bob@example.org"), "{received}");
     assert!(received.contains("Ответ из Ozero"), "{received}");
+    assert!(received.contains("Fwd: Message 2"), "{received}");
     let sent = runtime.block_on(async {
         let account = core.account(AccountId(account))?;
         let mut imap = core.connect(&account, "pass").await?;
@@ -450,6 +459,7 @@ fn saves_a_gmail_account_that_can_send() {
         reply_to: None,
         quote: String::new(),
         saved: 0,
+        forward: None,
     })
     .unwrap();
 }

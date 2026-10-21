@@ -12,6 +12,8 @@ fn outgoing(id: i64, to: &str) -> Outgoing {
         message_id: format!("{id}@example.com"),
         in_reply_to: None,
         date: 100,
+        forward: None,
+        files: vec![],
     }
 }
 
@@ -103,4 +105,16 @@ fn a_refusal_stays_and_a_network_failure_stops() {
     );
     // Message 2 failed on the network and 3 never went: both stay queued.
     assert!(store.sent.lock().unwrap().is_empty());
+}
+
+#[test]
+fn forwards_no_files_of_a_message_gone_from_the_device() {
+    let files = run(forwarded_files(
+        &Memory::default(),
+        &mut Server::default(),
+        &crate::fakes::Parser,
+        ozero_domain::AccountId(1),
+        MessageId(1),
+    ));
+    assert_eq!(files, Ok(vec![]));
 }

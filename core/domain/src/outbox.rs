@@ -18,6 +18,8 @@ pub struct Draft {
     pub reply_to: Option<MessageId>,
     /// The answered message, quoted under the text; empty for none.
     pub quote: String,
+    /// The forwarded message, whose files go with it.
+    pub forward: Option<MessageId>,
 }
 
 /// Local id of a message kept on the device while it is written.
@@ -38,6 +40,7 @@ pub struct SavedDraft {
     pub text: String,
     pub reply_to: Option<MessageId>,
     pub quote: String,
+    pub forward: Option<MessageId>,
     /// Milliseconds since the Unix epoch of the last save.
     pub saved: i64,
 }
@@ -65,6 +68,19 @@ pub struct Outgoing {
     pub in_reply_to: Option<String>,
     /// Seconds since the Unix epoch, for the `Date` header.
     pub date: i64,
+    /// The forwarded message, whose files go with it.
+    pub forward: Option<MessageId>,
+    /// The files sent with it, read from `forward` when it is sent.
+    pub files: Vec<OutgoingFile>,
+}
+
+/// A file sent with a message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutgoingFile {
+    pub name: String,
+    /// The content type, such as `application/pdf`.
+    pub mime: String,
+    pub data: Vec<u8>,
 }
 
 /// The recipients typed into one field: addresses split by commas, semicolons or spaces.

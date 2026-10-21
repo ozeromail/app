@@ -4,8 +4,8 @@ use std::fmt;
 use std::time::Duration;
 
 use ozero_domain::{
-    AccountId, Body, Changes, Folder, FolderRole, MailProvider, MessageLocation, MessageParser,
-    ProviderError, Store, StoreError,
+    AccountId, Attachment, Body, Changes, Folder, FolderRole, MailProvider, MessageLocation,
+    MessageParser, ProviderError, Store, StoreError,
 };
 
 /// Forgets the account's mail received before `since` (seconds), then saves its folders and
@@ -201,6 +201,18 @@ pub async fn download_attachments(
     message: &MessageLocation,
     parts: &[u32],
 ) -> Result<Vec<Option<Vec<u8>>>, SyncError> {
+    let (raw, _) = download_whole(store, provider, parser, message).await?;
+    Ok(parser.attachments(&raw, parts))
+}
+
+/// Downloads a saved message whole, and returns it with the files it lists; saves the body
+/// again if those differ from the saved ones.
+pub async fn download_whole(
+    store: &dyn Store,
+    provider: &mut impl MailProvider,
+    parser: &dyn MessageParser,
+    message: &MessageLocation,
+) -> Result<(Vec<u8>, Vec<Attachment>), SyncError> {
     let raw = provider
         .message(
             &message.folder_remote_id,
@@ -213,7 +225,7 @@ pub async fn download_attachments(
     if !raw.is_empty() && saved.as_ref() != Some(&body.attachments) {
         store.save_body(message.id, &body)?;
     }
-    Ok(parser.attachments(&raw, parts))
+    Ok((raw, body.attachments))
 }
 
 /// Downloads the missing bodies among the account's `limit` newest inbox messages, so they

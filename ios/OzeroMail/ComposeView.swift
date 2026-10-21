@@ -88,7 +88,8 @@ struct ComposeView: View {
         // The draft it was taken back into, if any, goes once it is sent.
         let draft = DraftItem(
             id: composing.draft.id, accountId: from.id, to: to, subject: subject, text: text,
-            replyTo: composing.draft.replyTo, quote: composing.draft.quote, saved: 0)
+            replyTo: composing.draft.replyTo, quote: composing.draft.quote, saved: 0,
+            forward: composing.draft.forward)
         Task {
             defer { busy = false }
             do {
