@@ -17,9 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.MotionDurationScale
@@ -59,8 +57,9 @@ import kotlinx.coroutines.flow.emptyFlow
  * it, at rest until something moves it. With [drawIn], as the last message leaves, a drop lands
  * on the water and the horizon comes out of its waves. A touch sends a wave out too. [grey] water
  * is for plain empty folders: it never draws in. While [waiting] for the list's mail, the words
- * hold back and a long wait drips. As the list is [pulled], a drop gathers over the water,
- * growing with the pull, and falls on each of [drops].
+ * hold back; a long wait stirs the water, as does a pull's sync while [refreshing]. As the
+ * list is [pulled], a drop gathers over the water, growing with the pull, and falls once on each of
+ * [drops]. [wordsModifier] moves the words alone, while the water stays.
  */
 @Composable
 fun StillNote(
@@ -69,18 +68,15 @@ fun StillNote(
     drawIn: Boolean,
     grey: Boolean = false,
     waiting: Boolean = false,
+    refreshing: Boolean = false,
     pulled: () -> Float = { 0f },
     drops: Flow<Unit> = emptyFlow(),
+    wordsModifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
     val still = rememberStill(fall = drawIn)
-    // The words wait for the first sync only; once said, a later one just stirs the water.
-    var said by remember { mutableStateOf(!waiting) }
-    val words by animateFloatAsState(if (said) 1f else 0f, Motion.calm(Motion.SMALL), label = "words")
-    LaunchedEffect(waiting) {
-        still.beat = waiting
-        if (!waiting) said = true
-    }
+    val words by animateFloatAsState(if (waiting) 0f else 1f, Motion.calm(Motion.SMALL), label = "words")
+    LaunchedEffect(waiting, refreshing) { still.beat = waiting || refreshing }
     LaunchedEffect(drops) { drops.collect { still.release() } }
     Column(
         Modifier.fillMaxWidth().padding(top = LAKE_TOP, bottom = 48.dp),
@@ -93,7 +89,7 @@ fun StillNote(
             still.draw(this, water, colors.accent, HORIZON, size.height, pulled(), FALL)
         }
         Column(
-            Modifier.graphicsLayer {
+            wordsModifier.graphicsLayer {
                 val shown = still.words() * words
                 alpha = shown
                 translationY = (1f - shown) * 8.dp.toPx()
@@ -116,7 +112,7 @@ fun StillNote(
  * The same water as an empty list's, under the title, in the gap the list opens as it is
  * pulled: the water stays where it is and the list uncovers it. [top] is where the gap begins,
  * or null while the title is off screen. As in the empty list, a drop gathers with [fraction]
- * and falls on each of [drops]; a long refresh drips.
+ * and falls once on each of [drops]; a long refresh stirs the water.
  */
 @Composable
 fun PullWater(fraction: () -> Float, refreshing: Boolean, top: () -> Float?, drops: Flow<Unit>, modifier: Modifier = Modifier) {
@@ -203,7 +199,7 @@ private class Still(private var falling: Boolean) {
     /** Wakes the clock of water at rest. */
     val wake = Channel<Unit>(Channel.CONFLATED)
 
-    /** A wait: a long one drips, a drop every few seconds. */
+    /** A wait: a long one stirs the water until it is over. */
     var beat = false
         set(value) {
             if (value && !field) waited = 0f
@@ -224,8 +220,7 @@ private class Still(private var falling: Boolean) {
     private var released = false
     private var spent = false
     private var waited = 0f
-    private var sinceDrip = 0f
-    private var drip = 0f
+    private var stir = 0f
     private var wobble = 0f
     private var wobbleV = 0f
     private var wasFull = false
@@ -240,7 +235,7 @@ private class Still(private var falling: Boolean) {
 
     /** Whether something on the water is moving, so every frame counts. */
     val busy
-        get() = beat || released || drops.isNotEmpty() || jets.isNotEmpty() || waves.isNotEmpty() || rising ||
+        get() = beat || stir > 0.05f || released || drops.isNotEmpty() || jets.isNotEmpty() || waves.isNotEmpty() || rising ||
             abs(wobble) > 0.002f || abs(wobbleV) > 0.02f || (falling && now - begun < WORDS + WORDS_MS)
 
     /** The clock goes to sleep: the next frame starts afresh rather than a step late. */
@@ -266,8 +261,7 @@ private class Still(private var falling: Boolean) {
 
     /** The gathered drop lets go, on the next step; one a pull. */
     fun release() {
-        // Not while a wait drips: no drop was shown gathering.
-        if (!ready || spent || beat) return
+        if (!ready || spent) return
         released = true
         wake.trySend(Unit)
     }
@@ -293,27 +287,16 @@ private class Still(private var falling: Boolean) {
 
     private fun step(dt: Float, land: Float) {
         waited += dt
-        sinceDrip += dt
         if (released) {
             released = false
             spent = true
             letGo(hanging(maxOf(pulled, 1f)), land)
-            sinceDrip = 0f
-            drip = 0f
         }
-        // A long wait drips: a drop gathers by itself, falls, and the next waits its turn.
-        if (beat && waited > DRIP_AFTER && ready) {
-            if (sinceDrip > DRIP_EVERY - DRIP_GATHER) drip = min(1f, drip + dt / DRIP_GATHER)
-            if (drip >= 1f) {
-                letGo(hanging(1f), land)
-                drip = 0f
-                sinceDrip = 0f
-            }
-        } else if (!beat) {
-            drip = 0f
-        }
+        // One drop a pull. A long wait stirs the water instead: the reflection sways until it is over.
+        val stirring = beat && waited > STIR_AFTER && ready
+        stir += ((if (stirring) 1f else 0f) - stir) * min(1f, dt / STIR_EASE)
         // The hanging drop gives a little jolt as it fills, and trembles as it settles.
-        val full = !spent && !beat && pulled >= 1f
+        val full = !spent && pulled >= 1f
         if (full && !wasFull) wobbleV += 2.4f
         wasFull = full
         wobbleV += (-220f * wobble - 7f * wobbleV) * dt
@@ -344,7 +327,7 @@ private class Still(private var falling: Boolean) {
             energy += a
             a < 0.015f
         }
-        calm += (min(1f, energy) - calm) * min(1f, dt * 2f)
+        calm += (maxOf(min(1f, energy), stir * STIR) - calm) * min(1f, dt * 2f)
         if (rising) {
             level = min(1f, level + dt * 1000f / LEVEL_MS)
             if (level >= 1f) rising = false
@@ -372,7 +355,7 @@ private class Still(private var falling: Boolean) {
         // A pull moves nothing else, so it wakes the clock; nothing gathers again until the list is back.
         if (pull != pulled) wake.trySend(Unit)
         pulled = pull
-        if (pull <= 0f && !beat) spent = false
+        if (pull <= 0f) spent = false
         if (falling && level == 0f && !rising && drops.isEmpty() && begun >= 0) {
             // The last message has left: a drop falls and the water comes out of its waves.
             drops += Drop(middle, hz - 70f, 120f, land, 2.8f, 0.9f, opens = true)
@@ -438,7 +421,7 @@ private class Still(private var falling: Boolean) {
         }
         if (lv > 0f) faded(0.55f, cx, 150.dp.toPx() * lv, hzPx, stroke)
         // The gathering drop grows with the pull, a round bead that fills into a drop.
-        val gathering = maxOf(if (!spent && !released && !beat && ready) pull else 0f, drip)
+        val gathering = if (!spent && !released && ready) pull else 0f
         if (gathering > 0.02f) {
             val h = hanging(gathering)
             bead(drop, middle, h.y, h.r, h.point, 1f + wobble)
@@ -505,9 +488,11 @@ private val PULL_FALL = 24.dp
 /** Gravity, dp/s²: a drop falls its 40–50 dp in about a third of a second. */
 private const val G = 760f
 private const val DROP_STEPS = 48
-private const val DRIP_AFTER = 1.4f
-private const val DRIP_EVERY = 3f
-private const val DRIP_GATHER = 1.2f
+
+/** A wait longer than this, in seconds, stirs the water: how much, and how slowly it comes and goes. */
+private const val STIR_AFTER = 1.4f
+private const val STIR = 0.7f
+private const val STIR_EASE = 1.2f
 private const val LEVEL_MS = 1900f
 private const val WORDS = 1300f
 private const val WORDS_MS = 1000f
