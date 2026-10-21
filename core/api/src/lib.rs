@@ -640,15 +640,10 @@ impl Core {
         let Some(account) = self.find(id)? else {
             return Ok(false);
         };
-        let mut folders = vec![];
-        for folder in self.store.folders(id)? {
-            if mailbox.holds(&folder) && !self.has_ended(folder.id)? {
-                folders.push(folder);
-            }
-        }
+        let folders = self.loadable(id, mailbox)?;
         let since = keep_since(account.keep_days);
         let (mut slot, mut more) = (None, false);
-        for folder in &folders {
+        for (folder, _) in &folders {
             let remote = self.remote(&mut slot, &account, &secret).await?;
             let loaded = load_older(&self.store, remote, &self.parser, folder, OLDER_PAGE, since);
             match self.refused(&account, loaded.await) {
@@ -877,10 +872,25 @@ impl Core {
         self.ended.lock().unwrap_or_else(|p| p.into_inner())
     }
 
-    /// Whether the folder's server had no older mail when it last loaded some.
-    fn has_ended(&self, folder: FolderId) -> Result<bool, CoreError> {
-        let oldest = self.store.oldest(folder)?;
-        Ok(self.ended_folders().get(&folder) == Some(&oldest))
+    /// The account's folders in `mailbox` whose server may have older mail, with when their
+    /// oldest saved message was received: those that had none when they last loaded some are
+    /// left out, until what they have saved changes.
+    fn loadable(
+        &self,
+        account: AccountId,
+        mailbox: Mailbox,
+    ) -> Result<Vec<(Folder, Option<i64>)>, CoreError> {
+        let mut loadable = vec![];
+        for folder in self.store.folders(account)? {
+            if !mailbox.holds(&folder) {
+                continue;
+            }
+            let oldest = self.store.oldest(folder.id)?;
+            if self.ended_folders().get(&folder.id) != Some(&oldest) {
+                loadable.push((folder, oldest));
+            }
+        }
+        Ok(loadable)
     }
 
     /// The rows of a list of `mailbox`'s folders, as far down as all of them have their mail
@@ -899,10 +909,8 @@ impl Core {
         })?;
         let mut floor = None;
         for account in self.store.accounts()? {
-            for folder in self.store.folders(account.id)? {
-                if mailbox.holds(&folder) && !self.has_ended(folder.id)? {
-                    floor = floor.max(self.store.oldest(folder.id)?);
-                }
+            for (_, oldest) in self.loadable(account.id, mailbox)? {
+                floor = floor.max(oldest);
             }
         }
         if let Some(floor) = floor {

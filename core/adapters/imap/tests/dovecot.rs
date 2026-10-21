@@ -87,6 +87,12 @@ async fn loads_mail_older_than_the_saved_one() {
         .await
         .unwrap();
     assert_eq!((uids(&older), older.more), (vec!["1".to_string()], false));
+    // A saved message gone from the server since: the mail below it still loads.
+    let older = imap
+        .older("INBOX", validity, &["9".into()], 0, 1)
+        .await
+        .unwrap();
+    assert_eq!(uids(&older), ["3"]);
     assert_eq!(
         imap.older("INBOX", validity + 1, &[], 0, 5).await,
         Err(ProviderError::Gone)

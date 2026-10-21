@@ -588,20 +588,24 @@ const FILED: [(&str, &str); 3] = [("INBOX", "inbox"), ("SENT", "sent"), ("DRAFT"
 /// label, or for the archive a search, which leaves spam and trash out as every list does
 /// unless asked.
 fn listing(folder: &str, query: &str) -> String {
-    let mut terms = vec![];
-    let mut listing = if folder == ARCHIVE {
-        terms.extend(FILED.iter().map(|(_, n)| format!("-in:{n}")));
-        String::new()
+    let (label, mut terms) = if folder == ARCHIVE {
+        let filed = FILED.iter().map(|(_, n)| format!("-in:{n}")).collect();
+        (None, filed)
     } else if APART.contains(&folder) {
-        format!("labelIds={}&includeSpamTrash=true&", percent(folder))
+        let label = format!("labelIds={}&includeSpamTrash=true", percent(folder));
+        (Some(label), vec![])
     } else {
-        format!("labelIds={}&", percent(folder))
+        (Some(format!("labelIds={}", percent(folder))), vec![])
     };
-    terms.extend((!query.is_empty()).then(|| query.to_owned()));
-    if !terms.is_empty() {
-        listing.push_str(&format!("q={}", percent(&terms.join(" "))));
+    if !query.is_empty() {
+        terms.push(query.to_owned());
     }
-    listing.trim_end_matches('&').to_owned()
+    let search = (!terms.is_empty()).then(|| format!("q={}", percent(&terms.join(" "))));
+    label
+        .into_iter()
+        .chain(search)
+        .collect::<Vec<_>>()
+        .join("&")
 }
 
 fn has(labels: &[String], folder: &str) -> bool {
