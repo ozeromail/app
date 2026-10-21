@@ -20,6 +20,28 @@ pub struct Draft {
     pub quote: String,
 }
 
+/// Local id of a message kept on the device while it is written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DraftId(pub i64);
+
+/// A message being written, kept on the device until it is sent or thrown away. Never on
+/// the server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedDraft {
+    /// None until it is first saved.
+    pub id: Option<DraftId>,
+    /// None while no account is picked.
+    pub account_id: Option<AccountId>,
+    /// The recipients as typed, checked only when it is sent.
+    pub to: String,
+    pub subject: String,
+    pub text: String,
+    pub reply_to: Option<MessageId>,
+    pub quote: String,
+    /// Milliseconds since the Unix epoch of the last save.
+    pub saved: i64,
+}
+
 /// A message the server refused, kept for the user to fix.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unsent {

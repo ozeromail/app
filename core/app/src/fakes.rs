@@ -8,9 +8,9 @@ use std::time::Duration;
 
 use ozero_domain::{
     Account, AccountId, Action, Address, Body, Category, Changes, Checkpoint, Correspondents,
-    Draft, Flags, Folder, FolderId, ListQuery, MailProvider, MailSender, MessageBuilder, MessageId,
-    MessageLocation, MessageParser, MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId,
-    OutboxId, Outgoing, ProviderError, RawMessage, Store, StoreError, Unsent,
+    Draft, DraftId, Flags, Folder, FolderId, ListQuery, MailProvider, MailSender, MessageBuilder,
+    MessageId, MessageLocation, MessageParser, MessageRow, NewAccount, NewFolder, NewMessage, Op,
+    OpId, OutboxId, Outgoing, ProviderError, RawMessage, SavedDraft, Store, StoreError, Unsent,
 };
 
 /// Fakes answer at once, so one poll finishes the future.
@@ -391,12 +391,31 @@ impl Store for Memory {
         Ok(())
     }
 
-    fn queue_send(&self, _: &Draft, _: &str, _: i64, _: i64) -> Result<OutboxId, StoreError> {
+    fn queue_send(
+        &self,
+        _: &Draft,
+        _: Option<DraftId>,
+        _: &str,
+        _: i64,
+        _: i64,
+    ) -> Result<OutboxId, StoreError> {
         Ok(OutboxId(1))
     }
 
-    fn undo_send(&self, _: OutboxId, _: i64) -> Result<Option<Draft>, StoreError> {
+    fn undo_send(&self, _: OutboxId, _: i64) -> Result<Option<SavedDraft>, StoreError> {
         Ok(None)
+    }
+
+    fn save_draft(&self, _: &SavedDraft) -> Result<DraftId, StoreError> {
+        Ok(DraftId(1))
+    }
+
+    fn drafts(&self) -> Result<Vec<SavedDraft>, StoreError> {
+        Ok(vec![])
+    }
+
+    fn delete_draft(&self, _: DraftId) -> Result<(), StoreError> {
+        Ok(())
     }
 
     fn unsent(&self) -> Result<Vec<Unsent>, StoreError> {

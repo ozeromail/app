@@ -1,9 +1,9 @@
 use std::fmt;
 
 use crate::{
-    Account, AccountId, Action, Body, Category, Changes, Checkpoint, Correspondents, Draft, Folder,
-    FolderId, ListQuery, MessageId, MessageLocation, MessageRow, NewAccount, NewFolder, NewMessage,
-    Op, OpId, OutboxId, Outgoing, Unsent,
+    Account, AccountId, Action, Body, Category, Changes, Checkpoint, Correspondents, Draft,
+    DraftId, Folder, FolderId, ListQuery, MessageId, MessageLocation, MessageRow, NewAccount,
+    NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing, SavedDraft, Unsent,
 };
 
 /// Local database port. The UI reads only from here; sync writes here.
@@ -102,18 +102,28 @@ pub trait Store: Send + Sync {
     /// The server has the actions: forget them, unless the user changed one since `due`.
     /// An archived message is dropped: it now lives in a folder that is synced on its own.
     fn finish(&self, ops: &[Op]) -> Result<(), StoreError>;
-    /// Queues a message to be sent from `not_before`. Fails with `NotFound` if the account or
-    /// the message it answers is gone.
+    /// Queues a message to be sent from `not_before`, and forgets the saved draft it was
+    /// written in, if any. Fails with `NotFound` if the account or the message it answers is
+    /// gone.
     fn queue_send(
         &self,
         draft: &Draft,
+        saved: Option<DraftId>,
         message_id: &str,
         date: i64,
         not_before: i64,
     ) -> Result<OutboxId, StoreError>;
-    /// Takes back a message that is still held or was refused, so it can be edited. None once
-    /// it may be on its way.
-    fn undo_send(&self, id: OutboxId, now: i64) -> Result<Option<Draft>, StoreError>;
+    /// Takes back a message that is still held or was refused, so it can be edited: it becomes
+    /// a saved draft, saved at `now`. None once it may be on its way.
+    fn undo_send(&self, id: OutboxId, now: i64) -> Result<Option<SavedDraft>, StoreError>;
+
+    /// Saves a message being written: a new one if it has no id, else over the saved one.
+    /// Fails with `NotFound` if that one is gone, sent or thrown away, so it never comes back.
+    fn save_draft(&self, draft: &SavedDraft) -> Result<DraftId, StoreError>;
+    /// The saved drafts, last saved first.
+    fn drafts(&self) -> Result<Vec<SavedDraft>, StoreError>;
+    /// Throws a saved draft away; one already gone is fine.
+    fn delete_draft(&self, id: DraftId) -> Result<(), StoreError>;
     /// The messages the server refused, newest first.
     fn unsent(&self) -> Result<Vec<Unsent>, StoreError>;
     /// The account's messages that may be sent at `now`, oldest first; refused ones stay out.

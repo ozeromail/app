@@ -14,9 +14,9 @@ use ozero_app::sync::{
 };
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Body, Category, Changes, Checkpoint, Draft,
-    Folder, FolderId, FolderRole, ListQuery, ListScope, MailProvider, MessageId, MessageRow,
-    NewAccount, NewFolder, OpId, OutboxId, ProviderError, Sender, Server, Store, StoreError, html,
-    parse_recipients, saves_sent_itself,
+    DraftId, Folder, FolderId, FolderRole, ListQuery, ListScope, MailProvider, MessageId,
+    MessageRow, NewAccount, NewFolder, OpId, OutboxId, ProviderError, SavedDraft, Sender, Server,
+    Store, StoreError, html, parse_recipients, saves_sent_itself,
 };
 use ozero_gmail::{GmailSession, oauth};
 use ozero_imap::ImapSession;
@@ -330,12 +330,14 @@ impl Core {
         let account = self.account(AccountId(message.account_id))?;
         let correspondents = self.store.correspondents(MessageId(message.id))?;
         Ok(DraftItem {
+            id: 0,
             account_id: message.account_id,
             to: correspondents.answer(&account.email, all).join(", "),
             subject: ozero_domain::reply_subject(&message.subject),
             text: String::new(),
             reply_to: Some(message.id),
             quote: String::new(),
+            saved: 0,
         })
     }
 
@@ -356,17 +358,19 @@ impl Core {
 
     /// Puts a message in the outbox, held for `HOLD` so `undo_send` can take it back;
     /// `push_actions` sends it. `to` is addresses split by commas or spaces; `reply_to` the
-    /// message it answers, and `quote` what goes under the text. Returns the id for
-    /// `undo_send`.
-    pub fn send(
-        &self,
-        account: i64,
-        to: String,
-        subject: String,
-        text: String,
-        reply_to: Option<i64>,
-        quote: String,
-    ) -> Result<i64, CoreError> {
+    /// message it answers, and `quote` what goes under the text. The saved draft it was
+    /// written in, if any, goes. Returns the id for `undo_send`.
+    pub fn send(&self, draft: DraftItem) -> Result<i64, CoreError> {
+        let DraftItem {
+            id: saved,
+            account_id: account,
+            to,
+            subject,
+            text,
+            reply_to,
+            quote,
+            ..
+        } = draft;
         let to = parse_recipients(&to).ok_or(CoreError::BadRecipients)?;
         let from = self.account(AccountId(account))?;
         // Would wait in the outbox forever.
@@ -384,6 +388,7 @@ impl Core {
         let now = now();
         let id = self.store.queue_send(
             &draft,
+            draft_id(saved),
             &message_id(&from.email, now),
             now / 1_000,
             now + HOLD,
@@ -405,12 +410,48 @@ impl Core {
             .collect())
     }
 
-    /// Takes back a held or refused message to edit it again. None once it may be on its way.
+    /// Takes back a held or refused message to edit it again, as a saved draft. None once it
+    /// may be on its way.
     pub fn undo_send(&self, id: i64) -> Result<Option<DraftItem>, CoreError> {
         Ok(self
             .store
             .undo_send(OutboxId(id), now())?
             .map(DraftItem::from))
+    }
+
+    /// Keeps a message being written on the device, as it is now: a new draft if its `id` is
+    /// 0. Returns its id. Fails with `Gone` once it was sent or thrown away.
+    pub fn save_draft(&self, draft: DraftItem) -> Result<i64, CoreError> {
+        let saved = SavedDraft {
+            id: draft_id(draft.id),
+            account_id: (draft.account_id != 0).then_some(AccountId(draft.account_id)),
+            to: draft.to,
+            subject: draft.subject,
+            text: draft.text,
+            reply_to: draft.reply_to.map(MessageId),
+            quote: draft.quote,
+            saved: now(),
+        };
+        match self.store.save_draft(&saved) {
+            Ok(id) => Ok(id.0),
+            Err(StoreError::NotFound) => Err(CoreError::Gone),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// The drafts kept on the device, last saved first.
+    pub fn drafts(&self) -> Result<Vec<DraftItem>, CoreError> {
+        Ok(self
+            .store
+            .drafts()?
+            .into_iter()
+            .map(DraftItem::from)
+            .collect())
+    }
+
+    /// Throws a draft away.
+    pub fn delete_draft(&self, id: i64) -> Result<(), CoreError> {
+        Ok(self.store.delete_draft(DraftId(id))?)
     }
 }
 
@@ -637,12 +678,14 @@ impl Core {
             (&labels.subject, &message.subject),
         ];
         Ok(DraftItem {
+            id: 0,
             account_id: message.account_id,
             to: String::new(),
             subject: ozero_domain::forward_subject(&message.subject),
             text: String::new(),
             reply_to: None,
             quote: ozero_domain::forward_quote(&labels.title, &fields, &text),
+            saved: 0,
         })
     }
 
@@ -1387,6 +1430,9 @@ pub struct UnsentItem {
 /// A message being written, as compose shows it.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct DraftItem {
+    /// The saved draft; 0 until it is saved.
+    pub id: i64,
+    /// 0 for none picked yet.
     pub account_id: i64,
     /// Addresses joined by ", ".
     pub to: String,
@@ -1395,6 +1441,8 @@ pub struct DraftItem {
     pub reply_to: Option<i64>,
     /// Goes under the text; empty for none.
     pub quote: String,
+    /// When it was last saved, in seconds since the Unix epoch; 0 if never.
+    pub saved: i64,
 }
 
 /// The header words of a forwarded message, in the app's language.
@@ -1407,17 +1455,24 @@ pub struct ForwardLabels {
     pub subject: String,
 }
 
-impl From<Draft> for DraftItem {
-    fn from(d: Draft) -> Self {
+impl From<SavedDraft> for DraftItem {
+    fn from(d: SavedDraft) -> Self {
         Self {
-            account_id: d.account_id.0,
-            to: d.to.join(", "),
+            id: d.id.map_or(0, |id| id.0),
+            account_id: d.account_id.map_or(0, |a| a.0),
+            to: d.to,
             subject: d.subject,
             text: d.text,
             reply_to: d.reply_to.map(|m| m.0),
             quote: d.quote,
+            saved: d.saved / 1_000,
         }
     }
+}
+
+/// A saved draft's id; none for 0.
+fn draft_id(id: i64) -> Option<DraftId> {
+    (id != 0).then_some(DraftId(id))
 }
 
 /// What the reading screen shows.
