@@ -116,7 +116,8 @@ class Mail(private val context: Context) {
         val start = vault.googleSignIn() ?: throw CoreException.Auth()
         val account = core.googleAccount(start, redirect, again?.id)
         vault.setGoogleSignIn(null)
-        vault.setPassword(account.email, account.secret)
+        // Under the saved address, which Google may write in other letter case.
+        vault.setPassword(again?.email ?: account.email, account.secret)
         if (again == null) core.addGmailAccount(account.email) else core.signedInAgain(again.id)
     }
 

@@ -858,12 +858,7 @@ impl Core {
         if let Some(remote) = slot {
             return Ok(remote);
         }
-        // Not until the person signs in again: a server may lock an account after many
-        // refused logins.
-        if account.needs_sign_in {
-            return Err(CoreError::Auth);
-        }
-        let opened = async {
+        let opened = self.signed_in(account, async {
             Ok(match account.kind {
                 AccountKind::Imap => Remote::Imap(self.connect(account, secret).await?),
                 AccountKind::Gmail => {
@@ -876,8 +871,26 @@ impl Core {
                     });
                 }
             })
-        };
-        Ok(slot.insert(self.refused(account, opened.await)?))
+        });
+        Ok(slot.insert(opened.await?))
+    }
+
+    /// Logs in with `login` unless the account waits for the person to sign in again: a
+    /// server may lock an account after many refused logins. A refused one marks it so.
+    async fn signed_in<T>(
+        &self,
+        account: &Account,
+        login: impl Future<Output = Result<T, CoreError>>,
+    ) -> Result<T, CoreError> {
+        if account.needs_sign_in {
+            return Err(CoreError::Auth);
+        }
+        let result = login.await;
+        if let Err(CoreError::Auth) = result {
+            // An account removed meanwhile has nothing to mark.
+            let _ = self.store.set_needs_sign_in(account.id, true);
+        }
+        result
     }
 
     /// A Gmail access token: the one from earlier while it works, else a new one.
@@ -898,7 +911,7 @@ impl Core {
     }
 
     /// Passes `result` on; a refused login drops the account's access token, so the next
-    /// call gets a new one, and marks the account as needing the person to sign in again.
+    /// call gets a new one. Only a refused new one asks the person to sign in again.
     fn refused<T, E: Into<CoreError>>(
         &self,
         account: &Account,
@@ -906,14 +919,8 @@ impl Core {
     ) -> Result<T, CoreError> {
         let result = result.map_err(Into::into);
         if let Err(CoreError::Auth) = result {
-            self.tokens
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .remove(&account.id);
-            // An account removed meanwhile has nothing to mark.
-            if !account.needs_sign_in {
-                let _ = self.store.set_needs_sign_in(account.id, true);
-            }
+            let mut tokens = self.tokens.lock().unwrap_or_else(|p| p.into_inner());
+            tokens.remove(&account.id);
         }
         result
     }
@@ -956,7 +963,9 @@ impl Core {
             return Ok(());
         }
         let server = account.smtp.as_ref().ok_or(CoreError::NoSmtp)?;
-        let mut smtp = self.send_login(server, secret).await?;
+        let mut smtp = self
+            .signed_in(account, self.send_login(server, secret))
+            .await?;
         let sent = if saves_sent_itself(&server.host) {
             None
         } else {

@@ -30,8 +30,9 @@ class MailWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         val signedOut = try {
             mail.accounts().filter { it.needsSignIn }.map { it.id }
         } catch (e: CoreException) {
+            // The mail still comes; only a sign-out may go unannounced.
             Log.w("Ozero", "accounts not read", e)
-            return Result.success()
+            emptyList()
         }
         try {
             mail.refresh()

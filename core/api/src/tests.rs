@@ -335,16 +335,28 @@ fn signs_in_to_a_gmail_account_again() {
     let db = TempDb::new("again");
     let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
     let id = core.add_gmail_account("me@gmail.com".into()).unwrap();
+    let needs_sign_in = || core.accounts().unwrap()[0].needs_sign_in;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    // A refused access token only asks for a new one.
     let account = core.account(AccountId(id)).unwrap();
     assert_eq!(
         core.refused(&account, Err::<(), _>(CoreError::Auth)),
         Err(CoreError::Auth)
     );
-    let item = &core.accounts().unwrap()[0];
-    assert!(item.needs_sign_in);
-    assert_eq!(item.kind, AccountKind::Gmail);
+    assert!(!needs_sign_in());
+    // A refused login asks the person, and no login is tried until they sign in again.
+    let login = |result| {
+        runtime.block_on(core.signed_in(&core.account(AccountId(id)).unwrap(), async { result }))
+    };
+    assert_eq!(login(Err(CoreError::Auth)), Err(CoreError::Auth));
+    assert!(needs_sign_in());
+    assert_eq!(login(Ok(())), Err(CoreError::Auth));
+    assert_eq!(core.accounts().unwrap()[0].kind, AccountKind::Gmail);
     core.signed_in_again(id).unwrap();
-    assert!(!core.accounts().unwrap()[0].needs_sign_in);
+    assert!(!needs_sign_in());
+    assert_eq!(login(Ok(())), Ok(()));
 }
 
 #[test]
