@@ -49,6 +49,15 @@ impl<M> Changes<M> {
     }
 }
 
+/// Mail of a folder older than what is saved of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Older {
+    /// Oldest first.
+    pub new: Vec<RawMessage>,
+    /// The folder may hold older mail still.
+    pub more: bool,
+}
+
 /// A mail server: IMAP, Gmail API or Microsoft Graph.
 pub trait MailProvider: Send {
     fn folders(&mut self) -> impl Future<Output = Result<Vec<NewFolder>, ProviderError>> + Send;
@@ -64,6 +73,29 @@ pub trait MailProvider: Send {
         known: &[String],
         limit: u32,
     ) -> impl Future<Output = Result<Changes, ProviderError>> + Send;
+
+    /// Up to `limit` of the folder's messages just older than the saved ones, which have the
+    /// `known` ids and the earliest of which was received at `oldest` (seconds; `i64::MAX`
+    /// with none saved). Fails with `Gone` if the folder's validity is no longer `validity`.
+    fn older(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        known: &[String],
+        oldest: i64,
+        limit: u32,
+    ) -> impl Future<Output = Result<Older, ProviderError>> + Send;
+
+    /// The newest `limit` of the folder's messages that have every word of `text` in their
+    /// header or body, oldest first. Fails with `Gone` if the folder's validity is no longer
+    /// `validity`.
+    fn search(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        text: &str,
+        limit: u32,
+    ) -> impl Future<Output = Result<Vec<RawMessage>, ProviderError>> + Send;
 
     /// The raw message with `remote_id` in a folder, without marking it read; may be cut at a
     /// size limit. Fails with `Gone` if the folder's validity is no longer `validity`.

@@ -15,6 +15,8 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import uniffi.ozero_api.AccountItem
@@ -25,6 +27,7 @@ import uniffi.ozero_api.DraftItem
 import uniffi.ozero_api.Endpoint
 import uniffi.ozero_api.FolderItem
 import uniffi.ozero_api.FolderRole
+import uniffi.ozero_api.ForwardLabels
 import uniffi.ozero_api.ImagesPage
 import uniffi.ozero_api.InboxTab
 import uniffi.ozero_api.Mailbox
@@ -45,6 +48,11 @@ class Mail(private val context: Context) {
     private val background = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var prefetching: Job? = null
 
+    private val savedDrafts = MutableStateFlow(emptyList<DraftItem>())
+
+    /** The drafts on the phone, last saved first; read again each time one changes. */
+    val drafts: StateFlow<List<DraftItem>> = savedDrafts
+
     suspend fun hasAccounts(): Boolean = io { core.accounts().isNotEmpty() }
 
     /** The accounts mail can be sent from, in the order they were added. */
@@ -60,12 +68,26 @@ class Mail(private val context: Context) {
     suspend fun removeAccount(account: AccountItem) = io {
         core.removeAccount(account.id)
         vault.forgetPassword(account.email)
+        // Its drafts went with it.
+        loadDrafts()
     }
 
-    suspend fun inbox(tab: Category): List<MessageItem> = io { core.unifiedInbox(tab, INBOX_SIZE) }
+    /** The newest [limit] conversations of a tab; fewer once the saved mail ends, see [older]. */
+    suspend fun inbox(tab: Category, limit: Int): List<MessageItem> = io { core.unifiedInbox(tab, limit.toUInt()) }
 
     /** A mailbox other than the unified inbox, which [inbox] shows by tab. */
-    suspend fun mailbox(mailbox: Mailbox): List<MessageItem> = io { core.mailbox(mailbox, INBOX_SIZE) }
+    suspend fun mailbox(mailbox: Mailbox, limit: Int): List<MessageItem> = io { core.mailbox(mailbox, limit.toUInt()) }
+
+    /**
+     * Brings older mail of [mailbox] from every account's server, for a list scrolled to its end;
+     * false once none of them has more. The first failure is thrown once every one has finished.
+     */
+    suspend fun older(mailbox: Mailbox): Boolean = eachAccount(mailbox) { account, password ->
+        core.olderMail(account.id, password, mailbox)
+    }.any { it }
+
+    /** Keeps [account]'s mail of the last [days] days on the phone, or all of it with 0. */
+    suspend fun setKeepDays(account: AccountItem, days: Int) = io { core.setAccountKeep(account.id, days.toUInt()) }
 
     /** Every account's folders; they show once the account's first sync has listed them. */
     suspend fun folders(): List<FolderItem> = io { core.folders() }
@@ -136,8 +158,23 @@ class Mail(private val context: Context) {
         core.messageBody(message.id, password(message.accountId).orEmpty())
     }
 
-    /** Messages matching every word of [text], newest first. */
+    /** Messages matching every word of [text], newest first, with what [searchServer] found for it. */
     suspend fun search(text: String): List<MessageItem> = io { core.search(text, SEARCH_SIZE) }
+
+    /**
+     * Searches every account's mail on its server for [text], older mail than the phone keeps
+     * included; [search] then shows what was found. The first failure is thrown once all are done.
+     */
+    suspend fun searchServer(text: String) {
+        // Back from a result, the same search has its answer saved already.
+        val now = SystemClock.elapsedRealtime()
+        if (searched?.let { (last, at) -> last == text && now - at < SEARCH_KEEP_MS } == true) return
+        eachAccount(INBOX) { account, password -> core.searchServer(account.id, password, text) }
+        searched = text to now
+    }
+
+    /** The last server search that went through, and when. */
+    private var searched: Pair<String, Long>? = null
 
     /** The message's conversation, oldest first. */
     suspend fun thread(message: MessageItem): List<MessageItem> = io { core.thread(message.id) }
@@ -185,6 +222,11 @@ class Mail(private val context: Context) {
     /** An answer to [message]: to its sender, or with [all] to everyone it went to as well. */
     suspend fun reply(message: MessageItem, all: Boolean): DraftItem = io { core.reply(message, all) }
 
+    /** [message] to send on, its text under [labels] and [date]; loads the text if not saved. */
+    suspend fun forward(message: MessageItem, labels: ForwardLabels, date: String): DraftItem = io {
+        core.forward(message, labels, date, password(message.accountId).orEmpty())
+    }
+
     /** The saved text of [message] quoted under [header]; empty while its body is not saved. */
     suspend fun quote(message: MessageItem, header: String): String = io { core.quote(message.id, header) }
 
@@ -196,16 +238,40 @@ class Mail(private val context: Context) {
      * It goes to the server once the undo time is over.
      */
     suspend fun send(draft: DraftItem): Long {
-        val id = io { core.send(draft.accountId, draft.to, draft.subject, draft.text, draft.replyTo, draft.quote) }
+        val id = io { core.send(draft) }
+        if (draft.id != 0L) loadDrafts()
         push(draft.accountId)
         return id
     }
 
+    /** Keeps [draft] on the phone; a new one if its id is 0. Returns its id. */
+    suspend fun saveDraft(draft: DraftItem): Long = io { core.saveDraft(draft) }.also { loadDrafts() }
+
+    /** Reads [drafts] again; on failure they stay as they were. */
+    suspend fun loadDrafts() {
+        try {
+            savedDrafts.value = io { core.drafts() }
+        } catch (e: CoreException) {
+            Log.w("Ozero", "drafts not read", e)
+        }
+    }
+
+    suspend fun deleteDraft(id: Long) {
+        io { core.deleteDraft(id) }
+        loadDrafts()
+    }
+
+    /** Saves a message being written as it changes, starting from the saved draft [id], or 0. */
+    fun keeper(id: Long) = DraftKeeper(this, background, id)
+
+    /** The message [id], if it is still saved: say the one a draft answers. */
+    suspend fun message(id: Long): MessageItem? = io { core.thread(id).find { it.id == id } }
+
     /** The messages the server refused, newest first; [undoSend] takes one back to fix it. */
     suspend fun unsent(): List<UnsentItem> = io { core.unsent() }
 
-    /** Takes back a message that has not gone out yet, to edit it again; null if too late. */
-    suspend fun undoSend(id: Long): DraftItem? = io { core.undoSend(id) }
+    /** Takes back a message that has not gone out yet, to edit it again as a draft; null if too late. */
+    suspend fun undoSend(id: Long): DraftItem? = io { core.undoSend(id) }?.also { loadDrafts() }
 
     /** Sends the account's queued actions in the background, waiting for held ones. */
     private fun push(accountId: Long) {
@@ -222,26 +288,38 @@ class Mail(private val context: Context) {
 
     /**
      * Syncs [mailbox] in all accounts at once; the first failure is thrown once every one has
-     * finished. A refused login is not one: it marks its account, and this returns true.
+     * finished. A refused login is not one: it marks its account. True if an account needs
+     * signing in again.
      */
-    suspend fun refresh(mailbox: Mailbox = INBOX): Boolean = io {
-        // A folder is one account's, so only that account syncs.
+    suspend fun refresh(mailbox: Mailbox = INBOX): Boolean {
+        eachAccount(mailbox) { account, password -> core.syncMailbox(account.id, password, mailbox) }
+        return io { core.accounts().any { it.needsSignIn } }
+    }
+
+    /**
+     * Runs [call] at once for every account with mail in [mailbox], but those that need signing
+     * in again, and returns what they gave; the first failure but a refused login is thrown once
+     * every one has finished.
+     */
+    private suspend fun <T> eachAccount(mailbox: Mailbox, call: suspend (AccountItem, String) -> T): List<T> = io {
+        // A folder is one account's, so only that account is asked.
         val owner = (mailbox as? Mailbox.Folder)?.let { box -> core.folders().find { it.id == box.id }?.accountId }
-        val failures = coroutineScope {
-            core.accounts().filter { owner == null || it.id == owner }.mapNotNull { account ->
-                val password = vault.password(account.email) ?: return@mapNotNull null
+        val signedIn = core.accounts().filter { (owner == null || it.id == owner) && !it.needsSignIn }.mapNotNull { account ->
+            vault.password(account.email)?.let { account to it }
+        }
+        val results: List<Result<T>> = coroutineScope {
+            signedIn.map { (account, password) ->
                 async {
                     try {
-                        core.syncMailbox(account.id, password, mailbox)
-                        null
+                        Result.success(call(account, password))
                     } catch (e: CoreException) {
-                        e
+                        Result.failure(e)
                     }
                 }
             }.awaitAll()
         }
-        failures.firstOrNull { it != null && it !is CoreException.Auth }?.let { throw it }
-        failures.any { it is CoreException.Auth }
+        results.firstNotNullOfOrNull { it.exceptionOrNull()?.takeIf { e -> e !is CoreException.Auth } }?.let { throw it }
+        results.mapNotNull { it.getOrNull() }
     }
 
     /**
@@ -300,10 +378,12 @@ class Mail(private val context: Context) {
         val INBOX: Mailbox = Mailbox.Unified(FolderRole.INBOX)
         const val IMAPS_PORT = 993
         const val SMTPS_PORT = 465
-        private const val INBOX_SIZE = 200u
         private const val SEARCH_SIZE = 100u
         private const val WATCH_PAUSE_MS = 5_000L
         private const val WATCH_PAUSE_MAX_MS = 5 * 60_000L
+
+        /** How long a server search answer stays good enough to not ask again. */
+        private const val SEARCH_KEEP_MS = 60_000L
     }
 }
 

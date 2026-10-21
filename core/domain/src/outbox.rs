@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use crate::{AccountId, MessageId};
 
 /// Local id of a message waiting to be sent.
@@ -16,6 +18,28 @@ pub struct Draft {
     pub reply_to: Option<MessageId>,
     /// The answered message, quoted under the text; empty for none.
     pub quote: String,
+}
+
+/// Local id of a message kept on the device while it is written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DraftId(pub i64);
+
+/// A message being written, kept on the device until it is sent or thrown away. Never on
+/// the server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedDraft {
+    /// None until it is first saved.
+    pub id: Option<DraftId>,
+    /// None while no account is picked.
+    pub account_id: Option<AccountId>,
+    /// The recipients as typed, checked only when it is sent.
+    pub to: String,
+    pub subject: String,
+    pub text: String,
+    pub reply_to: Option<MessageId>,
+    pub quote: String,
+    /// Milliseconds since the Unix epoch of the last save.
+    pub saved: i64,
 }
 
 /// A message the server refused, kept for the user to fix.
@@ -90,15 +114,42 @@ pub fn with_quote(text: &str, quote: &str) -> String {
 
 /// `Re: ` once, the way mail clients answer.
 pub fn reply_subject(subject: &str) -> String {
+    prefixed(subject, "Re: ", &["re:"])
+}
+
+/// `Fwd: ` once, the way mail clients forward; `Fw: ` counts too.
+pub fn forward_subject(subject: &str) -> String {
+    prefixed(subject, "Fwd: ", &["fwd:", "fw:"])
+}
+
+/// `prefix` before the subject unless it starts with one of `known`, in any case.
+fn prefixed(subject: &str, prefix: &str, known: &[&str]) -> String {
     let trimmed = subject.trim();
-    let prefixed = trimmed
-        .get(..3)
-        .is_some_and(|p| p.eq_ignore_ascii_case("re:"));
-    if prefixed {
+    let has = known.iter().any(|k| {
+        trimmed
+            .get(..k.len())
+            .is_some_and(|p| p.eq_ignore_ascii_case(k))
+    });
+    if has {
         trimmed.to_owned()
     } else {
-        format!("Re: {trimmed}")
+        format!("{prefix}{trimmed}")
     }
+}
+
+/// A forwarded message under the text: `title`, a line for each of its `fields` that has a
+/// value, a blank line, then its `text` as it is.
+pub fn forward_quote(title: &str, fields: &[(&str, &str)], text: &str) -> String {
+    let mut quote = title.to_owned();
+    for (label, value) in fields.iter().filter(|(_, v)| !v.is_empty()) {
+        let _ = write!(quote, "\n{label} {value}");
+    }
+    let text = text.trim();
+    if !text.is_empty() {
+        quote.push_str("\n\n");
+        quote.push_str(text);
+    }
+    quote
 }
 
 #[cfg(test)]
@@ -151,5 +202,27 @@ mod tests {
         assert_eq!(reply_subject("RE: Hi"), "RE: Hi");
         assert_eq!(reply_subject(" "), "Re: ");
         assert_eq!(reply_subject("Отчёт"), "Re: Отчёт");
+    }
+
+    #[test]
+    fn forwards_with_one_fwd() {
+        assert_eq!(forward_subject("Hi"), "Fwd: Hi");
+        assert_eq!(forward_subject(" FWD: Hi"), "FWD: Hi");
+        assert_eq!(forward_subject("Fw: Hi"), "Fw: Hi");
+        assert_eq!(forward_subject("Re: Hi"), "Fwd: Re: Hi");
+        assert_eq!(forward_subject("Отчёт"), "Fwd: Отчёт");
+    }
+
+    #[test]
+    fn forwards_the_text_under_its_header() {
+        let fields = [("From:", "Anna <anna@example.com>"), ("To:", "")];
+        assert_eq!(
+            forward_quote("Forwarded message", &fields, "\nHi\n> old\n"),
+            "Forwarded message\nFrom: Anna <anna@example.com>\n\nHi\n> old"
+        );
+        assert_eq!(
+            forward_quote("Forwarded", &fields, " "),
+            "Forwarded\nFrom: Anna <anna@example.com>"
+        );
     }
 }

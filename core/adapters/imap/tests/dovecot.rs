@@ -71,6 +71,59 @@ async fn lists_folders_with_roles_and_names() {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "needs tools/dovecot-test.sh"]
+async fn loads_mail_older_than_the_saved_one() {
+    let mut imap = session().await;
+    let validity = recent(&mut imap, "INBOX", 1).await.checkpoint.validity;
+    let uids = |older: &ozero_domain::Older| -> Vec<String> {
+        older.new.iter().map(|m| m.remote_id.clone()).collect()
+    };
+    let older = imap
+        .older("INBOX", validity, &["3".into()], 0, 1)
+        .await
+        .unwrap();
+    assert_eq!((uids(&older), older.more), (vec!["2".to_string()], true));
+    let older = imap
+        .older("INBOX", validity, &["3".into(), "2".into()], 0, 5)
+        .await
+        .unwrap();
+    assert_eq!((uids(&older), older.more), (vec!["1".to_string()], false));
+    // A saved message gone from the server since: the mail below it still loads.
+    let older = imap
+        .older("INBOX", validity, &["9".into()], 0, 1)
+        .await
+        .unwrap();
+    assert_eq!(uids(&older), ["3"]);
+    assert_eq!(
+        imap.older("INBOX", validity + 1, &[], 0, 5).await,
+        Err(ProviderError::Gone)
+    );
+    imap.logout().await.unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "needs tools/dovecot-test.sh"]
+async fn searches_a_folder_on_the_server() {
+    let mut imap = session().await;
+    let validity = recent(&mut imap, "INBOX", 1).await.checkpoint.validity;
+    let uids = |found: Vec<ozero_domain::RawMessage>| -> Vec<String> {
+        found.into_iter().map(|m| m.remote_id).collect()
+    };
+    let found = imap.search("INBOX", validity, "hello message", 2).await;
+    assert_eq!(uids(found.unwrap()), ["2", "3"]);
+    // Every word must be there, and a name in the header is found in any script.
+    let found = imap.search("INBOX", validity, "Анна hello", 5).await;
+    assert_eq!(uids(found.unwrap()).len(), 3);
+    let found = imap.search("INBOX", validity, "hello nowhere", 5).await;
+    assert!(found.unwrap().is_empty());
+    assert_eq!(
+        imap.search("INBOX", validity + 1, "hello", 5).await,
+        Err(ProviderError::Gone)
+    );
+    imap.logout().await.unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "needs tools/dovecot-test.sh"]
 async fn fetches_the_newest_messages_oldest_first() {
     let mut imap = session().await;
     let newest = recent(&mut imap, "INBOX", 2).await;

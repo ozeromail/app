@@ -23,12 +23,12 @@ pub use message::{
 };
 pub use op::{Action, Op, OpId};
 pub use outbox::{
-    Draft, OutboxId, Outgoing, Unsent, is_address, parse_recipients, quote, reply_subject,
-    with_quote,
+    Draft, DraftId, OutboxId, Outgoing, SavedDraft, Unsent, forward_quote, forward_subject,
+    is_address, parse_recipients, quote, reply_subject, with_quote,
 };
 pub use provider::{
-    Changes, Checkpoint, MailProvider, MailSender, MessageBuilder, MessageParser, ProviderError,
-    RawMessage,
+    Changes, Checkpoint, MailProvider, MailSender, MessageBuilder, MessageParser, Older,
+    ProviderError, RawMessage,
 };
 pub use sort::{Category, Signals};
 pub use store::{Store, StoreError};

@@ -8,12 +8,14 @@ use std::sync::{Mutex, MutexGuard};
 
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Body, Category, Changes, Checkpoint,
-    Correspondents, Draft, Flags, Folder, FolderId, FolderRole, ListQuery, ListScope, MessageId,
-    MessageLocation, MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing,
-    Sender, Server, Store, StoreError, Unsent, with_quote,
+    Correspondents, Draft, DraftId, Flags, Folder, FolderId, FolderRole, ListQuery, ListScope,
+    MessageId, MessageLocation, MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId, OutboxId,
+    Outgoing, SavedDraft, Sender, Server, Store, StoreError, Unsent, with_quote,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
-use rusqlite::{Connection, ErrorCode, OptionalExtension, Row, Transaction, params};
+use rusqlite::{
+    CachedStatement, Connection, ErrorCode, OptionalExtension, Row, Transaction, params,
+};
 
 pub struct SqliteStore {
     conn: Mutex<Connection>,
@@ -140,7 +142,7 @@ impl Store for SqliteStore {
         let mut stmt = conn
             .prepare_cached(
                 "SELECT id, kind, email, display_name, server_host, server_port, server_user,
-                        smtp_host, smtp_port, smtp_user, color, label, needs_sign_in
+                        smtp_host, smtp_port, smtp_user, color, label, keep_days, needs_sign_in
                  FROM account ORDER BY id",
             )
             .map_err(storage)?;
@@ -160,7 +162,8 @@ impl Store for SqliteStore {
                 smtp: server(7)?,
                 color: r.get(10)?,
                 label: r.get(11)?,
-                needs_sign_in: r.get(12)?,
+                keep_days: r.get(12)?,
+                needs_sign_in: r.get(13)?,
             })
         });
         rows.and_then(|rows| rows.collect()).map_err(storage)
@@ -194,6 +197,42 @@ impl Store for SqliteStore {
             )
             .map_err(storage)?;
         found(changed)
+    }
+
+    fn set_account_keep(&self, account: AccountId, days: u32) -> Result<(), StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        let changed = tx
+            .execute(
+                "UPDATE account SET keep_days = ?2 WHERE id = ?1 AND keep_days != ?2",
+                params![account.0, days],
+            )
+            .map_err(storage)?;
+        // Kept longer, a folder that ended at the old limit may have older mail again.
+        if changed > 0 {
+            tx.execute(
+                "UPDATE folder SET older_done = 0 WHERE account_id = ?1",
+                [account.0],
+            )
+            .map_err(storage)?;
+        } else {
+            require(&tx, "SELECT 1 FROM account WHERE id = ?1", account.0)?;
+        }
+        tx.commit().map_err(storage)
+    }
+
+    fn prune(&self, account: AccountId, before: i64) -> Result<(), StoreError> {
+        self.conn()
+            .execute(
+                "DELETE FROM message
+                 WHERE folder_id IN (SELECT id FROM folder WHERE account_id = ?1) AND date < ?2
+                   AND found = 0
+                   AND NOT EXISTS (SELECT 1 FROM op WHERE op.message_id = message.id)
+                   AND NOT EXISTS (SELECT 1 FROM outbox WHERE outbox.reply_to = message.id)",
+                params![account.0, before],
+            )
+            .map_err(storage)?;
+        Ok(())
     }
 
     fn set_needs_sign_in(&self, account: AccountId, needs: bool) -> Result<(), StoreError> {
@@ -283,10 +322,43 @@ impl Store for SqliteStore {
             .map_err(storage)?
             .ok_or(StoreError::NotFound)?;
         let known = conn
-            .prepare_cached("SELECT remote_id FROM message WHERE folder_id = ?1")
+            .prepare_cached("SELECT remote_id FROM message WHERE folder_id = ?1 AND found = 0")
             .and_then(|mut s| s.query_map([folder.0], |r| r.get(0))?.collect())
             .map_err(storage)?;
         Ok((checkpoint, known))
+    }
+
+    fn oldest(&self, folder: FolderId) -> Result<Option<i64>, StoreError> {
+        self.conn()
+            .query_row(
+                "SELECT min(date) FROM message WHERE folder_id = ?1 AND found = 0",
+                [folder.0],
+                |r| r.get(0),
+            )
+            .map_err(storage)
+    }
+
+    fn older_done(&self, folder: FolderId) -> Result<bool, StoreError> {
+        self.conn()
+            .query_row(
+                "SELECT older_done FROM folder WHERE id = ?1",
+                [folder.0],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(storage)?
+            .ok_or(StoreError::NotFound)
+    }
+
+    fn set_older_done(&self, folder: FolderId, done: bool) -> Result<(), StoreError> {
+        let changed = self
+            .conn()
+            .execute(
+                "UPDATE folder SET older_done = ?2 WHERE id = ?1",
+                params![folder.0, done],
+            )
+            .map_err(storage)?;
+        found(changed)
     }
 
     fn save_changes(
@@ -368,13 +440,64 @@ impl Store for SqliteStore {
     }
 
     fn search(&self, text: &str, limit: u32) -> Result<Vec<MessageRow>, StoreError> {
-        let Some(query) = fts_query(text) else {
+        let (Some(query), Some(words)) = (fts_query(text), hit_words(text)) else {
             return Ok(vec![]);
         };
         let conn = self.conn();
         conn.prepare_cached(SEARCH)
-            .and_then(|mut s| s.query_map(params![query, limit], message_row)?.collect())
+            .and_then(|mut s| {
+                s.query_map(params![query, limit, words], message_row)?
+                    .collect()
+            })
             .map_err(storage)
+    }
+
+    fn save_found(
+        &self,
+        account: AccountId,
+        text: &str,
+        found: &[(FolderId, Vec<NewMessage>)],
+    ) -> Result<(), StoreError> {
+        let Some(words) = hit_words(text) else {
+            return Ok(());
+        };
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        tx.execute(
+            "DELETE FROM search_hit WHERE message_id IN (
+                 SELECT m.id FROM message m JOIN folder f ON f.id = m.folder_id
+                 WHERE f.account_id = ?1)",
+            [account.0],
+        )
+        .map_err(storage)?;
+        {
+            let mut save = tx.prepare_cached(SAVE_FOUND).map_err(storage)?;
+            let mut hit = tx
+                .prepare_cached(
+                    "INSERT OR REPLACE INTO search_hit (message_id, words)
+                     SELECT id, ?3 FROM message WHERE folder_id = ?1 AND remote_id = ?2",
+                )
+                .map_err(storage)?;
+            for (folder, messages) in found {
+                for m in messages {
+                    if write_message(&mut save, *folder, m)? > 0 {
+                        link_thread(&tx, account.0, *folder, m)?;
+                    }
+                    hit.execute(params![folder.0, m.remote_id, words])
+                        .map_err(storage)?;
+                }
+            }
+        }
+        tx.execute(
+            "DELETE FROM message
+             WHERE found = 1 AND folder_id IN (SELECT id FROM folder WHERE account_id = ?1)
+               AND NOT EXISTS (SELECT 1 FROM search_hit h WHERE h.message_id = message.id)
+               AND NOT EXISTS (SELECT 1 FROM op WHERE op.message_id = message.id)
+               AND NOT EXISTS (SELECT 1 FROM outbox WHERE outbox.reply_to = message.id)",
+            [account.0],
+        )
+        .map_err(storage)?;
+        tx.commit().map_err(storage)
     }
 
     fn take_fresh(&self, since: i64) -> Result<Vec<MessageRow>, StoreError> {
@@ -642,6 +765,7 @@ impl Store for SqliteStore {
     fn queue_send(
         &self,
         draft: &Draft,
+        saved: Option<DraftId>,
         message_id: &str,
         date: i64,
         not_before: i64,
@@ -685,29 +809,104 @@ impl Store for SqliteStore {
                 |r| r.get(0),
             )
             .map_err(storage)?;
+        if let Some(saved) = saved {
+            tx.execute("DELETE FROM draft WHERE id = ?1", [saved.0])
+                .map_err(storage)?;
+        }
         tx.commit().map_err(storage)?;
         Ok(OutboxId(id))
     }
 
-    fn undo_send(&self, id: OutboxId, now: i64) -> Result<Option<Draft>, StoreError> {
-        self.conn()
-            .prepare_cached(
+    fn undo_send(&self, id: OutboxId, now: i64) -> Result<Option<SavedDraft>, StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        let taken = tx
+            .query_row(
                 "DELETE FROM outbox WHERE id = ?1 AND (not_before > ?2 OR failed IS NOT NULL)
                  RETURNING account_id, recipients, subject, text, reply_to, quote",
-            )
-            .and_then(|mut s| {
-                s.query_row(params![id.0, now], |r| {
-                    Ok(Draft {
-                        account_id: AccountId(r.get(0)?),
-                        to: recipients(&r.get::<_, String>(1)?),
+                params![id.0, now],
+                |r| {
+                    Ok(SavedDraft {
+                        id: None,
+                        account_id: Some(AccountId(r.get(0)?)),
+                        to: recipients(&r.get::<_, String>(1)?).join(", "),
                         subject: r.get(2)?,
                         text: r.get(3)?,
                         reply_to: r.get::<_, Option<i64>>(4)?.map(MessageId),
                         quote: r.get(5)?,
+                        saved: now,
                     })
-                })
-                .optional()
-            })
+                },
+            )
+            .optional()
+            .map_err(storage)?;
+        let Some(mut draft) = taken else {
+            return Ok(None);
+        };
+        draft.id = Some(insert_draft(&tx, &draft)?);
+        tx.commit().map_err(storage)?;
+        Ok(Some(draft))
+    }
+
+    fn save_draft(&self, draft: &SavedDraft) -> Result<DraftId, StoreError> {
+        let conn = self.conn();
+        let Some(id) = draft.id else {
+            return insert_draft(&conn, draft);
+        };
+        // An account or answered message gone since leaves the draft without one.
+        let changed = conn
+            .execute(
+                "UPDATE draft SET
+                     account_id = (SELECT id FROM account WHERE id = ?1),
+                     recipients = ?2, subject = ?3, text = ?4,
+                     reply_to = (SELECT id FROM message WHERE id = ?5),
+                     quote = ?6, saved = ?7
+                 WHERE id = ?8",
+                params![
+                    draft.account_id.map(|a| a.0),
+                    draft.to,
+                    draft.subject,
+                    draft.text,
+                    draft.reply_to.map(|m| m.0),
+                    draft.quote,
+                    draft.saved,
+                    id.0,
+                ],
+            )
+            .map_err(storage)?;
+        found(changed)?;
+        Ok(id)
+    }
+
+    fn drafts(&self) -> Result<Vec<SavedDraft>, StoreError> {
+        let conn = self.conn();
+        let rows = conn
+            .prepare_cached(
+                "SELECT id, account_id, recipients, subject, text, reply_to, quote, saved
+                 FROM draft ORDER BY saved DESC, id DESC",
+            )
+            .and_then(|mut s| {
+                s.query_map([], |r| {
+                    Ok(SavedDraft {
+                        id: Some(DraftId(r.get(0)?)),
+                        account_id: r.get::<_, Option<i64>>(1)?.map(AccountId),
+                        to: r.get(2)?,
+                        subject: r.get(3)?,
+                        text: r.get(4)?,
+                        reply_to: r.get::<_, Option<i64>>(5)?.map(MessageId),
+                        quote: r.get(6)?,
+                        saved: r.get(7)?,
+                    })
+                })?
+                .collect()
+            });
+        rows.map_err(storage)
+    }
+
+    fn delete_draft(&self, id: DraftId) -> Result<(), StoreError> {
+        self.conn()
+            .execute("DELETE FROM draft WHERE id = ?1", [id.0])
+            .map(|_| ())
             .map_err(storage)
     }
 
@@ -914,7 +1113,7 @@ fn reset_if_new(tx: &Transaction<'_>, folder: FolderId, validity: u32) -> Result
         tx.execute("DELETE FROM message WHERE folder_id = ?1", [folder.0])
             .map_err(storage)?;
         tx.execute(
-            "UPDATE folder SET validity = ?2, next_id = 0 WHERE id = ?1",
+            "UPDATE folder SET validity = ?2, next_id = 0, older_done = 0 WHERE id = ?1",
             params![folder.0, validity],
         )
         .map_err(storage)?;
@@ -938,25 +1137,34 @@ fn upsert_messages(
         )
         .map_err(storage)?;
     for m in messages {
-        upsert
-            .execute(params![
-                folder.0,
-                m.remote_id,
-                m.message_id,
-                m.from.name,
-                m.from.email,
-                m.subject,
-                m.snippet,
-                m.date,
-                flags_bits(m.flags),
-                category_ref(m.category),
-                m.answer_to.join("\n"),
-                m.recipients.join("\n"),
-            ])
-            .map_err(storage)?;
+        write_message(&mut upsert, folder, m)?;
         link_thread(tx, account, folder, m)?;
     }
     Ok(())
+}
+
+/// Runs `SAVE_MESSAGE` or `SAVE_FOUND` for `m`; the number of rows written.
+fn write_message(
+    statement: &mut CachedStatement<'_>,
+    folder: FolderId,
+    m: &NewMessage,
+) -> Result<usize, StoreError> {
+    statement
+        .execute(params![
+            folder.0,
+            m.remote_id,
+            m.message_id,
+            m.from.name,
+            m.from.email,
+            m.subject,
+            m.snippet,
+            m.date,
+            flags_bits(m.flags),
+            category_ref(m.category),
+            m.answer_to.join("\n"),
+            m.recipients.join("\n"),
+        ])
+        .map_err(storage)
 }
 
 /// Puts a saved message in the conversation of the messages it answers, that answer it, or
@@ -1106,15 +1314,15 @@ const SAVE_MESSAGE: &str = concat!(
                           subject, snippet, date, flags, category, answer_to, recipients, fresh)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1)
      ON CONFLICT (folder_id, remote_id) DO UPDATE SET
-         message_id = excluded.message_id, from_name = excluded.from_name,
+         found = 0, message_id = excluded.message_id, from_name = excluded.from_name,
          from_email = excluded.from_email, subject = excluded.subject,
          answer_to = excluded.answer_to, recipients = excluded.recipients,
          snippet = coalesce(nullif(excluded.snippet, ''), snippet),
          date = excluded.date, category = excluded.category, flags = ",
     merged_flags!("excluded.flags"),
-    " WHERE (message_id, from_name, from_email, subject, snippet, date, category,
+    " WHERE (found, message_id, from_name, from_email, subject, snippet, date, category,
             answer_to, recipients, flags)
-         IS NOT (excluded.message_id, excluded.from_name, excluded.from_email,
+         IS NOT (0, excluded.message_id, excluded.from_name, excluded.from_email,
                  excluded.subject, coalesce(nullif(excluded.snippet, ''), snippet),
                  excluded.date, excluded.category, excluded.answer_to, excluded.recipients, ",
     merged_flags!("excluded.flags"),
@@ -1141,7 +1349,7 @@ macro_rules! in_thread {
     () => {
         concat!(
             "FROM message n WHERE n.thread_id = m.thread_id AND n.folder_id = m.folder_id
-             AND n.category = m.category AND ",
+             AND n.category = m.category AND n.found = 0 AND ",
             not_moving!("n")
         )
     };
@@ -1237,7 +1445,7 @@ macro_rules! list_sql {
             )),
             " WHERE ",
             $scope,
-            " AND (m.date, m.id) < (?2, ?3)
+            " AND m.found = 0 AND (m.date, m.id) < (?2, ?3)
              AND ",
             not_moving!(),
             // One row per conversation: its newest message.
@@ -1290,8 +1498,9 @@ const FIND_THREADS: &str = "
 /// Sorting by date reads every match; fine for one person's mail.
 const SEARCH: &str = concat!(
     message_from!(),
-    " JOIN message_search ON message_search.rowid = m.id
-     WHERE message_search MATCH ?1 AND f.role NOT IN ('trash', 'junk') AND ",
+    " WHERE m.id IN (SELECT rowid FROM message_search WHERE message_search MATCH ?1
+                     UNION SELECT message_id FROM search_hit WHERE words = ?3)
+       AND f.role NOT IN ('trash', 'junk') AND ",
     not_moving!(),
     " AND NOT EXISTS (
          SELECT 1 FROM message d JOIN folder g ON g.id = d.folder_id
@@ -1314,6 +1523,20 @@ fn fts_query(text: &str) -> Option<String> {
     (!words.is_empty()).then(|| words.join(" "))
 }
 
+/// The words of `text` as the server searches of `search_hit` are kept by: lower case, one
+/// space apart. `None` when there are none.
+fn hit_words(text: &str) -> Option<String> {
+    let words: Vec<String> = text.split_whitespace().map(str::to_lowercase).collect();
+    (!words.is_empty()).then(|| words.join(" "))
+}
+
+/// Saves a message a server search found, unless it is saved already; not new mail.
+const SAVE_FOUND: &str = "
+    INSERT INTO message (folder_id, remote_id, message_id, from_name, from_email, subject,
+                         snippet, date, flags, category, answer_to, recipients, found)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1)
+    ON CONFLICT (folder_id, remote_id) DO NOTHING";
+
 const CLEAR_FRESH: &str = "UPDATE message SET fresh = 0 WHERE fresh = 1";
 
 // `1` is `SEEN`.
@@ -1327,7 +1550,8 @@ const FRESH_PEOPLE: &str = concat!(
 // `1` is `SEEN`.
 const INBOX_UNREAD: &str = concat!(
     "SELECT m.category, count(*) FROM message m
-     WHERE m.folder_id IN (SELECT id FROM folder WHERE role = 'inbox') AND m.flags & 1 = 0 AND ",
+     WHERE m.folder_id IN (SELECT id FROM folder WHERE role = 'inbox') AND m.flags & 1 = 0
+       AND m.found = 0 AND ",
     not_moving!(),
     " GROUP BY m.category"
 );
@@ -1352,7 +1576,7 @@ const FOLDER_MESSAGES: &str = concat!(
 // Stops at the first message found, so a full inbox costs no more than an empty one.
 const INBOX_EMPTY: &str = concat!(
     "SELECT NOT EXISTS (SELECT 1 FROM message m
-     WHERE m.folder_id IN (SELECT id FROM folder WHERE role = 'inbox') AND ",
+     WHERE m.folder_id IN (SELECT id FROM folder WHERE role = 'inbox') AND m.found = 0 AND ",
     not_moving!(),
     ")"
 );
@@ -1407,6 +1631,28 @@ fn found(changed: usize) -> Result<(), StoreError> {
         return Err(StoreError::NotFound);
     }
     Ok(())
+}
+
+/// Saves a new draft; an account or answered message that is gone is left out.
+fn insert_draft(conn: &Connection, draft: &SavedDraft) -> Result<DraftId, StoreError> {
+    conn.query_row(
+        "INSERT INTO draft (account_id, recipients, subject, text, reply_to, quote, saved)
+         VALUES ((SELECT id FROM account WHERE id = ?1), ?2, ?3, ?4,
+                 (SELECT id FROM message WHERE id = ?5), ?6, ?7)
+         RETURNING id",
+        params![
+            draft.account_id.map(|a| a.0),
+            draft.to,
+            draft.subject,
+            draft.text,
+            draft.reply_to.map(|m| m.0),
+            draft.quote,
+            draft.saved,
+        ],
+        |r| r.get(0),
+    )
+    .map(DraftId)
+    .map_err(storage)
 }
 
 /// Fails with `NotFound` when the row a write depends on is missing.

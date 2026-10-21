@@ -13,8 +13,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ozero_domain::{
-    Changes, Checkpoint, Flags, FolderRole, MailProvider, MailSender, NewFolder, ProviderError,
-    RawMessage,
+    Changes, Checkpoint, Flags, FolderRole, MailProvider, MailSender, NewFolder, Older,
+    ProviderError, RawMessage,
 };
 use ozero_http::{Body, HttpsClient, Response};
 use serde_json::{Value, json};
@@ -137,12 +137,23 @@ impl GmailSession {
         number(&profile["historyId"]).ok_or_else(|| protocol("no history id"))
     }
 
-    /// The newest `limit` messages with `label`, oldest first.
-    async fn newest(&mut self, label: &str, limit: u32) -> Result<Vec<RawMessage>, ProviderError> {
+    /// The newest `limit` messages in `folder`, oldest first.
+    async fn newest(&mut self, folder: &str, limit: u32) -> Result<Vec<RawMessage>, ProviderError> {
+        self.newest_matching(folder, "", limit).await
+    }
+
+    /// The newest `limit` messages in `folder` that match the Gmail search `query`, oldest
+    /// first.
+    async fn newest_matching(
+        &mut self,
+        folder: &str,
+        query: &str,
+        limit: u32,
+    ) -> Result<Vec<RawMessage>, ProviderError> {
         let list = self
             .get(&format!(
                 "/messages?{}&maxResults={}&fields=messages/id",
-                listing(label),
+                listing(folder, query),
                 limit.min(MAX_LIST)
             ))
             .await?;
@@ -300,7 +311,7 @@ impl GmailSession {
             let json = self
                 .get(&format!(
                     "/messages?{}&maxResults=500{page}",
-                    listing(folder)
+                    listing(folder, "")
                 ))
                 .await?;
             for m in json["messages"].as_array().into_iter().flatten() {
@@ -372,6 +383,68 @@ impl MailProvider for GmailSession {
             flags: vec![],
             gone: vec![],
         })
+    }
+
+    async fn older(
+        &mut self,
+        folder: &str,
+        _validity: u32,
+        known: &[String],
+        oldest: i64,
+        limit: u32,
+    ) -> Result<Older, ProviderError> {
+        // `before:` counts whole seconds: from the oldest saved one's on, leaving out what is saved.
+        let before = match oldest {
+            i64::MAX => String::new(),
+            oldest => format!("before:{}", oldest.saturating_add(1)),
+        };
+        let known: HashSet<&str> = known.iter().map(String::as_str).collect();
+        let mut page = String::new();
+        // A page of only saved mail, say many messages in the oldest saved second, goes on.
+        let (ids, more) = loop {
+            let list = self
+                .get(&format!(
+                    "/messages?{}&maxResults={}&fields=messages/id,nextPageToken{page}",
+                    listing(folder, &before),
+                    limit.min(MAX_LIST)
+                ))
+                .await?;
+            let mut ids = each(&list["messages"], |m| &m["id"]);
+            ids.retain(|id| !known.contains(id.as_str()));
+            match list["nextPageToken"].as_str() {
+                Some(token) if ids.is_empty() => page = format!("&pageToken={}", percent(token)),
+                token => break (ids, token.is_some()),
+            }
+        };
+        let mut new: Vec<_> = self
+            .headers(&ids)
+            .await?
+            .into_iter()
+            .filter(|m| has(&m.labels, folder))
+            .map(|m| m.raw)
+            .collect();
+        new.sort_by_key(|m| m.received);
+        Ok(Older { new, more })
+    }
+
+    async fn search(
+        &mut self,
+        folder: &str,
+        _validity: u32,
+        text: &str,
+        limit: u32,
+    ) -> Result<Vec<RawMessage>, ProviderError> {
+        // Gmail search syntax in the text stays plain words.
+        let words: Vec<String> = text
+            .split_whitespace()
+            .map(|w| w.replace('"', ""))
+            .filter(|w| !w.is_empty())
+            .map(|w| format!("\"{w}\""))
+            .collect();
+        if words.is_empty() {
+            return Ok(vec![]);
+        }
+        self.newest_matching(folder, &words.join(" "), limit).await
     }
 
     async fn body(
@@ -547,17 +620,28 @@ const APART: [&str; 2] = ["SPAM", "TRASH"];
 /// The other system labels, with their search names: mail in none of them is archived.
 const FILED: [(&str, &str); 3] = [("INBOX", "inbox"), ("SENT", "sent"), ("DRAFT", "drafts")];
 
-/// What lists a folder's messages: its label, or for the archive a search, which leaves spam
-/// and trash out as every list does unless asked.
-fn listing(folder: &str) -> String {
-    if folder == ARCHIVE {
-        let filed: Vec<_> = FILED.iter().map(|(_, n)| format!("-in:{n}")).collect();
-        format!("q={}", percent(&filed.join(" ")))
+/// What lists a folder's messages that match the Gmail search `query`, empty for all: its
+/// label, or for the archive a search, which leaves spam and trash out as every list does
+/// unless asked.
+fn listing(folder: &str, query: &str) -> String {
+    let (label, mut terms) = if folder == ARCHIVE {
+        let filed = FILED.iter().map(|(_, n)| format!("-in:{n}")).collect();
+        (None, filed)
     } else if APART.contains(&folder) {
-        format!("labelIds={}&includeSpamTrash=true", percent(folder))
+        let label = format!("labelIds={}&includeSpamTrash=true", percent(folder));
+        (Some(label), vec![])
     } else {
-        format!("labelIds={}", percent(folder))
+        (Some(format!("labelIds={}", percent(folder))), vec![])
+    };
+    if !query.is_empty() {
+        terms.push(query.to_owned());
     }
+    let search = (!terms.is_empty()).then(|| format!("q={}", percent(&terms.join(" "))));
+    label
+        .into_iter()
+        .chain(search)
+        .collect::<Vec<_>>()
+        .join("&")
 }
 
 fn has(labels: &[String], folder: &str) -> bool {

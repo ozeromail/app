@@ -1,9 +1,9 @@
 use std::fmt;
 
 use crate::{
-    Account, AccountId, Action, Body, Category, Changes, Checkpoint, Correspondents, Draft, Folder,
-    FolderId, ListQuery, MessageId, MessageLocation, MessageRow, NewAccount, NewFolder, NewMessage,
-    Op, OpId, OutboxId, Outgoing, Unsent,
+    Account, AccountId, Action, Body, Category, Changes, Checkpoint, Correspondents, Draft,
+    DraftId, Folder, FolderId, ListQuery, MessageId, MessageLocation, MessageRow, NewAccount,
+    NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing, SavedDraft, Unsent,
 };
 
 /// Local database port. The UI reads only from here; sync writes here.
@@ -16,6 +16,11 @@ pub trait Store: Send + Sync {
     fn set_account_color(&self, account: AccountId, color: u32) -> Result<(), StoreError>;
     /// Sets the user's name for the account; empty clears it.
     fn set_account_label(&self, account: AccountId, label: &str) -> Result<(), StoreError>;
+    /// Sets how many days back the account's mail is kept; 0 keeps all of it.
+    fn set_account_keep(&self, account: AccountId, days: u32) -> Result<(), StoreError>;
+    /// Forgets the account's mail received before `before` (seconds), but for mail a queued
+    /// action or message needs.
+    fn prune(&self, account: AccountId, before: i64) -> Result<(), StoreError>;
     /// Marks whether the account waits for the person to sign in again.
     fn set_needs_sign_in(&self, account: AccountId, needs: bool) -> Result<(), StoreError>;
 
@@ -29,6 +34,12 @@ pub trait Store: Send + Sync {
 
     /// Where the folder's last sync stopped, and the `remote_id`s of its saved messages.
     fn checkpoint(&self, folder: FolderId) -> Result<(Checkpoint, Vec<String>), StoreError>;
+    /// When the folder's oldest saved message was received, if it has any.
+    fn oldest(&self, folder: FolderId) -> Result<Option<i64>, StoreError>;
+    /// Whether the folder's server had no older mail to load, or none the account keeps. A
+    /// new validity, or a longer time the account keeps mail, makes it false again.
+    fn older_done(&self, folder: FolderId) -> Result<bool, StoreError>;
+    fn set_older_done(&self, folder: FolderId, done: bool) -> Result<(), StoreError>;
     /// Saves a sync in one transaction. A new validity first drops the folder's messages:
     /// their `remote_id`s now name other messages. Messages are matched by `remote_id`,
     /// and a queued action stays on top of what the server sent until it is sent. A new
@@ -52,7 +63,17 @@ pub trait Store: Send + Sync {
     /// Messages, newest first, whose subject, sender or body has every word of `text`, each
     /// as a word or the start of one, case and accents aside. Trash, junk and what is being
     /// archived are left out; empty `text` finds nothing.
+    /// Also the messages the last server search of their account found for the same words.
     fn search(&self, text: &str, limit: u32) -> Result<Vec<MessageRow>, StoreError>;
+    /// Saves what a server search of the account's folders found for `text`, in place of what
+    /// its last one found. A message not saved yet is kept apart from its folder's list, and
+    /// goes with the next search unless a queued action or message needs it.
+    fn save_found(
+        &self,
+        account: AccountId,
+        text: &str,
+        found: &[(FolderId, Vec<NewMessage>)],
+    ) -> Result<(), StoreError>;
     /// Unread People mail in an inbox saved since the last call and dated after `since`
     /// (seconds), newest first, for a notification. Everything saved stops being new.
     fn take_fresh(&self, since: i64) -> Result<Vec<MessageRow>, StoreError>;
@@ -104,18 +125,28 @@ pub trait Store: Send + Sync {
     /// The server has the actions: forget them, unless the user changed one since `due`.
     /// An archived message is dropped: it now lives in a folder that is synced on its own.
     fn finish(&self, ops: &[Op]) -> Result<(), StoreError>;
-    /// Queues a message to be sent from `not_before`. Fails with `NotFound` if the account or
-    /// the message it answers is gone.
+    /// Queues a message to be sent from `not_before`, and forgets the saved draft it was
+    /// written in, if any. Fails with `NotFound` if the account or the message it answers is
+    /// gone.
     fn queue_send(
         &self,
         draft: &Draft,
+        saved: Option<DraftId>,
         message_id: &str,
         date: i64,
         not_before: i64,
     ) -> Result<OutboxId, StoreError>;
-    /// Takes back a message that is still held or was refused, so it can be edited. None once
-    /// it may be on its way.
-    fn undo_send(&self, id: OutboxId, now: i64) -> Result<Option<Draft>, StoreError>;
+    /// Takes back a message that is still held or was refused, so it can be edited: it becomes
+    /// a saved draft, saved at `now`. None once it may be on its way.
+    fn undo_send(&self, id: OutboxId, now: i64) -> Result<Option<SavedDraft>, StoreError>;
+
+    /// Saves a message being written: a new one if it has no id, else over the saved one.
+    /// Fails with `NotFound` if that one is gone, sent or thrown away, so it never comes back.
+    fn save_draft(&self, draft: &SavedDraft) -> Result<DraftId, StoreError>;
+    /// The saved drafts, last saved first.
+    fn drafts(&self) -> Result<Vec<SavedDraft>, StoreError>;
+    /// Throws a saved draft away; one already gone is fine.
+    fn delete_draft(&self, id: DraftId) -> Result<(), StoreError>;
     /// The messages the server refused, newest first.
     fn unsent(&self) -> Result<Vec<Unsent>, StoreError>;
     /// The account's messages that may be sent at `now`, oldest first; refused ones stay out.

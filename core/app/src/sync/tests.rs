@@ -28,7 +28,8 @@ fn saves_inbox_and_sent_changes_since_the_checkpoint() {
         ],
         ..Server::default()
     };
-    run(sync_mail(&store, &mut server, &Parser, AccountId(1), 50)).unwrap();
+    run(sync_mail(&store, &mut server, &Parser, AccountId(1), 50, 0)).unwrap();
+    assert_eq!(*store.pruned.lock().unwrap(), [(AccountId(1), 0)]);
 
     let known: Vec<String> = vec!["5".into(), "6".into()];
     assert_eq!(
@@ -52,19 +53,97 @@ fn saves_inbox_and_sent_changes_since_the_checkpoint() {
 fn syncs_the_folders_asked_for() {
     let store = Memory::default();
     let mut server = Server::default();
-    let archive = Folder {
-        id: FolderId(4),
-        account_id: AccountId(1),
-        remote_id: "Archive".into(),
-        name: "Archive".into(),
-        role: FolderRole::Archive,
-    };
-    run(sync_folders(&store, &mut server, &Parser, &[archive], 50)).unwrap();
+    run(sync_folders(
+        &store,
+        &mut server,
+        &Parser,
+        &[archive()],
+        50,
+        0,
+    ))
+    .unwrap();
 
     let synced: Vec<_> = server.synced.iter().map(|s| (s.0.as_str(), s.3)).collect();
     assert_eq!(synced, [("Archive", 50)]);
     let changes = store.changes.lock().unwrap();
     assert_eq!(changes[0].0, FolderId(4));
+}
+
+fn archive() -> Folder {
+    Folder {
+        id: FolderId(4),
+        account_id: AccountId(1),
+        remote_id: "Archive".into(),
+        name: "Archive".into(),
+        role: FolderRole::Archive,
+    }
+}
+
+#[test]
+fn leaves_out_mail_older_than_the_account_keeps() {
+    let store = Memory::default();
+    run(sync_folders(
+        &store,
+        &mut Server::default(),
+        &Parser,
+        &[archive()],
+        50,
+        101,
+    ))
+    .unwrap();
+    let changes = store.changes.lock().unwrap();
+    assert!(changes[0].1.new.is_empty());
+    assert_eq!(changes[0].1.gone, ["6"]);
+}
+
+#[test]
+fn loads_older_mail_below_the_saved_one() {
+    let since = Checkpoint {
+        validity: 9,
+        next: 7,
+    };
+    let store = Memory {
+        checkpoint: (since, vec!["5".into()]),
+        oldest: Some(70),
+        ..Memory::default()
+    };
+    let mut server = Server::default();
+    assert_eq!(
+        run(load_older(&store, &mut server, &Parser, &archive(), 2, 0)),
+        Ok(true)
+    );
+    assert_eq!(
+        server.paged,
+        [("Archive".to_string(), 9, vec!["5".to_string()], 70, 2)]
+    );
+    let changes = store.changes.lock().unwrap();
+    let (folder, saved) = &changes[0];
+    assert_eq!(*folder, FolderId(4));
+    // The checkpoint stays as it was: only the end of the list moved.
+    assert_eq!(saved.checkpoint, since);
+    let ids: Vec<_> = saved.new.iter().map(|m| m.remote_id.as_str()).collect();
+    assert_eq!(ids, ["3", "4"]);
+    assert!(store.older_done.lock().unwrap().is_empty());
+}
+
+#[test]
+fn older_mail_stops_at_what_the_account_keeps() {
+    let store = Memory::default();
+    let mut server = Server::default();
+    assert_eq!(
+        run(load_older(&store, &mut server, &Parser, &archive(), 2, 55)),
+        Ok(false)
+    );
+    assert_eq!(server.paged[0].3, i64::MAX);
+    let changes = store.changes.lock().unwrap();
+    let ids: Vec<_> = changes[0]
+        .1
+        .new
+        .iter()
+        .map(|m| m.remote_id.as_str())
+        .collect();
+    assert_eq!(ids, ["4"]);
+    assert_eq!(*store.older_done.lock().unwrap(), [(FolderId(4), true)]);
 }
 
 #[test]
@@ -79,7 +158,8 @@ fn fails_without_an_inbox() {
             &mut server,
             &Parser,
             AccountId(1),
-            50
+            50,
+            0
         )),
         Err(SyncError::NoInbox)
     );
@@ -197,4 +277,43 @@ fn does_not_wait_without_an_inbox() {
         Err(SyncError::NoInbox)
     );
     assert!(server.waited.is_empty());
+}
+
+#[test]
+fn searches_the_server_in_the_folders_local_search_covers() {
+    let folder = |id, remote_id: &str, role| Folder {
+        id: FolderId(id),
+        account_id: AccountId(1),
+        remote_id: remote_id.into(),
+        name: remote_id.into(),
+        role,
+    };
+    let store = Memory {
+        folders: vec![
+            folder(1, "INBOX", FolderRole::Inbox),
+            folder(2, "Trash", FolderRole::Trash),
+            folder(3, "Gone", FolderRole::Custom),
+            folder(4, "Refused", FolderRole::Archive),
+        ],
+        ..Memory::default()
+    };
+    let mut server = Server::default();
+    run(search_server(
+        &store,
+        &mut server,
+        &Parser,
+        AccountId(1),
+        "invoice",
+        5,
+    ))
+    .unwrap();
+    let asked: Vec<_> = server.searched.iter().map(|s| s.0.as_str()).collect();
+    assert_eq!(asked, ["INBOX", "Gone", "Refused"]);
+    assert_eq!(server.searched[0].2, "invoice");
+    let found = store.found.lock().unwrap();
+    let (account, text, folders) = &found[0];
+    assert_eq!((*account, text.as_str()), (AccountId(1), "invoice"));
+    assert_eq!(folders.len(), 1);
+    assert_eq!(folders[0].0, FolderId(1));
+    assert_eq!(folders[0].1[0].remote_id, "INBOX");
 }

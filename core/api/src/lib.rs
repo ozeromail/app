@@ -10,13 +10,14 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use ozero_app::ops::push_ops;
 use ozero_app::send::{SentCopy, push_sends};
 use ozero_app::sync::{
-    SyncError, download_body, prefetch_bodies, sync_folders, sync_mail, wait_for_mail,
+    SyncError, download_body, load_older, prefetch_bodies, search_server, sync_folders, sync_mail,
+    wait_for_mail,
 };
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Body, Category, Changes, Checkpoint, Draft,
-    Folder, FolderId, FolderRole, ListQuery, ListScope, MailProvider, MessageId, MessageRow,
-    NewAccount, NewFolder, OpId, OutboxId, ProviderError, Sender, Server, Store, StoreError, html,
-    parse_recipients, saves_sent_itself,
+    DraftId, Folder, FolderId, FolderRole, ListQuery, ListScope, MailProvider, MessageId,
+    MessageRow, NewAccount, NewFolder, Older, OpId, OutboxId, ProviderError, RawMessage,
+    SavedDraft, Sender, Server, Store, StoreError, html, parse_recipients, saves_sent_itself,
 };
 use ozero_gmail::{GmailSession, oauth};
 use ozero_imap::ImapSession;
@@ -30,12 +31,18 @@ uniffi::setup_scaffolding!();
 /// How many new messages of the inbox and of the sent folder one sync brings in; also of a
 /// folder the user opens.
 const SYNC_LIMIT: u32 = 200;
+/// How many older messages of a folder a list scrolled to its end brings in at a time.
+const OLDER_PAGE: u32 = 100;
+/// How many of the newest matches in each folder a server search brings in.
+const SERVER_HITS: u32 = 50;
+/// Seconds in a day, for how long an account keeps its mail.
+const DAY: i64 = 86_400;
 /// How many of the newest inbox messages `prefetch` downloads whole.
 const PREFETCH: u32 = 20;
 /// Longest wait for new mail on one connection; a mobile network may drop a quiet one sooner.
 const MAIL_WAIT: Duration = Duration::from_secs(5 * 60);
 /// Mail older than this many seconds is not announced: a day.
-const NEWS_AGE: i64 = 86_400;
+const NEWS_AGE: i64 = DAY;
 /// Milliseconds an archived or sent message waits before the server hears of it.
 const HOLD: i64 = 5_000;
 /// The app's Google OAuth client (Android type, so it has no secret).
@@ -216,14 +223,10 @@ impl Core {
     }
 
     /// The newest conversations of one tab across all inboxes, newest first: each row is the
-    /// newest message of its conversation.
+    /// newest message of its conversation. Fewer than `limit` once the saved mail ends, so
+    /// `older_mail` can bring in more.
     pub fn unified_inbox(&self, tab: Category, limit: u32) -> Result<Vec<MessageItem>, CoreError> {
-        let rows = self.store.list(&ListQuery {
-            scope: ListScope::Inbox(tab),
-            limit,
-            after: None,
-        })?;
-        self.items(rows)
+        self.list(ListScope::Inbox(tab), INBOX, limit)
     }
 
     /// The folders of every account, in the order the server listed them first.
@@ -246,12 +249,7 @@ impl Core {
             Mailbox::Unified { role } => ListScope::Unified(role),
             Mailbox::Folder { id } => ListScope::Folder(FolderId(id)),
         };
-        let rows = self.store.list(&ListQuery {
-            scope,
-            limit,
-            after: None,
-        })?;
-        self.items(rows)
+        self.list(scope, mailbox, limit)
     }
 
     /// Unread mail in People from the last day that arrived since this or `forget_new_mail`
@@ -292,7 +290,8 @@ impl Core {
         Ok(self.store.inbox_is_empty()?)
     }
 
-    /// Messages matching every word of `text`, newest first.
+    /// Messages matching every word of `text`, newest first, with what `search_server`
+    /// found for the same words.
     pub fn search(&self, text: String, limit: u32) -> Result<Vec<MessageItem>, CoreError> {
         let rows = self.store.search(&text, limit)?;
         self.items(rows)
@@ -343,12 +342,14 @@ impl Core {
         let account = self.account(AccountId(message.account_id))?;
         let correspondents = self.store.correspondents(MessageId(message.id))?;
         Ok(DraftItem {
+            id: 0,
             account_id: message.account_id,
             to: correspondents.answer(&account.email, all).join(", "),
             subject: ozero_domain::reply_subject(&message.subject),
             text: String::new(),
             reply_to: Some(message.id),
             quote: String::new(),
+            saved: 0,
         })
     }
 
@@ -369,17 +370,19 @@ impl Core {
 
     /// Puts a message in the outbox, held for `HOLD` so `undo_send` can take it back;
     /// `push_actions` sends it. `to` is addresses split by commas or spaces; `reply_to` the
-    /// message it answers, and `quote` what goes under the text. Returns the id for
-    /// `undo_send`.
-    pub fn send(
-        &self,
-        account: i64,
-        to: String,
-        subject: String,
-        text: String,
-        reply_to: Option<i64>,
-        quote: String,
-    ) -> Result<i64, CoreError> {
+    /// message it answers, and `quote` what goes under the text. The saved draft it was
+    /// written in, if any, goes. Returns the id for `undo_send`.
+    pub fn send(&self, draft: DraftItem) -> Result<i64, CoreError> {
+        let DraftItem {
+            id: saved,
+            account_id: account,
+            to,
+            subject,
+            text,
+            reply_to,
+            quote,
+            ..
+        } = draft;
         let to = parse_recipients(&to).ok_or(CoreError::BadRecipients)?;
         let from = self.account(AccountId(account))?;
         // Would wait in the outbox forever.
@@ -397,6 +400,7 @@ impl Core {
         let now = now();
         let id = self.store.queue_send(
             &draft,
+            draft_id(saved),
             &message_id(&from.email, now),
             now / 1_000,
             now + HOLD,
@@ -418,12 +422,48 @@ impl Core {
             .collect())
     }
 
-    /// Takes back a held or refused message to edit it again. None once it may be on its way.
+    /// Takes back a held or refused message to edit it again, as a saved draft. None once it
+    /// may be on its way.
     pub fn undo_send(&self, id: i64) -> Result<Option<DraftItem>, CoreError> {
         Ok(self
             .store
             .undo_send(OutboxId(id), now())?
             .map(DraftItem::from))
+    }
+
+    /// Keeps a message being written on the device, as it is now: a new draft if its `id` is
+    /// 0. Returns its id. Fails with `Gone` once it was sent or thrown away.
+    pub fn save_draft(&self, draft: DraftItem) -> Result<i64, CoreError> {
+        let saved = SavedDraft {
+            id: draft_id(draft.id),
+            account_id: (draft.account_id != 0).then_some(AccountId(draft.account_id)),
+            to: draft.to,
+            subject: draft.subject,
+            text: draft.text,
+            reply_to: draft.reply_to.map(MessageId),
+            quote: draft.quote,
+            saved: now(),
+        };
+        match self.store.save_draft(&saved) {
+            Ok(id) => Ok(id.0),
+            Err(StoreError::NotFound) => Err(CoreError::Gone),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// The drafts kept on the device, last saved first.
+    pub fn drafts(&self) -> Result<Vec<DraftItem>, CoreError> {
+        Ok(self
+            .store
+            .drafts()?
+            .into_iter()
+            .map(DraftItem::from)
+            .collect())
+    }
+
+    /// Throws a draft away.
+    pub fn delete_draft(&self, id: i64) -> Result<(), CoreError> {
+        Ok(self.store.delete_draft(DraftId(id))?)
     }
 }
 
@@ -589,6 +629,7 @@ impl Core {
         let Some(account) = self.find(id)? else {
             return Ok(());
         };
+        let since = keep_since(account.keep_days);
         let folders: Vec<Folder> = if mailbox == INBOX {
             vec![]
         } else {
@@ -601,9 +642,10 @@ impl Core {
         if mailbox == INBOX || !folders.is_empty() {
             let remote = self.remote(&mut slot, &account, &secret).await?;
             let synced = if mailbox == INBOX {
-                sync_mail(&self.store, remote, &self.parser, id, SYNC_LIMIT).await
+                sync_mail(&self.store, remote, &self.parser, id, SYNC_LIMIT, since).await
             } else {
-                sync_folders(&self.store, remote, &self.parser, &folders, SYNC_LIMIT).await
+                let parser = &self.parser;
+                sync_folders(&self.store, remote, parser, &folders, SYNC_LIMIT, since).await
             };
             self.refused(&account, synced)?;
         }
@@ -611,6 +653,80 @@ impl Core {
             remote.close().await;
         }
         pushed
+    }
+
+    /// Brings in older mail of the account's folders in `mailbox`, for a list scrolled to its
+    /// end: up to `OLDER_PAGE` messages of each, none older than the account keeps. True while
+    /// one of them may have older mail still. `secret` as for `push_actions`.
+    pub async fn older_mail(
+        &self,
+        account: i64,
+        secret: String,
+        mailbox: Mailbox,
+    ) -> Result<bool, CoreError> {
+        let id = AccountId(account);
+        let lock = self.busy(id);
+        let _busy = lock.lock().await;
+        let Some(account) = self.find(id)? else {
+            return Ok(false);
+        };
+        let folders = self.loadable(id, mailbox)?;
+        let since = keep_since(account.keep_days);
+        let (mut slot, mut more) = (None, false);
+        for (folder, _) in &folders {
+            let remote = self.remote(&mut slot, &account, &secret).await?;
+            let loaded = load_older(&self.store, remote, &self.parser, folder, OLDER_PAGE, since);
+            match self.refused(&account, loaded.await) {
+                Ok(true) => more = true,
+                // The next sync starts the folder over.
+                Ok(false) | Err(CoreError::Gone) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        if let Some(remote) = slot {
+            remote.close().await;
+        }
+        Ok(more)
+    }
+
+    /// Searches the account's mail on its server for every word of `text`, mail older than it
+    /// keeps on the device included; `search` then shows what it found. `secret` as for
+    /// `push_actions`.
+    pub async fn search_server(
+        &self,
+        account: i64,
+        secret: String,
+        text: String,
+    ) -> Result<(), CoreError> {
+        let Some(account) = self.find(AccountId(account))? else {
+            return Ok(());
+        };
+        let mut slot = None;
+        let remote = self.remote(&mut slot, &account, &secret).await?;
+        let found = search_server(
+            &self.store,
+            remote,
+            &self.parser,
+            account.id,
+            &text,
+            SERVER_HITS,
+        )
+        .await;
+        if let Some(remote) = slot {
+            remote.close().await;
+        }
+        self.refused(&account, found)
+    }
+
+    /// Keeps the account's mail of the last `days` days on the device, or all of it with 0:
+    /// older mail goes at once, and lists stop loading older mail there. Waits for a sync
+    /// under way, which may save mail by the old limit.
+    pub async fn set_account_keep(&self, account: i64, days: u32) -> Result<(), CoreError> {
+        let account = AccountId(account);
+        let lock = self.busy(account);
+        let _busy = lock.lock().await;
+        self.store.set_account_keep(account, days)?;
+        Ok(self.store.prune(account, keep_since(days))?)
     }
 
     /// Downloads the missing bodies of the account's newest inbox mail, so it opens at once.
@@ -650,21 +766,43 @@ impl Core {
     ) -> Result<MessageBody, CoreError> {
         let message = MessageId(message);
         let shows_images = self.store.shows_images(message)?;
-        let page = |body: Body| MessageBody {
+        Ok(MessageBody {
             shows_images,
-            ..body.into()
+            ..self.body(message, &secret).await?.into()
+        })
+    }
+
+    /// `message` sent on from the account that got it, `Fwd: ` once, to no one yet: under the
+    /// text go `labels` with its sender, `date` as the app writes it and subject, then its
+    /// text, downloaded if not saved yet with `secret`, as for `message_body`.
+    pub async fn forward(
+        &self,
+        message: MessageItem,
+        labels: ForwardLabels,
+        date: String,
+        secret: String,
+    ) -> Result<DraftItem, CoreError> {
+        let id = MessageId(message.id);
+        let text = self.body(id, &secret).await?.text;
+        let from = match message.from_name.as_deref().map(str::trim) {
+            Some(name) if !name.is_empty() => format!("{name} <{}>", message.from_email),
+            _ => message.from_email.clone(),
         };
-        if let Some(body) = self.store.body(message)? {
-            return Ok(page(body));
-        }
-        let location = self.store.location(message)?;
-        let account = self.account(location.account_id)?;
-        let mut slot = None;
-        let remote = self.remote(&mut slot, &account, &secret).await?;
-        let body = download_body(&self.store, remote, &self.parser, &location).await;
-        // Closing without LOGOUT saves the reader a round trip; the server cleans up.
-        drop(slot);
-        Ok(page(self.refused(&account, body)?))
+        let fields = [
+            (labels.from.as_str(), from.as_str()),
+            (&labels.date, &date),
+            (&labels.subject, &message.subject),
+        ];
+        Ok(DraftItem {
+            id: 0,
+            account_id: message.account_id,
+            to: String::new(),
+            subject: ozero_domain::forward_subject(&message.subject),
+            text: String::new(),
+            reply_to: None,
+            quote: ozero_domain::forward_quote(&labels.title, &fields, &text),
+            saved: 0,
+        })
     }
 
     /// The message's page with its remote images loaded now, for `MessageBody::html`; None
@@ -796,6 +934,52 @@ impl Core {
         self.pages.lock().unwrap_or_else(|p| p.into_inner())
     }
 
+    /// The account's folders in `mailbox` whose server may have older mail to load, with when
+    /// their oldest saved message was received.
+    fn loadable(
+        &self,
+        account: AccountId,
+        mailbox: Mailbox,
+    ) -> Result<Vec<(Folder, Option<i64>)>, CoreError> {
+        let mut loadable = vec![];
+        for folder in self.store.folders(account)? {
+            if !mailbox.holds(&folder) {
+                continue;
+            }
+            if !self.store.older_done(folder.id)? {
+                let oldest = self.store.oldest(folder.id)?;
+                loadable.push((folder, oldest));
+            }
+        }
+        Ok(loadable)
+    }
+
+    /// The rows of a list of `mailbox`'s folders, as far down as all of them have their mail
+    /// saved: the latest of their oldest saved messages, leaving out those with nothing older
+    /// to load. Mail older than that would leave a gap in the list when the others load theirs.
+    fn list(
+        &self,
+        scope: ListScope,
+        mailbox: Mailbox,
+        limit: u32,
+    ) -> Result<Vec<MessageItem>, CoreError> {
+        let mut rows = self.store.list(&ListQuery {
+            scope,
+            limit,
+            after: None,
+        })?;
+        let mut floor = None;
+        for account in self.store.accounts()? {
+            for (_, oldest) in self.loadable(account.id, mailbox)? {
+                floor = floor.max(oldest);
+            }
+        }
+        if let Some(floor) = floor {
+            rows.retain(|r| r.date >= floor);
+        }
+        self.items(rows)
+    }
+
     /// Queues a move held for the undo time and returns its ops for `undo`.
     fn hold_move(&self, message: i64, action: Action) -> Result<Vec<i64>, CoreError> {
         Ok(ids(self.store.queue(
@@ -846,6 +1030,21 @@ impl Core {
     fn exists(&self, email: &str) -> Result<bool, CoreError> {
         let known = self.store.accounts()?;
         Ok(known.iter().any(|a| a.email.eq_ignore_ascii_case(email)))
+    }
+
+    /// The saved body, or downloaded once and saved with its snippet.
+    async fn body(&self, message: MessageId, secret: &str) -> Result<Body, CoreError> {
+        if let Some(body) = self.store.body(message)? {
+            return Ok(body);
+        }
+        let location = self.store.location(message)?;
+        let account = self.account(location.account_id)?;
+        let mut slot = None;
+        let remote = self.remote(&mut slot, &account, secret).await?;
+        let body = download_body(&self.store, remote, &self.parser, &location).await;
+        // Closing without LOGOUT saves the reader a round trip; the server cleans up.
+        drop(slot);
+        self.refused(&account, body)
     }
 
     /// The connection in `slot`, opened on first use.
@@ -1056,6 +1255,33 @@ impl MailProvider for Remote {
         }
     }
 
+    async fn older(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        known: &[String],
+        oldest: i64,
+        limit: u32,
+    ) -> Result<Older, ProviderError> {
+        match self {
+            Self::Imap(p) => p.older(folder, validity, known, oldest, limit).await,
+            Self::Gmail(p) => p.older(folder, validity, known, oldest, limit).await,
+        }
+    }
+
+    async fn search(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        text: &str,
+        limit: u32,
+    ) -> Result<Vec<RawMessage>, ProviderError> {
+        match self {
+            Self::Imap(p) => p.search(folder, validity, text, limit).await,
+            Self::Gmail(p) => p.search(folder, validity, text, limit).await,
+        }
+    }
+
     async fn body(
         &mut self,
         folder: &str,
@@ -1147,6 +1373,14 @@ fn message_id(email: &str, now: i64) -> String {
         .filter(|d| !d.is_empty() && d.is_ascii())
         .unwrap_or("localhost");
     format!("{now:x}.{random:016x}@{domain}")
+}
+
+/// Mail received before this, in seconds, is not kept by an account that keeps `days` days.
+fn keep_since(days: u32) -> i64 {
+    match days {
+        0 => i64::MIN,
+        days => now() / 1_000 - i64::from(days) * DAY,
+    }
 }
 
 /// Milliseconds since the Unix epoch.
@@ -1289,6 +1523,8 @@ pub struct AccountItem {
     pub color: u32,
     /// The colour's place in `account_colors`.
     pub color_index: u32,
+    /// How many days back its mail is kept on the device; 0 keeps all of it.
+    pub keep_days: u32,
     pub kind: AccountKind,
     /// The server refused the saved secret: mail stops until the person signs in again.
     pub needs_sign_in: bool,
@@ -1304,6 +1540,7 @@ impl From<Account> for AccountItem {
             email: a.email,
             display_name: a.display_name,
             label: a.label,
+            keep_days: a.keep_days,
             kind: a.kind,
             needs_sign_in: a.needs_sign_in,
         }
@@ -1428,6 +1665,9 @@ pub struct UnsentItem {
 /// A message being written, as compose shows it.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct DraftItem {
+    /// The saved draft; 0 until it is saved.
+    pub id: i64,
+    /// 0 for none picked yet.
     pub account_id: i64,
     /// Addresses joined by ", ".
     pub to: String,
@@ -1436,19 +1676,38 @@ pub struct DraftItem {
     pub reply_to: Option<i64>,
     /// Goes under the text; empty for none.
     pub quote: String,
+    /// When it was last saved, in seconds since the Unix epoch; 0 if never.
+    pub saved: i64,
 }
 
-impl From<Draft> for DraftItem {
-    fn from(d: Draft) -> Self {
+/// The header words of a forwarded message, in the app's language.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ForwardLabels {
+    /// The line over it all.
+    pub title: String,
+    pub from: String,
+    pub date: String,
+    pub subject: String,
+}
+
+impl From<SavedDraft> for DraftItem {
+    fn from(d: SavedDraft) -> Self {
         Self {
-            account_id: d.account_id.0,
-            to: d.to.join(", "),
+            id: d.id.map_or(0, |id| id.0),
+            account_id: d.account_id.map_or(0, |a| a.0),
+            to: d.to,
             subject: d.subject,
             text: d.text,
             reply_to: d.reply_to.map(|m| m.0),
             quote: d.quote,
+            saved: d.saved / 1_000,
         }
     }
+}
+
+/// A saved draft's id; none for 0.
+fn draft_id(id: i64) -> Option<DraftId> {
+    (id != 0).then_some(DraftId(id))
 }
 
 /// What the reading screen shows.

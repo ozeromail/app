@@ -196,6 +196,36 @@ pub const MIGRATIONS: &[&str] = &[
     "
     ALTER TABLE account ADD COLUMN label TEXT NOT NULL DEFAULT '';
     ",
-    // 19: an account whose login the server refused, until the person signs in again.
+    // 19: messages being written, kept on the device. `recipients` is the field as typed;
+    // `saved` is in milliseconds.
+    "
+    CREATE TABLE draft (
+        id         INTEGER PRIMARY KEY,
+        account_id INTEGER REFERENCES account(id) ON DELETE CASCADE,
+        recipients TEXT NOT NULL,
+        subject    TEXT NOT NULL,
+        text       TEXT NOT NULL,
+        reply_to   INTEGER REFERENCES message(id) ON DELETE SET NULL,
+        quote      TEXT NOT NULL,
+        saved      INTEGER NOT NULL
+    );
+    ",
+    // 20: how many days back an account's mail is kept, 0 for all of it; and whether a
+    // folder's server has no older mail to load.
+    "
+    ALTER TABLE account ADD COLUMN keep_days INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE folder ADD COLUMN older_done INTEGER NOT NULL DEFAULT 0;
+    ",
+    // 21: server search. `found` marks a message saved only because a search found it,
+    // older than the rest of its folder: lists and syncs leave it out. `search_hit` holds
+    // what the last server search of each account found, by the words it looked for.
+    "
+    ALTER TABLE message ADD COLUMN found INTEGER NOT NULL DEFAULT 0;
+    CREATE TABLE search_hit (
+        message_id INTEGER PRIMARY KEY REFERENCES message(id) ON DELETE CASCADE,
+        words      TEXT NOT NULL
+    );
+    ",
+    // 22: an account whose login the server refused, until the person signs in again.
     "ALTER TABLE account ADD COLUMN needs_sign_in INTEGER NOT NULL DEFAULT 0;",
 ];

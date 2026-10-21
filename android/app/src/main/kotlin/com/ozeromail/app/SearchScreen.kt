@@ -26,6 +26,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import uniffi.ozero_api.CoreException
@@ -34,9 +35,13 @@ import uniffi.ozero_api.MessageItem
 /** A pause in typing this long starts a search, so each key does not. */
 private const val TYPING_PAUSE_MS = 150L
 
+/** A longer pause also asks the servers, for mail the phone does not have. */
+private const val SERVER_PAUSE_MS = 700L
+
 /**
- * Search over the saved mail, newest first, as the user types. The field sits at the bottom,
- * in reach of the thumb; Close or back returns to the inbox.
+ * Search over the saved mail, newest first, as the user types; once typing stops, the servers
+ * are asked too and what they find joins the list. The field sits at the bottom, in reach of
+ * the thumb; Close or back returns to the inbox.
  */
 @Composable
 fun SearchScreen(
@@ -49,6 +54,8 @@ fun SearchScreen(
     // With the query they answer, so "No messages" never shows for a query still waiting.
     var found by remember { mutableStateOf<Pair<String, List<MessageItem>>?>(null) }
     var error by remember { mutableStateOf<Int?>(null) }
+    // The servers are being asked about the query on screen.
+    var asking by remember { mutableStateOf(false) }
     val focus = remember { FocusRequester() }
     // Not on the way back from a result: the keyboard would cover the results.
     LaunchedEffect(Unit) { if (query.isEmpty()) focus.requestFocus() }
@@ -61,8 +68,19 @@ fun SearchScreen(
         delay(TYPING_PAUSE_MS)
         try {
             found = query to mail.search(query)
+            delay(SERVER_PAUSE_MS - TYPING_PAUSE_MS)
+            asking = true
+            try {
+                mail.searchServer(query)
+            } catch (e: CoreException) {
+                // What the servers found so far still shows.
+                error = e.text()
+            }
+            found = query to mail.search(query)
         } catch (e: CoreException) {
             error = e.text()
+        } finally {
+            asking = false
         }
     }
     val colors = MaterialTheme.colorScheme
@@ -70,13 +88,24 @@ fun SearchScreen(
         BackArrow(onBack, Modifier.padding(top = 4.dp))
         LazyColumn(Modifier.weight(1f)) {
             val (shownFor, messages) = found ?: ("" to emptyList())
-            if (shownFor == query && query.isNotBlank() && messages.isEmpty()) {
+            if (shownFor == query && query.isNotBlank() && messages.isEmpty() && !asking) {
                 item { EmptyNote(R.drawable.ic_search, stringResource(R.string.inbox_empty)) }
             }
             itemsIndexed(messages, key = { _, it -> it.id }) { index, message ->
                 Column(rowMove()) {
                     if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.screen), color = colors.outlineVariant)
                     MessageRow(message, onClick = { onOpen(message) })
+                }
+            }
+            if (asking) {
+                item(key = "server") {
+                    Text(
+                        stringResource(R.string.search_server),
+                        color = colors.onSurfaceVariant,
+                        style = Type.Caption,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp).animateItem(),
+                    )
                 }
             }
         }

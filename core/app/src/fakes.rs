@@ -8,9 +8,10 @@ use std::time::Duration;
 
 use ozero_domain::{
     Account, AccountId, Action, Address, Body, Category, Changes, Checkpoint, Correspondents,
-    Draft, Flags, Folder, FolderId, ListQuery, MailProvider, MailSender, MessageBuilder, MessageId,
-    MessageLocation, MessageParser, MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId,
-    OutboxId, Outgoing, ProviderError, RawMessage, Store, StoreError, Unsent,
+    Draft, DraftId, Flags, Folder, FolderId, ListQuery, MailProvider, MailSender, MessageBuilder,
+    MessageId, MessageLocation, MessageParser, MessageRow, NewAccount, NewFolder, NewMessage,
+    Older, Op, OpId, OutboxId, Outgoing, ProviderError, RawMessage, SavedDraft, Store, StoreError,
+    Unsent,
 };
 
 /// Fakes answer at once, so one poll finishes the future.
@@ -34,6 +35,20 @@ pub struct Server {
     pub appended: Vec<(String, Vec<u8>)>,
     /// Each `wait` call: the folder, checkpoint and how long.
     pub waited: Vec<(String, Checkpoint, Duration)>,
+    /// Each `older` call: the folder, validity, known ids, oldest date and limit.
+    pub paged: Vec<(String, u32, Vec<String>, i64, u32)>,
+    /// Each `search` call: the folder, validity, text and limit. Folders named "Gone" and "Refused" fail.
+    pub searched: Vec<(String, u32, String, u32)>,
+}
+
+/// A message as `Server` returns it.
+fn raw(remote_id: &str, received: i64) -> RawMessage {
+    RawMessage {
+        remote_id: remote_id.into(),
+        flags: Flags::default(),
+        received,
+        header: b"Hi".to_vec(),
+    }
 }
 
 impl MailProvider for Server {
@@ -55,15 +70,44 @@ impl MailProvider for Server {
                 validity: 9,
                 next: 8,
             },
-            new: vec![RawMessage {
-                remote_id: "7".into(),
-                flags: Flags::default(),
-                received: 100,
-                header: b"Hi".to_vec(),
-            }],
+            new: vec![raw("7", 100)],
             flags: vec![("5".into(), Flags::default())],
             gone: vec!["6".into()],
         }))
+    }
+
+    /// Two older messages, received at 50 and 60, and more after them.
+    fn older(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        known: &[String],
+        oldest: i64,
+        limit: u32,
+    ) -> impl Future<Output = Result<Older, ProviderError>> + Send {
+        self.paged
+            .push((folder.into(), validity, known.to_vec(), oldest, limit));
+        ready(Ok(Older {
+            new: vec![raw("3", 50), raw("4", 60)],
+            more: true,
+        }))
+    }
+
+    /// One message, named after the folder.
+    fn search(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        text: &str,
+        limit: u32,
+    ) -> impl Future<Output = Result<Vec<RawMessage>, ProviderError>> + Send {
+        self.searched
+            .push((folder.into(), validity, text.into(), limit));
+        ready(match folder {
+            "Gone" => Err(ProviderError::Gone),
+            "Refused" => Err(ProviderError::Rejected("BADCHARSET".into())),
+            _ => Ok(vec![raw(folder, 10)]),
+        })
     }
 
     fn body(
@@ -220,12 +264,22 @@ impl MessageParser for Parser {
     }
 }
 
+/// One `save_found`: the account, the words and what each folder found.
+pub type Found = (AccountId, String, Vec<(FolderId, Vec<NewMessage>)>);
+
 #[derive(Default)]
 pub struct Memory {
     /// What `folders` returns.
     pub folders: Vec<Folder>,
     /// What `checkpoint` returns, and each `save_changes`; `others` leaves out of it.
     pub checkpoint: (Checkpoint, Vec<String>),
+    /// What `oldest` returns, and each `prune`.
+    pub oldest: Option<i64>,
+    pub pruned: Mutex<Vec<(AccountId, i64)>>,
+    /// Folders `set_older_done` marked.
+    pub older_done: Mutex<Vec<(FolderId, bool)>>,
+    /// Each `save_found`.
+    pub found: Mutex<Vec<Found>>,
     pub changes: Mutex<Vec<(FolderId, Changes<NewMessage>)>>,
     pub bodies: Mutex<Vec<(MessageId, Body)>>,
     /// What `without_body` returns.
@@ -271,6 +325,15 @@ impl Store for Memory {
         Ok(())
     }
 
+    fn set_account_keep(&self, _: AccountId, _: u32) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn prune(&self, account: AccountId, before: i64) -> Result<(), StoreError> {
+        self.pruned.lock().unwrap().push((account, before));
+        Ok(())
+    }
+
     fn set_needs_sign_in(&self, _: AccountId, _: bool) -> Result<(), StoreError> {
         Ok(())
     }
@@ -299,6 +362,19 @@ impl Store for Memory {
 
     fn checkpoint(&self, _: FolderId) -> Result<(Checkpoint, Vec<String>), StoreError> {
         Ok(self.checkpoint.clone())
+    }
+
+    fn oldest(&self, _: FolderId) -> Result<Option<i64>, StoreError> {
+        Ok(self.oldest)
+    }
+
+    fn older_done(&self, _: FolderId) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    fn set_older_done(&self, folder: FolderId, done: bool) -> Result<(), StoreError> {
+        self.older_done.lock().unwrap().push((folder, done));
+        Ok(())
     }
 
     fn save_changes(
@@ -336,6 +412,17 @@ impl Store for Memory {
 
     fn search(&self, _: &str, _: u32) -> Result<Vec<MessageRow>, StoreError> {
         Ok(vec![])
+    }
+
+    fn save_found(
+        &self,
+        account: AccountId,
+        text: &str,
+        found: &[(FolderId, Vec<NewMessage>)],
+    ) -> Result<(), StoreError> {
+        let saved = (account, text.into(), found.to_vec());
+        self.found.lock().unwrap().push(saved);
+        Ok(())
     }
 
     fn location(&self, _: MessageId) -> Result<MessageLocation, StoreError> {
@@ -395,12 +482,31 @@ impl Store for Memory {
         Ok(())
     }
 
-    fn queue_send(&self, _: &Draft, _: &str, _: i64, _: i64) -> Result<OutboxId, StoreError> {
+    fn queue_send(
+        &self,
+        _: &Draft,
+        _: Option<DraftId>,
+        _: &str,
+        _: i64,
+        _: i64,
+    ) -> Result<OutboxId, StoreError> {
         Ok(OutboxId(1))
     }
 
-    fn undo_send(&self, _: OutboxId, _: i64) -> Result<Option<Draft>, StoreError> {
+    fn undo_send(&self, _: OutboxId, _: i64) -> Result<Option<SavedDraft>, StoreError> {
         Ok(None)
+    }
+
+    fn save_draft(&self, _: &SavedDraft) -> Result<DraftId, StoreError> {
+        Ok(DraftId(1))
+    }
+
+    fn drafts(&self) -> Result<Vec<SavedDraft>, StoreError> {
+        Ok(vec![])
+    }
+
+    fn delete_draft(&self, _: DraftId) -> Result<(), StoreError> {
+        Ok(())
     }
 
     fn unsent(&self) -> Result<Vec<Unsent>, StoreError> {

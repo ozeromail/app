@@ -59,8 +59,8 @@ import uniffi.ozero_api.Mailbox
 import uniffi.ozero_api.accountColors
 
 /**
- * The mailboxes of all accounts together, then each account's folders, and below them the
- * swipes and a way to add an account. A tap on a group's name hides or shows its folders; its
+ * The drafts on the phone, if there are any, the mailboxes of all accounts together, then each
+ * account's folders, and below them the swipes and a way to add an account. A tap on a group's name hides or shows its folders; its
  * More button, or Swipes, opens the settings in the same sheet, which grows or shrinks to fit.
  */
 @Composable
@@ -69,6 +69,8 @@ fun AccountsSheet(
     accounts: List<AccountItem>,
     folders: List<FolderItem>,
     mailbox: Mailbox,
+    drafts: Int,
+    onDrafts: () -> Unit,
     swipes: Swipes,
     onMailbox: (Mailbox) -> Unit,
     onSwipes: (Swipes) -> Unit,
@@ -78,6 +80,7 @@ fun AccountsSheet(
     onColor: (AccountItem, Int) -> Unit,
     onLabel: (AccountItem, String) -> Unit,
     onSignIn: (AccountItem) -> Unit,
+    onKeepDays: (AccountItem, Int) -> Unit,
     onRemove: (AccountItem) -> Unit,
     onWrite: () -> Unit,
     onClose: () -> Unit,
@@ -108,10 +111,12 @@ fun AccountsSheet(
                         onColor = { onColor(account, it) },
                         onLabel = { onLabel(account, it) },
                         onSignIn = { onSignIn(account) },
+                        onKeepDays = { onKeepDays(account, it) },
                         onRemove = { onRemove(account) },
                     )
                     else -> {
                         SheetTitle(stringResource(R.string.folders_title))
+                        if (drafts > 0) FolderRow(R.drawable.ic_compose, stringResource(R.string.folder_drafts), open = false, count = drafts, onClick = onDrafts)
                         Folders(
                             accounts,
                             folders,
@@ -283,7 +288,7 @@ private fun Group(
 }
 
 @Composable
-private fun FolderRow(@DrawableRes icon: Int, title: String, open: Boolean, onClick: () -> Unit) {
+private fun FolderRow(@DrawableRes icon: Int, title: String, open: Boolean, count: Int = 0, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     SheetRow(onClick, lead = { Glyph(icon, null, colors.primary) }) {
         Text(
@@ -295,6 +300,7 @@ private fun FolderRow(@DrawableRes icon: Int, title: String, open: Boolean, onCl
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
+        if (count > 0) Text(count.toString(), color = colors.onSurfaceVariant, style = Type.Caption)
     }
 }
 
@@ -325,6 +331,7 @@ private fun SubPage(title: String, onBack: () -> Unit) {
  * One account: its name and colour, and a way to remove it from the phone. One the server
  * signed out offers to sign in again first.
  */
+/** One account: its name and colour, how much of its mail the phone keeps, and a way to remove it. */
 @Composable
 private fun AccountSettings(
     account: AccountItem,
@@ -332,6 +339,7 @@ private fun AccountSettings(
     onColor: (Int) -> Unit,
     onLabel: (String) -> Unit,
     onSignIn: () -> Unit,
+    onKeepDays: (Int) -> Unit,
     onRemove: () -> Unit,
 ) {
     var confirming by rememberSaveable { mutableStateOf(false) }
@@ -354,6 +362,21 @@ private fun AccountSettings(
         modifier = Modifier.padding(start = Gap.sheet, end = Gap.sheet, top = 8.dp, bottom = 12.dp),
     )
     Swatches(account.colorIndex.toInt(), onColor)
+    Choices(R.string.account_keep, KEEP_DAYS.keys.toList(), account.keepDays.toInt(), onKeepDays) { days, on ->
+        Text(
+            stringResource(KEEP_DAYS.getValue(days)),
+            color = if (on) colors.primary else colors.onSurface,
+            style = Type.Text,
+            fontWeight = Weight.Medium,
+            maxLines = 1,
+        )
+    }
+    Text(
+        stringResource(R.string.account_keep_hint),
+        color = colors.onSurfaceVariant,
+        style = Type.Caption,
+        modifier = Modifier.padding(start = Gap.sheet, end = Gap.sheet, bottom = 12.dp),
+    )
     SheetAction(R.drawable.ic_close, stringResource(R.string.account_remove), colors.error) { confirming = true }
     if (confirming) {
         AlertDialog(
@@ -376,6 +399,14 @@ private fun AccountSettings(
         )
     }
 }
+
+/** How many days back an account's mail stays on the phone, 0 for all of it, and what to call it. */
+private val KEEP_DAYS = linkedMapOf(
+    30 to R.string.account_keep_month,
+    90 to R.string.account_keep_quarter,
+    365 to R.string.account_keep_year,
+    0 to R.string.account_keep_all,
+)
 
 /** The person's own name for the account, saved on Done and when the page closes. */
 @Composable

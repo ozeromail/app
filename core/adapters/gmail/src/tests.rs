@@ -203,6 +203,53 @@ async fn starts_with_the_newest_messages() {
 }
 
 #[tokio::test]
+async fn loads_mail_older_than_the_saved_one() {
+    let (mut gmail, seen) = session(vec![
+        (
+            "/messages?labelIds=INBOX&q=before%3A1001",
+            200,
+            json!({"messages": [{"id": "saved"}, {"id": "old"}], "nextPageToken": "x"}),
+        ),
+        (
+            "/messages/old?",
+            200,
+            message("old", &["INBOX"], 900_000, "Old"),
+        ),
+    ])
+    .await;
+    let older = gmail
+        .older("INBOX", 0, &["saved".into()], 1_000, 10)
+        .await
+        .unwrap();
+    let ids: Vec<_> = older.new.iter().map(|m| m.remote_id.as_str()).collect();
+    assert_eq!(ids, ["old"]);
+    assert!(older.more);
+    // What is saved costs no request.
+    let paths: Vec<_> = seen.lock().unwrap().iter().map(|s| s.1.clone()).collect();
+    assert_eq!(paths.len(), 3, "{paths:?}");
+    assert!(paths[0].contains("maxResults=10"));
+}
+
+#[tokio::test]
+async fn searches_a_folder_for_plain_words() {
+    let (mut gmail, seen) = session(vec![
+        (
+            "/messages?q=-in%3Ainbox%20-in%3Asent%20-in%3Adrafts%20%22from%3Aanna%22%20%22invoice%22&",
+            200,
+            json!({"messages": [{"id": "a"}]}),
+        ),
+        ("/messages/a?", 200, message("a", &[], 1_000, "Invoice")),
+    ])
+    .await;
+    let found = gmail
+        .search(ARCHIVE, 0, " from:anna  invoice", 5)
+        .await
+        .unwrap();
+    assert_eq!(found.len(), 1);
+    assert!(seen.lock().unwrap()[0].1.contains("maxResults=5"));
+}
+
+#[tokio::test]
 async fn follows_the_history() {
     let history = json!({
         "historyId": "120",

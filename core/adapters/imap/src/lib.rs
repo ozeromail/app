@@ -11,17 +11,19 @@ use bounded_static::IntoBoundedStatic;
 use imap_codec::encode::{Encoder, Fragment};
 use imap_codec::fragmentizer::Fragmentizer;
 use imap_codec::imap_types::command::{Command, CommandBody};
-use imap_codec::imap_types::core::{AString, LiteralMode, Vec1};
+use imap_codec::imap_types::core::{AString, Charset, LiteralMode, Vec1};
 use imap_codec::imap_types::fetch::{MessageDataItem, MessageDataItemName, Section};
 use imap_codec::imap_types::flag::{Flag, FlagFetch, FlagNameAttribute, StoreResponse, StoreType};
 use imap_codec::imap_types::mailbox::Mailbox;
 use imap_codec::imap_types::response::{
     Capability, Code, Data, GreetingKind, Response, Status, StatusBody, StatusKind,
 };
+use imap_codec::imap_types::search::SearchKey;
 use imap_codec::imap_types::sequence::{SeqOrUid, Sequence, SequenceSet};
 use imap_codec::{CommandCodec, GreetingCodec, ResponseCodec};
 use ozero_domain::{
-    Changes, Checkpoint, Flags, FolderRole, MailProvider, NewFolder, ProviderError, RawMessage,
+    Changes, Checkpoint, Flags, FolderRole, MailProvider, NewFolder, Older, ProviderError,
+    RawMessage,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -372,7 +374,7 @@ impl ImapSession {
         })
     }
 
-    /// The newest `limit` of a folder's `exists` messages, oldest first.
+    /// The newest `limit` of the open folder's messages 1 to `exists`, oldest first.
     async fn newest(&mut self, exists: u32, limit: u32) -> Result<Vec<RawMessage>, ProviderError> {
         if exists == 0 || limit == 0 {
             return Ok(vec![]);
@@ -419,6 +421,47 @@ impl ImapSession {
         messages.sort_by_cached_key(|m| m.remote_id.parse::<u32>().unwrap_or(0));
         messages.dedup_by(|a, b| a.remote_id == b.remote_id);
         Ok(messages)
+    }
+
+    /// The open folder's messages that match all `keys`: UIDs, or sequence numbers without `uid`.
+    async fn search_for(
+        &mut self,
+        charset: Option<Charset<'_>>,
+        keys: Vec1<SearchKey<'_>>,
+        uid: bool,
+    ) -> Result<Vec<NonZeroU32>, ProviderError> {
+        let search = CommandBody::search(charset, keys, uid);
+        Ok(self
+            .run(search)
+            .await?
+            .data
+            .into_iter()
+            .filter_map(|d| match d {
+                Data::Search(found, ..) => Some(found),
+                _ => None,
+            })
+            .flatten()
+            .collect())
+    }
+
+    /// The sequence number of the open folder's message with `uid`, if it is still there.
+    async fn number(&mut self, uid: NonZeroU32) -> Result<Option<u32>, ProviderError> {
+        let items = vec![MessageDataItemName::Uid];
+        let fetch = CommandBody::fetch(uid, items, true).map_err(|_| protocol("bad FETCH"))?;
+        // The server may add FETCH replies about other messages, such as flag changes.
+        Ok(self
+            .run(fetch)
+            .await?
+            .data
+            .into_iter()
+            .find_map(|d| match d {
+                Data::Fetch { seq, items } => items
+                    .as_ref()
+                    .iter()
+                    .any(|i| matches!(i, MessageDataItem::Uid(u) if *u == uid))
+                    .then_some(seq.get()),
+                _ => None,
+            }))
     }
 
     /// The UID and flags of every message from UID `from` on.
@@ -531,6 +574,93 @@ impl MailProvider for ImapSession {
             };
         }
         Ok(changes)
+    }
+
+    async fn older(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        known: &[String],
+        _oldest: i64,
+        limit: u32,
+    ) -> Result<Older, ProviderError> {
+        let opened = self.open(folder, false).await?;
+        if opened.validity != validity {
+            return Err(ProviderError::Gone);
+        }
+        let lowest = known
+            .iter()
+            .filter_map(|id| id.parse::<NonZeroU32>().ok())
+            .min();
+        // Sequence numbers grow with UIDs, so the mail below the lowest saved UID is numbered
+        // 1 to one less than that message's number.
+        let below = match lowest {
+            None => opened.exists,
+            Some(lowest) => match self.number(lowest).await? {
+                Some(number) => number - 1,
+                // Gone since the last sync: the first number of the saved mail after it, a
+                // longer answer. Not `n:*`, see `empty`.
+                None => {
+                    let from = SequenceSet::try_from(lowest.get()..=i32::MAX as u32)
+                        .map_err(|_| protocol("bad UID set"))?;
+                    let keys = Vec1::from(SearchKey::Uid(from));
+                    self.search_for(None, keys, false)
+                        .await?
+                        .into_iter()
+                        .min()
+                        .map_or(opened.exists, |first| first.get() - 1)
+                }
+            },
+        };
+        let mut new = self.newest(below, limit).await?;
+        // Mail expunged meanwhile moves the numbers down: only what is older still.
+        if let Some(lowest) = lowest {
+            new.retain(|m| {
+                m.remote_id
+                    .parse::<u32>()
+                    .is_ok_and(|uid| uid < lowest.get())
+            });
+        }
+        Ok(Older {
+            new,
+            more: below > limit,
+        })
+    }
+
+    async fn search(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        text: &str,
+        limit: u32,
+    ) -> Result<Vec<RawMessage>, ProviderError> {
+        let words = text
+            .split_whitespace()
+            .map(|w| AString::try_from(w).map(SearchKey::Text))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| protocol("bad search"))?;
+        let Ok(words) = Vec1::try_from(words) else {
+            return Ok(vec![]);
+        };
+        // 0: a folder never synced, so any validity will do.
+        let opened = self.open(folder, false).await?.validity;
+        if validity != 0 && opened != validity {
+            return Err(ProviderError::Gone);
+        }
+        // US-ASCII is every server's default; other text needs the charset named.
+        let charset = (!text.is_ascii())
+            .then(|| Charset::try_from("UTF-8"))
+            .transpose()
+            .map_err(|_| protocol("bad charset"))?;
+        let mut uids = self.search_for(charset, words, true).await?;
+        uids.sort_unstable();
+        uids.dedup();
+        let newest = &uids[uids.len().saturating_sub(limit as usize)..];
+        if newest.is_empty() {
+            return Ok(vec![]);
+        }
+        let set = SequenceSet::try_from(newest).map_err(|_| protocol("bad UID set"))?;
+        self.headers(set, true).await
     }
 
     async fn body(

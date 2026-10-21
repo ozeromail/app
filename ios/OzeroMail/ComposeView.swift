@@ -85,9 +85,10 @@ struct ComposeView: View {
         guard !busy, let from else { return }
         busy = true
         error = nil
+        // The draft it was taken back into, if any, goes once it is sent.
         let draft = DraftItem(
-            accountId: from.id, to: to, subject: subject, text: text,
-            replyTo: composing.draft.replyTo, quote: composing.draft.quote)
+            id: composing.draft.id, accountId: from.id, to: to, subject: subject, text: text,
+            replyTo: composing.draft.replyTo, quote: composing.draft.quote, saved: 0)
         Task {
             defer { busy = false }
             do {
@@ -124,6 +125,7 @@ extension Composing {
     /// A blank message; account 0 is none, so compose starts from the first account.
     static var new: Composing {
         Composing(
-            draft: DraftItem(accountId: 0, to: "", subject: "", text: "", replyTo: nil, quote: ""))
+            draft: DraftItem(
+                id: 0, accountId: 0, to: "", subject: "", text: "", replyTo: nil, quote: "", saved: 0))
     }
 }

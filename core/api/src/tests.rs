@@ -129,6 +129,9 @@ fn syncs_an_imap_inbox_into_the_list() {
     sync().unwrap();
     // A second sync updates the same rows.
     sync().unwrap();
+    // The first sync brought the whole inbox.
+    let older = runtime.block_on(core.older_mail(account, "pass".into(), INBOX));
+    assert_eq!(older, Ok(false));
 
     // A refused password keeps the account and its mail and asks to sign in again.
     let needs_sign_in = || core.accounts().unwrap()[0].needs_sign_in;
@@ -179,6 +182,30 @@ fn syncs_an_imap_inbox_into_the_list() {
         "Hello 2"
     );
 
+    // A forward carries the saved text under its header, to no one yet.
+    let labels = ForwardLabels {
+        title: "Forwarded".into(),
+        from: "From:".into(),
+        date: "Date:".into(),
+        subject: "Subject:".into(),
+    };
+    let forward = runtime
+        .block_on(core.forward(inbox[1].clone(), labels, "today".into(), "wrong".into()))
+        .unwrap();
+    assert_eq!(forward.subject, "Fwd: Message 2");
+    assert!(forward.to.is_empty() && forward.reply_to.is_none());
+    assert!(
+        forward.quote.starts_with("Forwarded\nFrom: "),
+        "{}",
+        forward.quote
+    );
+    assert!(
+        forward
+            .quote
+            .contains("\nDate: today\nSubject: Message 2\n")
+    );
+    assert!(forward.quote.ends_with("\n\nHello 2"), "{}", forward.quote);
+
     // Read on the device at once, on the server after the push; then unread again.
     let first = inbox[2].id;
     for seen in [true, false] {
@@ -199,21 +226,25 @@ fn syncs_an_imap_inbox_into_the_list() {
 
     // Undo gives the draft back; sent again, it reaches the SMTP server and Sent.
     let send = || {
-        core.send(
-            account,
-            "bob@example.org".into(),
-            "Ответ из Ozero".into(),
-            "Привет!".into(),
-            Some(first),
-            "Anna wrote:\n> Hi".into(),
-        )
+        core.send(DraftItem {
+            id: 0,
+            account_id: account,
+            to: "bob@example.org".into(),
+            subject: "Ответ из Ozero".into(),
+            text: "Привет!".into(),
+            reply_to: Some(first),
+            quote: "Anna wrote:\n> Hi".into(),
+            saved: 0,
+        })
         .unwrap()
     };
     let draft = core.undo_send(send()).unwrap().unwrap();
     assert_eq!(draft.to, "bob@example.org");
     assert_eq!(draft.reply_to, Some(first));
     assert_eq!(draft.quote, "Anna wrote:\n> Hi");
-    send();
+    assert_eq!(core.drafts().unwrap(), std::slice::from_ref(&draft));
+    core.send(draft).unwrap();
+    assert!(core.drafts().unwrap().is_empty());
     runtime
         .block_on(core.push_actions(account, "pass".into()))
         .unwrap();
@@ -249,6 +280,68 @@ fn mailpit_messages() -> String {
     let mut response = String::new();
     http.read_to_string(&mut response).unwrap();
     response
+}
+
+#[test]
+fn a_unified_list_ends_where_an_account_has_older_mail_to_load() {
+    let db = TempDb::new("floor");
+    let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
+    let inbox = |email: &str, dates: &[i64]| {
+        let store = &core.store;
+        let account = store
+            .add_account(&NewAccount {
+                kind: AccountKind::Imap,
+                email: email.into(),
+                display_name: email.into(),
+                server: None,
+                smtp: None,
+            })
+            .unwrap();
+        let folder = NewFolder {
+            remote_id: "INBOX".into(),
+            name: "Inbox".into(),
+            role: FolderRole::Inbox,
+        };
+        let folder = store.save_folders(account, &[folder]).unwrap()[0].id;
+        let new = dates
+            .iter()
+            .map(|&date| ozero_domain::NewMessage {
+                remote_id: format!("{email}{date}"),
+                message_id: None,
+                references: vec![],
+                from: Address {
+                    name: None,
+                    email: "anna@example.com".into(),
+                },
+                answer_to: vec![],
+                recipients: vec![],
+                subject: date.to_string(),
+                snippet: String::new(),
+                date,
+                flags: Default::default(),
+                category: Category::People,
+            })
+            .collect();
+        let checkpoint = store.checkpoint(folder).unwrap().0;
+        let changes = Changes {
+            checkpoint,
+            new,
+            flags: vec![],
+            gone: vec![],
+        };
+        store.save_changes(folder, &changes).unwrap();
+        folder
+    };
+    inbox("a@example.com", &[10, 20, 30]);
+    let b = inbox("b@example.com", &[25, 35]);
+    let dates = || -> Vec<i64> {
+        let rows = core.unified_inbox(Category::People, 50).unwrap();
+        rows.iter().map(|m| m.date).collect()
+    };
+    assert_eq!(dates(), [35, 30, 25]);
+    // Once the other account has nothing older, the first one's mail shows all the way down.
+    core.store.set_older_done(b, true).unwrap();
+    assert_eq!(dates(), [35, 30, 25, 20, 10]);
 }
 
 #[test]
@@ -319,14 +412,16 @@ fn saves_a_gmail_account_that_can_send() {
     let account = core.account(AccountId(id)).unwrap();
     assert_eq!((account.kind, account.smtp), (AccountKind::Gmail, None));
     // Gmail sends over its API, so no SMTP server is needed.
-    core.send(
-        id,
-        "you@example.com".into(),
-        "Hi".into(),
-        "Text".into(),
-        None,
-        String::new(),
-    )
+    core.send(DraftItem {
+        id: 0,
+        account_id: id,
+        to: "you@example.com".into(),
+        subject: "Hi".into(),
+        text: "Text".into(),
+        reply_to: None,
+        quote: String::new(),
+        saved: 0,
+    })
     .unwrap();
 }
 
