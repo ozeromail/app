@@ -110,6 +110,14 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 90
+      # Each build of main must be signed by the same key and keep its version code, or it will
+      # not install over the last one; the log shows both to compare.
+      - name: Show who signed the debug APK
+        working-directory: android
+        run: |
+          tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          "$tools/apksigner" verify --print-certs app/build/outputs/apk/debug/app-debug.apk | grep -i 'SHA-256'
+          "$tools/aapt2" dump badging app/build/outputs/apk/debug/app-debug.apk | head -1
       - name: Upload debug APK
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
