@@ -71,10 +71,22 @@ class Mail(private val context: Context) {
         loadDrafts()
     }
 
-    suspend fun inbox(tab: Category): List<MessageItem> = io { core.unifiedInbox(tab, INBOX_SIZE) }
+    /** The newest [limit] conversations of a tab; fewer once the saved mail ends, see [older]. */
+    suspend fun inbox(tab: Category, limit: Int): List<MessageItem> = io { core.unifiedInbox(tab, limit.toUInt()) }
 
     /** A mailbox other than the unified inbox, which [inbox] shows by tab. */
-    suspend fun mailbox(mailbox: Mailbox): List<MessageItem> = io { core.mailbox(mailbox, INBOX_SIZE) }
+    suspend fun mailbox(mailbox: Mailbox, limit: Int): List<MessageItem> = io { core.mailbox(mailbox, limit.toUInt()) }
+
+    /**
+     * Brings older mail of [mailbox] from every account's server, for a list scrolled to its end;
+     * false once none of them has more. The first failure is thrown once every one has finished.
+     */
+    suspend fun older(mailbox: Mailbox): Boolean = eachAccount(mailbox) { account, password ->
+        core.olderMail(account.id, password, mailbox)
+    }.any { it }
+
+    /** Keeps [account]'s mail of the last [days] days on the phone, or all of it with 0. */
+    suspend fun setKeepDays(account: AccountItem, days: Int) = io { core.setAccountKeep(account.id, days.toUInt()) }
 
     /** Every account's folders; they show once the account's first sync has listed them. */
     suspend fun folders(): List<FolderItem> = io { core.folders() }
@@ -250,23 +262,33 @@ class Mail(private val context: Context) {
      * Syncs [mailbox] in all accounts at once; the first failure is thrown once every one has
      * finished.
      */
-    suspend fun refresh(mailbox: Mailbox = INBOX) = io {
-        // A folder is one account's, so only that account syncs.
+    suspend fun refresh(mailbox: Mailbox = INBOX) {
+        eachAccount(mailbox) { account, password -> core.syncMailbox(account.id, password, mailbox) }
+    }
+
+    /**
+     * Runs [call] for every account with mail in [mailbox] at once and returns what they gave;
+     * the first failure is thrown once every one has finished.
+     */
+    private suspend fun <T> eachAccount(mailbox: Mailbox, call: suspend (AccountItem, String) -> T): List<T> = io {
+        // A folder is one account's, so only that account is asked.
         val owner = (mailbox as? Mailbox.Folder)?.let { box -> core.folders().find { it.id == box.id }?.accountId }
-        val failures = coroutineScope {
-            core.accounts().filter { owner == null || it.id == owner }.mapNotNull { account ->
-                val password = vault.password(account.email) ?: return@mapNotNull null
+        val signedIn = core.accounts().filter { owner == null || it.id == owner }.mapNotNull { account ->
+            vault.password(account.email)?.let { account to it }
+        }
+        val results: List<Result<T>> = coroutineScope {
+            signedIn.map { (account, password) ->
                 async {
                     try {
-                        core.syncMailbox(account.id, password, mailbox)
-                        null
+                        Result.success(call(account, password))
                     } catch (e: CoreException) {
-                        e
+                        Result.failure(e)
                     }
                 }
             }.awaitAll()
         }
-        failures.firstNotNullOfOrNull { it }?.let { throw it }
+        results.firstNotNullOfOrNull { it.exceptionOrNull() }?.let { throw it }
+        results.map { it.getOrThrow() }
     }
 
     /**
@@ -324,7 +346,6 @@ class Mail(private val context: Context) {
         val INBOX: Mailbox = Mailbox.Unified(FolderRole.INBOX)
         const val IMAPS_PORT = 993
         const val SMTPS_PORT = 465
-        private const val INBOX_SIZE = 200u
         private const val SEARCH_SIZE = 100u
         private const val WATCH_PAUSE_MS = 5_000L
         private const val WATCH_PAUSE_MAX_MS = 5 * 60_000L

@@ -79,6 +79,7 @@ fun AccountsSheet(
     onAdd: () -> Unit,
     onColor: (AccountItem, Int) -> Unit,
     onLabel: (AccountItem, String) -> Unit,
+    onKeepDays: (AccountItem, Int) -> Unit,
     onRemove: (AccountItem) -> Unit,
     onWrite: () -> Unit,
     onClose: () -> Unit,
@@ -108,6 +109,7 @@ fun AccountsSheet(
                         onBack = { page = null },
                         onColor = { onColor(account, it) },
                         onLabel = { onLabel(account, it) },
+                        onKeepDays = { onKeepDays(account, it) },
                         onRemove = { onRemove(account) },
                     )
                     else -> {
@@ -323,13 +325,14 @@ private fun SubPage(title: String, onBack: () -> Unit) {
     }
 }
 
-/** One account: its name and colour, and a way to remove it from the phone. */
+/** One account: its name and colour, how much of its mail the phone keeps, and a way to remove it. */
 @Composable
 private fun AccountSettings(
     account: AccountItem,
     onBack: () -> Unit,
     onColor: (Int) -> Unit,
     onLabel: (String) -> Unit,
+    onKeepDays: (Int) -> Unit,
     onRemove: () -> Unit,
 ) {
     var confirming by rememberSaveable { mutableStateOf(false) }
@@ -343,6 +346,21 @@ private fun AccountSettings(
         modifier = Modifier.padding(start = Gap.sheet, end = Gap.sheet, top = 8.dp, bottom = 12.dp),
     )
     Swatches(account.colorIndex.toInt(), onColor)
+    Choices(R.string.account_keep, KEEP_DAYS.keys.toList(), account.keepDays.toInt(), onKeepDays) { days, on ->
+        Text(
+            stringResource(KEEP_DAYS.getValue(days)),
+            color = if (on) colors.primary else colors.onSurface,
+            style = Type.Text,
+            fontWeight = Weight.Medium,
+            maxLines = 1,
+        )
+    }
+    Text(
+        stringResource(R.string.account_keep_hint),
+        color = colors.onSurfaceVariant,
+        style = Type.Caption,
+        modifier = Modifier.padding(start = Gap.sheet, end = Gap.sheet, bottom = 12.dp),
+    )
     SheetAction(R.drawable.ic_close, stringResource(R.string.account_remove), colors.error) { confirming = true }
     if (confirming) {
         AlertDialog(
@@ -365,6 +383,14 @@ private fun AccountSettings(
         )
     }
 }
+
+/** How many days back an account's mail stays on the phone, 0 for all of it, and what to call it. */
+private val KEEP_DAYS = linkedMapOf(
+    30 to R.string.account_keep_month,
+    90 to R.string.account_keep_quarter,
+    365 to R.string.account_keep_year,
+    0 to R.string.account_keep_all,
+)
 
 /** The person's own name for the account, saved on Done and when the page closes. */
 @Composable

@@ -302,6 +302,28 @@ fun SwipeSettings(swipes: Swipes, onChange: (Swipes) -> Unit) {
 @Composable
 private fun Side(@StringRes title: Int, picked: SwipeAction, onPick: (SwipeAction) -> Unit) {
     val colors = MaterialTheme.colorScheme
+    Choices(title, SwipeAction.entries, picked, onPick) { action, on ->
+        Glyph(action.icon, null, if (on) colors.primary else colors.onSurfaceVariant, size = 18.dp)
+        Text(
+            stringResource(action.label),
+            color = if (on) colors.primary else colors.onSurface,
+            style = Type.Text,
+            fontWeight = Weight.Medium,
+            maxLines = 1,
+        )
+    }
+}
+
+/** Equal choices in a row under a caption; the picked one is outlined in the accent colour. */
+@Composable
+fun <T> Choices(
+    @StringRes title: Int,
+    options: List<T>,
+    picked: T,
+    onPick: (T) -> Unit,
+    content: @Composable (option: T, on: Boolean) -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
     Text(
         stringResource(title),
         color = colors.onSurfaceVariant,
@@ -312,9 +334,8 @@ private fun Side(@StringRes title: Int, picked: SwipeAction, onPick: (SwipeActio
         Modifier.fillMaxWidth().padding(horizontal = Gap.sheet).padding(bottom = 8.dp).selectableGroup(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        SwipeAction.entries.forEach { action ->
-            val on = action == picked
-            val tint = if (on) colors.primary else colors.onSurface
+        options.forEach { option ->
+            val on = option == picked
             val shape = RoundedCornerShape(Radius.medium)
             Row(
                 Modifier
@@ -323,12 +344,11 @@ private fun Side(@StringRes title: Int, picked: SwipeAction, onPick: (SwipeActio
                     .clip(shape)
                     .background(if (on) colors.primary.copy(alpha = 0.1f) else colors.surfaceVariant)
                     .then(if (on) Modifier.border(1.5.dp, colors.primary, shape) else Modifier)
-                    .selectable(selected = on, role = Role.RadioButton, onClick = { onPick(action) }),
+                    .selectable(selected = on, role = Role.RadioButton, onClick = { onPick(option) }),
                 horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Glyph(action.icon, null, if (on) colors.primary else colors.onSurfaceVariant, size = 18.dp)
-                Text(stringResource(action.label), color = tint, style = Type.Text, fontWeight = Weight.Medium, maxLines = 1)
+                content(option, on)
             }
         }
     }

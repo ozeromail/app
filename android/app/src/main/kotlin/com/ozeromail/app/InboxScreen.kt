@@ -124,6 +124,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -157,6 +158,10 @@ import uniffi.ozero_api.undoSeconds
 /** How soon after a sync a return to the app syncs again. */
 private const val RESYNC_MS = 30_000L
 
+/** How many more rows the list reads at a time, and how far from its end it starts to. */
+private const val PAGE = 100
+private const val AHEAD = 20
+
 /** A folder by its id, which is positive; the unified mailboxes as their role below zero. */
 private val MailboxSaver = Saver<Mailbox, Long>(
     save = {
@@ -189,6 +194,15 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var syncedBoxes by remember { mutableStateOf(emptySet<Mailbox>()) }
     // Until the saved list is read, an empty one says nothing.
     var listLoaded by remember { mutableStateOf(false) }
+    // How many rows the list reads; scrolling near its end reads more.
+    var listSize by remember { mutableIntStateOf(PAGE) }
+    // The saved mail ended before `listSize`: more has to come from the servers.
+    var savedEnds by remember { mutableStateOf(false) }
+    // Mailboxes whose servers have no older mail, and whether some is on its way.
+    var olderEnded by remember { mutableStateOf(emptySet<Mailbox>()) }
+    var loadingOlder by remember { mutableStateOf(false) }
+    // Counts the loads of older mail, so the list looks at its end again after each.
+    var olderLoads by remember { mutableIntStateOf(0) }
     var error by remember { mutableStateOf<Int?>(null) }
     var open by remember { mutableStateOf<MessageItem?>(null) }
     var composing by remember { mutableStateOf<Composing?>(null) }
@@ -235,9 +249,13 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     suspend fun loadList() {
         val shown = tab to mailbox
         try {
-            val found = if (mailbox == Mail.INBOX) mail.inbox(tab) else mail.mailbox(mailbox)
+            val size = listSize
+            val found = if (mailbox == Mail.INBOX) mail.inbox(tab, size) else mail.mailbox(mailbox, size)
             // A tab or mailbox picked meanwhile loads its own list.
-            if (tab to mailbox == shown) messages = found
+            if (tab to mailbox == shown) {
+                messages = found
+                savedEnds = found.size < size
+            }
         } catch (e: CoreException) {
             // Never leave the last list's messages under the new one.
             if (tab to mailbox == shown) messages = emptyList()
@@ -267,6 +285,30 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     suspend fun load() {
         loadList()
         counts()
+    }
+
+    /**
+     * The list is scrolled near its end: more of the saved mail, or once that ends, older mail
+     * from the servers of a mailbox synced since the app opened.
+     */
+    suspend fun loadMore() {
+        if (!savedEnds) {
+            listSize += PAGE
+            loadList()
+            return
+        }
+        val box = mailbox
+        if (loadingOlder || box in olderEnded || box !in syncedBoxes) return
+        loadingOlder = true
+        try {
+            if (!mail.older(box)) olderEnded += box
+            olderLoads++
+        } catch (e: CoreException) {
+            error = e.text()
+        } finally {
+            loadingOlder = false
+        }
+        loadList()
     }
 
     /** Saves a change to an account, then shows it in the sheet and on the rows. */
@@ -336,8 +378,19 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     }
     LaunchedEffect(tab, mailbox) {
         chosen = emptySet()
+        listSize = PAGE
         loadList()
         listState.scrollToItem(0)
+    }
+    // Near the end of the list, the next rows come before the finger gets there.
+    LaunchedEffect(tab, mailbox, messages.size, olderLoads, syncedBoxes) {
+        if (messages.isEmpty()) return@LaunchedEffect
+        snapshotFlow {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()?.index ?: return@snapshotFlow false
+            last >= info.totalItemsCount - AHEAD
+        }.first { it }
+        loadMore()
     }
     // Another mailbox brings in what changed in it; the inbox keeps itself up to date.
     LaunchedEffect(mailbox) {
@@ -688,6 +741,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                             settings.swipeTipSeen = true
                         },
                         messages = messages,
+                        loadingOlder = loadingOlder,
                         tab = tab,
                         tabs = tabs,
                         inboxEmpty = inboxEmpty,
@@ -756,6 +810,11 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             },
             onLabel = { account, label ->
                 changeAccount { mail.setAccountLabel(account, label) }
+            },
+            onKeepDays = { account, days ->
+                // Kept longer, mail that ended at the old limit can load again.
+                olderEnded = emptySet()
+                changeAccount { mail.setKeepDays(account, days) }
             },
             onRemove = { account ->
                 accountsOpen = false
@@ -875,6 +934,8 @@ private fun InboxList(
     swipeTip: Boolean,
     onSwipeTip: () -> Unit,
     messages: List<MessageItem>,
+    /** Older mail is on its way from the servers. */
+    loadingOlder: Boolean,
     tab: Category,
     tabs: List<InboxTab>,
     inboxEmpty: Boolean,
@@ -1081,6 +1142,17 @@ private fun InboxList(
                                 },
                             )
                         }
+                    }
+                }
+                if (loadingOlder) {
+                    item(key = "older") {
+                        Text(
+                            stringResource(R.string.inbox_loading_older),
+                            color = colors.onSurfaceVariant,
+                            style = Type.Caption,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp).animateItem(),
+                        )
                     }
                 }
             }
