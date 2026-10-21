@@ -278,10 +278,10 @@ fun Toast(state: SnackbarHostState, onGo: (Mailbox) -> Unit, modifier: Modifier 
                                     data.dismiss()
                                     onGo(go)
                                 },
-                            ) { Text(stringResource(R.string.action_show), color = colors.primary) }
+                            ) { Text(stringResource(R.string.action_show), color = colors.inversePrimary) }
                         }
                         data.visuals.actionLabel?.let { label ->
-                            TextButton(onClick = data::performAction) { Text(label, color = colors.primary) }
+                            TextButton(onClick = data::performAction) { Text(label, color = colors.inversePrimary) }
                         }
                     }
                 },

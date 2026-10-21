@@ -1118,8 +1118,8 @@ private fun Dock(
                         R.drawable.ic_compose,
                         stringResource(R.string.compose_new),
                         onCompose,
-                        background = colors.primary,
-                        tint = colors.onPrimary,
+                        background = colors.accent,
+                        tint = colors.onAccent,
                     )
                 }
             }
@@ -1350,7 +1350,7 @@ internal fun MessageRow(message: MessageItem, onClick: () -> Unit, choosing: Flo
     val unread = message.threadUnread > 0u
     // The dot goes out quickly and in place: read is the most frequent change there is.
     val dot by animateFloatAsState(if (unread) 1f else 0f, Motion.calm(Motion.QUICK), label = "dot")
-    val tint by animateColorAsState(if (chosen) colors.primary.copy(alpha = 0.08f) else Color.Transparent, Motion.calm(Motion.QUICK), label = "chosen")
+    val tint by animateColorAsState(if (chosen) colors.accent.copy(alpha = 0.08f) else Color.Transparent, Motion.calm(Motion.QUICK), label = "chosen")
     Box(Modifier.fillMaxWidth().background(tint)) {
         if (choosing > 0f) ChoiceMark(chosen, choosing, Modifier.align(Alignment.CenterStart).padding(start = 14.dp))
         MessageLine(message, unread, dot, account, MARK_ROOM * choosing, Modifier.clickable(onClick = onClick))
@@ -1399,7 +1399,7 @@ private fun MessageLine(message: MessageItem, unread: Boolean, dot: Float, accou
                             .drawBehind {
                                 if (dot > 0f) {
                                     val x = if (layoutDirection == LayoutDirection.Ltr) -9.dp.toPx() else size.width + 9.dp.toPx()
-                                    drawCircle(colors.primary.copy(alpha = dot), 4.dp.toPx() * (0.4f + 0.6f * dot), Offset(x, size.height / 2))
+                                    drawCircle(colors.accent.copy(alpha = dot), 4.dp.toPx() * (0.4f + 0.6f * dot), Offset(x, size.height / 2))
                                 }
                             },
                     )

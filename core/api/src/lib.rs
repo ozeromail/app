@@ -1476,10 +1476,10 @@ fn sandboxed(html: &str, styled: bool) -> String {
         "font-optical-sizing:none;text-wrap:pretty}",
         "p,ul,ol,blockquote,pre,table{margin:0 0 14px}",
         "h1,h2,h3{font-weight:650;line-height:1.3;margin:22px 0 10px}",
-        "a{color:#1f5ccd;text-decoration-thickness:1px;text-underline-offset:3px}",
+        "a{color:#1a6fe0;text-decoration-thickness:1px;text-underline-offset:3px}",
         "blockquote{padding-left:14px;border-left:2px solid #e3e9f2;color:#76829a}",
         "li::marker{color:#76829a}",
-        "@media(prefers-color-scheme:dark){html{color:#e5e9f1}a{color:#6aa3f9}",
+        "@media(prefers-color-scheme:dark){html{color:#e5e9f1}a{color:#6ab2ff}",
         "blockquote{border-color:#2b3343;color:#8792a7}",
         "details.ozero-quote>summary{background:#1f2532;color:#8792a7}}",
     );
