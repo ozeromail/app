@@ -96,6 +96,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.VisibilityThreshold
 import androidx.compose.runtime.mutableIntStateOf
@@ -134,6 +135,7 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -181,6 +183,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var lastSync by remember { mutableLongStateOf(-RESYNC_MS) }
     // Only a pull shows the spinner; syncs on their own stay quiet over the saved mail.
     var pulled by remember { mutableStateOf(false) }
+    // Mailboxes synced since the app opened: until then, their empty list waits for its mail.
+    var syncedBoxes by remember { mutableStateOf(emptySet<Mailbox>()) }
     // Until the saved list is read, an empty one says nothing.
     var listLoaded by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<Int?>(null) }
@@ -307,6 +311,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         } finally {
             syncing = false
         }
+        if (synced) syncedBoxes += box
         syncAgain.firstOrNull()?.let {
             syncAgain -= it
             return sync(it)
@@ -597,10 +602,11 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         listState = listState,
                         syncing = syncing,
                         refreshing = pulled,
+                        listLoaded = listLoaded,
                         // The first mail of an empty list is on its way: the water waits, without words.
-                        waiting = syncing && listLoaded && messages.isEmpty(),
-                        onSync = { spin ->
-                            pulled = spin
+                        waiting = syncing && listLoaded && messages.isEmpty() && mailbox !in syncedBoxes,
+                        onSync = {
+                            pulled = true
                             scope.launch { sync(mailbox) }
                         },
                         mailbox = mailbox,
@@ -782,9 +788,10 @@ private fun InboxList(
     listState: LazyListState,
     syncing: Boolean,
     refreshing: Boolean,
+    listLoaded: Boolean,
     waiting: Boolean,
-    /** A pull asks for a sync, with the pull's own water unless the lake's drop answers it. */
-    onSync: (spin: Boolean) -> Unit,
+    /** A pull asks for a sync; the empty list answers it with its own water. */
+    onSync: () -> Unit,
     mailbox: Mailbox,
     title: String,
     owner: String?,
@@ -851,7 +858,7 @@ private fun InboxList(
     val pull = rememberPullToRefreshState()
     // There is one water, under the title, and it stays put: a pull over an empty list's lake
     // gathers a drop over it, and a pull on a list moves the rows down to uncover the same water.
-    val lake = messages.isEmpty() && (!syncing || waiting) && error == null
+    val lake = messages.isEmpty() && (!syncing || listLoaded) && error == null
     val drops = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
     val sink = if (lake) Modifier else Modifier.graphicsLayer { translationY = pullGap(pull.distanceFraction) }
     // Where the title ends on screen, or null once it has scrolled away.
@@ -890,10 +897,11 @@ private fun InboxList(
     val mini by animateFloatAsState(if (scrolled) 1f else 0f, Motion.calm(Motion.SMALL), label = "title")
     Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
         PullToRefreshBox(
-            isRefreshing = refreshing,
+            // The empty list keeps its own water and does not hold the gap open.
+            isRefreshing = refreshing && !lake,
             onRefresh = {
                 drops.tryEmit(Unit)
-                onSync(!lake)
+                onSync()
             },
             modifier = Modifier.fillMaxSize(),
             state = pull,
@@ -933,8 +941,16 @@ private fun InboxList(
                 if (lake) {
                     item(key = "empty") {
                         // New mail covers the water rather than cutting it off.
-                        Box(Modifier.animateItem(fadeInSpec = null, placementSpec = null, fadeOutSpec = Motion.calm(Motion.SMALL)).then(if (allEmpty) Modifier else slide)) {
-                            // The lake keeps its water as the tabs change, and stays put when every one is empty.
+                        // One water for every tab: only the words go with the tabs. It fades in, without
+                        // moving, when the tabs come from a list with mail.
+                        var fresh by remember { mutableStateOf(glide.isRunning || glide.value != 0f) }
+                        LaunchedEffect(fresh) {
+                            if (!fresh) return@LaunchedEffect
+                            snapshotFlow { glide.isRunning || glide.value != 0f }.first { !it }
+                            fresh = false
+                        }
+                        val fade = if (fresh) Modifier.graphicsLayer { alpha = glidedAlpha(glide.value) } else Modifier
+                        Box(Modifier.animateItem(fadeInSpec = null, placementSpec = null, fadeOutSpec = Motion.calm(Motion.SMALL)).then(fade)) {
                             key(mailbox) {
                                 val (title, text) = when {
                                     !inbox -> R.string.tab_empty_title to R.string.folder_empty
@@ -947,8 +963,10 @@ private fun InboxList(
                                     drawIn = hadMail && inbox,
                                     grey = !inbox,
                                     waiting = waiting,
+                                    refreshing = refreshing,
                                     pulled = { pull.distanceFraction },
                                     drops = drops,
+                                    wordsModifier = if (allEmpty) Modifier else slide,
                                 )
                             }
                         }
@@ -1617,5 +1635,8 @@ private fun Afloat(
 /** Something on a tab's page, [at] tabs from its place: it leaves to the side the thumb moves away from and fades. */
 private fun Modifier.glided(at: () -> Float): Modifier = graphicsLayer {
     translationX = -at() * size.width * 0.35f
-    alpha = 1f - (abs(at()) * 1.2f).coerceAtMost(1f)
+    alpha = glidedAlpha(at())
 }
+
+/** How much of a list shows [at] a glide: it is gone before the tabs are halfway. */
+private fun glidedAlpha(at: Float) = 1f - (abs(at) * 1.2f).coerceAtMost(1f)
