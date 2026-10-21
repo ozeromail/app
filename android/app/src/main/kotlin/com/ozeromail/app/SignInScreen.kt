@@ -87,7 +87,7 @@ private data class Step(val provider: Provider?) : java.io.Serializable
  * Adds an account in two steps: first where the mail lives, then the sign-in for it. Google
  * goes straight to the browser; known services need only an email and an app password; any
  * other server shows its IMAP and SMTP fields. Everything to tap sits in the lower half.
- * With [onCancel], for a further account, system back and Cancel leave it.
+ * With [onCancel], for a further account, system back and the back arrow leave it.
  */
 @Composable
 fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = null) {
