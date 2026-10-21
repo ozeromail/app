@@ -290,9 +290,9 @@ private class Still(private var falling: Boolean, var ambient: Boolean) {
         glow = Brush.radialGradient(listOf(color, Color.Transparent), Offset.Zero, 1f)
     }
 
-    /** The pulled drop hangs [hang] over the horizon and lands [fall] under it. */
-    fun draw(scope: DrawScope, color: Color, horizon: Dp, bottom: Float, pulled: Float = 0f, hang: Dp = HANG, fall: Dp = FALL) = with(scope) {
-        val hz = horizon.toPx()
+    /** The horizon lies [line] down; the pulled drop hangs [hang] over it and lands [fall] under it. */
+    fun draw(scope: DrawScope, color: Color, line: Dp, bottom: Float, pulled: Float = 0f, hang: Dp = HANG, fall: Dp = FALL) = with(scope) {
+        val hz = line.toPx()
         val t = now
         horizon = hz
         width = size.width
