@@ -319,6 +319,11 @@ impl Core {
         self.hold_move(message, Action::Archive)
     }
 
+    /// As `archive`, back into the inbox: for mail in the archive, trash or spam.
+    pub fn move_to_inbox(&self, message: i64) -> Result<Vec<i64>, CoreError> {
+        self.hold_move(message, Action::Inbox)
+    }
+
     /// As `archive`, into the trash. Fails with `NoTrash` if the account has no trash folder.
     pub fn trash(&self, message: i64) -> Result<Vec<i64>, CoreError> {
         self.hold_move(message, Action::Trash)
@@ -2001,6 +2006,8 @@ pub struct MessageItem {
     pub can_archive: bool,
     /// It can go to the trash: it is not there already; delete there is for good.
     pub can_trash: bool,
+    /// It can go back to the inbox: it is in the archive, trash or spam.
+    pub can_move_to_inbox: bool,
     /// In mixed lists (the unified inbox, search), set when there is more than one account.
     pub account: Option<AccountMark>,
     /// The names of its attachments, once its body is downloaded; a name may be empty.
@@ -2025,6 +2032,7 @@ impl From<MessageRow> for MessageItem {
             sent: row.role == FolderRole::Sent,
             can_archive: row.role.allows(Action::Archive),
             can_trash: row.role.allows(Action::Trash),
+            can_move_to_inbox: row.role.allows(Action::Inbox),
             account: None,
             attachments: row.attachments,
         }

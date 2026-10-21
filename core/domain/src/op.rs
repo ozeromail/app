@@ -9,6 +9,8 @@ pub enum Action {
     Archive,
     /// Moves the message out of its folder into the account's trash.
     Trash,
+    /// Moves the message back into the account's inbox, out of the archive, trash or spam.
+    Inbox,
     /// Removes the message from the server for good: from the trash only.
     Delete,
     /// Empties the trash or spam the message is in, for good: everything the server has
