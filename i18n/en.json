@@ -122,5 +122,10 @@
   "compose_forward_title": "---------- Forwarded message ----------",
   "compose_forward_from": "From:",
   "compose_forward_date": "Date:",
-  "compose_forward_subject": "Subject:"
+  "compose_forward_subject": "Subject:",
+  "drafts_empty": "No drafts",
+  "drafts_no_recipients": "No recipients",
+  "draft_saved": "Saved to drafts",
+  "draft_deleted": "Draft deleted",
+  "action_delete_draft": "Delete draft"
 }

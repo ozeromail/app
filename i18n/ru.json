@@ -122,5 +122,10 @@
   "compose_forward_title": "---------- Пересланное письмо ----------",
   "compose_forward_from": "От:",
   "compose_forward_date": "Дата:",
-  "compose_forward_subject": "Тема:"
+  "compose_forward_subject": "Тема:",
+  "drafts_empty": "Черновиков нет",
+  "drafts_no_recipients": "Без получателей",
+  "draft_saved": "Сохранено в черновики",
+  "draft_deleted": "Черновик удалён",
+  "action_delete_draft": "Удалить черновик"
 }

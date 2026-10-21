@@ -14,6 +14,8 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import uniffi.ozero_api.AccountItem
@@ -45,6 +47,11 @@ class Mail(private val context: Context) {
     private val background = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var prefetching: Job? = null
 
+    private val savedDrafts = MutableStateFlow(emptyList<DraftItem>())
+
+    /** The drafts on the phone, last saved first; read again each time one changes. */
+    val drafts: StateFlow<List<DraftItem>> = savedDrafts
+
     suspend fun hasAccounts(): Boolean = io { core.accounts().isNotEmpty() }
 
     /** The accounts mail can be sent from, in the order they were added. */
@@ -60,6 +67,8 @@ class Mail(private val context: Context) {
     suspend fun removeAccount(account: AccountItem) = io {
         core.removeAccount(account.id)
         vault.forgetPassword(account.email)
+        // Its drafts went with it.
+        loadDrafts()
     }
 
     suspend fun inbox(tab: Category): List<MessageItem> = io { core.unifiedInbox(tab, INBOX_SIZE) }
@@ -189,16 +198,40 @@ class Mail(private val context: Context) {
      * It goes to the server once the undo time is over.
      */
     suspend fun send(draft: DraftItem): Long {
-        val id = io { core.send(draft.accountId, draft.to, draft.subject, draft.text, draft.replyTo, draft.quote) }
+        val id = io { core.send(draft) }
+        if (draft.id != 0L) loadDrafts()
         push(draft.accountId)
         return id
     }
 
+    /** Keeps [draft] on the phone; a new one if its id is 0. Returns its id. */
+    suspend fun saveDraft(draft: DraftItem): Long = io { core.saveDraft(draft) }.also { loadDrafts() }
+
+    /** Reads [drafts] again; on failure they stay as they were. */
+    suspend fun loadDrafts() {
+        try {
+            savedDrafts.value = io { core.drafts() }
+        } catch (e: CoreException) {
+            Log.w("Ozero", "drafts not read", e)
+        }
+    }
+
+    suspend fun deleteDraft(id: Long) {
+        io { core.deleteDraft(id) }
+        loadDrafts()
+    }
+
+    /** Saves a message being written as it changes, starting from the saved draft [id], or 0. */
+    fun keeper(id: Long) = DraftKeeper(this, background, id)
+
+    /** The message [id], if it is still saved: say the one a draft answers. */
+    suspend fun message(id: Long): MessageItem? = io { core.thread(id).find { it.id == id } }
+
     /** The messages the server refused, newest first; [undoSend] takes one back to fix it. */
     suspend fun unsent(): List<UnsentItem> = io { core.unsent() }
 
-    /** Takes back a message that has not gone out yet, to edit it again; null if too late. */
-    suspend fun undoSend(id: Long): DraftItem? = io { core.undoSend(id) }
+    /** Takes back a message that has not gone out yet, to edit it again as a draft; null if too late. */
+    suspend fun undoSend(id: Long): DraftItem? = io { core.undoSend(id) }?.also { loadDrafts() }
 
     /** Sends the account's queued actions in the background, waiting for held ones. */
     private fun push(accountId: Long) {
