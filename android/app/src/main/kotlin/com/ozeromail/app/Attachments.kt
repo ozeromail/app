@@ -491,7 +491,7 @@ private fun Viewer(files: Files, viewing: Viewing) {
             // Keeps the title centred against the close button.
             Box(Modifier.size(44.dp))
         }
-        HorizontalPager(pager, Modifier.weight(1f).fillMaxWidth(), userScrollEnabled = !zoomed, key = { viewing.files[it].part }) { page ->
+        HorizontalPager(pager, Modifier.weight(1f).fillMaxWidth(), userScrollEnabled = !zoomed, key = { viewing.files[it].part.toInt() }) { page ->
             val shown = viewing.files[page]
             Downloaded(files, viewing, page) { local ->
                 when (shown.preview) {
