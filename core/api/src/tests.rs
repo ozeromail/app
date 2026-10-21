@@ -158,6 +158,30 @@ fn syncs_an_imap_inbox_into_the_list() {
     let older = runtime.block_on(core.older_mail(account, "pass".into(), INBOX));
     assert_eq!(older, Ok(false));
 
+    // A refused password keeps the account and its mail and asks to sign in again.
+    let needs_sign_in = || core.accounts().unwrap()[0].needs_sign_in;
+    assert_eq!(
+        runtime
+            .block_on(core.sync(account, "wrong".into()))
+            .unwrap_err(),
+        CoreError::Auth
+    );
+    assert!(needs_sign_in());
+    // Until then the server hears no more logins, not even a right one.
+    assert_eq!(sync().unwrap_err(), CoreError::Auth);
+    assert_eq!(
+        runtime
+            .block_on(core.check_password(account, "wrong".into()))
+            .unwrap_err(),
+        CoreError::Auth
+    );
+    runtime
+        .block_on(core.check_password(account, "pass".into()))
+        .unwrap();
+    core.signed_in_again(account).unwrap();
+    assert!(!needs_sign_in());
+    sync().unwrap();
+
     let inbox = core.unified_inbox(Category::People, 50).unwrap();
     let subjects: Vec<_> = inbox.iter().map(|m| m.subject.as_str()).collect();
     assert_eq!(subjects, ["Message 3", "Message 2", "Message 1"]);
@@ -431,8 +455,43 @@ fn saves_a_gmail_account_that_can_send() {
 }
 
 #[test]
+fn signs_in_to_a_gmail_account_again() {
+    let db = TempDb::new("again");
+    let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
+    let id = core.add_gmail_account("me@gmail.com".into()).unwrap();
+    let needs_sign_in = || core.accounts().unwrap()[0].needs_sign_in;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    // A refused access token only asks for a new one.
+    let account = core.account(AccountId(id)).unwrap();
+    assert_eq!(
+        core.refused(&account, Err::<(), _>(CoreError::Auth)),
+        Err(CoreError::Auth)
+    );
+    assert!(!needs_sign_in());
+    // A refused login asks the person, and no login is tried until they sign in again.
+    let login = |result| {
+        runtime.block_on(core.signed_in(&core.account(AccountId(id)).unwrap(), async { result }))
+    };
+    assert_eq!(login(Err(CoreError::Auth)), Err(CoreError::Auth));
+    assert!(needs_sign_in());
+    assert_eq!(login(Ok(())), Err(CoreError::Auth));
+    assert_eq!(core.accounts().unwrap()[0].kind, AccountKind::Gmail);
+    core.signed_in_again(id).unwrap();
+    assert!(!needs_sign_in());
+    assert_eq!(login(Ok(())), Ok(()));
+}
+
+#[test]
+fn offers_the_account_when_signing_in_again() {
+    let start = google_sign_in(Some("me@gmail.com".into())).unwrap();
+    assert!(start.url.contains("login_hint=me%40gmail.com"));
+}
+
+#[test]
 fn starts_google_sign_in_at_google() {
-    let start = google_sign_in().unwrap();
+    let start = google_sign_in(None).unwrap();
     assert!(start.url.starts_with("https://accounts.google.com/"));
     assert!(start.url.contains(&start.state));
     assert!(!start.url.contains(&start.verifier));

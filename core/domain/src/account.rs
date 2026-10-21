@@ -43,6 +43,9 @@ pub struct Account {
     pub label: String,
     /// How many days back its mail is kept on the phone; 0 keeps all of it.
     pub keep_days: u32,
+    /// The server refused the saved password or Google secret: the account waits for the
+    /// person to sign in again, its mail and queued work kept.
+    pub needs_sign_in: bool,
 }
 
 impl Account {
@@ -102,6 +105,7 @@ mod tests {
             color: 0,
             label: String::new(),
             keep_days: 0,
+            needs_sign_in: false,
         };
         assert_eq!(account.name(), "a@example.com");
         account.display_name = "Anna".into();

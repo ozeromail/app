@@ -79,6 +79,7 @@ fun AccountsSheet(
     onAdd: () -> Unit,
     onColor: (AccountItem, Int) -> Unit,
     onLabel: (AccountItem, String) -> Unit,
+    onSignIn: (AccountItem) -> Unit,
     onKeepDays: (AccountItem, Int) -> Unit,
     onRemove: (AccountItem) -> Unit,
     onWrite: () -> Unit,
@@ -109,6 +110,7 @@ fun AccountsSheet(
                         onBack = { page = null },
                         onColor = { onColor(account, it) },
                         onLabel = { onLabel(account, it) },
+                        onSignIn = { onSignIn(account) },
                         onKeepDays = { onKeepDays(account, it) },
                         onRemove = { onRemove(account) },
                     )
@@ -325,6 +327,10 @@ private fun SubPage(title: String, onBack: () -> Unit) {
     }
 }
 
+/**
+ * One account: its name and colour, and a way to remove it from the phone. One the server
+ * signed out offers to sign in again first.
+ */
 /** One account: its name and colour, how much of its mail the phone keeps, and a way to remove it. */
 @Composable
 private fun AccountSettings(
@@ -332,12 +338,22 @@ private fun AccountSettings(
     onBack: () -> Unit,
     onColor: (Int) -> Unit,
     onLabel: (String) -> Unit,
+    onSignIn: () -> Unit,
     onKeepDays: (Int) -> Unit,
     onRemove: () -> Unit,
 ) {
     var confirming by rememberSaveable { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
     SubPage(account.name, onBack)
+    if (account.needsSignIn) {
+        Text(
+            stringResource(R.string.account_signed_out),
+            color = colors.onSurfaceVariant,
+            style = Type.Caption,
+            modifier = Modifier.padding(horizontal = Gap.sheet),
+        )
+        SheetAction(R.drawable.ic_next, stringResource(R.string.signin_again_title), colors.primary, onSignIn)
+    }
     LabelField(account, onLabel)
     Text(
         stringResource(R.string.account_color),

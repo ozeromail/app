@@ -58,6 +58,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import uniffi.ozero_api.AccountItem
+import uniffi.ozero_api.AccountKind
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.Endpoint
 import uniffi.ozero_api.suggestedImapHost
@@ -85,9 +87,10 @@ private data class Step(val provider: Provider?) : java.io.Serializable
  * goes straight to the browser; known services need only an email and an app password; any
  * other server shows its IMAP and SMTP fields. Everything to tap sits in the lower half.
  * With [onCancel], for a further account, system back and the back arrow leave it.
+ * With [again], it signs in to that saved account again instead, keeping its mail.
  */
 @Composable
-fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = null) {
+fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = null, again: AccountItem? = null) {
     // Null while picking.
     var step by rememberSaveable { mutableStateOf<Step?>(null) }
     var busy by remember { mutableStateOf(false) }
@@ -119,7 +122,7 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
         for (answer in mail.googleRedirects) {
             // Back to the list, where Google is, from whatever step the person was on.
             go(null)
-            attempt { mail.finishGoogle(answer) }
+            attempt { mail.finishGoogle(answer, again) }
         }
     }
 
@@ -135,7 +138,7 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
         error = null
         scope.launch {
             try {
-                open(mail.startGoogle())
+                open(mail.startGoogle(again))
             } catch (e: CoreException) {
                 error = e.text()
             }
@@ -149,40 +152,54 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
             .imePadding()
             .padding(horizontal = Gap.screen, vertical = 24.dp),
     ) {
-        AnimatedContent(
-            step,
-            Modifier.weight(1f),
-            // Stable across process death, so each step's saved fields come back.
-            contentKey = { it?.provider?.name ?: if (it == null) "pick" else "other" },
-            transitionSpec = {
-                val move = Motion.calm<IntOffset>(Motion.SCREEN)
-                val fade = Motion.calm<Float>(Motion.SCREEN)
-                val forward = targetState != null
-                val sign = if (forward) 1 else -1
-                (slideInHorizontally(move) { sign * it / 3 } + fadeIn(fade)) togetherWith
-                    (slideOutHorizontally(move) { -sign * it / 3 } + fadeOut(fade))
-            },
-            label = "step",
-        ) { shown ->
-            if (shown == null) {
-                Choose(
-                    busy = busy,
-                    onCancel = onCancel,
-                    onGoogle = ::google,
-                    onPick = { go(Step(it)) },
-                )
-            } else {
-                Credentials(
-                    shown.provider,
-                    busy = busy,
-                    onBack = { go(null) },
-                    onAppPasswords = ::open,
-                    onSubmit = { email, password, imap, smtp ->
-                        // Set before the coroutine starts, so a second tap does nothing.
-                        busy = true
-                        scope.launch { attempt { mail.signIn(email, password, imap, smtp) } }
-                    },
-                )
+        if (again != null) {
+            Again(
+                again,
+                busy = busy,
+                onCancel = onCancel,
+                onGoogle = ::google,
+                onSubmit = { password ->
+                    busy = true
+                    scope.launch { attempt { mail.signInAgain(again, password) } }
+                },
+                modifier = Modifier.weight(1f),
+            )
+        } else {
+            AnimatedContent(
+                step,
+                Modifier.weight(1f),
+                // Stable across process death, so each step's saved fields come back.
+                contentKey = { it?.provider?.name ?: if (it == null) "pick" else "other" },
+                transitionSpec = {
+                    val move = Motion.calm<IntOffset>(Motion.SCREEN)
+                    val fade = Motion.calm<Float>(Motion.SCREEN)
+                    val forward = targetState != null
+                    val sign = if (forward) 1 else -1
+                    (slideInHorizontally(move) { sign * it / 3 } + fadeIn(fade)) togetherWith
+                        (slideOutHorizontally(move) { -sign * it / 3 } + fadeOut(fade))
+                },
+                label = "step",
+            ) { shown ->
+                if (shown == null) {
+                    Choose(
+                        busy = busy,
+                        onCancel = onCancel,
+                        onGoogle = ::google,
+                        onPick = { go(Step(it)) },
+                    )
+                } else {
+                    Credentials(
+                        shown.provider,
+                        busy = busy,
+                        onBack = { go(null) },
+                        onAppPasswords = ::open,
+                        onSubmit = { email, password, imap, smtp ->
+                            // Set before the coroutine starts, so a second tap does nothing.
+                            busy = true
+                            scope.launch { attempt { mail.signIn(email, password, imap, smtp) } }
+                        },
+                    )
+                }
             }
         }
         Reveal(error) { Text(stringResource(it), color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 12.dp)) }
@@ -217,6 +234,53 @@ private fun Choose(busy: Boolean, onCancel: (() -> Unit)?, onGoogle: () -> Unit,
             (Provider.entries + null).forEach { provider ->
                 HorizontalDivider(Modifier.padding(start = Gap.card), color = colors.outlineVariant)
                 Choice(stringResource(provider?.label ?: R.string.signin_other), !busy, onClick = { onPick(provider) })
+            }
+        }
+    }
+}
+
+/**
+ * Signing in to a saved account again: Google goes back to the browser, any other server
+ * asks only for the new password, as its servers stay the same.
+ */
+@Composable
+private fun Again(
+    account: AccountItem,
+    busy: Boolean,
+    onCancel: (() -> Unit)?,
+    onGoogle: () -> Unit,
+    onSubmit: (password: String) -> Unit,
+    modifier: Modifier,
+) {
+    val google = account.kind == AccountKind.GMAIL
+    // Not saveable, as in [Credentials].
+    var password by remember { mutableStateOf("") }
+    val ready = !busy && (google || password.isNotEmpty())
+    fun submit() {
+        if (!ready) return
+        if (google) onGoogle() else onSubmit(password)
+    }
+    Column(modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // With the column's spacing, the title sits where the first step's does.
+        Box(Modifier.height(44.dp)) {
+            if (onCancel != null) StepBack(stringResource(R.string.action_back), onCancel, busy)
+        }
+        LargeTitle(stringResource(R.string.signin_again_title))
+        Text(
+            stringResource(if (google) R.string.signin_again_google else R.string.signin_again_password, account.email),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.weight(1f))
+        if (!google) Field(password, { password = it }, R.string.signin_password, KeyboardType.Password, onDone = ::submit)
+        Button(
+            onClick = ::submit,
+            enabled = ready,
+            modifier = Modifier.fillMaxWidth().height(48.dp),
+        ) {
+            if (busy) {
+                Spinner(LocalContentColor.current)
+            } else {
+                Text(stringResource(if (google) R.string.signin_again_with_google else R.string.signin_action))
             }
         }
     }

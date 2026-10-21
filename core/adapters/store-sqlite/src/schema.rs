@@ -239,4 +239,6 @@ pub const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (message_id, part)
     ) WITHOUT ROWID;
     ",
+    // 23: an account whose login the server refused, until the person signs in again.
+    "ALTER TABLE account ADD COLUMN needs_sign_in INTEGER NOT NULL DEFAULT 0;",
 ];

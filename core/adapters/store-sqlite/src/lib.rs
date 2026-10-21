@@ -142,7 +142,7 @@ impl Store for SqliteStore {
         let mut stmt = conn
             .prepare_cached(
                 "SELECT id, kind, email, display_name, server_host, server_port, server_user,
-                        smtp_host, smtp_port, smtp_user, color, label, keep_days
+                        smtp_host, smtp_port, smtp_user, color, label, keep_days, needs_sign_in
                  FROM account ORDER BY id",
             )
             .map_err(storage)?;
@@ -163,6 +163,7 @@ impl Store for SqliteStore {
                 color: r.get(10)?,
                 label: r.get(11)?,
                 keep_days: r.get(12)?,
+                needs_sign_in: r.get(13)?,
             })
         });
         rows.and_then(|rows| rows.collect()).map_err(storage)
@@ -232,6 +233,17 @@ impl Store for SqliteStore {
             )
             .map_err(storage)?;
         Ok(())
+    }
+
+    fn set_needs_sign_in(&self, account: AccountId, needs: bool) -> Result<(), StoreError> {
+        let changed = self
+            .conn()
+            .execute(
+                "UPDATE account SET needs_sign_in = ?2 WHERE id = ?1",
+                params![account.0, needs],
+            )
+            .map_err(storage)?;
+        found(changed)
     }
 
     fn save_folders(

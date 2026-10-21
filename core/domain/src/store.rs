@@ -21,6 +21,8 @@ pub trait Store: Send + Sync {
     /// Forgets the account's mail received before `before` (seconds), but for mail a queued
     /// action or message needs.
     fn prune(&self, account: AccountId, before: i64) -> Result<(), StoreError>;
+    /// Marks whether the account waits for the person to sign in again.
+    fn set_needs_sign_in(&self, account: AccountId, needs: bool) -> Result<(), StoreError>;
 
     /// Inserts new folders and updates known ones, matched by `remote_id`.
     fn save_folders(
