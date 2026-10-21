@@ -135,5 +135,21 @@
   "drafts_no_recipients": "No recipients",
   "draft_saved": "Saved to drafts",
   "draft_deleted": "Draft deleted",
-  "action_delete_draft": "Delete draft"
+  "action_delete_draft": "Delete draft",
+  "message_attachments": "Attachments",
+  "attachment_count": "Attachments: %1$d",
+  "attachment_untitled": "Attachment",
+  "attachment_save_all": "Save all",
+  "attachment_open": "Open",
+  "attachment_share": "Share",
+  "attachment_save": "Save to Downloads",
+  "attachment_save_short": "Save",
+  "attachment_open_with": "Open in another app",
+  "attachment_open_with_short": "Open in",
+  "attachment_saved": "Saved to Downloads",
+  "attachment_saved_all": "Files saved to Downloads: %1$d",
+  "attachment_not_saved": "Can’t save the file. Check the free space.",
+  "attachment_no_app": "No app on this phone opens this file.",
+  "attachment_cant_show": "Can’t show this file here. Open it in another app.",
+  "attachment_position": "%1$d of %2$d"
 }
