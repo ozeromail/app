@@ -163,3 +163,47 @@ fn parses_a_response_held_in_memory() {
     );
     assert_eq!(parse(b"HTTP/1.1 200 OK\r\n"), None);
 }
+
+/// A connection whose reads fail as TLS fails one dropped without a goodbye.
+struct Dropped;
+
+impl AsyncRead for Dropped {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+        _: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let e = std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "no close_notify");
+        std::task::Poll::Ready(Err(e))
+    }
+}
+
+impl AsyncWrite for Dropped {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::task::Poll::Ready(Ok(buf.len()))
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+#[tokio::test]
+async fn takes_a_connection_dropped_before_answering_as_closed() {
+    let answer = exchange(Conn::new(Dropped, MAX_BODY), b"GET / HTTP/1.1\r\n\r\n").await;
+    assert!(matches!(answer, Err(Failure::Closed)));
+}
