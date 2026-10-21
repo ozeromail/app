@@ -88,9 +88,9 @@ fun StillNote(
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         // Grey water still takes a drop of the accent's color: a drop is a drop.
-        val water = if (grey) colors.outline else colors.primary
+        val water = if (grey) colors.outline else colors.accent
         Canvas(Modifier.fillMaxWidth().height(LAKE_HEIGHT).touches(still)) {
-            still.draw(this, water, colors.primary, HORIZON, size.height, pulled(), FALL)
+            still.draw(this, water, colors.accent, HORIZON, size.height, pulled(), FALL)
         }
         Column(
             Modifier.graphicsLayer {
@@ -120,7 +120,7 @@ fun StillNote(
  */
 @Composable
 fun PullWater(fraction: () -> Float, refreshing: Boolean, top: () -> Float?, drops: Flow<Unit>, modifier: Modifier = Modifier) {
-    val water = MaterialTheme.colorScheme.primary
+    val water = MaterialTheme.colorScheme.accent
     val still = rememberStill(fall = false)
     LaunchedEffect(refreshing) { still.beat = refreshing }
     LaunchedEffect(drops) { drops.collect { still.release() } }

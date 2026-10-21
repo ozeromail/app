@@ -166,7 +166,7 @@ fun SwipeRow(
 @Composable
 private fun SwipeAction.colors(): Pair<Color, Color> = with(MaterialTheme.colorScheme) {
     when (this@colors) {
-        SwipeAction.DONE -> primary to onPrimary
+        SwipeAction.DONE -> accent to onAccent
         SwipeAction.READ -> secondary to onSecondary
         SwipeAction.DELETE -> error to onError
     }

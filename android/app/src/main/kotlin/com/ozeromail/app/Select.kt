@@ -178,14 +178,14 @@ fun ChoiceMark(chosen: Boolean, shown: Float, modifier: Modifier = Modifier) {
             .size(22.dp)
             .then(
                 if (chosen) {
-                    Modifier.background(colors.primary, CircleShape)
+                    Modifier.background(colors.accent, CircleShape)
                 } else {
                     Modifier.border(1.5.dp, colors.outline, CircleShape)
                 },
             ),
         contentAlignment = Alignment.Center,
     ) {
-        if (chosen) Glyph(R.drawable.ic_done, null, colors.onPrimary, size = 14.dp)
+        if (chosen) Glyph(R.drawable.ic_done, null, colors.onAccent, size = 14.dp)
     }
 }
 
@@ -211,6 +211,6 @@ fun ChoiceBar(done: Int, unread: Boolean, forever: Boolean, onCancel: () -> Unit
             onClick = onDelete,
         )
         BarAction(R.drawable.ic_more, stringResource(R.string.action_more), colors.onSurface, onClick = onMore)
-        onDone?.let { BarAction(R.drawable.ic_done, stringResource(R.string.action_done_count, done), colors.onPrimary, colors.primary, it) }
+        onDone?.let { BarAction(R.drawable.ic_done, stringResource(R.string.action_done_count, done), colors.onAccent, colors.accent, it) }
     }
 }

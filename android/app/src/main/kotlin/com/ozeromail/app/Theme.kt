@@ -3,6 +3,7 @@ package com.ozeromail.app
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.size
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -14,14 +15,15 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
-// White paper and the icon's lake: cool greys, one deep blue for actions and Done, colour only where it
-// means something. All roles are set, so none of Material's default lilac shows. No dynamic colour.
+// White paper and the icon's lake: cool greys, one bright morning blue for actions and Done, colour only
+// where it means something. [accent] fills; `primary` is its darker tone, for text and Material's controls.
+// All roles are set, so none of Material's default lilac shows. No dynamic colour.
 private val Light = lightColorScheme(
-    primary = Color(0xFF1F5CCD),
+    primary = Color(0xFF1A6FE0),
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFE2EBFC),
-    onPrimaryContainer = Color(0xFF0F2A5E),
-    inversePrimary = Color(0xFF9CC4FD),
+    primaryContainer = Color(0xFFE6F1FF),
+    onPrimaryContainer = Color(0xFF0B2E5C),
+    inversePrimary = Color(0xFF8CC2FF),
     secondary = Color(0xFF5B6B8C),
     onSecondary = Color.White,
     secondaryContainer = Color(0xFFE3E9F2),
@@ -57,11 +59,11 @@ private val Light = lightColorScheme(
 
 // The night lake: blue-slate paper, the lighter water for actions.
 private val Dark = darkColorScheme(
-    primary = Color(0xFF6AA3F9),
-    onPrimary = Color(0xFF0B1A33),
-    primaryContainer = Color(0xFF1B2F55),
-    onPrimaryContainer = Color(0xFFDCE8FF),
-    inversePrimary = Color(0xFF1F5CCD),
+    primary = Color(0xFF6AB2FF),
+    onPrimary = Color(0xFF06203A),
+    primaryContainer = Color(0xFF15325A),
+    onPrimaryContainer = Color(0xFFDCEBFF),
+    inversePrimary = Color(0xFF1A6FE0),
     secondary = Color(0xFF8D9BB8),
     onSecondary = Color(0xFF0F1626),
     secondaryContainer = Color(0xFF2B3343),
@@ -94,6 +96,16 @@ private val Dark = darkColorScheme(
     onErrorContainer = Color(0xFFFCE8EA),
     scrim = Color(0x8C000000),
 )
+
+private val Accent = Color(0xFF2F8CFF)
+
+/** The bright blue of buttons, Done, marks and water, the same in both themes. */
+val ColorScheme.accent: Color
+    get() = Accent
+
+/** What sits on [accent]. */
+val ColorScheme.onAccent: Color
+    get() = Color.White
 
 @Composable
 fun OzeroTheme(content: @Composable () -> Unit) {

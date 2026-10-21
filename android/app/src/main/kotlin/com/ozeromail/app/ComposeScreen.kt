@@ -188,8 +188,8 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
                     stringResource(R.string.compose_send),
                     ::send,
                     Modifier.width(56.dp),
-                    background = colors.primary,
-                    tint = colors.onPrimary,
+                    background = colors.accent,
+                    tint = colors.onAccent,
                     shape = CircleShape,
                     enabled = ready,
                 )
@@ -206,7 +206,7 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
                     lead = { AccountDot(account.tint, size = 12.dp) },
                 ) {
                     Text(account.email, style = Type.Row, fontWeight = Weight.Regular, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                    if (account.id == from?.id) Glyph(R.drawable.ic_done, null, colors.primary)
+                    if (account.id == from?.id) Glyph(R.drawable.ic_done, null, colors.accent)
                 }
             }
         }
