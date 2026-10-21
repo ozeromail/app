@@ -232,12 +232,12 @@ private class Still(private var falling: Boolean) {
     private var wasFull = false
     private var calm = 0f
     private var horizon = 0f
-    private var center = 0f
+    private var middle = 0f
     private var tint = Color.Unspecified
     private var line: Brush = SolidColor(Color.Transparent)
     private var glow: Brush = SolidColor(Color.Transparent)
 
-    val ready get() = !frozen && level > 0.5f && center > 0f
+    val ready get() = !frozen && level > 0.5f && middle > 0f
 
     /** Whether something on the water is moving, so every frame counts. */
     val busy
@@ -280,7 +280,7 @@ private class Still(private var falling: Boolean) {
     }
 
     private fun letGo(h: Hanging, land: Float) {
-        drops += Drop(center, h.y, 0f, land, h.r, h.point)
+        drops += Drop(middle, h.y, 0f, land, h.r, h.point)
         wobble = 0f
         wobbleV = 0f
     }
@@ -364,11 +364,11 @@ private class Still(private var falling: Boolean) {
         val hz = line.value
         val land = hz + fall.value
         horizon = hz
-        center = size.width / u / 2
+        middle = size.width / u / 2
         pulled = pull
         if (falling && level == 0f && !rising && drops.isEmpty() && begun >= 0) {
             // The last message has left: a drop falls and the water comes out of its waves.
-            drops += Drop(center, hz - 70f, 120f, land, 2.8f, 0.9f, opens = true)
+            drops += Drop(middle, hz - 70f, 120f, land, 2.8f, 0.9f, opens = true)
         }
         var dt = if (stepped < 0) 0f else min(0.05f, (now - stepped) / 1000f)
         stepped = now
@@ -380,7 +380,7 @@ private class Still(private var falling: Boolean) {
         if (busy) wake.trySend(Unit)
         paint(water)
         val t = now / 1000f
-        val cx = center * u
+        val cx = middle * u
         val hzPx = hz * u
         val lv = Calm.transform(level)
         val stroke = 1.dp.toPx()
@@ -434,7 +434,7 @@ private class Still(private var falling: Boolean) {
         val gathering = maxOf(if (!spent && !beat && ready) pull else 0f, drip)
         if (gathering > 0.02f) {
             val h = hanging(gathering)
-            bead(drop, center, h.y, h.r, h.point, 1f + wobble)
+            bead(drop, middle, h.y, h.r, h.point, 1f + wobble)
         }
         // Falling, it draws out with its speed.
         for (d in drops) bead(drop, d.x, d.y, d.r, d.point, 1f + min(0.35f, d.v / 1100f))
