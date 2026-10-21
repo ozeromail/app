@@ -57,9 +57,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  * it, and rings that lie on the water in perspective. With [drawIn], as the last message leaves,
  * a drop lands on the water and the horizon comes out of its rings. A touch leaves rings too.
  * [grey] water is for plain empty folders: it never draws in, and only moves when touched. While
- * [waiting] for a list's first mail, rings spread one after another and the words hold back;
- * while [rippling] for a refresh, the rings spread under the words. As the list is [pulled], a
- * drop gathers over the water, full at the threshold, and falls on each of [drops].
+ * [waiting] for a list's first mail, rings spread one after another and the words hold back.
+ * As the list is [pulled], a drop gathers over the water, full at the threshold, and falls on
+ * each of [drops].
  */
 @Composable
 fun StillNote(
@@ -68,7 +68,6 @@ fun StillNote(
     drawIn: Boolean,
     grey: Boolean = false,
     waiting: Boolean = false,
-    rippling: Boolean = false,
     pulled: () -> Float = { 0f },
     drops: Flow<Unit> = emptyFlow(),
 ) {
@@ -77,19 +76,19 @@ fun StillNote(
     // The words wait for the first sync only; once said, a later one just stirs the water.
     var said by remember { mutableStateOf(!waiting) }
     val words by animateFloatAsState(if (said) 1f else 0f, Motion.calm(Motion.SMALL), label = "words")
-    LaunchedEffect(waiting, rippling) {
-        still.beat = waiting || rippling
+    LaunchedEffect(waiting) {
+        still.beat = waiting
         if (!waiting) said = true
     }
     LaunchedEffect(drops) { drops.collect { still.release() } }
     Column(
-        Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 48.dp),
+        Modifier.fillMaxWidth().padding(top = LAKE_TOP, bottom = 48.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         val water = if (grey) colors.outline else colors.primary
         Canvas(Modifier.fillMaxWidth().height(LAKE_HEIGHT).touches(still)) {
-            still.draw(this, water, HORIZON.toPx(), size.height, pulled())
+            still.draw(this, water, HORIZON, size.height, pulled())
         }
         Column(
             Modifier.graphicsLayer {
@@ -130,8 +129,7 @@ fun PullWater(fraction: () -> Float, refreshing: Boolean, top: () -> Float?, dro
         if (depth <= 0f) return@Canvas
         translate(top = y) {
             clipRect(top = 0f, bottom = depth) {
-                val hz = PULL_HORIZON.toPx()
-                still.draw(this, water, hz, PULL_GAP.toPx(), if (refreshing) 0f else fraction(), PULL_HANG.toPx(), PULL_FALL.toPx())
+                still.draw(this, water, LAKE_TOP + HORIZON, maxOf(depth, PULL_GAP.toPx()), if (refreshing) 0f else fraction(), PULL_HANG, PULL_FALL)
             }
         }
     }
@@ -211,7 +209,7 @@ private class Still(private var falling: Boolean, var ambient: Boolean) {
     /** Wakes the clock of water at rest when it is touched. */
     val wake = Channel<Unit>(Channel.CONFLATED)
 
-    var level = if (falling) 0f else 1f
+    private var level = if (falling) 0f else 1f
     private val rings = ArrayList<Ring>()
     private var frozen = false
     private var begun = -1L
@@ -293,21 +291,14 @@ private class Still(private var falling: Boolean, var ambient: Boolean) {
     }
 
     /** The pulled drop hangs [hang] over the horizon and lands [fall] under it. */
-    fun draw(
-        scope: DrawScope,
-        color: Color,
-        hz: Float,
-        bottom: Float,
-        pulled: Float = 0f,
-        hang: Float = HANG.toPx(scope),
-        fall: Float = FALL.toPx(scope),
-    ) = with(scope) {
+    fun draw(scope: DrawScope, color: Color, horizon: Dp, bottom: Float, pulled: Float = 0f, hang: Dp = HANG, fall: Dp = FALL) = with(scope) {
+        val hz = horizon.toPx()
         val t = now
         horizon = hz
         width = size.width
         paint(color)
         val cx = size.width / 2
-        val landY = hz + fall
+        val landY = hz + fall.toPx()
         if (drop >= 0) {
             val p = ((t - drop) / DROP_MS).coerceIn(0f, 1f)
             if (p < 1f) {
@@ -321,7 +312,7 @@ private class Still(private var falling: Boolean, var ambient: Boolean) {
                 for (i in LANDING.indices) ring(cx, landY, LANDING[i], t + i * 180L, echo = false)
             }
         }
-        val hangY = hz - hang
+        val hangY = hz - hang.toPx()
         if (pullDrop >= 0) {
             val p = ((t - pullDrop) / DROP_MS).coerceIn(0f, 1f)
             if (p < 1f) {
@@ -334,7 +325,8 @@ private class Still(private var falling: Boolean, var ambient: Boolean) {
                 lastBeat = t + 850
                 for (i in PULL_LANDING.indices) ring(cx, landY, PULL_LANDING[i], t + i * 170L, echo = false)
             }
-        } else if ((pulled > 0.01f || pullDrop == RELEASED) && !frozen) {
+        } else if ((pulled > 0.01f || pullDrop == RELEASED) && ready) {
+            // Only over water that can take it: a drop that cannot fall does not gather.
             // The drop gathers with the pull and stretches, ready to fall, at the threshold.
             val p = if (pullDrop == RELEASED) 1f else pulled.coerceAtMost(1f)
             val r = SWOLLEN.toPx() * sqrt(p)
@@ -417,14 +409,16 @@ private val STREAKS = listOf(
     Streak(35.dp, 62.dp, 0.055f),
     Streak(55.dp, 40.dp, 0.035f),
 )
-private val PULL_GAP = 72.dp
+private val PULL_GAP = 88.dp
 private val LANDING = floatArrayOf(2.2f, 1.5f, 1f)
 private val PULL_LANDING = floatArrayOf(1.6f, 1.1f, 0.75f)
 private val HANG = 32.dp
 private val FALL = 40.dp
 
+/** The lake's water under a title; the pull's lies at the same height, so the two are one. */
+private val LAKE_TOP = 8.dp
+
 /** The pull's water is shallower than a lake: the gap is all there is of it. */
-private val PULL_HORIZON = 30.dp
 private val PULL_HANG = 22.dp
 private val PULL_FALL = 24.dp
 private val SWOLLEN = 3.2.dp
@@ -441,5 +435,3 @@ private val Glide = CubicBezierEasing(0.2f, 0.6f, 0.3f, 1f)
 private val Fall = CubicBezierEasing(0.6f, 0f, 0.9f, 0.4f)
 private val Spread = CubicBezierEasing(0.15f, 0.6f, 0.25f, 1f)
 private val Calm = CubicBezierEasing(0.2f, 0f, 0f, 1f)
-
-private fun Dp.toPx(density: Density) = with(density) { toPx() }
