@@ -1281,7 +1281,8 @@ fn link_thread(
     Ok(())
 }
 
-/// The folder of the message's account with `role`, the archive or the trash.
+/// The folder of the message's account with `role`, where a move goes. An account without an
+/// inbox has not synced yet, so a missing one reads as the message not being there.
 fn role_folder(
     tx: &Transaction<'_>,
     message: MessageId,

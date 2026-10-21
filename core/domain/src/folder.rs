@@ -105,8 +105,17 @@ mod tests {
         assert!(FolderRole::Junk.allows(Action::Empty));
         assert!(!FolderRole::Inbox.allows(Action::Empty));
         assert!(!FolderRole::Sent.allows(Action::Archive));
-        assert!(FolderRole::Archive.allows(Action::Inbox));
-        assert!(!FolderRole::Inbox.allows(Action::Inbox));
+        for role in [FolderRole::Archive, FolderRole::Trash, FolderRole::Junk] {
+            assert!(role.allows(Action::Inbox));
+        }
+        for role in [
+            FolderRole::Inbox,
+            FolderRole::Sent,
+            FolderRole::Drafts,
+            FolderRole::Custom,
+        ] {
+            assert!(!role.allows(Action::Inbox));
+        }
         assert!(FolderRole::Sent.allows(Action::Seen(true)));
     }
 }
