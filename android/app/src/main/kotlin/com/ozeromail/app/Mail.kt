@@ -222,6 +222,9 @@ class Mail(private val context: Context) {
      */
     suspend fun archive(message: MessageItem): List<Long> = move(message) { core.archive(it) }
 
+    /** As [archive], back into the inbox: for mail in the archive, trash or spam. */
+    suspend fun moveToInbox(message: MessageItem): List<Long> = move(message) { core.moveToInbox(it) }
+
     /** As [archive], into the trash. */
     suspend fun trash(message: MessageItem): List<Long> = move(message) { core.trash(it) }
 

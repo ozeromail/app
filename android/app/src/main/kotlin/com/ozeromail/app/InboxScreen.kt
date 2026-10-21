@@ -236,6 +236,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         crash = withContext(Dispatchers.IO) { Crashes.last(context) }
     }
     val archived = stringResource(R.string.inbox_archived)
+    val movedBack = stringResource(R.string.inbox_moved_back)
     val trashed = stringResource(R.string.inbox_trashed)
     val deleted = stringResource(R.string.inbox_deleted)
     val emptied = stringResource(R.string.inbox_emptied)
@@ -575,6 +576,9 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     /** Done: into the archive. */
     fun archive(gone: List<MessageItem>, reset: () -> Unit = {}) = remove(gone, archived, FolderRole.ARCHIVE, mail::archive, reset)
 
+    /** Back into the inbox, out of the archive, trash or spam. */
+    fun moveToInbox(gone: List<MessageItem>) = remove(gone, movedBack, FolderRole.INBOX, mail::moveToInbox)
+
     /** Marks the rows [read] or unread; they stay in the list either way. */
     fun setRead(rows: List<MessageItem>, read: Boolean, reset: () -> Unit = {}) {
         scope.launch {
@@ -701,6 +705,11 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                 load()
                             }
                         },
+                        onMoveToInbox = {
+                            open = null
+                            closeSearch()
+                            moveToInbox(listOf(shown.message))
+                        }.takeIf { shown.message.canMoveToInbox },
                         onDone = {
                             open = null
                             // Back to the list, where the toast can undo it.
