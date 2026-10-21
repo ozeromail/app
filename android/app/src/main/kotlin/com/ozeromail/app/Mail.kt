@@ -145,8 +145,23 @@ class Mail(private val context: Context) {
         core.messageBody(message.id, password(message.accountId).orEmpty())
     }
 
-    /** Messages matching every word of [text], newest first. */
+    /** Messages matching every word of [text], newest first, with what [searchServer] found for it. */
     suspend fun search(text: String): List<MessageItem> = io { core.search(text, SEARCH_SIZE) }
+
+    /**
+     * Searches every account's mail on its server for [text], older mail than the phone keeps
+     * included; [search] then shows what was found. The first failure is thrown once all are done.
+     */
+    suspend fun searchServer(text: String) {
+        // Back from a result, the same search has its answer saved already.
+        val now = SystemClock.elapsedRealtime()
+        if (searched?.let { (last, at) -> last == text && now - at < SEARCH_KEEP_MS } == true) return
+        eachAccount(INBOX) { account, password -> core.searchServer(account.id, password, text) }
+        searched = text to now
+    }
+
+    /** The last server search that went through, and when. */
+    private var searched: Pair<String, Long>? = null
 
     /** The message's conversation, oldest first. */
     suspend fun thread(message: MessageItem): List<MessageItem> = io { core.thread(message.id) }
@@ -348,6 +363,9 @@ class Mail(private val context: Context) {
         private const val SEARCH_SIZE = 100u
         private const val WATCH_PAUSE_MS = 5_000L
         private const val WATCH_PAUSE_MAX_MS = 5 * 60_000L
+
+        /** How long a server search answer stays good enough to not ask again. */
+        private const val SEARCH_KEEP_MS = 60_000L
     }
 }
 

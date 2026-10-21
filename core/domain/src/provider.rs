@@ -86,6 +86,17 @@ pub trait MailProvider: Send {
         limit: u32,
     ) -> impl Future<Output = Result<Older, ProviderError>> + Send;
 
+    /// The newest `limit` of the folder's messages that have every word of `text` in their
+    /// header or body, oldest first. Fails with `Gone` if the folder's validity is no longer
+    /// `validity`.
+    fn search(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        text: &str,
+        limit: u32,
+    ) -> impl Future<Output = Result<Vec<RawMessage>, ProviderError>> + Send;
+
     /// The raw message with `remote_id` in a folder, without marking it read; may be cut at a
     /// size limit. Fails with `Gone` if the folder's validity is no longer `validity`.
     fn body(

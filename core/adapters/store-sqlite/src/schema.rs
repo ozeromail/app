@@ -216,4 +216,14 @@ pub const MIGRATIONS: &[&str] = &[
     ALTER TABLE account ADD COLUMN keep_days INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE folder ADD COLUMN older_done INTEGER NOT NULL DEFAULT 0;
     ",
+    // 21: server search. `found` marks a message saved only because a search found it,
+    // older than the rest of its folder: lists and syncs leave it out. `search_hit` holds
+    // what the last server search of each account found, by the words it looked for.
+    "
+    ALTER TABLE message ADD COLUMN found INTEGER NOT NULL DEFAULT 0;
+    CREATE TABLE search_hit (
+        message_id INTEGER PRIMARY KEY REFERENCES message(id) ON DELETE CASCADE,
+        words      TEXT NOT NULL
+    );
+    ",
 ];

@@ -231,6 +231,25 @@ async fn loads_mail_older_than_the_saved_one() {
 }
 
 #[tokio::test]
+async fn searches_a_folder_for_plain_words() {
+    let (mut gmail, seen) = session(vec![
+        (
+            "/messages?q=-in%3Ainbox%20-in%3Asent%20-in%3Adrafts%20%22from%3Aanna%22%20%22invoice%22&",
+            200,
+            json!({"messages": [{"id": "a"}]}),
+        ),
+        ("/messages/a?", 200, message("a", &[], 1_000, "Invoice")),
+    ])
+    .await;
+    let found = gmail
+        .search(ARCHIVE, 0, " from:anna  invoice", 5)
+        .await
+        .unwrap();
+    assert_eq!(found.len(), 1);
+    assert!(seen.lock().unwrap()[0].1.contains("maxResults=5"));
+}
+
+#[tokio::test]
 async fn follows_the_history() {
     let history = json!({
         "historyId": "120",

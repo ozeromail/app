@@ -13,7 +13,9 @@ use ozero_domain::{
     Outgoing, SavedDraft, Sender, Server, Store, StoreError, Unsent, with_quote,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
-use rusqlite::{Connection, ErrorCode, OptionalExtension, Row, Transaction, params};
+use rusqlite::{
+    CachedStatement, Connection, ErrorCode, OptionalExtension, Row, Transaction, params,
+};
 
 pub struct SqliteStore {
     conn: Mutex<Connection>,
@@ -223,6 +225,7 @@ impl Store for SqliteStore {
             .execute(
                 "DELETE FROM message
                  WHERE folder_id IN (SELECT id FROM folder WHERE account_id = ?1) AND date < ?2
+                   AND found = 0
                    AND NOT EXISTS (SELECT 1 FROM op WHERE op.message_id = message.id)
                    AND NOT EXISTS (SELECT 1 FROM outbox WHERE outbox.reply_to = message.id)",
                 params![account.0, before],
@@ -307,7 +310,7 @@ impl Store for SqliteStore {
             .map_err(storage)?
             .ok_or(StoreError::NotFound)?;
         let known = conn
-            .prepare_cached("SELECT remote_id FROM message WHERE folder_id = ?1")
+            .prepare_cached("SELECT remote_id FROM message WHERE folder_id = ?1 AND found = 0")
             .and_then(|mut s| s.query_map([folder.0], |r| r.get(0))?.collect())
             .map_err(storage)?;
         Ok((checkpoint, known))
@@ -316,7 +319,7 @@ impl Store for SqliteStore {
     fn oldest(&self, folder: FolderId) -> Result<Option<i64>, StoreError> {
         self.conn()
             .query_row(
-                "SELECT min(date) FROM message WHERE folder_id = ?1",
+                "SELECT min(date) FROM message WHERE folder_id = ?1 AND found = 0",
                 [folder.0],
                 |r| r.get(0),
             )
@@ -425,13 +428,64 @@ impl Store for SqliteStore {
     }
 
     fn search(&self, text: &str, limit: u32) -> Result<Vec<MessageRow>, StoreError> {
-        let Some(query) = fts_query(text) else {
+        let (Some(query), Some(words)) = (fts_query(text), hit_words(text)) else {
             return Ok(vec![]);
         };
         let conn = self.conn();
         conn.prepare_cached(SEARCH)
-            .and_then(|mut s| s.query_map(params![query, limit], message_row)?.collect())
+            .and_then(|mut s| {
+                s.query_map(params![query, limit, words], message_row)?
+                    .collect()
+            })
             .map_err(storage)
+    }
+
+    fn save_found(
+        &self,
+        account: AccountId,
+        text: &str,
+        found: &[(FolderId, Vec<NewMessage>)],
+    ) -> Result<(), StoreError> {
+        let Some(words) = hit_words(text) else {
+            return Ok(());
+        };
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        tx.execute(
+            "DELETE FROM search_hit WHERE message_id IN (
+                 SELECT m.id FROM message m JOIN folder f ON f.id = m.folder_id
+                 WHERE f.account_id = ?1)",
+            [account.0],
+        )
+        .map_err(storage)?;
+        {
+            let mut save = tx.prepare_cached(SAVE_FOUND).map_err(storage)?;
+            let mut hit = tx
+                .prepare_cached(
+                    "INSERT OR REPLACE INTO search_hit (message_id, words)
+                     SELECT id, ?3 FROM message WHERE folder_id = ?1 AND remote_id = ?2",
+                )
+                .map_err(storage)?;
+            for (folder, messages) in found {
+                for m in messages {
+                    if write_message(&mut save, *folder, m)? > 0 {
+                        link_thread(&tx, account.0, *folder, m)?;
+                    }
+                    hit.execute(params![folder.0, m.remote_id, words])
+                        .map_err(storage)?;
+                }
+            }
+        }
+        tx.execute(
+            "DELETE FROM message
+             WHERE found = 1 AND folder_id IN (SELECT id FROM folder WHERE account_id = ?1)
+               AND NOT EXISTS (SELECT 1 FROM search_hit h WHERE h.message_id = message.id)
+               AND NOT EXISTS (SELECT 1 FROM op WHERE op.message_id = message.id)
+               AND NOT EXISTS (SELECT 1 FROM outbox WHERE outbox.reply_to = message.id)",
+            [account.0],
+        )
+        .map_err(storage)?;
+        tx.commit().map_err(storage)
     }
 
     fn take_fresh(&self, since: i64) -> Result<Vec<MessageRow>, StoreError> {
@@ -1071,25 +1125,34 @@ fn upsert_messages(
         )
         .map_err(storage)?;
     for m in messages {
-        upsert
-            .execute(params![
-                folder.0,
-                m.remote_id,
-                m.message_id,
-                m.from.name,
-                m.from.email,
-                m.subject,
-                m.snippet,
-                m.date,
-                flags_bits(m.flags),
-                category_ref(m.category),
-                m.answer_to.join("\n"),
-                m.recipients.join("\n"),
-            ])
-            .map_err(storage)?;
+        write_message(&mut upsert, folder, m)?;
         link_thread(tx, account, folder, m)?;
     }
     Ok(())
+}
+
+/// Runs `SAVE_MESSAGE` or `SAVE_FOUND` for `m`; the number of rows written.
+fn write_message(
+    statement: &mut CachedStatement<'_>,
+    folder: FolderId,
+    m: &NewMessage,
+) -> Result<usize, StoreError> {
+    statement
+        .execute(params![
+            folder.0,
+            m.remote_id,
+            m.message_id,
+            m.from.name,
+            m.from.email,
+            m.subject,
+            m.snippet,
+            m.date,
+            flags_bits(m.flags),
+            category_ref(m.category),
+            m.answer_to.join("\n"),
+            m.recipients.join("\n"),
+        ])
+        .map_err(storage)
 }
 
 /// Puts a saved message in the conversation of the messages it answers, that answer it, or
@@ -1239,15 +1302,15 @@ const SAVE_MESSAGE: &str = concat!(
                           subject, snippet, date, flags, category, answer_to, recipients, fresh)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1)
      ON CONFLICT (folder_id, remote_id) DO UPDATE SET
-         message_id = excluded.message_id, from_name = excluded.from_name,
+         found = 0, message_id = excluded.message_id, from_name = excluded.from_name,
          from_email = excluded.from_email, subject = excluded.subject,
          answer_to = excluded.answer_to, recipients = excluded.recipients,
          snippet = coalesce(nullif(excluded.snippet, ''), snippet),
          date = excluded.date, category = excluded.category, flags = ",
     merged_flags!("excluded.flags"),
-    " WHERE (message_id, from_name, from_email, subject, snippet, date, category,
+    " WHERE (found, message_id, from_name, from_email, subject, snippet, date, category,
             answer_to, recipients, flags)
-         IS NOT (excluded.message_id, excluded.from_name, excluded.from_email,
+         IS NOT (0, excluded.message_id, excluded.from_name, excluded.from_email,
                  excluded.subject, coalesce(nullif(excluded.snippet, ''), snippet),
                  excluded.date, excluded.category, excluded.answer_to, excluded.recipients, ",
     merged_flags!("excluded.flags"),
@@ -1274,7 +1337,7 @@ macro_rules! in_thread {
     () => {
         concat!(
             "FROM message n WHERE n.thread_id = m.thread_id AND n.folder_id = m.folder_id
-             AND n.category = m.category AND ",
+             AND n.category = m.category AND n.found = 0 AND ",
             not_moving!("n")
         )
     };
@@ -1370,7 +1433,7 @@ macro_rules! list_sql {
             )),
             " WHERE ",
             $scope,
-            " AND (m.date, m.id) < (?2, ?3)
+            " AND m.found = 0 AND (m.date, m.id) < (?2, ?3)
              AND ",
             not_moving!(),
             // One row per conversation: its newest message.
@@ -1423,8 +1486,9 @@ const FIND_THREADS: &str = "
 /// Sorting by date reads every match; fine for one person's mail.
 const SEARCH: &str = concat!(
     message_from!(),
-    " JOIN message_search ON message_search.rowid = m.id
-     WHERE message_search MATCH ?1 AND f.role NOT IN ('trash', 'junk') AND ",
+    " WHERE m.id IN (SELECT rowid FROM message_search WHERE message_search MATCH ?1
+                     UNION SELECT message_id FROM search_hit WHERE words = ?3)
+       AND f.role NOT IN ('trash', 'junk') AND ",
     not_moving!(),
     " AND NOT EXISTS (
          SELECT 1 FROM message d JOIN folder g ON g.id = d.folder_id
@@ -1447,6 +1511,20 @@ fn fts_query(text: &str) -> Option<String> {
     (!words.is_empty()).then(|| words.join(" "))
 }
 
+/// The words of `text` as the server searches of `search_hit` are kept by: lower case, one
+/// space apart. `None` when there are none.
+fn hit_words(text: &str) -> Option<String> {
+    let words: Vec<String> = text.split_whitespace().map(str::to_lowercase).collect();
+    (!words.is_empty()).then(|| words.join(" "))
+}
+
+/// Saves a message a server search found, unless it is saved already; not new mail.
+const SAVE_FOUND: &str = "
+    INSERT INTO message (folder_id, remote_id, message_id, from_name, from_email, subject,
+                         snippet, date, flags, category, answer_to, recipients, found)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1)
+    ON CONFLICT (folder_id, remote_id) DO NOTHING";
+
 const CLEAR_FRESH: &str = "UPDATE message SET fresh = 0 WHERE fresh = 1";
 
 // `1` is `SEEN`.
@@ -1460,7 +1538,8 @@ const FRESH_PEOPLE: &str = concat!(
 // `1` is `SEEN`.
 const INBOX_UNREAD: &str = concat!(
     "SELECT m.category, count(*) FROM message m
-     WHERE m.folder_id IN (SELECT id FROM folder WHERE role = 'inbox') AND m.flags & 1 = 0 AND ",
+     WHERE m.folder_id IN (SELECT id FROM folder WHERE role = 'inbox') AND m.flags & 1 = 0
+       AND m.found = 0 AND ",
     not_moving!(),
     " GROUP BY m.category"
 );
@@ -1485,7 +1564,7 @@ const FOLDER_MESSAGES: &str = concat!(
 // Stops at the first message found, so a full inbox costs no more than an empty one.
 const INBOX_EMPTY: &str = concat!(
     "SELECT NOT EXISTS (SELECT 1 FROM message m
-     WHERE m.folder_id IN (SELECT id FROM folder WHERE role = 'inbox') AND ",
+     WHERE m.folder_id IN (SELECT id FROM folder WHERE role = 'inbox') AND m.found = 0 AND ",
     not_moving!(),
     ")"
 );

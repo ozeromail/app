@@ -278,3 +278,42 @@ fn does_not_wait_without_an_inbox() {
     );
     assert!(server.waited.is_empty());
 }
+
+#[test]
+fn searches_the_server_in_the_folders_local_search_covers() {
+    let folder = |id, remote_id: &str, role| Folder {
+        id: FolderId(id),
+        account_id: AccountId(1),
+        remote_id: remote_id.into(),
+        name: remote_id.into(),
+        role,
+    };
+    let store = Memory {
+        folders: vec![
+            folder(1, "INBOX", FolderRole::Inbox),
+            folder(2, "Trash", FolderRole::Trash),
+            folder(3, "Gone", FolderRole::Custom),
+            folder(4, "Refused", FolderRole::Archive),
+        ],
+        ..Memory::default()
+    };
+    let mut server = Server::default();
+    run(search_server(
+        &store,
+        &mut server,
+        &Parser,
+        AccountId(1),
+        "invoice",
+        5,
+    ))
+    .unwrap();
+    let asked: Vec<_> = server.searched.iter().map(|s| s.0.as_str()).collect();
+    assert_eq!(asked, ["INBOX", "Gone", "Refused"]);
+    assert_eq!(server.searched[0].2, "invoice");
+    let found = store.found.lock().unwrap();
+    let (account, text, folders) = &found[0];
+    assert_eq!((*account, text.as_str()), (AccountId(1), "invoice"));
+    assert_eq!(folders.len(), 1);
+    assert_eq!(folders[0].0, FolderId(1));
+    assert_eq!(folders[0].1[0].remote_id, "INBOX");
+}
