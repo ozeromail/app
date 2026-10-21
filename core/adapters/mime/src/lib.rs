@@ -2,10 +2,14 @@
 
 mod build;
 
+use std::collections::HashSet;
+
 pub use build::MimeBuilder;
 
-use mail_parser::{Address as Addresses, Message, PartType};
-use ozero_domain::{Address, Body, Category, MessageParser, NewMessage, RawMessage, Signals};
+use mail_parser::{Address as Addresses, Message, MessagePart, MimeHeaders, PartType};
+use ozero_domain::{
+    Address, Attachment, Body, Category, MessageParser, NewMessage, RawMessage, Signals,
+};
 
 #[derive(Debug, Default)]
 pub struct MimeParser(mail_parser::MessageParser);
@@ -60,9 +64,104 @@ impl MessageParser for MimeParser {
                 .body_text(0)
                 .map(|t| t.trim_end().to_owned())
                 .unwrap_or_default(),
+            attachments: attachments(&message, html.as_deref().unwrap_or_default()),
             html,
         }
     }
+
+    fn attachments(&self, raw: &[u8], parts: &[u32]) -> Vec<Option<Vec<u8>>> {
+        let message = self.0.parse(raw);
+        let contents = |part: &u32| {
+            let message = message.as_ref()?;
+            if !message.attachments.contains(part) {
+                return None;
+            }
+            message.part(*part).map(|p| p.contents().to_vec())
+        };
+        parts.iter().map(contents).collect()
+    }
+}
+
+/// The message's attachments but the images its HTML shows by `cid:`.
+fn attachments(message: &Message<'_>, html: &str) -> Vec<Attachment> {
+    if message.attachments.is_empty() {
+        return vec![];
+    }
+    // `cid:` URLs are case-blind and may be percent-encoded (RFC 2392).
+    let html = html.to_ascii_lowercase();
+    let shown: HashSet<String> = html
+        .match_indices("cid:")
+        .map(|(at, _)| {
+            let id = &html[at + 4..];
+            let end = id.find(['"', '\'', ')', ' ', '>']).unwrap_or(id.len());
+            percent_decoded(&id[..end])
+        })
+        .collect();
+    message
+        .attachments
+        .iter()
+        .filter_map(|&n| Some((n, message.part(n)?)))
+        .filter(|(_, p)| {
+            let id = p
+                .content_id()
+                .map(|id| id.trim_matches(['<', '>']).to_ascii_lowercase());
+            !id.is_some_and(|id| shown.contains(&id))
+        })
+        .map(|(part, p)| Attachment {
+            part,
+            name: name(p),
+            mime: p.content_type().map_or_else(
+                || "application/octet-stream".to_owned(),
+                |t| match t.subtype() {
+                    Some(sub) => format!("{}/{sub}", t.ctype()).to_ascii_lowercase(),
+                    None => t.ctype().to_ascii_lowercase(),
+                },
+            ),
+            size: u64::try_from(p.len()).unwrap_or(u64::MAX),
+        })
+        .collect()
+}
+
+/// `text` with each `%XX` turned into its byte; anything else is left as it is.
+fn percent_decoded(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = bytes
+            .get(i + 1..i + 3)
+            .and_then(|h| std::str::from_utf8(h).ok());
+        match hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
+            Some(byte) if bytes[i] == b'%' => {
+                out.push(byte);
+                i += 3;
+            }
+            _ => {
+                out.push(bytes[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// The file name as sent, without any folders or control characters; a forwarded message
+/// is named by its subject.
+fn name(part: &MessagePart<'_>) -> String {
+    let name = match part.attachment_name() {
+        Some(name) => name.rsplit(['/', '\\']).next().unwrap_or(name).to_owned(),
+        None => match part.message().and_then(Message::subject).map(str::trim) {
+            Some(subject) if !subject.is_empty() => {
+                format!("{}.eml", subject.replace(['/', '\\'], "-"))
+            }
+            _ => String::new(),
+        },
+    };
+    name.chars()
+        .filter(|c| !c.is_control())
+        .collect::<String>()
+        .trim()
+        .to_owned()
 }
 
 /// The bare addresses of address headers, in order.
@@ -223,6 +322,49 @@ mod tests {
             b"Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\n\r\nPart one\r\n--b\r\nContent-Type: app",
         );
         assert_eq!(body.text, "Part one");
+    }
+
+    const MIXED: &[u8] = b"Content-Type: multipart/mixed; boundary=m\r\n\r\n\
+        --m\r\nContent-Type: multipart/related; boundary=r\r\n\r\n\
+        --r\r\nContent-Type: text/html\r\n\r\n<p>Hi</p><img src=\"CID:Logo%40x\">\r\n\
+        --r\r\nContent-Type: image/png\r\nContent-ID: <logo@x>\r\n\
+        Content-Transfer-Encoding: base64\r\n\r\naGk=\r\n--r--\r\n\
+        --m\r\nContent-Type: application/PDF; name=\"=?UTF-8?B?0KHQv9GA0LDQstC60LAucGRm?=\"\r\n\
+        Content-Disposition: attachment; filename=\"C:\\\\docs\\\\x.pdf\"\r\n\
+        Content-Transfer-Encoding: base64\r\n\r\nJVBERi0=\r\n\
+        --m\r\nContent-Type: image/jpeg\r\nContent-ID: <photo@x>\r\n\
+        Content-Disposition: inline\r\nContent-Transfer-Encoding: base64\r\n\r\n/9j/\r\n\
+        --m\r\nContent-Type: message/rfc822\r\n\r\nSubject: Old/plan\r\n\r\nText\r\n\
+        --m--\r\n";
+
+    #[test]
+    fn lists_attachments_but_images_the_page_shows() {
+        let body = MimeParser::default().parse_body(MIXED);
+        let files: Vec<_> = body
+            .attachments
+            .iter()
+            .map(|a| (a.name.as_str(), a.mime.as_str(), a.size))
+            .collect();
+        assert_eq!(
+            files,
+            [
+                ("x.pdf", "application/pdf", 5),
+                ("", "image/jpeg", 3),
+                ("Old-plan.eml", "message/rfc822", 25),
+            ]
+        );
+    }
+
+    #[test]
+    fn decodes_attachments() {
+        let parser = MimeParser::default();
+        let body = parser.parse_body(MIXED);
+        let pdf = body.attachments[0].part;
+        // Only attachments: not the HTML part, not a part past the end.
+        assert_eq!(
+            parser.attachments(MIXED, &[pdf, 2, 99]),
+            [Some(b"%PDF-".to_vec()), None, None]
+        );
     }
 
     #[test]
