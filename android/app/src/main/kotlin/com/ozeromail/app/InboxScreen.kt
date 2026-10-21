@@ -47,7 +47,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -87,6 +86,8 @@ import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import androidx.compose.ui.platform.LocalHapticFeedback
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
+import kotlin.math.min
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -95,6 +96,15 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.VisibilityThreshold
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.graphics.ColorProducer
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -852,19 +862,31 @@ private fun InboxList(
     // Where the tabs are between two of them, in tabs: the thumb and the list follow it.
     val glide = remember { Animatable(0f) }
     val glideScope = rememberCoroutineScope()
+    // The tab the thumb counts from. It changes in the same moment as the glide, so the thumb
+    // never sees one without the other, while the tab itself changes at once.
+    var thumbTab by remember { mutableIntStateOf(Category.entries.indexOf(tab)) }
+    LaunchedEffect(tab) { if (!glide.isRunning) thumbTab = Category.entries.indexOf(tab) }
     val pick: (Category, Float, Float) -> Unit = { next, from, velocity ->
         onTab(next)
         glideScope.launch {
             glide.snapTo(from)
+            thumbTab = Category.entries.indexOf(next)
             glide.animateTo(0f, thumbSpring(velocity), velocity)
         }
     }
-    // The list leaves to the side the thumb moves away from, and the next one comes in from the other.
-    val slide = Modifier.graphicsLayer {
-        val at = glide.value
-        translationX = -at * size.width * 0.35f
-        alpha = 1f - (abs(at) * 1.2f).coerceAtMost(1f)
+    // The row a finger holds, which draws its neighbours along, and where the last swiped row was.
+    val rowPull = remember { Pull() }
+    var closedAt by remember(tab, mailbox) { mutableIntStateOf(Int.MAX_VALUE) }
+    // Once the rows have closed up, later moves are not held back by it.
+    LaunchedEffect(closedAt) {
+        delay(CLOSING_MS)
+        closedAt = Int.MAX_VALUE
     }
+    // How many messages are scrolled past, so the rows on screen pour in from the top one down.
+    val leading = 1 + unsent.size + (if (swipeTip && messages.isNotEmpty()) 1 else 0) + (if (lake) 1 else 0)
+    val firstRow by remember(leading) { derivedStateOf { (listState.firstVisibleItemIndex - leading).coerceAtLeast(0) } }
+    // The list leaves to the side the thumb moves away from, and the next one comes in from the other.
+    val slide = Modifier.glided { glide.value }
     val mini by animateFloatAsState(if (scrolled) 1f else 0f, Motion.calm(Motion.SMALL), label = "title")
     Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
         PullToRefreshBox(
@@ -903,10 +925,10 @@ private fun InboxList(
             ) {
                 item(key = "title") { Hero(shownTitle, shownOwner, onBack) }
                 items(unsent, key = { "unsent-${it.id}" }) { failed ->
-                    UnsentRow(failed, rowMove().then(sink).then(slide), onClick = { onUnsent(failed) })
+                    Afloat(glide, depth = { 0 }, modifier = rowMove().then(sink)) { UnsentRow(failed, Modifier, onClick = { onUnsent(failed) }) }
                 }
                 if (swipeTip && messages.isNotEmpty()) {
-                    item(key = "tip") { Box(rowMove().then(sink).then(slide)) { SwipeTip(swipes, onSwipeTip) } }
+                    item(key = "tip") { Afloat(glide, depth = { 0 }, modifier = rowMove().then(sink)) { SwipeTip(swipes, onSwipeTip) } }
                 }
                 if (lake) {
                     item(key = "empty") {
@@ -933,9 +955,27 @@ private fun InboxList(
                     }
                 }
                 itemsIndexed(messages, key = { _, it -> it.id }) { index, message ->
-                    Column(rowMove().then(sink).then(slide)) {
+                    // Rows below one that left close up after it, each a little later than the one above.
+                    val behind = if (index >= closedAt) index - closedAt + 1 else 0
+                    Afloat(
+                        glide,
+                        depth = { (index - firstRow).coerceIn(0, 8) },
+                        modifier = rowMove(Motion.behind(behind.coerceAtMost(6), Motion.CLOSE, IntOffset.VisibilityThreshold)).then(sink),
+                        pull = rowPull,
+                        index = index,
+                    ) {
                         if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.screen), color = colors.outlineVariant)
-                        SwipeRow(message, swipes, enabled = !choosing, onSwipe = { action, reset -> onSwipe(message, action, reset) }) {
+                        SwipeRow(
+                            message,
+                            swipes,
+                            enabled = !choosing,
+                            onSwipe = { action, reset ->
+                                // Read leaves the row where it is: nothing below has a gap to close.
+                                if (action != SwipeAction.READ) closedAt = index
+                                onSwipe(message, action, reset)
+                            },
+                            onPull = { rowPull.hold(message.id, index, it) },
+                        ) {
                             MessageRow(
                                 message,
                                 choosing = mode,
@@ -988,6 +1028,7 @@ private fun InboxList(
                 tab = tab,
                 tabs = tabs.takeIf { inbox },
                 glide = glide,
+                thumb = { thumbTab + glide.value },
                 accounts = accounts,
                 onTab = pick,
                 onAccounts = onAccounts,
@@ -1073,6 +1114,8 @@ private fun Dock(
     tab: Category,
     tabs: List<InboxTab>?,
     glide: Animatable<Float, AnimationVector1D>,
+    /** Where the tabs' thumb is, in tabs from the first. */
+    thumb: () -> Float,
     accounts: List<AccountItem>,
     onTab: (Category, from: Float, velocity: Float) -> Unit,
     onAccounts: () -> Unit,
@@ -1094,7 +1137,7 @@ private fun Dock(
             .padding(top = Gap.barTop, bottom = Gap.barBottom),
         verticalArrangement = Arrangement.spacedBy(Gap.inBar),
     ) {
-        tabs?.let { Tabs(tab, it, glide, onTab) }
+        tabs?.let { Tabs(tab, it, glide, thumb, onTab) }
         empty?.let { (label, onClick) -> EmptyButton(stringResource(label), onClick) }
         // As tall as the taller of the two, so the dock keeps its height as they change.
         Box(Modifier.height(52.dp), contentAlignment = Alignment.Center) {
@@ -1197,29 +1240,58 @@ private fun AccountsButton(accounts: List<AccountItem>, onClick: () -> Unit) {
  * glides it there. [onPick] gets the tab, where the thumb is from it and how fast it goes, in tabs.
  */
 @Composable
-private fun Tabs(tab: Category, tabs: List<InboxTab>, glide: Animatable<Float, AnimationVector1D>, onPick: (Category, from: Float, velocity: Float) -> Unit) {
+private fun Tabs(
+    tab: Category,
+    tabs: List<InboxTab>,
+    glide: Animatable<Float, AnimationVector1D>,
+    thumb: () -> Float,
+    onPick: (Category, from: Float, velocity: Float) -> Unit,
+) {
     val colors = MaterialTheme.colorScheme
     val thumb = RoundedCornerShape(Radius.thumb)
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
     val index = Category.entries.indexOf(tab)
     val last = Category.entries.size - 1
+    val thumbNow by rememberUpdatedState(thumb)
+    // The thumb's two edges ride springs of their own: the front one leads and the back one is
+    // held back as if by water, so the thumb draws out while it moves and gathers as it stops.
+    val leftEdge = remember { Animatable(index.toFloat()) }
+    val rightEdge = remember { Animatable(index.toFloat()) }
+    LaunchedEffect(Unit) {
+        // An edge leads when the thumb moves its way.
+        launch { leftEdge.follow({ to -> edgeSpring(lead = to < leftEdge.value) }) { thumbNow() } }
+        rightEdge.follow({ to -> edgeSpring(lead = to > rightEdge.value) }) { thumbNow() }
+    }
+    var pressed by remember { mutableStateOf(false) }
+    val press by animateFloatAsState(if (pressed) 1f else 0f, Motion.settle(), label = "press")
     BoxWithConstraints(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = Gap.bar)
             .clip(RoundedCornerShape(Radius.medium))
             .background(colors.surfaceVariant)
+            .whilePressed { pressed = it }
             .padding(3.dp),
     ) {
         val count = Category.entries.size
         val gap = 2.dp
         val width = (maxWidth - gap * (count - 1)) / count
         val step = width + gap
+        // How long the thumb is drawn out between its edges.
+        val long: Density.() -> Float = { width.toPx() + abs(rightEdge.value - leftEdge.value) * step.toPx() }
         Box(
             Modifier
-                .offset { IntOffset(((index + glide.value) * step.toPx()).roundToInt(), 0) }
-                .size(width, 34.dp)
+                .layout { measurable, _ ->
+                    val from = min(leftEdge.value, rightEdge.value)
+                    val placeable = measurable.measure(Constraints.fixed(long().roundToInt(), 34.dp.roundToPx()))
+                    layout(placeable.width, placeable.height) { placeable.placeRelative((from * step.toPx()).roundToInt(), 0) }
+                }
+                .graphicsLayer {
+                    // It keeps its area, so it thins as it draws out; under a finger it dips a little.
+                    scaleX = 1f - 0.03f * press
+                    scaleY = sqrt(width.toPx() / long()) * (1f - 0.06f * press)
+                }
                 .shadow(1.dp, thumb)
                 .background(colors.background, thumb),
         )
@@ -1262,24 +1334,36 @@ private fun Tabs(tab: Category, tabs: List<InboxTab>, glide: Animatable<Float, A
             horizontalArrangement = Arrangement.spacedBy(gap),
         ) {
             // Every tab shows at once; the counts come when the core has them.
-            Category.entries.forEach { category ->
+            Category.entries.forEachIndexed { at, category ->
                 val on = category == tab
                 val unread = tabs.find { it.category == category }?.unread ?: 0u
-                val label by animateColorAsState(if (on) colors.onSurface else colors.onSurfaceVariant, Motion.calm(Motion.SMALL), label = "tab")
+                // The label darkens as the thumb comes over it, not all at once; read while drawing,
+                // so the glide does not recompose the tabs on every frame.
+                val label = ColorProducer { lerp(colors.onSurfaceVariant, colors.onSurface, (1f - abs(at - thumb())).coerceIn(0f, 1f)) }
+                // A count that changes gives a small nudge, as a float does when something touches it.
+                // Not when the counts first come in from the core.
+                val nudge = remember { Animatable(0f) }
+                val known = tabs.any { it.category == category }
+                var counted by remember { mutableStateOf<UInt?>(null) }
+                LaunchedEffect(unread, known) {
+                    if (!known) return@LaunchedEffect
+                    val before = counted
+                    counted = unread
+                    if (before != null && before != unread) nudge.animateTo(0f, Motion.nudge(), initialVelocity = 9f)
+                }
                 Row(
                     Modifier
                         .weight(1f)
                         .height(34.dp)
                         .clip(thumb)
-                        .selectable(selected = on, role = Role.Tab, onClick = { if (!on) onPick(category, (index - Category.entries.indexOf(category)).toFloat(), 0f) }),
+                        .selectable(selected = on, role = Role.Tab, onClick = { if (!on) onPick(category, (index - at).toFloat(), 0f) }),
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
+                    BasicText(
                         stringResource(category.label()),
                         color = label,
-                        style = Type.Text,
-                        fontWeight = if (on) Weight.SemiBold else Weight.Medium,
+                        style = Type.Text.copy(fontWeight = if (on) Weight.SemiBold else Weight.Medium),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
@@ -1290,7 +1374,10 @@ private fun Tabs(tab: Category, tabs: List<InboxTab>, glide: Animatable<Float, A
                             color = colors.primary,
                             style = Type.Badge,
                             fontWeight = Weight.Bold,
-                            modifier = Modifier.padding(start = 6.dp),
+                            modifier = Modifier.padding(start = 6.dp).graphicsLayer {
+                                scaleX = 1f + 0.18f * nudge.value
+                                scaleY = scaleX
+                            },
                         )
                     }
                 }
@@ -1496,5 +1583,39 @@ private fun thumbSpring(velocity: Float): SpringSpec<Float> = if (abs(velocity) 
 /** Tabs a second past which a released thumb was flung. */
 private const val FLING = 2f
 
+/** A tab thumb's edge: the front one leads, quicker than the finger's spring; the back one follows through the water. */
+private fun edgeSpring(lead: Boolean): SpringSpec<Float> = spring(dampingRatio = 1f, stiffness = if (lead) 1540f else 315f)
+
 /** The least a pulled refresh lasts: the drop's fall and its first rings. */
 private const val PULLED_MS = 1100L
+
+/** How long rows below one that left are held back as they close up; then moves are even again. */
+private const val CLOSING_MS = 2000L
+
+/**
+ * A row afloat. It follows the tabs' [glide] on a spring of its own, softer the further [depth]
+ * it is down the screen, so a tab's list pours in from the top; and, given a [pull], it is drawn
+ * a little way after the row a finger holds.
+ */
+@Composable
+private fun Afloat(
+    glide: Animatable<Float, AnimationVector1D>,
+    depth: () -> Int,
+    modifier: Modifier,
+    pull: Pull? = null,
+    index: Int = 0,
+    content: @Composable () -> Unit,
+) {
+    val along = remember { Animatable(glide.value) }
+    val drawn = remember { Animatable(0f) }
+    val depthNow by rememberUpdatedState(depth)
+    LaunchedEffect(glide) { along.follow({ Motion.behind(depthNow(), Motion.POUR) }) { glide.value } }
+    if (pull != null) LaunchedEffect(pull, index) { drawn.follow({ Motion.drift() }) { pull.near(index) } }
+    Column(modifier.glided { along.value }.graphicsLayer { translationX = drawn.value }) { content() }
+}
+
+/** Something on a tab's page, [at] tabs from its place: it leaves to the side the thumb moves away from and fades. */
+private fun Modifier.glided(at: () -> Float): Modifier = graphicsLayer {
+    translationX = -at() * size.width * 0.35f
+    alpha = 1f - (abs(at()) * 1.2f).coerceAtMost(1f)
+}

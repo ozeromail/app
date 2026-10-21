@@ -1,14 +1,20 @@
 package com.ozeromail.app
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.SpringSpec
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.lazy.LazyItemScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import kotlin.math.pow
+import kotlinx.coroutines.flow.collectLatest
 
 /**
  * Spacing shared by every screen. Text lines up on [screen]; controls in the bottom bars
@@ -82,6 +88,28 @@ object Motion {
     /** For what follows a finger or moves in place: no bounce, interrupted without a jump. */
     fun <T> settle(): SpringSpec<T> = spring(dampingRatio = 1f, stiffness = 700f)
 
+    /**
+     * For something [depth] places behind what leads, held back as if by water: each place
+     * keeps [per] of the stiffness of the one before, so a column of them follows in a wave.
+     */
+    fun <T> behind(depth: Int, per: Float, visibilityThreshold: T? = null): SpringSpec<T> =
+        spring(dampingRatio = 1f, stiffness = 700f * per.pow(depth), visibilityThreshold = visibilityThreshold)
+
+    /** How much of the stiffness each row down keeps as a tab's list pours in. */
+    const val POUR = 0.68f
+
+    /** How much each row further below keeps as rows close up after one that left. */
+    const val CLOSE = 0.6f
+
+    /** What is drawn along through water: slower than the finger, and without bounce. */
+    fun <T> drift(): SpringSpec<T> = spring(dampingRatio = 1f, stiffness = 260f)
+
+    /** A small pop when something changes state under a finger: a little overshoot, then still. */
+    fun <T> pop(): SpringSpec<T> = spring(dampingRatio = 0.7f, stiffness = 700f)
+
+    /** A light touch on something at rest, which rocks once and settles. */
+    fun <T> nudge(): SpringSpec<T> = spring(dampingRatio = 0.55f, stiffness = 700f)
+
     /** After a fling: the same spring with a little give, since the finger threw it. */
     fun <T> fling(): SpringSpec<T> = spring(dampingRatio = 0.85f, stiffness = 500f)
 
@@ -100,5 +128,14 @@ object Motion {
     }
 }
 
+/**
+ * Keeps this value following [target] for as long as it is called: each new target takes over
+ * the motion where it is, so the value never jumps, with the [spec] for that moment.
+ */
+suspend fun Animatable<Float, AnimationVector1D>.follow(spec: (to: Float) -> AnimationSpec<Float>, target: () -> Float) {
+    snapshotFlow(target).collectLatest { animateTo(it, spec(it)) }
+}
+
 /** A list row that slides into its new place when rows above it come or go. */
-fun LazyItemScope.rowMove(): Modifier = Modifier.animateItem(fadeInSpec = null, placementSpec = Motion.Row, fadeOutSpec = null)
+fun LazyItemScope.rowMove(placement: FiniteAnimationSpec<IntOffset> = Motion.Row): Modifier =
+    Modifier.animateItem(fadeInSpec = null, placementSpec = placement, fadeOutSpec = null)
