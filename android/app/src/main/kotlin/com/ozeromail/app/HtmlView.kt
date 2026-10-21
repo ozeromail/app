@@ -51,7 +51,7 @@ private fun WebView.configure(images: List<RemoteImage?>) {
         allowFileAccess = false
         allowContentAccess = false
         blockNetworkLoads = true
-        // The page sets its own viewport; wider newsletters can be pinched.
+        // A page wider than the screen opens zoomed out to fit it, as in Gmail, and can be pinched.
         loadWithOverviewMode = true
         useWideViewPort = true
         builtInZoomControls = true
