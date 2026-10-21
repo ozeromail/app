@@ -190,6 +190,30 @@ fn downloads_a_body() {
 }
 
 #[test]
+fn downloads_attachments_and_saves_the_whole_body() {
+    let store = Memory::default();
+    let mut server = Server::default();
+    let mut download = |id, parts: &[u32]| {
+        run(download_attachments(
+            &store,
+            &mut server,
+            &Parser,
+            &location(id),
+            parts,
+        ))
+    };
+    assert_eq!(
+        download("7", &[0, 1]),
+        Ok(vec![Some(b"Hello".to_vec()), None])
+    );
+    assert_eq!(
+        download("gone", &[0]),
+        Err(SyncError::Provider(ProviderError::Gone))
+    );
+    assert_eq!(store.bodies.lock().unwrap()[0].1.text, "Hello");
+}
+
+#[test]
 fn does_not_save_an_empty_download() {
     let store = Memory::default();
     let body = run(download_body(

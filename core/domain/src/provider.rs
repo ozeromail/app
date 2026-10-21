@@ -106,6 +106,17 @@ pub trait MailProvider: Send {
         remote_id: &str,
     ) -> impl Future<Output = Result<Vec<u8>, ProviderError>> + Send;
 
+    /// The whole raw message, like `body` but never cut: for its attachments. A provider
+    /// whose `body` is never cut keeps this.
+    fn message(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_id: &str,
+    ) -> impl Future<Output = Result<Vec<u8>, ProviderError>> + Send {
+        self.body(folder, validity, remote_id)
+    }
+
     /// Marks messages of a folder read or unread. Messages no longer there are skipped;
     /// fails with `Gone` if the folder's validity is no longer `validity`.
     fn set_seen(
@@ -179,6 +190,9 @@ pub trait MessageBuilder: Send + Sync {
 pub trait MessageParser: Send + Sync {
     fn parse(&self, raw: RawMessage) -> NewMessage;
     fn parse_body(&self, raw: &[u8]) -> Body;
+    /// The decoded contents of these `Attachment::part`s of a raw message, in order; None for
+    /// a part that is no attachment of it.
+    fn attachments(&self, raw: &[u8], parts: &[u32]) -> Vec<Option<Vec<u8>>>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

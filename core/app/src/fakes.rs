@@ -262,6 +262,14 @@ impl MessageParser for Parser {
             ..Body::default()
         }
     }
+
+    /// The whole message is attachment 0.
+    fn attachments(&self, raw: &[u8], parts: &[u32]) -> Vec<Option<Vec<u8>>> {
+        parts
+            .iter()
+            .map(|&p| (p == 0).then(|| raw.to_vec()))
+            .collect()
+    }
 }
 
 /// One `save_found`: the account, the words and what each folder found.

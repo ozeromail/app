@@ -191,6 +191,31 @@ pub async fn download_body(
     Ok(body)
 }
 
+/// Downloads a saved message whole, once, and returns these attachment `parts` of it,
+/// decoded, in order; None for a part it has not. Saves the body again if its attachments
+/// differ, so those a cut body left out are listed from now on.
+pub async fn download_attachments(
+    store: &dyn Store,
+    provider: &mut impl MailProvider,
+    parser: &dyn MessageParser,
+    message: &MessageLocation,
+    parts: &[u32],
+) -> Result<Vec<Option<Vec<u8>>>, SyncError> {
+    let raw = provider
+        .message(
+            &message.folder_remote_id,
+            message.validity,
+            &message.remote_id,
+        )
+        .await?;
+    let body = parser.parse_body(&raw);
+    let saved = store.body(message.id)?.map(|b| b.attachments);
+    if !raw.is_empty() && saved.as_ref() != Some(&body.attachments) {
+        store.save_body(message.id, &body)?;
+    }
+    Ok(parser.attachments(&raw, parts))
+}
+
 /// Downloads the missing bodies among the account's `limit` newest inbox messages, so they
 /// open at once. A message gone from the server is skipped; any other failure stops it, and
 /// the reader downloads what is left.

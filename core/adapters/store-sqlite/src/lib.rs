@@ -7,10 +7,10 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
 use ozero_domain::{
-    Account, AccountId, AccountKind, Action, Address, Body, Category, Changes, Checkpoint,
-    Correspondents, Draft, DraftId, Flags, Folder, FolderId, FolderRole, ListQuery, ListScope,
-    MessageId, MessageLocation, MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId, OutboxId,
-    Outgoing, SavedDraft, Sender, Server, Store, StoreError, Unsent, with_quote,
+    Account, AccountId, AccountKind, Action, Address, Attachment, Body, Category, Changes,
+    Checkpoint, Correspondents, Draft, DraftId, Flags, Folder, FolderId, FolderRole, ListQuery,
+    ListScope, MessageId, MessageLocation, MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId,
+    OutboxId, Outgoing, SavedDraft, Sender, Server, Store, StoreError, Unsent, with_quote,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{
@@ -605,6 +605,22 @@ impl Store for SqliteStore {
             params![message.0, body.text, body.html],
         )
         .map_err(storage)?;
+        tx.execute("DELETE FROM attachment WHERE message_id = ?1", [message.0])
+            .map_err(storage)?;
+        {
+            let mut insert = tx
+                .prepare_cached(
+                    "INSERT INTO attachment (message_id, part, name, mime, size)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                )
+                .map_err(storage)?;
+            for a in &body.attachments {
+                let size = i64::try_from(a.size).unwrap_or(i64::MAX);
+                insert
+                    .execute(params![message.0, a.part, a.name, a.mime, size])
+                    .map_err(storage)?;
+            }
+        }
         tx.execute(
             // A body without text keeps the snippet the list had.
             "UPDATE message SET snippet = ?2 WHERE id = ?1 AND ?2 <> ''",
@@ -615,18 +631,38 @@ impl Store for SqliteStore {
     }
 
     fn body(&self, message: MessageId) -> Result<Option<Body>, StoreError> {
-        self.conn()
+        let conn = self.conn();
+        let Some((text, html)) = conn
             .prepare_cached("SELECT text, html FROM message_body WHERE message_id = ?1")
             .and_then(|mut s| {
-                s.query_row([message.0], |r| {
-                    Ok(Body {
-                        text: r.get(0)?,
-                        html: r.get(1)?,
-                    })
-                })
-                .optional()
+                s.query_row([message.0], |r| Ok((r.get(0)?, r.get(1)?)))
+                    .optional()
             })
-            .map_err(storage)
+            .map_err(storage)?
+        else {
+            return Ok(None);
+        };
+        let attachments = conn
+            .prepare_cached(
+                "SELECT part, name, mime, size FROM attachment WHERE message_id = ?1 ORDER BY part",
+            )
+            .and_then(|mut s| {
+                s.query_map([message.0], |r| {
+                    Ok(Attachment {
+                        part: r.get(0)?,
+                        name: r.get(1)?,
+                        mime: r.get(2)?,
+                        size: u64::try_from(r.get::<_, i64>(3)?).unwrap_or(0),
+                    })
+                })?
+                .collect()
+            })
+            .map_err(storage)?;
+        Ok(Some(Body {
+            text,
+            html,
+            attachments,
+        }))
     }
 
     fn queue(
@@ -1404,7 +1440,8 @@ macro_rules! message_from {
             "SELECT m.id, f.account_id, m.from_name, m.from_email, m.subject, m.snippet, m.date,
                     m.flags, ",
             $thread,
-            ", f.role",
+            ", f.role, (SELECT group_concat(part || char(31) || name, char(30)) FROM attachment
+                         WHERE message_id = m.id)",
             " FROM message m JOIN folder f ON f.id = m.folder_id"
         )
     };
@@ -1669,7 +1706,22 @@ fn message_row(r: &Row<'_>) -> rusqlite::Result<MessageRow> {
         thread_count,
         senders,
         role: r.get::<_, Role>(10)?.0,
+        attachments: parse_attachments(&r.get::<_, Option<String>>(11)?.unwrap_or_default()),
     })
+}
+
+/// Attachment names as `message_from!` joins them, each after its part and `\x1f`, by `\x1e`;
+/// in part order.
+fn parse_attachments(joined: &str) -> Vec<String> {
+    let mut files: Vec<(u32, &str)> = joined
+        .split('\x1e')
+        .filter_map(|one| {
+            let (part, name) = one.split_once('\x1f')?;
+            Some((part.parse().ok()?, name))
+        })
+        .collect();
+    files.sort_unstable_by_key(|f| f.0);
+    files.into_iter().map(|(_, name)| name.to_owned()).collect()
 }
 
 /// Senders as `sender!` writes them, joined by `\x1e`: how many messages, and who wrote.
