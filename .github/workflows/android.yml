@@ -33,8 +33,8 @@ jobs:
           LEVEL: ${{ github.event_name == 'pull_request' && 'warning' || 'error' }}
         run: |
           if [ -n "$KEYSTORE" ]; then
-            mkdir -p ~/.android
-            echo "$KEYSTORE" | base64 -d > ~/.android/debug.keystore
+            echo "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/debug.keystore"
+            echo "DEBUG_KEYSTORE=$RUNNER_TEMP/debug.keystore" >> "$GITHUB_ENV"
           else
             echo "::$LEVEL::ANDROID_DEBUG_KEYSTORE is not set; this APK will not install over earlier builds"
             [ "$LEVEL" = warning ]
@@ -110,14 +110,20 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 90
-      # Each build of main must be signed by the same key and keep its version code, or it will
-      # not install over the last one; the log shows both to compare.
-      - name: Show who signed the debug APK
+      # Each build must be signed by the shared key, or it will not install over the last one.
+      # Its certificate's digest is public; the key is not.
+      - name: Check who signed the debug APK
         working-directory: android
         run: |
           tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
-          "$tools/apksigner" verify --print-certs app/build/outputs/apk/debug/app-debug.apk | grep -i 'SHA-256'
-          "$tools/aapt2" dump badging app/build/outputs/apk/debug/app-debug.apk | head -1
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          "$tools/aapt2" dump badging "$apk" | head -1
+          digest="$("$tools/apksigner" verify --print-certs "$apk" | grep -m1 'SHA-256' | awk '{print $NF}')"
+          echo "Signed by $digest"
+          if [ -n "$DEBUG_KEYSTORE" ] && [[ "$digest" != 7275405b*e2f8d94e ]]; then
+            echo "::error::The debug APK is not signed by the shared debug key"
+            exit 1
+          fi
       - name: Upload debug APK
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4

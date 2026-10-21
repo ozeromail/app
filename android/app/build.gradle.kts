@@ -34,6 +34,17 @@ android {
         compose = true
     }
 
+    // CI's shared debug key, set explicitly so each build installs over the last; locally the
+    // usual one in ~/.android.
+    env("DEBUG_KEYSTORE")?.let { keystore ->
+        signingConfigs.getByName("debug") {
+            storeFile = file(keystore)
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         // Every debug build would read 0.1.0; the commit tells which one a crash came from.
         debug {
