@@ -287,7 +287,6 @@ class Mail(private val context: Context) {
                 }
             }.awaitAll()
         }
-        results.firstNotNullOfOrNull { it.exceptionOrNull() }?.let { throw it }
         results.map { it.getOrThrow() }
     }
 

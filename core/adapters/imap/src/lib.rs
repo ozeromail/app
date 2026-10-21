@@ -423,6 +423,26 @@ impl ImapSession {
         Ok(messages)
     }
 
+    /// The sequence number of the open folder's message with `uid`, if it is still there.
+    async fn number(&mut self, uid: NonZeroU32) -> Result<Option<u32>, ProviderError> {
+        let items = vec![MessageDataItemName::Uid];
+        let fetch = CommandBody::fetch(uid, items, true).map_err(|_| protocol("bad FETCH"))?;
+        // The server may add FETCH replies about other messages, such as flag changes.
+        Ok(self
+            .run(fetch)
+            .await?
+            .data
+            .into_iter()
+            .find_map(|d| match d {
+                Data::Fetch { seq, items } => items
+                    .as_ref()
+                    .iter()
+                    .any(|i| matches!(i, MessageDataItem::Uid(u) if *u == uid))
+                    .then_some(seq.get()),
+                _ => None,
+            }))
+    }
+
     /// The UID and flags of every message from UID `from` on.
     async fn flags_from(&mut self, from: NonZeroU32) -> Result<Vec<(u32, Flags)>, ProviderError> {
         let items = vec![MessageDataItemName::Uid, MessageDataItemName::Flags];
@@ -552,26 +572,30 @@ impl MailProvider for ImapSession {
             .filter_map(|id| id.parse::<NonZeroU32>().ok())
             .min();
         // Sequence numbers grow with UIDs, so the mail below the lowest saved UID is numbered
-        // 1 to `below`: one less than the first number from it on. Asking for those few is
-        // cheaper than for all the older ones. Not `n:*`, see `empty`.
+        // 1 to one less than that message's number.
         let below = match lowest {
             None => opened.exists,
-            Some(lowest) => {
-                let from = SequenceSet::try_from(lowest.get()..=i32::MAX as u32)
-                    .map_err(|_| protocol("bad UID set"))?;
-                let search = CommandBody::search(None, Vec1::from(SearchKey::Uid(from)), false);
-                self.run(search)
-                    .await?
-                    .data
-                    .into_iter()
-                    .filter_map(|d| match d {
-                        Data::Search(found, ..) => Some(found),
-                        _ => None,
-                    })
-                    .flatten()
-                    .min()
-                    .map_or(opened.exists, |first| first.get() - 1)
-            }
+            Some(lowest) => match self.number(lowest).await? {
+                Some(number) => number - 1,
+                // Gone since the last sync: the first number of the saved mail after it, a
+                // longer answer. Not `n:*`, see `empty`.
+                None => {
+                    let from = SequenceSet::try_from(lowest.get()..=i32::MAX as u32)
+                        .map_err(|_| protocol("bad UID set"))?;
+                    let search = CommandBody::search(None, Vec1::from(SearchKey::Uid(from)), false);
+                    self.run(search)
+                        .await?
+                        .data
+                        .into_iter()
+                        .filter_map(|d| match d {
+                            Data::Search(found, ..) => Some(found),
+                            _ => None,
+                        })
+                        .flatten()
+                        .min()
+                        .map_or(opened.exists, |first| first.get() - 1)
+                }
+            },
         };
         let mut new = self.newest(below, limit).await?;
         // Mail expunged meanwhile moves the numbers down: only what is older still.
