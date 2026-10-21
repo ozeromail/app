@@ -8,9 +8,9 @@ use std::sync::{Mutex, MutexGuard};
 
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Body, Category, Changes, Checkpoint,
-    Correspondents, Draft, Flags, Folder, FolderId, FolderRole, ListQuery, ListScope, MessageId,
-    MessageLocation, MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing,
-    Sender, Server, Store, StoreError, Unsent, with_quote,
+    Correspondents, Draft, DraftId, Flags, Folder, FolderId, FolderRole, ListQuery, ListScope,
+    MessageId, MessageLocation, MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId, OutboxId,
+    Outgoing, SavedDraft, Sender, Server, Store, StoreError, Unsent, with_quote,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{Connection, ErrorCode, OptionalExtension, Row, Transaction, params};
@@ -630,6 +630,7 @@ impl Store for SqliteStore {
     fn queue_send(
         &self,
         draft: &Draft,
+        saved: Option<DraftId>,
         message_id: &str,
         date: i64,
         not_before: i64,
@@ -673,29 +674,104 @@ impl Store for SqliteStore {
                 |r| r.get(0),
             )
             .map_err(storage)?;
+        if let Some(saved) = saved {
+            tx.execute("DELETE FROM draft WHERE id = ?1", [saved.0])
+                .map_err(storage)?;
+        }
         tx.commit().map_err(storage)?;
         Ok(OutboxId(id))
     }
 
-    fn undo_send(&self, id: OutboxId, now: i64) -> Result<Option<Draft>, StoreError> {
-        self.conn()
-            .prepare_cached(
+    fn undo_send(&self, id: OutboxId, now: i64) -> Result<Option<SavedDraft>, StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        let taken = tx
+            .query_row(
                 "DELETE FROM outbox WHERE id = ?1 AND (not_before > ?2 OR failed IS NOT NULL)
                  RETURNING account_id, recipients, subject, text, reply_to, quote",
-            )
-            .and_then(|mut s| {
-                s.query_row(params![id.0, now], |r| {
-                    Ok(Draft {
-                        account_id: AccountId(r.get(0)?),
-                        to: recipients(&r.get::<_, String>(1)?),
+                params![id.0, now],
+                |r| {
+                    Ok(SavedDraft {
+                        id: None,
+                        account_id: Some(AccountId(r.get(0)?)),
+                        to: recipients(&r.get::<_, String>(1)?).join(", "),
                         subject: r.get(2)?,
                         text: r.get(3)?,
                         reply_to: r.get::<_, Option<i64>>(4)?.map(MessageId),
                         quote: r.get(5)?,
+                        saved: now,
                     })
-                })
-                .optional()
-            })
+                },
+            )
+            .optional()
+            .map_err(storage)?;
+        let Some(mut draft) = taken else {
+            return Ok(None);
+        };
+        draft.id = Some(insert_draft(&tx, &draft)?);
+        tx.commit().map_err(storage)?;
+        Ok(Some(draft))
+    }
+
+    fn save_draft(&self, draft: &SavedDraft) -> Result<DraftId, StoreError> {
+        let conn = self.conn();
+        let Some(id) = draft.id else {
+            return insert_draft(&conn, draft);
+        };
+        // An account or answered message gone since leaves the draft without one.
+        let changed = conn
+            .execute(
+                "UPDATE draft SET
+                     account_id = (SELECT id FROM account WHERE id = ?1),
+                     recipients = ?2, subject = ?3, text = ?4,
+                     reply_to = (SELECT id FROM message WHERE id = ?5),
+                     quote = ?6, saved = ?7
+                 WHERE id = ?8",
+                params![
+                    draft.account_id.map(|a| a.0),
+                    draft.to,
+                    draft.subject,
+                    draft.text,
+                    draft.reply_to.map(|m| m.0),
+                    draft.quote,
+                    draft.saved,
+                    id.0,
+                ],
+            )
+            .map_err(storage)?;
+        found(changed)?;
+        Ok(id)
+    }
+
+    fn drafts(&self) -> Result<Vec<SavedDraft>, StoreError> {
+        let conn = self.conn();
+        let rows = conn
+            .prepare_cached(
+                "SELECT id, account_id, recipients, subject, text, reply_to, quote, saved
+                 FROM draft ORDER BY saved DESC, id DESC",
+            )
+            .and_then(|mut s| {
+                s.query_map([], |r| {
+                    Ok(SavedDraft {
+                        id: Some(DraftId(r.get(0)?)),
+                        account_id: r.get::<_, Option<i64>>(1)?.map(AccountId),
+                        to: r.get(2)?,
+                        subject: r.get(3)?,
+                        text: r.get(4)?,
+                        reply_to: r.get::<_, Option<i64>>(5)?.map(MessageId),
+                        quote: r.get(6)?,
+                        saved: r.get(7)?,
+                    })
+                })?
+                .collect()
+            });
+        rows.map_err(storage)
+    }
+
+    fn delete_draft(&self, id: DraftId) -> Result<(), StoreError> {
+        self.conn()
+            .execute("DELETE FROM draft WHERE id = ?1", [id.0])
+            .map(|_| ())
             .map_err(storage)
     }
 
@@ -1395,6 +1471,28 @@ fn found(changed: usize) -> Result<(), StoreError> {
         return Err(StoreError::NotFound);
     }
     Ok(())
+}
+
+/// Saves a new draft; an account or answered message that is gone is left out.
+fn insert_draft(conn: &Connection, draft: &SavedDraft) -> Result<DraftId, StoreError> {
+    conn.query_row(
+        "INSERT INTO draft (account_id, recipients, subject, text, reply_to, quote, saved)
+         VALUES ((SELECT id FROM account WHERE id = ?1), ?2, ?3, ?4,
+                 (SELECT id FROM message WHERE id = ?5), ?6, ?7)
+         RETURNING id",
+        params![
+            draft.account_id.map(|a| a.0),
+            draft.to,
+            draft.subject,
+            draft.text,
+            draft.reply_to.map(|m| m.0),
+            draft.quote,
+            draft.saved,
+        ],
+        |r| r.get(0),
+    )
+    .map(DraftId)
+    .map_err(storage)
 }
 
 /// Fails with `NotFound` when the row a write depends on is missing.

@@ -196,4 +196,18 @@ pub const MIGRATIONS: &[&str] = &[
     "
     ALTER TABLE account ADD COLUMN label TEXT NOT NULL DEFAULT '';
     ",
+    // 19: messages being written, kept on the device. `recipients` is the field as typed;
+    // `saved` is in milliseconds.
+    "
+    CREATE TABLE draft (
+        id         INTEGER PRIMARY KEY,
+        account_id INTEGER REFERENCES account(id) ON DELETE CASCADE,
+        recipients TEXT NOT NULL,
+        subject    TEXT NOT NULL,
+        text       TEXT NOT NULL,
+        reply_to   INTEGER REFERENCES message(id) ON DELETE SET NULL,
+        quote      TEXT NOT NULL,
+        saved      INTEGER NOT NULL
+    );
+    ",
 ];

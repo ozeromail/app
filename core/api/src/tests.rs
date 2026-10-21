@@ -199,21 +199,25 @@ fn syncs_an_imap_inbox_into_the_list() {
 
     // Undo gives the draft back; sent again, it reaches the SMTP server and Sent.
     let send = || {
-        core.send(
-            account,
-            "bob@example.org".into(),
-            "Ответ из Ozero".into(),
-            "Привет!".into(),
-            Some(first),
-            "Anna wrote:\n> Hi".into(),
-        )
+        core.send(DraftItem {
+            id: 0,
+            account_id: account,
+            to: "bob@example.org".into(),
+            subject: "Ответ из Ozero".into(),
+            text: "Привет!".into(),
+            reply_to: Some(first),
+            quote: "Anna wrote:\n> Hi".into(),
+            saved: 0,
+        })
         .unwrap()
     };
     let draft = core.undo_send(send()).unwrap().unwrap();
     assert_eq!(draft.to, "bob@example.org");
     assert_eq!(draft.reply_to, Some(first));
     assert_eq!(draft.quote, "Anna wrote:\n> Hi");
-    send();
+    assert_eq!(core.drafts().unwrap(), std::slice::from_ref(&draft));
+    core.send(draft).unwrap();
+    assert!(core.drafts().unwrap().is_empty());
     runtime
         .block_on(core.push_actions(account, "pass".into()))
         .unwrap();
@@ -319,14 +323,16 @@ fn saves_a_gmail_account_that_can_send() {
     let account = core.account(AccountId(id)).unwrap();
     assert_eq!((account.kind, account.smtp), (AccountKind::Gmail, None));
     // Gmail sends over its API, so no SMTP server is needed.
-    core.send(
-        id,
-        "you@example.com".into(),
-        "Hi".into(),
-        "Text".into(),
-        None,
-        String::new(),
-    )
+    core.send(DraftItem {
+        id: 0,
+        account_id: id,
+        to: "you@example.com".into(),
+        subject: "Hi".into(),
+        text: "Text".into(),
+        reply_to: None,
+        quote: String::new(),
+        saved: 0,
+    })
     .unwrap();
 }
 

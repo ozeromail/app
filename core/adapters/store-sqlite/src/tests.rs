@@ -829,22 +829,43 @@ fn draft(account: AccountId) -> Draft {
     }
 }
 
+/// `draft` as `undo_send` saves it at `now`, without the id it gets.
+fn saved(draft: &Draft, now: i64) -> SavedDraft {
+    SavedDraft {
+        id: None,
+        account_id: Some(draft.account_id),
+        to: draft.to.join(", "),
+        subject: draft.subject.clone(),
+        text: draft.text.clone(),
+        reply_to: draft.reply_to,
+        quote: draft.quote.clone(),
+        saved: now,
+    }
+}
+
+/// What `undo_send` gives back, without its id, which must be the saved draft's.
+fn taken_back(store: &SqliteStore, id: OutboxId, now: i64) -> Option<SavedDraft> {
+    let draft = store.undo_send(id, now).unwrap()?;
+    assert_eq!(store.drafts().unwrap()[0], draft);
+    Some(SavedDraft { id: None, ..draft })
+}
+
 #[test]
 fn a_held_message_can_be_taken_back_until_it_is_due() {
     let store = store();
     let a = account(&store, "a@example.com");
     let id = store
-        .queue_send(&draft(a), "1@example.com", 100, 105)
+        .queue_send(&draft(a), None, "1@example.com", 100, 105)
         .unwrap();
     assert_eq!(store.next_send(a).unwrap(), Some(105));
     assert!(store.due_sends(a, 104).unwrap().is_empty());
 
-    assert_eq!(store.undo_send(id, 104).unwrap(), Some(draft(a)));
-    assert_eq!(store.undo_send(id, 104).unwrap(), None);
+    assert_eq!(taken_back(&store, id, 104), Some(saved(&draft(a), 104)));
+    assert_eq!(taken_back(&store, id, 104), None);
     assert_eq!(store.next_send(a).unwrap(), None);
 
     let id = store
-        .queue_send(&draft(a), "2@example.com", 100, 105)
+        .queue_send(&draft(a), None, "2@example.com", 100, 105)
         .unwrap();
     assert_eq!(store.undo_send(id, 105).unwrap(), None, "too late");
     let due = store.due_sends(a, 105).unwrap();
@@ -861,7 +882,7 @@ fn a_refused_message_waits_to_be_fixed() {
     let store = store();
     let a = account(&store, "a@example.com");
     let id = store
-        .queue_send(&draft(a), "1@example.com", 100, 100)
+        .queue_send(&draft(a), None, "1@example.com", 100, 100)
         .unwrap();
     store.refused(id, "550 no such user").unwrap();
     assert!(store.due_sends(a, 200).unwrap().is_empty());
@@ -872,7 +893,7 @@ fn a_refused_message_waits_to_be_fixed() {
         (id, "550 no such user")
     );
     // Taken back to edit, it is gone from the outbox.
-    assert_eq!(store.undo_send(id, 0).unwrap(), Some(draft(a)));
+    assert_eq!(taken_back(&store, id, 0), Some(saved(&draft(a), 0)));
     assert!(store.unsent().unwrap().is_empty());
 }
 
@@ -888,7 +909,9 @@ fn a_reply_answers_the_message_id() {
         reply_to: Some(parent),
         ..draft(a)
     };
-    store.queue_send(&reply, "2@example.com", 100, 100).unwrap();
+    store
+        .queue_send(&reply, None, "2@example.com", 100, 100)
+        .unwrap();
     let due = store.due_sends(a, 100).unwrap();
     assert_eq!(due[0].in_reply_to.as_deref(), Some("<1@example.com>"));
 
@@ -897,7 +920,7 @@ fn a_reply_answers_the_message_id() {
         ..draft(a)
     };
     assert_eq!(
-        store.queue_send(&gone, "3@example.com", 100, 100),
+        store.queue_send(&gone, None, "3@example.com", 100, 100),
         Err(StoreError::NotFound)
     );
 }
@@ -1306,12 +1329,12 @@ fn a_taken_back_answer_keeps_its_quote() {
         quote: "Bob wrote:\n> Hi".into(),
         ..draft(a)
     };
-    let id = store.queue_send(&draft, "1@x", 0, 100).unwrap();
+    let id = store.queue_send(&draft, None, "1@x", 0, 100).unwrap();
     assert_eq!(
         store.due_sends(a, 100).unwrap()[0].text,
         "Hello\n\nBob wrote:\n> Hi"
     );
-    assert_eq!(store.undo_send(id, 50).unwrap(), Some(draft));
+    assert_eq!(taken_back(&store, id, 50), Some(saved(&draft, 50)));
 }
 
 #[test]
@@ -1342,4 +1365,81 @@ fn shows_images_from_people_and_chosen_senders() {
         store.allow_images(MessageId(999)),
         Err(StoreError::NotFound)
     );
+}
+
+#[test]
+fn a_draft_is_kept_until_it_is_sent_or_thrown_away() {
+    let store = store();
+    let a = account(&store, "a@example.com");
+    let mut draft = SavedDraft {
+        id: None,
+        account_id: Some(a),
+        to: "bob@exam".into(),
+        subject: String::new(),
+        text: "Hel".into(),
+        reply_to: None,
+        quote: String::new(),
+        saved: 100,
+    };
+    let id = store.save_draft(&draft).unwrap();
+    draft.id = Some(id);
+    draft.text = "Hello".into();
+    draft.saved = 200;
+    assert_eq!(store.save_draft(&draft).unwrap(), id);
+    let other = store
+        .save_draft(&SavedDraft {
+            id: None,
+            saved: 150,
+            ..draft.clone()
+        })
+        .unwrap();
+    assert_eq!(
+        store
+            .drafts()
+            .unwrap()
+            .iter()
+            .map(|d| d.id)
+            .collect::<Vec<_>>(),
+        [Some(id), Some(other)],
+        "last saved first"
+    );
+    assert_eq!(store.drafts().unwrap()[0], draft);
+
+    store.delete_draft(other).unwrap();
+    store.delete_draft(other).unwrap();
+    store
+        .queue_send(&self::draft(a), Some(id), "1@x", 0, 100)
+        .unwrap();
+    assert!(store.drafts().unwrap().is_empty());
+    // A save still on its way does not bring it back.
+    assert_eq!(store.save_draft(&draft), Err(StoreError::NotFound));
+    assert!(store.drafts().unwrap().is_empty());
+}
+
+#[test]
+fn a_draft_outlives_its_answered_message_but_not_its_account() {
+    let store = store();
+    let a = account(&store, "a@example.com");
+    let draft = SavedDraft {
+        id: None,
+        account_id: Some(a),
+        to: String::new(),
+        subject: "Re: Hi".into(),
+        text: "Hello".into(),
+        reply_to: Some(MessageId(999)),
+        quote: String::new(),
+        saved: 100,
+    };
+    store.save_draft(&draft).unwrap();
+    assert_eq!(store.drafts().unwrap()[0].reply_to, None);
+    let gone = SavedDraft {
+        account_id: Some(AccountId(999)),
+        ..draft.clone()
+    };
+    store.save_draft(&gone).unwrap();
+    assert_eq!(store.drafts().unwrap().len(), 2);
+    store.remove_account(a).unwrap();
+    let left = store.drafts().unwrap();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].account_id, None);
 }
