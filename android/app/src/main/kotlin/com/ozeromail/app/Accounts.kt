@@ -59,8 +59,8 @@ import uniffi.ozero_api.Mailbox
 import uniffi.ozero_api.accountColors
 
 /**
- * The mailboxes of all accounts together, then each account's folders, and below them the
- * swipes and a way to add an account. A tap on a group's name hides or shows its folders; its
+ * The drafts on the phone, if there are any, the mailboxes of all accounts together, then each
+ * account's folders, and below them the swipes and a way to add an account. A tap on a group's name hides or shows its folders; its
  * More button, or Swipes, opens the settings in the same sheet, which grows or shrinks to fit.
  */
 @Composable
@@ -69,6 +69,8 @@ fun AccountsSheet(
     accounts: List<AccountItem>,
     folders: List<FolderItem>,
     mailbox: Mailbox,
+    drafts: Int,
+    onDrafts: () -> Unit,
     swipes: Swipes,
     onMailbox: (Mailbox) -> Unit,
     onSwipes: (Swipes) -> Unit,
@@ -110,6 +112,7 @@ fun AccountsSheet(
                     )
                     else -> {
                         SheetTitle(stringResource(R.string.folders_title))
+                        if (drafts > 0) FolderRow(R.drawable.ic_compose, stringResource(R.string.folder_drafts), open = false, count = drafts, onClick = onDrafts)
                         Folders(
                             accounts,
                             folders,
@@ -281,7 +284,7 @@ private fun Group(
 }
 
 @Composable
-private fun FolderRow(@DrawableRes icon: Int, title: String, open: Boolean, onClick: () -> Unit) {
+private fun FolderRow(@DrawableRes icon: Int, title: String, open: Boolean, count: Int = 0, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     SheetRow(onClick, lead = { Glyph(icon, null, colors.primary) }) {
         Text(
@@ -293,6 +296,7 @@ private fun FolderRow(@DrawableRes icon: Int, title: String, open: Boolean, onCl
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
+        if (count > 0) Text(count.toString(), color = colors.onSurfaceVariant, style = Type.Caption)
     }
 }
 

@@ -29,6 +29,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -37,6 +38,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -52,6 +54,11 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import uniffi.ozero_api.AccountItem
 import uniffi.ozero_api.CoreException
@@ -60,7 +67,10 @@ import uniffi.ozero_api.ForwardLabels
 import uniffi.ozero_api.MessageItem
 
 /** A blank message; account 0 is none, so compose starts from the first account. */
-val NEW_DRAFT = DraftItem(0, "", "", "", null, "")
+val NEW_DRAFT = DraftItem(0, 0, "", "", "", null, "", 0)
+
+/** A pause in typing this long saves the draft, so each key does not. */
+private const val SAVE_PAUSE_MS = 1_000L
 
 /** The header words of a forwarded message, in the app's language. */
 fun forwardLabels(context: Context) = ForwardLabels(
@@ -77,9 +87,20 @@ data class Composing(val draft: DraftItem, val original: MessageItem? = null)
  * A new message, a reply or a forward, on the whole screen. The fields sit low, near the
  * keyboard; the message being answered or forwarded stays on top. [onSent] gets the outbox
  * id for undo.
+ *
+ * What is written is kept as a draft on the phone a moment after typing stops, when the app
+ * goes to the background and when the screen closes; [onKept] then says it is in the drafts.
+ * [onDiscard] gets what was thrown away, for undo.
  */
 @Composable
-fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent: (Long, Composing) -> Unit) {
+fun ComposeScreen(
+    mail: Mail,
+    composing: Composing,
+    onCancel: () -> Unit,
+    onSent: (Long, Composing) -> Unit,
+    onKept: () -> Unit,
+    onDiscard: (DraftItem) -> Unit,
+) {
     val start = composing.draft
     var to by rememberSaveable { mutableStateOf(start.to) }
     var subject by rememberSaveable { mutableStateOf(start.subject) }
@@ -94,6 +115,11 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
     var picking by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val keeper = remember { mail.keeper(start.id) }
+    // Whether anything was written here; until then a saved draft stays as it was.
+    var changed by remember { mutableStateOf(false) }
+    // Sent or thrown away: nothing more to keep.
+    var finished by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         try {
@@ -105,14 +131,46 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
     // A new message starts from the first account.
     val from = accounts.find { it.id == accountId } ?: accounts.firstOrNull()
 
+    // Account 0 is kept as none, and opens with the first account again.
+    fun current() = DraftItem(0, accountId, to, subject, text, start.replyTo, quote, 0)
+    fun keep() {
+        if (changed && !finished) keeper.save(current())
+    }
+    LaunchedEffect(keeper) {
+        snapshotFlow { current() }.drop(1).collectLatest { draft ->
+            changed = true
+            delay(SAVE_PAUSE_MS)
+            if (!finished) keeper.save(draft)
+        }
+    }
+    // The process may be killed in the background at any time.
+    // Something written here or before, which Delete throws away.
+    val hasDraft = changed || start.id != 0L
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { keep() }
+    DisposableEffect(keeper) {
+        onDispose {
+            keep()
+            // Read here, not from the first composition.
+            if (!finished && (changed || start.id != 0L) && !current().isBlank()) onKept()
+        }
+    }
+
+    fun discard() {
+        finished = true
+        keeper.discard()
+        onDiscard(current().copy(accountId = from?.id ?: accountId))
+    }
+
     fun send() {
         if (busy || from == null) return
         busy = true
         error = null
-        val draft = DraftItem(from.id, to, subject, text, start.replyTo, quote)
+        val draft = current().copy(accountId = from.id)
         scope.launch {
             try {
-                onSent(mail.send(draft), composing.copy(draft = draft))
+                val id = keeper.send(draft)
+                finished = true
+                onSent(id, composing.copy(draft = draft))
             } catch (e: CoreException) {
                 error = e.text()
             } finally {
@@ -192,6 +250,9 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
                 horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
             ) {
                 IconTile(R.drawable.ic_close, stringResource(R.string.action_close), onCancel, shape = CircleShape)
+                if (hasDraft) {
+                    IconTile(R.drawable.ic_delete, stringResource(R.string.action_delete_draft), ::discard, shape = CircleShape)
+                }
                 Box(Modifier.weight(1f)) {
                     if (from != null) Sender(from, enabled = accounts.size > 1, onClick = { picking = true })
                 }

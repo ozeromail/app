@@ -75,6 +75,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -198,6 +199,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var inboxEmpty by remember { mutableStateOf(false) }
     var unsent by remember { mutableStateOf(emptyList<UnsentItem>()) }
     var searching by rememberSaveable { mutableStateOf(false) }
+    var draftsOpen by rememberSaveable { mutableStateOf(false) }
     var addingAccount by rememberSaveable { mutableStateOf(false) }
     var accountsOpen by rememberSaveable { mutableStateOf(false) }
     var accounts by remember { mutableStateOf(emptyList<AccountItem>()) }
@@ -224,6 +226,11 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     val emptied = stringResource(R.string.inbox_emptied)
     val undo = stringResource(R.string.action_undo)
     val sending = stringResource(R.string.inbox_sending)
+    val draftSaved = stringResource(R.string.draft_saved)
+    val draftDeleted = stringResource(R.string.draft_deleted)
+
+    val drafts by mail.drafts.collectAsState()
+    LaunchedEffect(Unit) { mail.loadDrafts() }
 
     suspend fun loadList() {
         val shown = tab to mailbox
@@ -373,6 +380,12 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         onStopOrDispose { watching.cancel() }
     }
 
+    /** Shows a toast without undo, in place of any other. */
+    suspend fun note(text: String) {
+        snackbar.currentSnackbarData?.dismiss()
+        snackbar.showSnackbar(text)
+    }
+
     /**
      * Shows a toast for [undoSeconds]; true if Undo was tapped. One toast at a time. With [go],
      * it can also show that folder.
@@ -414,6 +427,40 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         scope.launch {
             if (!offerUndo(sending)) return@launch
             mail.undoSend(id)?.let { composing = message.copy(draft = it) }
+        }
+    }
+
+    /** Closed with something written: the toast says where it went. */
+    fun kept() {
+        scope.launch { note(draftSaved) }
+    }
+
+    /** Thrown away: the toast can bring it back, saved again, to go on writing. */
+    fun discarded(draft: DraftItem, original: MessageItem?) {
+        composing = null
+        scope.launch {
+            // Nothing written is not worth bringing back.
+            if (draft.isBlank()) return@launch note(draftDeleted)
+            if (!offerUndo(draftDeleted)) return@launch
+            try {
+                composing = Composing(draft.copy(id = mail.saveDraft(draft)), original)
+            } catch (e: CoreException) {
+                error = e.text()
+            }
+        }
+    }
+
+    /** A draft from the list, with the message it answers if that is still saved. */
+    fun openDraft(draft: DraftItem) {
+        scope.launch {
+            val original = draft.replyTo?.let { id ->
+                try {
+                    mail.message(id)
+                } catch (_: CoreException) {
+                    null
+                }
+            }
+            composing = Composing(draft, original)
         }
     }
 
@@ -505,13 +552,13 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         act(rows)
     }
 
-    val screen = screenOf(composing, open, addingAccount, searching)
+    val screen = screenOf(composing, open, addingAccount, searching, draftsOpen)
     // Where back leads: the same screens with the top one gone.
     val behind: Screen? = when (screen) {
         Screen.Inbox -> null
-        Screen.Search, Screen.AddAccount -> Screen.Inbox
-        is Screen.Read -> screenOf(null, null, addingAccount, searching)
-        is Screen.Write -> screenOf(null, open, addingAccount, searching)
+        Screen.Search, Screen.AddAccount, Screen.Drafts -> Screen.Inbox
+        is Screen.Read -> screenOf(null, null, addingAccount, searching, draftsOpen)
+        is Screen.Write -> screenOf(null, open, addingAccount, searching, draftsOpen)
     }
 
     fun closeSearch() {
@@ -524,6 +571,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             Screen.Inbox -> Unit
             Screen.Search -> closeSearch()
             Screen.AddAccount -> addingAccount = false
+            Screen.Drafts -> draftsOpen = false
             // Back reloads the list: the message now has a snippet.
             is Screen.Read -> {
                 open = null
@@ -562,7 +610,15 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         rememberTransition(screens, label = "screen").AnimatedContent(transitionSpec = { slide() }) { shown ->
             Box(Modifier.fillMaxSize().background(colors.background)) {
                 when (shown) {
-                    is Screen.Write -> ComposeScreen(mail, shown.composing, onCancel = ::back, onSent = ::sent)
+                    is Screen.Write -> ComposeScreen(
+                        mail,
+                        shown.composing,
+                        onCancel = ::back,
+                        onSent = ::sent,
+                        onKept = ::kept,
+                        onDiscard = { discarded(it, shown.composing.original) },
+                    )
+                    Screen.Drafts -> DraftsScreen(mail, snackbar, onOpen = ::openDraft, onBack = ::back)
                     is Screen.Read -> MessageScreen(
                         mail,
                         shown.message,
@@ -672,6 +728,11 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             accounts = accounts,
             folders = folders,
             mailbox = mailbox,
+            drafts = drafts.size,
+            onDrafts = {
+                accountsOpen = false
+                draftsOpen = true
+            },
             swipes = swipes,
             onMailbox = {
                 accountsOpen = false
@@ -748,12 +809,13 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
 }
 
 /** The screen on top: a message being written, then one being read, then the rest. */
-private fun screenOf(composing: Composing?, open: MessageItem?, addingAccount: Boolean, searching: Boolean): Screen =
+private fun screenOf(composing: Composing?, open: MessageItem?, addingAccount: Boolean, searching: Boolean, drafts: Boolean): Screen =
     composing?.let { Screen.Write(it) }
         ?: open?.let { Screen.Read(it) }
         ?: when {
             addingAccount -> Screen.AddAccount
             searching -> Screen.Search
+            drafts -> Screen.Drafts
             else -> Screen.Inbox
         }
 
@@ -762,6 +824,7 @@ private sealed class Screen(val depth: Int) {
     data object Inbox : Screen(0)
     data object Search : Screen(1)
     data object AddAccount : Screen(1)
+    data object Drafts : Screen(1)
     data class Read(val message: MessageItem) : Screen(2)
     data class Write(val composing: Composing) : Screen(3)
 }
@@ -1115,7 +1178,7 @@ private fun mailboxOwner(mailbox: Mailbox, folder: FolderItem?, accounts: List<A
 
 /** The large title at the top of the list, where it does not need the thumb. */
 @Composable
-private fun Hero(title: String, subtitle: String?, onBack: (() -> Unit)?) {
+internal fun Hero(title: String, subtitle: String?, onBack: (() -> Unit)?) {
     Column {
         // The arrow's row is there even without it, so every title sits at the same height.
         Box(Modifier.padding(top = 4.dp).height(44.dp)) { onBack?.let { BackArrow(it) } }
