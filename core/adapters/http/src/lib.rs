@@ -85,7 +85,8 @@ impl HttpsClient {
     }
 
     /// Sends a request and reads the whole response. `path` holds the query too; `headers`
-    /// are added to Host, Accept and Content-Length.
+    /// are added to Host, Accept and Content-Length. A GET the server drops before answering
+    /// is sent once more on a new connection.
     pub async fn send(
         &mut self,
         method: &str,
@@ -97,7 +98,8 @@ impl HttpsClient {
             .await
     }
 
-    /// Like `send`, for a request that is safe to send twice whatever its method.
+    /// Like `send`, for a request that is safe to send twice whatever its method: it too is
+    /// sent once more if the server drops it before answering.
     pub async fn send_repeatable(
         &mut self,
         method: &str,
@@ -117,13 +119,9 @@ impl HttpsClient {
         repeatable: bool,
     ) -> Result<Response, ProviderError> {
         let request = request(method, &self.host, path, headers, body)?;
-        let reused = match self.conn.take() {
-            Some((conn, used)) if used.elapsed() < IDLE => Some(conn),
-            _ => None,
-        };
-        let conn = match reused {
-            Some(conn) => conn,
-            None => self.connect().await?,
+        let conn = match self.conn.take() {
+            Some((conn, used)) if used.elapsed() < IDLE => conn,
+            _ => self.connect().await?,
         };
         let (response, conn) = match exchange(conn, &request).await {
             Ok(done) => done,
