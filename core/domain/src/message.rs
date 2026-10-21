@@ -51,7 +51,8 @@ pub struct Correspondents {
 impl Correspondents {
     /// Who an answer from `own` goes to: the sender, or `Reply-To` when there is one; with
     /// `all`, everyone else it went to as well. Never `own`, and each address once. An answer
-    /// to the user's own message goes to the people it was sent to.
+    /// to the user's own message goes to the people it was sent to, or back to `own` if it
+    /// went only there.
     pub fn answer(&self, own: &str, all: bool) -> Vec<String> {
         let first = if self.answer_to.is_empty() {
             std::slice::from_ref(&self.from)
@@ -70,6 +71,10 @@ impl Correspondents {
             if !address.is_empty() && !address.eq_ignore_ascii_case(own) && !known {
                 to.push(address.clone());
             }
+        }
+        let to_me = self.recipients.iter().any(|a| a.eq_ignore_ascii_case(own));
+        if to.is_empty() && mine && to_me {
+            to.push(self.from.clone());
         }
         to
     }
@@ -361,5 +366,14 @@ mod tests {
     fn answers_my_own_message_to_its_recipients() {
         let m = mail("me@x.com", &[], &["anna@x.com", "bob@x.com"]);
         assert_eq!(m.answer("me@x.com", false), ["anna@x.com", "bob@x.com"]);
+    }
+
+    #[test]
+    fn answers_a_note_to_myself_to_me() {
+        let m = mail("me@x.com", &[], &["Me@x.com"]);
+        assert_eq!(m.answer("me@x.com", true), ["me@x.com"]);
+        // Sent in Bcc only: who it went to is not known.
+        let m = mail("me@x.com", &[], &[]);
+        assert!(m.answer("me@x.com", false).is_empty());
     }
 }
