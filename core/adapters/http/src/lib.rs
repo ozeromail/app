@@ -117,6 +117,26 @@ impl HttpsClient {
         repeatable: bool,
     ) -> Result<Response, ProviderError> {
         let request = request(method, &self.host, path, headers, body)?;
+        let was_reused = self
+            .conn
+            .as_ref()
+            .is_some_and(|(_, used)| used.elapsed() < IDLE);
+        let bare = path.split('?').next().unwrap_or_default().to_owned();
+        let host = self.host.clone();
+        let tag = |e: ProviderError| match e {
+            ProviderError::Network(d) => {
+                ProviderError::Network(format!("{d} [{host} {method} {bare} reused={was_reused}]"))
+            }
+            e => e,
+        };
+        self.exchange_inner(request, repeatable).await.map_err(tag)
+    }
+
+    async fn exchange_inner(
+        &mut self,
+        request: Vec<u8>,
+        repeatable: bool,
+    ) -> Result<Response, ProviderError> {
         let reused = match self.conn.take() {
             Some((conn, used)) if used.elapsed() < IDLE => Some(conn),
             _ => None,
