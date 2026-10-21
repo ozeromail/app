@@ -3,6 +3,7 @@ package com.ozeromail.app
 import android.content.Context
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -12,8 +13,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SwipeToDismissBox
@@ -24,19 +27,29 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import uniffi.ozero_api.MessageItem
 
 /** What a swipe on a row does; the person picks one for each side. */
@@ -109,6 +122,10 @@ fun SwipeAction.appliesTo(message: MessageItem): Boolean = this != SwipeAction.D
 /**
  * A row that does [swipes] when swiped; a side whose action does not apply to [message] stays
  * still, as the whole row does unless [enabled]. [onSwipe] gets a way to bring the row back.
+ * [onPull] hears how far the row is held from its place, so its neighbours can be drawn along.
+ *
+ * The row slides off a bare strip. The action's icon waits at the edge in a pale round drop;
+ * once letting go would act, the drop fills with colour and the word slides out beside it.
  */
 @Composable
 fun SwipeRow(
@@ -116,6 +133,7 @@ fun SwipeRow(
     swipes: Swipes,
     enabled: Boolean,
     onSwipe: (SwipeAction, reset: () -> Unit) -> Unit,
+    onPull: (Float) -> Unit,
     content: @Composable () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -125,6 +143,7 @@ fun SwipeRow(
     val threshold = SwipeToDismissBoxDefaults.positionalThreshold
     val state = remember { SwipeToDismissBoxState(SwipeToDismissBoxValue.Settled, density, positionalThreshold = threshold) }
     val swiped by rememberUpdatedState(onSwipe)
+    val pulled by rememberUpdatedState(onPull)
     val current by rememberUpdatedState(swipes)
     LaunchedEffect(state.currentValue) {
         val action = when (state.currentValue) {
@@ -134,9 +153,15 @@ fun SwipeRow(
         }
         swiped(action) { scope.launch { state.reset() } }
     }
+    // Only while a finger holds the row: once let go, its neighbours settle back.
+    var held by remember { mutableStateOf(false) }
+    LaunchedEffect(state) {
+        snapshotFlow { if (held) state.offsetOrZero() else 0f }.collect { pulled(it) }
+    }
     val colors = MaterialTheme.colorScheme
     SwipeToDismissBox(
         state = state,
+        modifier = Modifier.whilePressed { held = it },
         enableDismissFromStartToEnd = enabled && swipes.right.appliesTo(message),
         enableDismissFromEndToStart = enabled && swipes.left.appliesTo(message),
         backgroundContent = {
@@ -147,18 +172,87 @@ fun SwipeRow(
                 action == SwipeAction.DELETE && !message.canTrash -> R.string.action_delete_forever
                 else -> action.label
             }
-            val (background, content) = action.colors()
+            val (fill, on) = action.colors()
+            // Whether letting go now would act: the drop fills a little slower than the icon nudges.
+            val armed = state.targetValue != SwipeToDismissBoxValue.Settled
+            val flood by animateFloatAsState(if (armed) 1f else 0f, Motion.drift(), label = "flood")
+            val arm by animateFloatAsState(if (armed) 1f else 0f, Motion.pop(), label = "arm")
+            val shown = arm.coerceIn(0f, 1f)
+            // A small swell as the drop fills, and the overshoot of the spring past it.
+            val swell = arm - shown * shown
+            val side = if (left) -1f else 1f
             Row(
-                Modifier.fillMaxSize().background(background).padding(horizontal = 24.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp, if (left) Alignment.End else Alignment.Start),
+                Modifier.fillMaxSize().background(colors.background).padding(horizontal = Gap.screen - 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp, if (left) Alignment.End else Alignment.Start),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Glyph(action.icon, null, content)
-                Text(stringResource(label), color = content, style = Type.Text, fontWeight = Weight.SemiBold)
+                val word = @Composable {
+                    Text(
+                        stringResource(label),
+                        color = fill,
+                        style = Type.Text,
+                        fontWeight = Weight.SemiBold,
+                        modifier = Modifier.graphicsLayer {
+                            alpha = shown
+                            translationX = side * (1f - shown) * 8.dp.toPx()
+                        },
+                    )
+                }
+                if (left) word()
+                // The drop: it grows in as the row uncovers it, and stays put at the edge.
+                Box(
+                    Modifier
+                        .size(36.dp)
+                        .graphicsLayer {
+                            val seen = ((abs(state.offsetOrZero()) - 14.dp.toPx()) / 36.dp.toPx()).coerceIn(0f, 1f)
+                            scaleX = seen * (1f + 0.14f * swell)
+                            scaleY = scaleX
+                        }
+                        .background(fill.copy(alpha = 0.16f + 0.84f * flood), CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Glyph(action.icon, null, lerp(fill, on, flood), size = 20.dp)
+                }
+                if (!left) word()
             }
         },
     ) {
         Box(Modifier.background(colors.background)) { content() }
+    }
+}
+
+/** How far the row is from its place; zero before it is first laid out. */
+private fun SwipeToDismissBoxState.offsetOrZero(): Float =
+    if (dismissDirection == SwipeToDismissBoxValue.Settled) 0f else requireOffset()
+
+/**
+ * The row a finger holds and how far it has gone. Its neighbours are drawn a little way after
+ * it, as through water: the next row by an eighth, the one after by a twenty-fifth.
+ */
+@Stable
+class Pull {
+    private var message by mutableLongStateOf(-1L)
+    private var row by mutableIntStateOf(-1)
+    private var offset by mutableFloatStateOf(0f)
+
+    /** The row with [id], now at [index], is held [by] from its place; zero lets it go. */
+    fun hold(id: Long, index: Int, by: Float) {
+        if (by != 0f) {
+            message = id
+            row = index
+            offset = by
+        } else if (message == id) {
+            message = -1L
+            row = -1
+            offset = 0f
+        }
+    }
+
+    fun near(index: Int): Float = when {
+        row < 0 -> 0f
+        abs(index - row) == 1 -> offset * 0.12f
+        abs(index - row) == 2 -> offset * 0.04f
+        else -> 0f
     }
 }
 

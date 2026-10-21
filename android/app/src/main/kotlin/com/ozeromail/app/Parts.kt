@@ -13,6 +13,8 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -308,6 +310,18 @@ fun <T : Any> Reveal(value: T?, modifier: Modifier = Modifier, content: @Composa
         exit = shrinkVertically(Motion.calm(Motion.NOTE)) + fadeOut(Motion.calm(Motion.SMALL)),
     ) {
         (value ?: last.value)?.let { content(it) }
+    }
+}
+
+/** Tells [onChange] when a finger comes down and when the last one lifts, taking nothing from what is below. */
+fun Modifier.whilePressed(onChange: (Boolean) -> Unit): Modifier = pointerInput(Unit) {
+    awaitEachGesture {
+        awaitFirstDown(requireUnconsumed = false)
+        onChange(true)
+        do {
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+        } while (event.changes.any { it.pressed })
+        onChange(false)
     }
 }
 
