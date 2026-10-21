@@ -10,13 +10,14 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use ozero_app::ops::push_ops;
 use ozero_app::send::{SentCopy, push_sends};
 use ozero_app::sync::{
-    SyncError, download_body, load_older, prefetch_bodies, sync_folders, sync_mail, wait_for_mail,
+    SyncError, download_body, load_older, prefetch_bodies, search_server, sync_folders, sync_mail,
+    wait_for_mail,
 };
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Body, Category, Changes, Checkpoint, Draft,
     DraftId, Folder, FolderId, FolderRole, ListQuery, ListScope, MailProvider, MessageId,
-    MessageRow, NewAccount, NewFolder, Older, OpId, OutboxId, ProviderError, SavedDraft, Sender,
-    Server, Store, StoreError, html, parse_recipients, saves_sent_itself,
+    MessageRow, NewAccount, NewFolder, Older, OpId, OutboxId, ProviderError, RawMessage,
+    SavedDraft, Sender, Server, Store, StoreError, html, parse_recipients, saves_sent_itself,
 };
 use ozero_gmail::{GmailSession, oauth};
 use ozero_imap::ImapSession;
@@ -32,6 +33,8 @@ uniffi::setup_scaffolding!();
 const SYNC_LIMIT: u32 = 200;
 /// How many older messages of a folder a list scrolled to its end brings in at a time.
 const OLDER_PAGE: u32 = 100;
+/// How many of the newest matches in each folder a server search brings in.
+const SERVER_HITS: u32 = 50;
 /// Seconds in a day, for how long an account keeps its mail.
 const DAY: i64 = 86_400;
 /// How many of the newest inbox messages `prefetch` downloads whole.
@@ -274,7 +277,8 @@ impl Core {
         Ok(self.store.inbox_is_empty()?)
     }
 
-    /// Messages matching every word of `text`, newest first.
+    /// Messages matching every word of `text`, newest first, with what `search_server`
+    /// found for the same words.
     pub fn search(&self, text: String, limit: u32) -> Result<Vec<MessageItem>, CoreError> {
         let rows = self.store.search(&text, limit)?;
         self.items(rows)
@@ -642,6 +646,35 @@ impl Core {
             remote.close().await;
         }
         Ok(more)
+    }
+
+    /// Searches the account's mail on its server for every word of `text`, mail older than it
+    /// keeps on the device included; `search` then shows what it found. `secret` as for
+    /// `push_actions`.
+    pub async fn search_server(
+        &self,
+        account: i64,
+        secret: String,
+        text: String,
+    ) -> Result<(), CoreError> {
+        let Some(account) = self.find(AccountId(account))? else {
+            return Ok(());
+        };
+        let mut slot = None;
+        let remote = self.remote(&mut slot, &account, &secret).await?;
+        let found = search_server(
+            &self.store,
+            remote,
+            &self.parser,
+            account.id,
+            &text,
+            SERVER_HITS,
+        )
+        .await;
+        if let Some(remote) = slot {
+            remote.close().await;
+        }
+        self.refused(&account, found)
     }
 
     /// Keeps the account's mail of the last `days` days on the device, or all of it with 0:
@@ -1170,6 +1203,19 @@ impl MailProvider for Remote {
         match self {
             Self::Imap(p) => p.older(folder, validity, known, oldest, limit).await,
             Self::Gmail(p) => p.older(folder, validity, known, oldest, limit).await,
+        }
+    }
+
+    async fn search(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        text: &str,
+        limit: u32,
+    ) -> Result<Vec<RawMessage>, ProviderError> {
+        match self {
+            Self::Imap(p) => p.search(folder, validity, text, limit).await,
+            Self::Gmail(p) => p.search(folder, validity, text, limit).await,
         }
     }
 

@@ -11,7 +11,7 @@ use bounded_static::IntoBoundedStatic;
 use imap_codec::encode::{Encoder, Fragment};
 use imap_codec::fragmentizer::Fragmentizer;
 use imap_codec::imap_types::command::{Command, CommandBody};
-use imap_codec::imap_types::core::{AString, LiteralMode, Vec1};
+use imap_codec::imap_types::core::{AString, Charset, LiteralMode, Vec1};
 use imap_codec::imap_types::fetch::{MessageDataItem, MessageDataItemName, Section};
 use imap_codec::imap_types::flag::{Flag, FlagFetch, FlagNameAttribute, StoreResponse, StoreType};
 use imap_codec::imap_types::mailbox::Mailbox;
@@ -423,6 +423,27 @@ impl ImapSession {
         Ok(messages)
     }
 
+    /// The open folder's messages that match all `keys`: UIDs, or sequence numbers without `uid`.
+    async fn search_for(
+        &mut self,
+        charset: Option<Charset<'_>>,
+        keys: Vec1<SearchKey<'_>>,
+        uid: bool,
+    ) -> Result<Vec<NonZeroU32>, ProviderError> {
+        let search = CommandBody::search(charset, keys, uid);
+        Ok(self
+            .run(search)
+            .await?
+            .data
+            .into_iter()
+            .filter_map(|d| match d {
+                Data::Search(found, ..) => Some(found),
+                _ => None,
+            })
+            .flatten()
+            .collect())
+    }
+
     /// The sequence number of the open folder's message with `uid`, if it is still there.
     async fn number(&mut self, uid: NonZeroU32) -> Result<Option<u32>, ProviderError> {
         let items = vec![MessageDataItemName::Uid];
@@ -582,16 +603,10 @@ impl MailProvider for ImapSession {
                 None => {
                     let from = SequenceSet::try_from(lowest.get()..=i32::MAX as u32)
                         .map_err(|_| protocol("bad UID set"))?;
-                    let search = CommandBody::search(None, Vec1::from(SearchKey::Uid(from)), false);
-                    self.run(search)
+                    let keys = Vec1::from(SearchKey::Uid(from));
+                    self.search_for(None, keys, false)
                         .await?
-                        .data
                         .into_iter()
-                        .filter_map(|d| match d {
-                            Data::Search(found, ..) => Some(found),
-                            _ => None,
-                        })
-                        .flatten()
                         .min()
                         .map_or(opened.exists, |first| first.get() - 1)
                 }
@@ -610,6 +625,42 @@ impl MailProvider for ImapSession {
             new,
             more: below > limit,
         })
+    }
+
+    async fn search(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        text: &str,
+        limit: u32,
+    ) -> Result<Vec<RawMessage>, ProviderError> {
+        let words = text
+            .split_whitespace()
+            .map(|w| AString::try_from(w).map(SearchKey::Text))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| protocol("bad search"))?;
+        let Ok(words) = Vec1::try_from(words) else {
+            return Ok(vec![]);
+        };
+        // 0: a folder never synced, so any validity will do.
+        let opened = self.open(folder, false).await?.validity;
+        if validity != 0 && opened != validity {
+            return Err(ProviderError::Gone);
+        }
+        // US-ASCII is every server's default; other text needs the charset named.
+        let charset = (!text.is_ascii())
+            .then(|| Charset::try_from("UTF-8"))
+            .transpose()
+            .map_err(|_| protocol("bad charset"))?;
+        let mut uids = self.search_for(charset, words, true).await?;
+        uids.sort_unstable();
+        uids.dedup();
+        let newest = &uids[uids.len().saturating_sub(limit as usize)..];
+        if newest.is_empty() {
+            return Ok(vec![]);
+        }
+        let set = SequenceSet::try_from(newest).map_err(|_| protocol("bad UID set"))?;
+        self.headers(set, true).await
     }
 
     async fn body(

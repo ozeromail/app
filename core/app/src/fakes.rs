@@ -37,6 +37,8 @@ pub struct Server {
     pub waited: Vec<(String, Checkpoint, Duration)>,
     /// Each `older` call: the folder, validity, known ids, oldest date and limit.
     pub paged: Vec<(String, u32, Vec<String>, i64, u32)>,
+    /// Each `search` call: the folder, validity, text and limit. Folders named "Gone" and "Refused" fail.
+    pub searched: Vec<(String, u32, String, u32)>,
 }
 
 /// A message as `Server` returns it.
@@ -89,6 +91,23 @@ impl MailProvider for Server {
             new: vec![raw("3", 50), raw("4", 60)],
             more: true,
         }))
+    }
+
+    /// One message, named after the folder.
+    fn search(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        text: &str,
+        limit: u32,
+    ) -> impl Future<Output = Result<Vec<RawMessage>, ProviderError>> + Send {
+        self.searched
+            .push((folder.into(), validity, text.into(), limit));
+        ready(match folder {
+            "Gone" => Err(ProviderError::Gone),
+            "Refused" => Err(ProviderError::Rejected("BADCHARSET".into())),
+            _ => Ok(vec![raw(folder, 10)]),
+        })
     }
 
     fn body(
@@ -245,6 +264,9 @@ impl MessageParser for Parser {
     }
 }
 
+/// One `save_found`: the account, the words and what each folder found.
+pub type Found = (AccountId, String, Vec<(FolderId, Vec<NewMessage>)>);
+
 #[derive(Default)]
 pub struct Memory {
     /// What `folders` returns.
@@ -256,6 +278,8 @@ pub struct Memory {
     pub pruned: Mutex<Vec<(AccountId, i64)>>,
     /// Folders `set_older_done` marked.
     pub older_done: Mutex<Vec<(FolderId, bool)>>,
+    /// Each `save_found`.
+    pub found: Mutex<Vec<Found>>,
     pub changes: Mutex<Vec<(FolderId, Changes<NewMessage>)>>,
     pub bodies: Mutex<Vec<(MessageId, Body)>>,
     /// What `without_body` returns.
@@ -384,6 +408,17 @@ impl Store for Memory {
 
     fn search(&self, _: &str, _: u32) -> Result<Vec<MessageRow>, StoreError> {
         Ok(vec![])
+    }
+
+    fn save_found(
+        &self,
+        account: AccountId,
+        text: &str,
+        found: &[(FolderId, Vec<NewMessage>)],
+    ) -> Result<(), StoreError> {
+        let saved = (account, text.into(), found.to_vec());
+        self.found.lock().unwrap().push(saved);
+        Ok(())
     }
 
     fn location(&self, _: MessageId) -> Result<MessageLocation, StoreError> {

@@ -88,6 +88,46 @@ pub async fn load_older(
     Ok(more)
 }
 
+/// Asks the server for the newest `limit` messages of each of the account's folders that
+/// have every word of `text`, and saves them as what its search found. Trash, spam and
+/// drafts are left out, as local search leaves them; so is a folder reset since its sync.
+pub async fn search_server(
+    store: &dyn Store,
+    provider: &mut impl MailProvider,
+    parser: &dyn MessageParser,
+    account: AccountId,
+    text: &str,
+    limit: u32,
+) -> Result<(), SyncError> {
+    let mut found = vec![];
+    for folder in store.folders(account)? {
+        if !matches!(
+            folder.role,
+            FolderRole::Inbox | FolderRole::Archive | FolderRole::Sent | FolderRole::Custom
+        ) {
+            continue;
+        }
+        let (checkpoint, _) = store.checkpoint(folder.id)?;
+        let messages = match provider
+            .search(&folder.remote_id, checkpoint.validity, text, limit)
+            .await
+        {
+            Ok(messages) => messages,
+            // One folder's refusal, such as a charset it lacks, leaves the others' results.
+            Err(ProviderError::Gone | ProviderError::Protocol(_) | ProviderError::Rejected(_)) => {
+                continue;
+            }
+            Err(e) => return Err(e.into()),
+        };
+        found.push((
+            folder.id,
+            messages.into_iter().map(|m| parser.parse(m)).collect(),
+        ));
+    }
+    store.save_found(account, text, &found)?;
+    Ok(())
+}
+
 /// Waits until the account's inbox may have changed since its last sync, at most `wait`:
 /// true if it may have.
 pub async fn wait_for_mail(

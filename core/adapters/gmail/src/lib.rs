@@ -137,12 +137,23 @@ impl GmailSession {
         number(&profile["historyId"]).ok_or_else(|| protocol("no history id"))
     }
 
-    /// The newest `limit` messages with `label`, oldest first.
-    async fn newest(&mut self, label: &str, limit: u32) -> Result<Vec<RawMessage>, ProviderError> {
+    /// The newest `limit` messages in `folder`, oldest first.
+    async fn newest(&mut self, folder: &str, limit: u32) -> Result<Vec<RawMessage>, ProviderError> {
+        self.newest_matching(folder, "", limit).await
+    }
+
+    /// The newest `limit` messages in `folder` that match the Gmail search `query`, oldest
+    /// first.
+    async fn newest_matching(
+        &mut self,
+        folder: &str,
+        query: &str,
+        limit: u32,
+    ) -> Result<Vec<RawMessage>, ProviderError> {
         let list = self
             .get(&format!(
                 "/messages?{}&maxResults={}&fields=messages/id",
-                listing(label, ""),
+                listing(folder, query),
                 limit.min(MAX_LIST)
             ))
             .await?;
@@ -414,6 +425,26 @@ impl MailProvider for GmailSession {
             .collect();
         new.sort_by_key(|m| m.received);
         Ok(Older { new, more })
+    }
+
+    async fn search(
+        &mut self,
+        folder: &str,
+        _validity: u32,
+        text: &str,
+        limit: u32,
+    ) -> Result<Vec<RawMessage>, ProviderError> {
+        // Gmail search syntax in the text stays plain words.
+        let words: Vec<String> = text
+            .split_whitespace()
+            .map(|w| w.replace('"', ""))
+            .filter(|w| !w.is_empty())
+            .map(|w| format!("\"{w}\""))
+            .collect();
+        if words.is_empty() {
+            return Ok(vec![]);
+        }
+        self.newest_matching(folder, &words.join(" "), limit).await
     }
 
     async fn body(

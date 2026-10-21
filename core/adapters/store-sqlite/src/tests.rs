@@ -1169,6 +1169,41 @@ fn a_conversation_shows_the_users_replies() {
 }
 
 #[test]
+fn keeps_what_a_server_search_found_apart_until_the_next_one() {
+    let store = store();
+    let a = account(&store, "a@example.com");
+    let inbox = inbox(&store, a);
+    store.save_messages(inbox, &[message(5, 50)]).unwrap();
+    // The server matched words in bodies the device does not have.
+    let found = vec![(inbox, vec![message(1, 10), message(5, 50)])];
+    store.save_found(a, "Quarterly  Report", &found).unwrap();
+    let ids = |rows: Vec<MessageRow>| -> Vec<i64> { rows.iter().map(|m| m.date).collect() };
+    assert_eq!(ids(store.search("quarterly report", 10).unwrap()), [50, 10]);
+    assert!(store.search("quarterly", 10).unwrap().is_empty());
+    // Lists, syncs and paging see only the folder's own mail.
+    assert_eq!(ids(list(&store, ListScope::Folder(inbox), 10, None)), [50]);
+    assert_eq!(store.checkpoint(inbox).unwrap().1, ["5"]);
+    assert_eq!(store.oldest(inbox).unwrap(), Some(50));
+    // The keep limit is for synced mail; search finds older mail on purpose.
+    store.prune(a, 20).unwrap();
+    assert_eq!(ids(store.search("quarterly report", 10).unwrap()), [50, 10]);
+
+    // The next search lets it go; loading older mail makes it the folder's own.
+    store.save_found(a, "other", &[]).unwrap();
+    assert!(store.search("quarterly report", 10).unwrap().is_empty());
+    store
+        .save_found(a, "report", &[(inbox, vec![message(1, 10)])])
+        .unwrap();
+    store.save_messages(inbox, &[message(1, 10)]).unwrap();
+    assert_eq!(
+        ids(list(&store, ListScope::Folder(inbox), 10, None)),
+        [50, 10]
+    );
+    store.save_found(a, "other", &[]).unwrap();
+    assert_eq!(store.checkpoint(inbox).unwrap().1.len(), 2);
+}
+
+#[test]
 fn search_finds_words_in_subject_sender_and_body() {
     let store = store();
     let account = account(&store, "a@example.com");

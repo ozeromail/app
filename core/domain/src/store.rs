@@ -61,7 +61,17 @@ pub trait Store: Send + Sync {
     /// Messages, newest first, whose subject, sender or body has every word of `text`, each
     /// as a word or the start of one, case and accents aside. Trash, junk and what is being
     /// archived are left out; empty `text` finds nothing.
+    /// Also the messages the last server search of their account found for the same words.
     fn search(&self, text: &str, limit: u32) -> Result<Vec<MessageRow>, StoreError>;
+    /// Saves what a server search of the account's folders found for `text`, in place of what
+    /// its last one found. A message not saved yet is kept apart from its folder's list, and
+    /// goes with the next search unless a queued action or message needs it.
+    fn save_found(
+        &self,
+        account: AccountId,
+        text: &str,
+        found: &[(FolderId, Vec<NewMessage>)],
+    ) -> Result<(), StoreError>;
     /// Unread People mail in an inbox saved since the last call and dated after `since`
     /// (seconds), newest first, for a notification. Everything saved stops being new.
     fn take_fresh(&self, since: i64) -> Result<Vec<MessageRow>, StoreError>;
