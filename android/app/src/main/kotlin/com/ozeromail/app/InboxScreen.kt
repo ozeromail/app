@@ -124,6 +124,7 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -300,6 +301,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             syncAgain -= it
             return sync(it)
         }
+        // The pulled drop lands before the gap closes, however quick the sync.
+        if (pulled) delay(started + PULLED_MS - SystemClock.elapsedRealtime())
         pulled = false
         return synced
     }
@@ -921,7 +924,6 @@ private fun InboxList(
                                     drawIn = hadMail && inbox,
                                     grey = !inbox,
                                     waiting = waiting,
-                                    rippling = refreshing,
                                     pulled = { if (refreshing) 0f else pull.distanceFraction },
                                     drops = drops,
                                 )
@@ -963,6 +965,7 @@ private fun InboxList(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(shownTitle, style = Type.Row, fontWeight = Weight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                onBack?.let { BackArrow(it, Modifier.align(Alignment.CenterStart)) }
             }
         }
         Column(Modifier.align(Alignment.BottomCenter)) {
@@ -1490,3 +1493,6 @@ private fun thumbSpring(velocity: Float): SpringSpec<Float> = if (abs(velocity) 
 
 /** Tabs a second past which a released thumb was flung. */
 private const val FLING = 2f
+
+/** The least a pulled refresh lasts: the drop's fall and its first rings. */
+private const val PULLED_MS = 1100L

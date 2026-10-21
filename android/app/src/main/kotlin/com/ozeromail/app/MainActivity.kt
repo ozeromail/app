@@ -1,10 +1,8 @@
 package com.ozeromail.app
 
 import android.content.Intent
-import android.graphics.Color
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.annotation.StringRes
@@ -16,7 +14,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -31,20 +28,14 @@ import uniffi.ozero_api.CoreException
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         val mail = (application as OzeroApp).mail
         // Only a fresh launch: a recreated activity keeps the intent it was first started with.
         if (savedInstanceState == null) googleRedirect(intent)
         setContent {
             // The activity outlives a change of the system theme, so the bars' icons follow it here.
             val dark = isSystemInDarkTheme()
-            DisposableEffect(dark) {
-                enableEdgeToEdge(
-                    statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) { dark },
-                    // The system's own scrims, for three-button navigation.
-                    navigationBarStyle = SystemBarStyle.auto(LIGHT_SCRIM, DARK_SCRIM) { dark },
-                )
-                onDispose {}
-            }
+            LaunchedEffect(dark) { enableEdgeToEdge() }
             OzeroTheme {
                 Surface(Modifier.fillMaxSize()) {
                     App(mail)
@@ -64,9 +55,6 @@ class MainActivity : ComponentActivity() {
         if (uri.scheme == packageName) (application as OzeroApp).mail.googleRedirects.trySend(uri.toString())
     }
 }
-
-private val LIGHT_SCRIM = Color.argb(0xe6, 0xFF, 0xFF, 0xFF)
-private val DARK_SCRIM = Color.argb(0x80, 0x1b, 0x1b, 0x1b)
 
 private sealed interface Start {
     data object Loading : Start
