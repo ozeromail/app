@@ -30,7 +30,7 @@ pub async fn push_ops(
         let ids: Vec<_> = ops.iter().map(|o| o.location.remote_id.clone()).collect();
         let sent = match (action, to) {
             (Action::Seen(seen), _) => provider.set_seen(&folder, validity, &ids, seen).await,
-            (Action::Archive | Action::Trash, Some(to)) => {
+            (Action::Archive | Action::Trash | Action::Inbox, Some(to)) => {
                 provider.move_to(&folder, validity, &ids, &to).await
             }
             (Action::Delete, _) => provider.delete(&folder, validity, &ids).await,
@@ -39,7 +39,7 @@ pub async fn push_ops(
                     .empty(&folder, validity, &store.others(&ops)?)
                     .await
             }
-            (Action::Archive | Action::Trash, None) => {
+            (Action::Archive | Action::Trash | Action::Inbox, None) => {
                 Err(ProviderError::Protocol("no folder to move to".into()))
             }
         };

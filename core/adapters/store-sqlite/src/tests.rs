@@ -655,6 +655,37 @@ fn archiving_hides_the_message_until_undo_or_the_server_has_it() {
 }
 
 #[test]
+fn archived_mail_goes_back_to_the_inbox() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    archive_folder(&store, account);
+    let archive = store
+        .folders(account)
+        .unwrap()
+        .into_iter()
+        .find(|f| f.role == FolderRole::Archive)
+        .unwrap()
+        .id;
+    store.save_messages(archive, &[message(1, 100)]).unwrap();
+    let id = list(&store, ListScope::Folder(archive), 10, None)[0].id;
+
+    store.queue(id, Action::Inbox, 0).unwrap();
+    assert!(list(&store, ListScope::Folder(archive), 10, None).is_empty());
+    let due = store.due(account, 0).unwrap();
+    assert_eq!(due[0].to.as_deref(), Some("INBOX"));
+    store.finish(&due).unwrap();
+    assert_eq!(store.location(id).unwrap_err(), StoreError::NotFound);
+
+    let inbox = inbox(&store, account);
+    store.save_messages(inbox, &[message(2, 200)]).unwrap();
+    let id = list(&store, ListScope::Folder(inbox), 10, None)[0].id;
+    assert_eq!(
+        store.queue(id, Action::Inbox, 0).unwrap_err(),
+        StoreError::NotAllowed
+    );
+}
+
+#[test]
 fn trash_moves_the_message_like_archive() {
     let store = store();
     let account = account(&store, "a@example.com");

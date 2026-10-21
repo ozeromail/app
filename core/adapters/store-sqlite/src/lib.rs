@@ -704,7 +704,11 @@ impl Store for SqliteStore {
             // only the message itself.
             let changes = match action {
                 Action::Seen(seen) => seen && flags & SEEN == 0,
-                Action::Archive | Action::Trash | Action::Delete | Action::Empty => true,
+                Action::Archive
+                | Action::Trash
+                | Action::Inbox
+                | Action::Delete
+                | Action::Empty => true,
             };
             if id == message.0 || changes {
                 ops.push(queue_one(&tx, MessageId(id), action, not_before)?);
@@ -1066,7 +1070,11 @@ impl Store for SqliteStore {
                     .map_err(storage)?;
                 if let (
                     Some(message),
-                    Action::Archive | Action::Trash | Action::Delete | Action::Empty,
+                    Action::Archive
+                    | Action::Trash
+                    | Action::Inbox
+                    | Action::Delete
+                    | Action::Empty,
                 ) = (gone, op.action)
                 {
                     drop_message.execute([message]).map_err(storage)?;
@@ -1121,6 +1129,7 @@ fn queue_one(
         // Undone by dropping the op, which shows the message again.
         Action::Archive => (0, Some(role_folder(tx, message, FolderRole::Archive)?)),
         Action::Trash => (0, Some(role_folder(tx, message, FolderRole::Trash)?)),
+        Action::Inbox => (0, Some(role_folder(tx, message, FolderRole::Inbox)?)),
         Action::Delete | Action::Empty => (0, None),
     };
     // Kept even when it undoes itself: a push may be sending the older value right now.
@@ -1278,10 +1287,10 @@ fn role_folder(
     message: MessageId,
     role: FolderRole,
 ) -> Result<i64, StoreError> {
-    let missing = if role == FolderRole::Trash {
-        StoreError::NoTrash
-    } else {
-        StoreError::NoArchive
+    let missing = match role {
+        FolderRole::Trash => StoreError::NoTrash,
+        FolderRole::Archive => StoreError::NoArchive,
+        _ => StoreError::NotFound,
     };
     tx.prepare_cached(
         "SELECT a.id FROM message m JOIN folder f ON f.id = m.folder_id
@@ -1323,7 +1332,7 @@ fn take_back(tx: &Transaction<'_>, sql: &str, op: OpId, arg: i64) -> Result<bool
     match kind.with(undo) {
         Action::Seen(seen) => set_seen(tx, message, seen)?,
         // Without its op the message shows in its folder again.
-        Action::Archive | Action::Trash | Action::Delete | Action::Empty => {}
+        Action::Archive | Action::Trash | Action::Inbox | Action::Delete | Action::Empty => {}
     }
     Ok(true)
 }
@@ -1374,7 +1383,7 @@ const SAVE_MESSAGE: &str = concat!(
     ")"
 );
 
-/// Lists leave out a message while its move to the archive or trash is held.
+/// Lists leave out a message while its move to another folder is held.
 macro_rules! not_moving {
     () => {
         not_moving!("m")
@@ -1383,7 +1392,7 @@ macro_rules! not_moving {
         concat!(
             "NOT EXISTS (SELECT 1 FROM op WHERE op.message_id = ",
             $m,
-            ".id AND op.kind IN ('archive', 'trash', 'delete', 'empty'))"
+            ".id AND op.kind IN ('archive', 'trash', 'inbox', 'delete', 'empty'))"
         )
     };
 }
@@ -1783,6 +1792,7 @@ enum StoredAction {
     Seen,
     Archive,
     Trash,
+    Inbox,
     Delete,
     Empty,
 }
@@ -1793,6 +1803,7 @@ fn stored(action: Action) -> (&'static str, i64) {
         Action::Seen(seen) => ("seen", i64::from(seen)),
         Action::Archive => ("archive", 1),
         Action::Trash => ("trash", 1),
+        Action::Inbox => ("inbox", 1),
         Action::Delete => ("delete", 1),
         Action::Empty => ("empty", 1),
     }
@@ -1804,6 +1815,7 @@ impl StoredAction {
             Self::Seen => Action::Seen(value != 0),
             Self::Archive => Action::Archive,
             Self::Trash => Action::Trash,
+            Self::Inbox => Action::Inbox,
             Self::Delete => Action::Delete,
             Self::Empty => Action::Empty,
         }
@@ -1816,6 +1828,7 @@ impl FromSql for StoredAction {
             "seen" => Ok(Self::Seen),
             "archive" => Ok(Self::Archive),
             "trash" => Ok(Self::Trash),
+            "inbox" => Ok(Self::Inbox),
             "delete" => Ok(Self::Delete),
             "empty" => Ok(Self::Empty),
             _ => Err(FromSqlError::InvalidType),
