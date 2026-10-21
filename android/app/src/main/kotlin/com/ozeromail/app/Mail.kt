@@ -380,12 +380,17 @@ class Mail(private val context: Context) {
             launch {
                 val password = io { vault.password(account.email) } ?: return@launch
                 var pause = WATCH_PAUSE_MS
+                var failed = false
                 while (true) {
+                    // After a failed wait a sync comes first, until one goes through: mail may
+                    // have come meanwhile, and the error on screen goes.
+                    if (failed) failed = !onMail()
                     val started = SystemClock.elapsedRealtime()
                     val fine = try {
                         !io { core.waitForMail(account.id, password) } || onMail()
                     } catch (e: CoreException) {
                         Log.w("Ozero", "wait for mail failed", e)
+                        failed = true
                         false
                     }
                     // A failure, or a server that keeps waking at once, waits longer each time.
