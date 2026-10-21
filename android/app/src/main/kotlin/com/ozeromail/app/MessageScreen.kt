@@ -74,13 +74,14 @@ import uniffi.ozero_api.RemoteImage
  * A conversation, oldest first, on one page. The message opened from the list is open; the
  * others sit closed as a line each, unread ones in bold, and a tap opens or closes any of them.
  * A message on its own fills the screen, so a wide newsletter can be pinched. Reply, Reply
- * all and Done sit at the bottom, in reach of the thumb.
+ * all, Forward and Done sit at the bottom, in reach of the thumb.
  */
 @Composable
 fun MessageScreen(
     mail: Mail,
     message: MessageItem,
     onReply: (MessageItem, all: Boolean) -> Unit,
+    onForward: (MessageItem) -> Unit,
     onDelete: () -> Unit,
     onUnread: () -> Unit,
     onDone: (() -> Unit)?,
@@ -157,6 +158,14 @@ fun MessageScreen(
                         R.drawable.ic_reply_all,
                         stringResource(R.string.message_reply_all),
                         { onReply(answer, true) },
+                        shape = CircleShape,
+                        size = 46.dp,
+                    )
+                    // The newest message, the user's own too.
+                    IconTile(
+                        R.drawable.ic_forward,
+                        stringResource(R.string.message_forward),
+                        { onForward(thread.lastOrNull() ?: message) },
                         shape = CircleShape,
                         size = 46.dp,
                     )

@@ -155,6 +155,30 @@ fn syncs_an_imap_inbox_into_the_list() {
         "Hello 2"
     );
 
+    // A forward carries the saved text under its header, to no one yet.
+    let labels = ForwardLabels {
+        title: "Forwarded".into(),
+        from: "From:".into(),
+        date: "Date:".into(),
+        subject: "Subject:".into(),
+    };
+    let forward = runtime
+        .block_on(core.forward(inbox[1].clone(), labels, "today".into(), "wrong".into()))
+        .unwrap();
+    assert_eq!(forward.subject, "Fwd: Message 2");
+    assert!(forward.to.is_empty() && forward.reply_to.is_none());
+    assert!(
+        forward.quote.starts_with("Forwarded\nFrom: "),
+        "{}",
+        forward.quote
+    );
+    assert!(
+        forward
+            .quote
+            .contains("\nDate: today\nSubject: Message 2\n")
+    );
+    assert!(forward.quote.ends_with("\n\nHello 2"), "{}", forward.quote);
+
     // Read on the device at once, on the server after the push; then unread again.
     let first = inbox[2].id;
     for seen in [true, false] {

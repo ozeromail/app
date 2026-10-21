@@ -144,6 +144,7 @@ import uniffi.ozero_api.AccountItem
 import uniffi.ozero_api.AccountMark
 import uniffi.ozero_api.Category
 import uniffi.ozero_api.CoreException
+import uniffi.ozero_api.DraftItem
 import uniffi.ozero_api.FolderItem
 import uniffi.ozero_api.FolderRole
 import uniffi.ozero_api.InboxTab
@@ -190,8 +191,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var error by remember { mutableStateOf<Int?>(null) }
     var open by remember { mutableStateOf<MessageItem?>(null) }
     var composing by remember { mutableStateOf<Composing?>(null) }
-    // One answer at a time: a second tap would replace the one being written.
-    var replying by remember { mutableStateOf(false) }
+    // One answer or forward at a time: a second tap would replace the one being written.
+    var writing by remember { mutableStateOf(false) }
     var tab by rememberSaveable { mutableStateOf(Category.PEOPLE) }
     var tabs by remember { mutableStateOf(emptyList<InboxTab>()) }
     var inboxEmpty by remember { mutableStateOf(false) }
@@ -386,6 +387,26 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         return result == SnackbarResult.ActionPerformed
     }
 
+    /**
+     * Opens compose with the draft [make] gives for [original], once at a time; not if the
+     * user has left the message meanwhile, as a forward may wait for its text to download.
+     */
+    fun write(original: MessageItem, make: suspend () -> DraftItem) {
+        if (writing) return
+        writing = true
+        val reading = open?.id
+        scope.launch {
+            try {
+                val draft = make()
+                if (open?.id == reading) composing = Composing(draft, original)
+            } catch (e: CoreException) {
+                error = e.text()
+            } finally {
+                writing = false
+            }
+        }
+    }
+
     /** Sent: back to the list, where the toast can bring the message back to edit it. */
     fun sent(id: Long, message: Composing) {
         composing = null
@@ -545,19 +566,9 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                     is Screen.Read -> MessageScreen(
                         mail,
                         shown.message,
-                        onReply = { to, all ->
-                            if (!replying) {
-                                replying = true
-                                scope.launch {
-                                    try {
-                                        composing = Composing(mail.reply(to, all), to)
-                                    } catch (e: CoreException) {
-                                        error = e.text()
-                                    } finally {
-                                        replying = false
-                                    }
-                                }
-                            }
+                        onReply = { to, all -> write(to) { mail.reply(to, all) } },
+                        onForward = { original ->
+                            write(original) { mail.forward(original, forwardLabels(context), longDate(context, original.date)) }
                         },
                         onDelete = {
                             open = null

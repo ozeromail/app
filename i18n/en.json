@@ -117,5 +117,10 @@
   "select_hint": "Tap to add or remove",
   "action_select_all": "Select all",
   "action_all_from": "All from %1$s",
-  "action_done_count": "Done %1$d"
+  "action_done_count": "Done %1$d",
+  "message_forward": "Forward",
+  "compose_forward_title": "---------- Forwarded message ----------",
+  "compose_forward_from": "From:",
+  "compose_forward_date": "Date:",
+  "compose_forward_subject": "Subject:"
 }

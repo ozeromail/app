@@ -1,5 +1,6 @@
 package com.ozeromail.app
 
+import android.content.Context
 import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -55,17 +56,27 @@ import kotlinx.coroutines.launch
 import uniffi.ozero_api.AccountItem
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.DraftItem
+import uniffi.ozero_api.ForwardLabels
 import uniffi.ozero_api.MessageItem
 
 /** A blank message; account 0 is none, so compose starts from the first account. */
 val NEW_DRAFT = DraftItem(0, "", "", "", null, "")
 
-/** A message being written, and the one it answers. */
+/** The header words of a forwarded message, in the app's language. */
+fun forwardLabels(context: Context) = ForwardLabels(
+    context.getString(R.string.compose_forward_title),
+    context.getString(R.string.compose_forward_from),
+    context.getString(R.string.compose_forward_date),
+    context.getString(R.string.compose_forward_subject),
+)
+
+/** A message being written, and the one it answers or forwards. */
 data class Composing(val draft: DraftItem, val original: MessageItem? = null)
 
 /**
- * A new message or a reply, on the whole screen. The fields sit low, near the keyboard;
- * the message being answered stays on top. [onSent] gets the outbox id for undo.
+ * A new message, a reply or a forward, on the whole screen. The fields sit low, near the
+ * keyboard; the message being answered or forwarded stays on top. [onSent] gets the outbox
+ * id for undo.
  */
 @Composable
 fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent: (Long, Composing) -> Unit) {
@@ -150,8 +161,10 @@ fun ComposeScreen(mail: Mail, composing: Composing, onCancel: () -> Unit, onSent
                     // Room for a few lines from the start, less while the keyboard takes the screen.
                     modifier = Modifier.heightIn(min = if (keyboard) 72.dp else 168.dp, max = if (keyboard) 168.dp else 320.dp),
                 )
+                // A forward is its quote, so it stays.
+                val forwarding = original != null && start.replyTo == null
                 if (quote.isNotEmpty()) {
-                    Quote(quote, onRemove = { quote = "" })
+                    Quote(quote, onRemove = { quote = "" }.takeUnless { forwarding })
                 } else if (original != null && quotable) {
                     Pill(stringResource(R.string.compose_add_quote), height = 32.dp, onClick = {
                         val header = context.getString(R.string.compose_quote_header, longDate(context, original.date), original.sender)
@@ -255,9 +268,9 @@ private fun Original(mail: Mail, message: MessageItem, modifier: Modifier) {
     }
 }
 
-/** The quoted original under the text, with a way to take it out. */
+/** The quoted original under the text, with a way to take it out if [onRemove] is set. */
 @Composable
-private fun Quote(quote: String, onRemove: () -> Unit) {
+private fun Quote(quote: String, onRemove: (() -> Unit)?) {
     val colors = MaterialTheme.colorScheme
     Row(verticalAlignment = Alignment.Top) {
         Text(
@@ -271,7 +284,7 @@ private fun Quote(quote: String, onRemove: () -> Unit) {
                 .drawBehind { drawLine(colors.outlineVariant, Offset.Zero, Offset(0f, size.height), 3.dp.toPx()) }
                 .padding(start = 12.dp, top = 2.dp, bottom = 2.dp),
         )
-        IconTile(R.drawable.ic_close, stringResource(R.string.action_remove), onRemove, size = 32.dp)
+        if (onRemove != null) IconTile(R.drawable.ic_close, stringResource(R.string.action_remove), onRemove, size = 32.dp)
     }
 }
 

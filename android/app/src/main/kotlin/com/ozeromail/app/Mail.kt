@@ -24,6 +24,7 @@ import uniffi.ozero_api.DraftItem
 import uniffi.ozero_api.Endpoint
 import uniffi.ozero_api.FolderItem
 import uniffi.ozero_api.FolderRole
+import uniffi.ozero_api.ForwardLabels
 import uniffi.ozero_api.ImagesPage
 import uniffi.ozero_api.InboxTab
 import uniffi.ozero_api.Mailbox
@@ -171,6 +172,11 @@ class Mail(private val context: Context) {
 
     /** An answer to [message]: to its sender, or with [all] to everyone it went to as well. */
     suspend fun reply(message: MessageItem, all: Boolean): DraftItem = io { core.reply(message, all) }
+
+    /** [message] to send on, its text under [labels] and [date]; loads the text if not saved. */
+    suspend fun forward(message: MessageItem, labels: ForwardLabels, date: String): DraftItem = io {
+        core.forward(message, labels, date, password(message.accountId).orEmpty())
+    }
 
     /** The saved text of [message] quoted under [header]; empty while its body is not saved. */
     suspend fun quote(message: MessageItem, header: String): String = io { core.quote(message.id, header) }

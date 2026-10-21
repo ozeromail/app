@@ -609,21 +609,41 @@ impl Core {
     ) -> Result<MessageBody, CoreError> {
         let message = MessageId(message);
         let shows_images = self.store.shows_images(message)?;
-        let page = |body: Body| MessageBody {
+        Ok(MessageBody {
             shows_images,
-            ..body.into()
+            ..self.body(message, &secret).await?.into()
+        })
+    }
+
+    /// `message` sent on from the account that got it, `Fwd: ` once, to no one yet: under the
+    /// text go `labels` with its sender, `date` as the app writes it and subject, then its
+    /// text, downloaded if not saved yet with `secret`, as for `message_body`.
+    pub async fn forward(
+        &self,
+        message: MessageItem,
+        labels: ForwardLabels,
+        date: String,
+        secret: String,
+    ) -> Result<DraftItem, CoreError> {
+        let id = MessageId(message.id);
+        let text = self.body(id, &secret).await?.text;
+        let from = match message.from_name.as_deref().map(str::trim) {
+            Some(name) if !name.is_empty() => format!("{name} <{}>", message.from_email),
+            _ => message.from_email.clone(),
         };
-        if let Some(body) = self.store.body(message)? {
-            return Ok(page(body));
-        }
-        let location = self.store.location(message)?;
-        let account = self.account(location.account_id)?;
-        let mut slot = None;
-        let remote = self.remote(&mut slot, &account, &secret).await?;
-        let body = download_body(&self.store, remote, &self.parser, &location).await;
-        // Closing without LOGOUT saves the reader a round trip; the server cleans up.
-        drop(slot);
-        Ok(page(self.refused(&account, body)?))
+        let fields = [
+            (labels.from.as_str(), from.as_str()),
+            (&labels.date, &date),
+            (&labels.subject, &message.subject),
+        ];
+        Ok(DraftItem {
+            account_id: message.account_id,
+            to: String::new(),
+            subject: ozero_domain::forward_subject(&message.subject),
+            text: String::new(),
+            reply_to: None,
+            quote: ozero_domain::forward_quote(&labels.title, &fields, &text),
+        })
     }
 
     /// The message's page with its remote images loaded now, for `MessageBody::html`; None
@@ -805,6 +825,21 @@ impl Core {
     fn exists(&self, email: &str) -> Result<bool, CoreError> {
         let known = self.store.accounts()?;
         Ok(known.iter().any(|a| a.email.eq_ignore_ascii_case(email)))
+    }
+
+    /// The saved body, or downloaded once and saved with its snippet.
+    async fn body(&self, message: MessageId, secret: &str) -> Result<Body, CoreError> {
+        if let Some(body) = self.store.body(message)? {
+            return Ok(body);
+        }
+        let location = self.store.location(message)?;
+        let account = self.account(location.account_id)?;
+        let mut slot = None;
+        let remote = self.remote(&mut slot, &account, secret).await?;
+        let body = download_body(&self.store, remote, &self.parser, &location).await;
+        // Closing without LOGOUT saves the reader a round trip; the server cleans up.
+        drop(slot);
+        self.refused(&account, body)
     }
 
     /// The connection in `slot`, opened on first use.
@@ -1360,6 +1395,16 @@ pub struct DraftItem {
     pub reply_to: Option<i64>,
     /// Goes under the text; empty for none.
     pub quote: String,
+}
+
+/// The header words of a forwarded message, in the app's language.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ForwardLabels {
+    /// The line over it all.
+    pub title: String,
+    pub from: String,
+    pub date: String,
+    pub subject: String,
 }
 
 impl From<Draft> for DraftItem {
