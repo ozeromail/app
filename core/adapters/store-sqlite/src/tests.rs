@@ -1287,6 +1287,19 @@ fn prunes_mail_older_than_an_account_keeps() {
     assert_eq!(known.len(), 2);
     assert_eq!(store.oldest(inbox_a).unwrap(), Some(10));
     assert_eq!(store.checkpoint(inbox_b).unwrap().1.len(), 3);
+    // Kept longer, or reset, a folder may have older mail again.
+    store.set_older_done(inbox_a, true).unwrap();
+    store.set_account_keep(a, 30).unwrap();
+    assert!(store.older_done(inbox_a).unwrap());
+    store.set_account_keep(a, 0).unwrap();
+    assert!(!store.older_done(inbox_a).unwrap());
+    store.set_older_done(inbox_a, true).unwrap();
+    store.set_validity(inbox_a, 5).unwrap();
+    assert!(!store.older_done(inbox_a).unwrap());
+    assert_eq!(
+        store.set_account_keep(AccountId(99), 1),
+        Err(StoreError::NotFound)
+    );
 }
 
 #[test]

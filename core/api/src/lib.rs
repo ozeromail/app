@@ -98,9 +98,6 @@ pub struct Core {
     /// The last pages read with all their images, newest last, so opening one again is
     /// instant; up to `PAGES_KEPT` times `IMAGES_SIZE` in memory.
     pages: Mutex<VecDeque<KeptPage>>,
-    /// Folders whose server has no older mail to load, with the oldest they had saved then:
-    /// once that changes, say after a reset, they may have again.
-    ended: Mutex<HashMap<FolderId, Option<i64>>>,
 }
 
 /// A page with its images, and the message HTML it was made from.
@@ -151,7 +148,6 @@ impl Core {
             waiting: Mutex::default(),
             tokens: Mutex::default(),
             pages: Mutex::default(),
-            ended: Mutex::default(),
         }))
     }
 
@@ -176,16 +172,6 @@ impl Core {
         Ok(self.store.set_account_label(AccountId(account), &label)?)
     }
 
-    /// Keeps the account's mail of the last `days` days on the device, or all of it with 0:
-    /// older mail goes at once, and lists stop loading older mail there.
-    pub fn set_account_keep(&self, account: i64, days: u32) -> Result<(), CoreError> {
-        let account = AccountId(account);
-        self.store.set_account_keep(account, days)?;
-        // Kept longer, the folders that ended at the old limit have older mail again.
-        self.ended_folders().clear();
-        Ok(self.store.prune(account, keep_since(days))?)
-    }
-
     /// Removes the account and all its mail from the device, once its sync is done; a sync or
     /// push that waited then finds nothing to do. The app forgets its secret.
     pub async fn remove_account(&self, account: i64) -> Result<(), CoreError> {
@@ -202,7 +188,6 @@ impl Core {
             .unwrap_or_else(|p| p.into_inner())
             .remove(&account);
         self.kept_pages().clear();
-        self.ended_folders().clear();
         Ok(())
     }
 
@@ -648,12 +633,8 @@ impl Core {
             let loaded = load_older(&self.store, remote, &self.parser, folder, OLDER_PAGE, since);
             match self.refused(&account, loaded.await) {
                 Ok(true) => more = true,
-                Ok(false) => {
-                    let oldest = self.store.oldest(folder.id)?;
-                    self.ended_folders().insert(folder.id, oldest);
-                }
                 // The next sync starts the folder over.
-                Err(CoreError::Gone) => {}
+                Ok(false) | Err(CoreError::Gone) => {}
                 Err(e) => return Err(e),
             }
         }
@@ -661,6 +642,17 @@ impl Core {
             remote.close().await;
         }
         Ok(more)
+    }
+
+    /// Keeps the account's mail of the last `days` days on the device, or all of it with 0:
+    /// older mail goes at once, and lists stop loading older mail there. Waits for a sync
+    /// under way, which may save mail by the old limit.
+    pub async fn set_account_keep(&self, account: i64, days: u32) -> Result<(), CoreError> {
+        let account = AccountId(account);
+        let lock = self.busy(account);
+        let _busy = lock.lock().await;
+        self.store.set_account_keep(account, days)?;
+        Ok(self.store.prune(account, keep_since(days))?)
     }
 
     /// Downloads the missing bodies of the account's newest inbox mail, so it opens at once.
@@ -868,13 +860,8 @@ impl Core {
         self.pages.lock().unwrap_or_else(|p| p.into_inner())
     }
 
-    fn ended_folders(&self) -> std::sync::MutexGuard<'_, HashMap<FolderId, Option<i64>>> {
-        self.ended.lock().unwrap_or_else(|p| p.into_inner())
-    }
-
-    /// The account's folders in `mailbox` whose server may have older mail, with when their
-    /// oldest saved message was received: those that had none when they last loaded some are
-    /// left out, until what they have saved changes.
+    /// The account's folders in `mailbox` whose server may have older mail to load, with when
+    /// their oldest saved message was received.
     fn loadable(
         &self,
         account: AccountId,
@@ -885,8 +872,8 @@ impl Core {
             if !mailbox.holds(&folder) {
                 continue;
             }
-            let oldest = self.store.oldest(folder.id)?;
-            if self.ended_folders().get(&folder.id) != Some(&oldest) {
+            if !self.store.older_done(folder.id)? {
+                let oldest = self.store.oldest(folder.id)?;
                 loadable.push((folder, oldest));
             }
         }

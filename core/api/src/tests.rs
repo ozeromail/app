@@ -316,7 +316,7 @@ fn a_unified_list_ends_where_an_account_has_older_mail_to_load() {
     };
     assert_eq!(dates(), [35, 30, 25]);
     // Once the other account has nothing older, the first one's mail shows all the way down.
-    core.ended_folders().insert(b, Some(25));
+    core.store.set_older_done(b, true).unwrap();
     assert_eq!(dates(), [35, 30, 25, 20, 10]);
 }
 

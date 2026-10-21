@@ -254,6 +254,8 @@ pub struct Memory {
     /// What `oldest` returns, and each `prune`.
     pub oldest: Option<i64>,
     pub pruned: Mutex<Vec<(AccountId, i64)>>,
+    /// Folders `set_older_done` marked.
+    pub older_done: Mutex<Vec<(FolderId, bool)>>,
     pub changes: Mutex<Vec<(FolderId, Changes<NewMessage>)>>,
     pub bodies: Mutex<Vec<(MessageId, Body)>>,
     /// What `without_body` returns.
@@ -336,6 +338,15 @@ impl Store for Memory {
 
     fn oldest(&self, _: FolderId) -> Result<Option<i64>, StoreError> {
         Ok(self.oldest)
+    }
+
+    fn older_done(&self, _: FolderId) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    fn set_older_done(&self, folder: FolderId, done: bool) -> Result<(), StoreError> {
+        self.older_done.lock().unwrap().push((folder, done));
+        Ok(())
     }
 
     fn save_changes(
