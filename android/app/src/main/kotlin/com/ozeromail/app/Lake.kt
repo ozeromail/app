@@ -15,7 +15,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -88,7 +87,7 @@ fun StillNote(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        // Grey water still takes a drop of the accent's colour: a drop is a drop.
+        // Grey water still takes a drop of the accent's color: a drop is a drop.
         val water = if (grey) colors.outline else colors.primary
         Canvas(Modifier.fillMaxWidth().height(LAKE_HEIGHT).touches(still)) {
             still.draw(this, water, colors.primary, HORIZON, size.height, pulled(), FALL)
@@ -122,8 +121,7 @@ fun StillNote(
 @Composable
 fun PullWater(fraction: () -> Float, refreshing: Boolean, top: () -> Float?, drops: Flow<Unit>, modifier: Modifier = Modifier) {
     val water = MaterialTheme.colorScheme.primary
-    val pulled by remember { derivedStateOf { fraction() > 0f } }
-    val still = rememberStill(fall = false, running = pulled || refreshing)
+    val still = rememberStill(fall = false)
     LaunchedEffect(refreshing) { still.beat = refreshing }
     LaunchedEffect(drops) { drops.collect { still.release() } }
     Canvas(modifier) {
@@ -132,7 +130,7 @@ fun PullWater(fraction: () -> Float, refreshing: Boolean, top: () -> Float?, dro
         // Drawn even when closed, so the water hears that the pull is over.
         translate(top = y) {
             clipRect(top = 0f, bottom = depth) {
-                still.draw(this, water, water, LAKE_TOP + HORIZON, maxOf(depth, PULL_GAP.toPx()), if (refreshing) 0f else fraction(), PULL_FALL)
+                still.draw(this, water, water, LAKE_TOP + HORIZON, maxOf(depth, PULL_GAP.toPx()), fraction(), PULL_FALL)
             }
         }
     }
@@ -144,24 +142,25 @@ fun Density.pullGap(fraction: Float): Float {
     return if (fraction <= 1f) full * fraction else full * (1f + 0.6f * (1f - 1f / fraction))
 }
 
-
 /**
- * Runs the water's clock while [running]: every frame while something moves, and not at all for
- * water at rest. With the system's animations off, the water stands still.
+ * Runs the water's clock: every frame while something moves, and not at all for water at rest.
+ * With the system's animations off, the water stands still.
  */
 @Composable
-private fun rememberStill(fall: Boolean, running: Boolean = true): Still {
+private fun rememberStill(fall: Boolean): Still {
     // Only as it first shows: the caller's flag turns off right after.
     val still = remember { Still(fall) }
-    LaunchedEffect(still, running) {
+    LaunchedEffect(still) {
         if (coroutineContext[MotionDurationScale]?.scaleFactor == 0f) {
             still.hold()
             return@LaunchedEffect
         }
-        if (!running) return@LaunchedEffect
         while (true) {
             withFrameMillis { still.now = it }
-            if (!still.busy) still.wake.receive()
+            if (!still.busy) {
+                still.rest()
+                still.wake.receive()
+            }
         }
     }
     return still
@@ -204,7 +203,7 @@ private class Still(private var falling: Boolean) {
     /** Wakes the clock of water at rest. */
     val wake = Channel<Unit>(Channel.CONFLATED)
 
-    /** Rings of a wait: a long one drips, a drop every few seconds. */
+    /** A wait: a long one drips, a drop every few seconds. */
     var beat = false
         set(value) {
             if (value && !field) waited = 0f
@@ -244,6 +243,11 @@ private class Still(private var falling: Boolean) {
         get() = beat || released || drops.isNotEmpty() || jets.isNotEmpty() || waves.isNotEmpty() || rising ||
             abs(wobble) > 0.002f || abs(wobbleV) > 0.02f || (falling && now - begun < WORDS + WORDS_MS)
 
+    /** The clock goes to sleep: the next frame starts afresh rather than a step late. */
+    fun rest() {
+        stepped = -1
+    }
+
     /** Water that never moves, for when the system's animations are off. */
     fun hold() {
         frozen = true
@@ -262,11 +266,13 @@ private class Still(private var falling: Boolean) {
 
     /** The gathered drop lets go, on the next step; one a pull. */
     fun release() {
-        if (!ready || spent) return
+        // Not while a wait drips: no drop was shown gathering.
+        if (!ready || spent || beat) return
         released = true
         wake.trySend(Unit)
     }
 
+    /** A wave from under a finger at [x], [y] dp. */
     fun touch(x: Float, y: Float) {
         waves += Wave(x, maxOf(y, horizon + 6f), 0.55f)
         wake.trySend(Unit)
@@ -295,8 +301,6 @@ private class Still(private var falling: Boolean) {
             sinceDrip = 0f
             drip = 0f
         }
-        // Nothing gathers again until the list is back at rest.
-        if (pulled <= 0f && drops.isEmpty() && !beat) spent = false
         // A long wait drips: a drop gathers by itself, falls, and the next waits its turn.
         if (beat && waited > DRIP_AFTER && ready) {
             if (sinceDrip > DRIP_EVERY - DRIP_GATHER) drip = min(1f, drip + dt / DRIP_GATHER)
@@ -359,13 +363,16 @@ private class Still(private var falling: Boolean) {
      * The horizon lies [line] down, drops gather [pull] near the top and land [fall] under the
      * horizon; the water ends at [bottom] px. Water is [water], drops [drop].
      */
-    fun draw(scope: DrawScope, water: Color, drop: Color, line: Dp, bottom: Float, pull: Float, fall: Dp) = with(scope) {
+    fun draw(scope: DrawScope, water: Color, drop: Color, surface: Dp, bottom: Float, pull: Float, fall: Dp) = with(scope) {
         val u = density
-        val hz = line.value
+        val hz = surface.value
         val land = hz + fall.value
         horizon = hz
         middle = size.width / u / 2
+        // A pull moves nothing else, so it wakes the clock; nothing gathers again until the list is back.
+        if (pull != pulled) wake.trySend(Unit)
         pulled = pull
+        if (pull <= 0f && !beat) spent = false
         if (falling && level == 0f && !rising && drops.isEmpty() && begun >= 0) {
             // The last message has left: a drop falls and the water comes out of its waves.
             drops += Drop(middle, hz - 70f, 120f, land, 2.8f, 0.9f, opens = true)
@@ -431,7 +438,7 @@ private class Still(private var falling: Boolean) {
         }
         if (lv > 0f) faded(0.55f, cx, 150.dp.toPx() * lv, hzPx, stroke)
         // The gathering drop grows with the pull, a round bead that fills into a drop.
-        val gathering = maxOf(if (!spent && !beat && ready) pull else 0f, drip)
+        val gathering = maxOf(if (!spent && !released && !beat && ready) pull else 0f, drip)
         if (gathering > 0.02f) {
             val h = hanging(gathering)
             bead(drop, middle, h.y, h.r, h.point, 1f + wobble)
@@ -495,7 +502,7 @@ private val LAKE_TOP = 8.dp
 /** The pull's water is shallower than a lake: the gap is all there is of it. */
 private val PULL_FALL = 24.dp
 
-/** Gravity, dp/s²: a drop falls its 24–40 dp in about a quarter of a second. */
+/** Gravity, dp/s²: a drop falls its 40–50 dp in about a third of a second. */
 private const val G = 760f
 private const val DROP_STEPS = 48
 private const val DRIP_AFTER = 1.4f

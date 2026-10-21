@@ -835,6 +835,7 @@ private fun InboxList(
     LaunchedEffect(messages) { hadMail = messages.isNotEmpty() && messages !== oldTabList }
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     // The compact title shows once the large one has scrolled under the status bar.
+    // Half way through the title, under the back arrow's 4 + 44 + 2 dp.
     val titleGone = with(density) { 62.dp.roundToPx() }
     val scrolled by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > titleGone } }
     val pull = rememberPullToRefreshState()
@@ -924,7 +925,7 @@ private fun InboxList(
                                     drawIn = hadMail && inbox,
                                     grey = !inbox,
                                     waiting = waiting,
-                                    pulled = { if (refreshing) 0f else pull.distanceFraction },
+                                    pulled = { pull.distanceFraction },
                                     drops = drops,
                                 )
                             }
