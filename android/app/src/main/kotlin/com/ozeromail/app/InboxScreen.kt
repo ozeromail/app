@@ -563,6 +563,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                             closeSearch()
                             archive(listOf(shown.message))
                         }.takeIf { shown.message.canArchive },
+                        onBack = ::back,
                     )
                     Screen.AddAccount -> SignInScreen(
                         mail,
@@ -623,6 +624,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         onSearch = { searching = true },
                         onCompose = { composing = Composing(NEW_DRAFT) },
                         onGo = { mailbox = it },
+                        onBack = { mailbox = Mail.INBOX }.takeIf { mailbox != Mail.INBOX },
                         empty = openFolder?.let { folder -> folder.role.emptyLabel()?.let { it to { empty(folder) } } },
                         chosen = chosen,
                         onChoose = { chosen = it },
@@ -792,6 +794,8 @@ private fun InboxList(
     onSearch: () -> Unit,
     onCompose: () -> Unit,
     onGo: (Mailbox) -> Unit,
+    /** Back to the inbox from another mailbox; null in the inbox. */
+    onBack: (() -> Unit)?,
     empty: Pair<Int, () -> Unit>?,
     /** Messages chosen to act on together; acting on them ends the choosing. */
     chosen: Set<Long>,
@@ -831,9 +835,16 @@ private fun InboxList(
     val titleGone = with(density) { 24.dp.roundToPx() }
     val scrolled by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > titleGone } }
     val pull = rememberPullToRefreshState()
-    // Over the lake of an empty list a pull gathers its drop and lets it fall: one water, not two.
+    // There is one water, under the title, and it stays put: a pull over an empty list's lake
+    // gathers a drop over it, and a pull on a list moves the rows down to uncover the same water.
     val lake = messages.isEmpty() && (!syncing || waiting) && error == null
     val drops = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
+    val sink = if (lake) Modifier else Modifier.graphicsLayer { translationY = pullGap(pull.distanceFraction) }
+    // Where the title ends on screen, or null once it has scrolled away.
+    val underTitle = {
+        val info = listState.layoutInfo
+        info.visibleItemsInfo.firstOrNull { it.key == "title" }?.let { (it.offset + it.size - info.viewportStartOffset).toFloat() }
+    }
     // Where the tabs are between two of them, in tabs: the thumb and the list follow it.
     val glide = remember { Animatable(0f) }
     val glideScope = rememberCoroutineScope()
@@ -855,18 +866,19 @@ private fun InboxList(
         PullToRefreshBox(
             isRefreshing = refreshing,
             onRefresh = {
-                if (lake) drops.tryEmit(Unit)
+                drops.tryEmit(Unit)
                 onSync(!lake)
             },
             modifier = Modifier.fillMaxSize(),
             state = pull,
-            // The list moves down with the finger and still water shows in the gap it leaves.
+            // The rows move down with the finger and still water shows in the gap they leave.
             indicator = {
-                if (!lake || refreshing) {
+                if (!lake) {
                     PullWater(
                         fraction = { pull.distanceFraction },
                         refreshing = refreshing,
-                        top = top,
+                        top = underTitle,
+                        drops = drops,
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
@@ -881,17 +893,16 @@ private fun InboxList(
                         chosen = { chosenNow.filterTo(LinkedHashSet()) { id -> rowsNow.any { it.id == id } } },
                         onChoose = { chooseNow(it) },
                         onHold = { haptics.performHapticFeedback(HapticFeedbackType.LongPress) },
-                    )
-                    .graphicsLayer { translationY = pullGap(pull.distanceFraction) },
+                    ),
                 state = listState,
                 contentPadding = PaddingValues(top = top, bottom = dockHeight + 16.dp),
             ) {
-                item(key = "title") { Hero(shownTitle, shownOwner) }
+                item(key = "title") { Hero(shownTitle, shownOwner, onBack) }
                 items(unsent, key = { "unsent-${it.id}" }) { failed ->
-                    UnsentRow(failed, rowMove().then(slide), onClick = { onUnsent(failed) })
+                    UnsentRow(failed, rowMove().then(sink).then(slide), onClick = { onUnsent(failed) })
                 }
                 if (swipeTip && messages.isNotEmpty()) {
-                    item(key = "tip") { Box(rowMove().then(slide)) { SwipeTip(swipes, onSwipeTip) } }
+                    item(key = "tip") { Box(rowMove().then(sink).then(slide)) { SwipeTip(swipes, onSwipeTip) } }
                 }
                 if (lake) {
                     item(key = "empty") {
@@ -910,7 +921,8 @@ private fun InboxList(
                                     drawIn = hadMail && inbox,
                                     grey = !inbox,
                                     waiting = waiting,
-                                    pulled = { pull.distanceFraction },
+                                    rippling = refreshing,
+                                    pulled = { if (refreshing) 0f else pull.distanceFraction },
                                     drops = drops,
                                 )
                             }
@@ -918,7 +930,7 @@ private fun InboxList(
                     }
                 }
                 itemsIndexed(messages, key = { _, it -> it.id }) { index, message ->
-                    Column(rowMove().then(slide)) {
+                    Column(rowMove().then(sink).then(slide)) {
                         if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.screen), color = colors.outlineVariant)
                         SwipeRow(message, swipes, enabled = !choosing, onSwipe = { action, reset -> onSwipe(message, action, reset) }) {
                             MessageRow(
@@ -1029,16 +1041,19 @@ private fun mailboxOwner(mailbox: Mailbox, folder: FolderItem?, accounts: List<A
 
 /** The large title at the top of the list, where it does not need the thumb. */
 @Composable
-private fun Hero(title: String, subtitle: String?) {
-    Column(Modifier.padding(start = Gap.screen, end = Gap.screen, top = 12.dp, bottom = 14.dp)) {
-        LargeTitle(title)
-        if (subtitle != null) {
-            Text(
-                subtitle,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = Type.Caption,
-                modifier = Modifier.padding(top = 2.dp),
-            )
+private fun Hero(title: String, subtitle: String?, onBack: (() -> Unit)?) {
+    Column {
+        onBack?.let { BackArrow(it, Modifier.padding(top = 4.dp)) }
+        Column(Modifier.padding(start = Gap.screen, end = Gap.screen, top = if (onBack == null) 12.dp else 2.dp, bottom = 14.dp)) {
+            LargeTitle(title)
+            if (subtitle != null) {
+                Text(
+                    subtitle,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = Type.Caption,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
         }
     }
 }

@@ -57,9 +57,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  * it, and rings that lie on the water in perspective. With [drawIn], as the last message leaves,
  * a drop lands on the water and the horizon comes out of its rings. A touch leaves rings too.
  * [grey] water is for plain empty folders: it never draws in, and only moves when touched. While
- * [waiting] for a list's first mail, rings spread one after another and the words hold back.
- * As the list is [pulled], a drop gathers over the water, full at the threshold, and falls on
- * each of [drops].
+ * [waiting] for a list's first mail, rings spread one after another and the words hold back;
+ * while [rippling] for a refresh, the rings spread under the words. As the list is [pulled], a
+ * drop gathers over the water, full at the threshold, and falls on each of [drops].
  */
 @Composable
 fun StillNote(
@@ -68,6 +68,7 @@ fun StillNote(
     drawIn: Boolean,
     grey: Boolean = false,
     waiting: Boolean = false,
+    rippling: Boolean = false,
     pulled: () -> Float = { 0f },
     drops: Flow<Unit> = emptyFlow(),
 ) {
@@ -76,8 +77,8 @@ fun StillNote(
     // The words wait for the first sync only; once said, a later one just stirs the water.
     var said by remember { mutableStateOf(!waiting) }
     val words by animateFloatAsState(if (said) 1f else 0f, Motion.calm(Motion.SMALL), label = "words")
-    LaunchedEffect(waiting) {
-        still.beat = waiting
+    LaunchedEffect(waiting, rippling) {
+        still.beat = waiting || rippling
         if (!waiting) said = true
     }
     LaunchedEffect(drops) { drops.collect { still.release() } }
@@ -111,20 +112,28 @@ fun StillNote(
 }
 
 /**
- * The same water in the gap a pulled list opens, under the status bar at [top]: the horizon
- * stretches with [fraction], and while [refreshing], quiet rings spread one after another.
+ * The same water as an empty list's, under the title, in the gap the list opens as it is
+ * pulled: the water stays where it is and the list uncovers it. [top] is where the gap begins,
+ * or null while the title is off screen. As in the empty list, a drop gathers with [fraction]
+ * and falls on each of [drops]; while [refreshing], quiet rings spread one after another.
  */
 @Composable
-fun PullWater(fraction: () -> Float, refreshing: Boolean, top: Dp, modifier: Modifier = Modifier) {
+fun PullWater(fraction: () -> Float, refreshing: Boolean, top: () -> Float?, drops: Flow<Unit>, modifier: Modifier = Modifier) {
     val water = MaterialTheme.colorScheme.primary
     val pulled by remember { derivedStateOf { fraction() > 0f } }
     val still = rememberStill(fall = false, ambient = false, running = pulled || refreshing)
     LaunchedEffect(refreshing) { still.beat = refreshing }
+    LaunchedEffect(drops) { drops.collect { still.release() } }
     Canvas(modifier) {
         val depth = pullGap(fraction())
+        val y = top() ?: return@Canvas
         if (depth <= 0f) return@Canvas
-        still.level = if (refreshing) 1f else fraction().coerceIn(0f, 1f)
-        translate(top = top.toPx()) { still.draw(this, water, depth * 0.42f, depth) }
+        translate(top = y) {
+            clipRect(top = 0f, bottom = depth) {
+                val hz = PULL_HORIZON.toPx()
+                still.draw(this, water, hz, PULL_GAP.toPx(), if (refreshing) 0f else fraction(), PULL_HANG.toPx(), PULL_FALL.toPx())
+            }
+        }
     }
 }
 
@@ -283,13 +292,22 @@ private class Still(private var falling: Boolean, var ambient: Boolean) {
         glow = Brush.radialGradient(listOf(color, Color.Transparent), Offset.Zero, 1f)
     }
 
-    fun draw(scope: DrawScope, color: Color, hz: Float, bottom: Float, pulled: Float = 0f) = with(scope) {
+    /** The pulled drop hangs [hang] over the horizon and lands [fall] under it. */
+    fun draw(
+        scope: DrawScope,
+        color: Color,
+        hz: Float,
+        bottom: Float,
+        pulled: Float = 0f,
+        hang: Float = HANG.toPx(scope),
+        fall: Float = FALL.toPx(scope),
+    ) = with(scope) {
         val t = now
         horizon = hz
         width = size.width
         paint(color)
         val cx = size.width / 2
-        val landY = hz + 40.dp.toPx()
+        val landY = hz + fall
         if (drop >= 0) {
             val p = ((t - drop) / DROP_MS).coerceIn(0f, 1f)
             if (p < 1f) {
@@ -303,7 +321,7 @@ private class Still(private var falling: Boolean, var ambient: Boolean) {
                 for (i in LANDING.indices) ring(cx, landY, LANDING[i], t + i * 180L, echo = false)
             }
         }
-        val hangY = hz - HANG.toPx()
+        val hangY = hz - hang
         if (pullDrop >= 0) {
             val p = ((t - pullDrop) / DROP_MS).coerceIn(0f, 1f)
             if (p < 1f) {
@@ -403,6 +421,12 @@ private val PULL_GAP = 72.dp
 private val LANDING = floatArrayOf(2.2f, 1.5f, 1f)
 private val PULL_LANDING = floatArrayOf(1.6f, 1.1f, 0.75f)
 private val HANG = 32.dp
+private val FALL = 40.dp
+
+/** The pull's water is shallower than a lake: the gap is all there is of it. */
+private val PULL_HORIZON = 30.dp
+private val PULL_HANG = 22.dp
+private val PULL_FALL = 24.dp
 private val SWOLLEN = 3.2.dp
 private const val MAX_RINGS = 48
 private const val IDLE_MS = 250L
@@ -417,3 +441,5 @@ private val Glide = CubicBezierEasing(0.2f, 0.6f, 0.3f, 1f)
 private val Fall = CubicBezierEasing(0.6f, 0f, 0.9f, 0.4f)
 private val Spread = CubicBezierEasing(0.15f, 0.6f, 0.25f, 1f)
 private val Calm = CubicBezierEasing(0.2f, 0f, 0f, 1f)
+
+private fun Dp.toPx(density: Density) = with(density) { toPx() }

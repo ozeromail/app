@@ -31,6 +31,7 @@
   "compose_subject": "Тема",
   "compose_text": "Текст письма",
   "compose_send": "Отправить",
+  "action_back": "Назад",
   "action_cancel": "Отмена",
   "message_reply": "Ответить",
   "inbox_sending": "Отправляется",
