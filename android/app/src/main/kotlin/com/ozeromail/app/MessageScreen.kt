@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalFoundationApi::class)
+
 package com.ozeromail.app
 
 import androidx.annotation.DrawableRes
@@ -9,6 +11,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -22,20 +25,23 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -61,7 +67,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import uniffi.ozero_api.CoreException
@@ -88,6 +93,10 @@ fun MessageScreen(
     onBack: () -> Unit,
 ) {
     var more by remember(message.id) { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val snackbar = remember { SnackbarHostState() }
+    val files = remember(message.id) { Files(mail, context, scope, snackbar) }
     var thread by remember(message.id) { mutableStateOf(listOf(message)) }
     var error by remember(message.id) { mutableStateOf<Int?>(null) }
     // What the user opened or closed; at first only the message from the list is open.
@@ -122,7 +131,7 @@ fun MessageScreen(
                             Reveal(middle.count().takeIf { folded }) { count -> More(count, onClick = { showAll = true }) }
                         }
                         key(m.id) {
-                            val letter = @Composable { Letter(mail, m, bodies, isOpen(m), onToggle = { opened[m.id] = !isOpen(m) }) }
+                            val letter = @Composable { Letter(mail, files, m, bodies, isOpen(m), onToggle = { opened[m.id] = !isOpen(m) }) }
                             if (i in middle) {
                                 AnimatedVisibility(!folded, enter = opening, exit = closing) { letter() }
                             } else {
@@ -134,10 +143,11 @@ fun MessageScreen(
                     Spacer(Modifier.height(12.dp))
                 }
             } else {
+                val filesAt = remember { BringIntoViewRequester() }
                 Title(message)
-                From(message, open = true)
+                From(message, open = true, fileCount(message, bodies), filesAt)
                 HorizontalDivider(Modifier.padding(top = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
-                LetterBody(mail, message, bodies, Modifier.weight(1f), fill = true)
+                LetterBody(mail, files, filesAt, message, bodies, Modifier.weight(1f), fill = true)
             }
             Column(
                 Modifier.fillMaxWidth().navigationBarsPadding().padding(top = Gap.barTop, bottom = Gap.barBottom),
@@ -180,8 +190,19 @@ fun MessageScreen(
                 onUnread()
             }
         }
+        AttachmentActions(files)
+        FileViewer(files)
+        Toast(
+            snackbar,
+            onGo = {},
+            modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = TOAST_ABOVE_BARS),
+        )
     }
 }
+
+/** How many files a message has: as the list knew, or as its body says once loaded. */
+private fun fileCount(message: MessageItem, bodies: Map<Long, MessageBody>): Int =
+    maxOf(message.attachments.size, bodies[message.id]?.attachments?.size ?: 0)
 
 /** A message opens slowly from its line down, and closes a little quicker. */
 private val opening = expandVertically(Motion.calm(Motion.SCREEN), expandFrom = Alignment.Top) + fadeIn(Motion.calm(Motion.SCREEN))
@@ -189,12 +210,13 @@ private val closing = shrinkVertically(Motion.calm(Motion.NOTE), shrinkTowards =
 
 /** One message of a conversation: its line, and under it the message when open. */
 @Composable
-private fun Letter(mail: Mail, message: MessageItem, bodies: MutableMap<Long, MessageBody>, open: Boolean, onToggle: () -> Unit) {
+private fun Letter(mail: Mail, files: Files, message: MessageItem, bodies: MutableMap<Long, MessageBody>, open: Boolean, onToggle: () -> Unit) {
+    val filesAt = remember { BringIntoViewRequester() }
     Column(Modifier.fillMaxWidth()) {
         HorizontalDivider(Modifier.padding(horizontal = Gap.screen), color = MaterialTheme.colorScheme.outlineVariant)
-        From(message, open, onToggle)
+        From(message, open, fileCount(message, bodies), filesAt, onToggle)
         AnimatedVisibility(open, enter = opening, exit = closing) {
-            LetterBody(mail, message, bodies, Modifier.fillMaxWidth(), fill = false)
+            LetterBody(mail, files, filesAt, message, bodies, Modifier.fillMaxWidth(), fill = false)
         }
     }
 }
@@ -221,10 +243,19 @@ private fun More(count: Int, onClick: () -> Unit) {
 /**
  * A message's page, or its text with the quote folded; it loads when shown, once into
  * [bodies]. With [fill] it takes the space it is given and scrolls itself; otherwise it is
- * as tall as it is.
+ * as tall as it is. Its files follow the text; [filesAt] brings them into sight. A page that
+ * scrolls itself keeps them under it instead.
  */
 @Composable
-private fun LetterBody(mail: Mail, message: MessageItem, bodies: MutableMap<Long, MessageBody>, modifier: Modifier, fill: Boolean) {
+private fun LetterBody(
+    mail: Mail,
+    files: Files,
+    filesAt: BringIntoViewRequester,
+    message: MessageItem,
+    bodies: MutableMap<Long, MessageBody>,
+    modifier: Modifier,
+    fill: Boolean,
+) {
     // A page whose images load on their own waits for them again, as on the first time.
     var body by remember(message.id) { mutableStateOf(bodies[message.id]?.takeUnless { it.remoteImages > 0u && it.showsImages }) }
     var error by remember(message.id) { mutableStateOf<Int?>(null) }
@@ -275,6 +306,10 @@ private fun LetterBody(mail: Mail, message: MessageItem, bodies: MutableMap<Long
         failed != null -> Body.Failed(failed)
         else -> Body.Loading
     }
+    val attachments = loaded?.attachments.orEmpty()
+    val fileList = @Composable {
+        if (attachments.isNotEmpty()) AttachmentList(files, message, attachments, Modifier.bringIntoViewRequester(filesAt))
+    }
     // A page grows in steps as it lays out; only the short text and notes animate.
     Column(if (fill || shown is Body.Page) modifier else modifier.animateContentSize(Motion.calm(Motion.NOTE))) {
         Reveal(imagesNote) { note ->
@@ -316,25 +351,27 @@ private fun LetterBody(mail: Mail, message: MessageItem, bodies: MutableMap<Long
                     }
                     HtmlView(kind.html, kind.images, page)
                 }
-                is Body.Plain -> PlainText(kind.text, kind.quote, if (fill) content.verticalScroll(rememberScrollState()) else content)
+                is Body.Plain -> if (fill) {
+                    Column(content.verticalScroll(rememberScrollState())) {
+                        PlainText(kind.text, kind.quote, Modifier.fillMaxWidth())
+                        fileList()
+                    }
+                } else {
+                    PlainText(kind.text, kind.quote, content)
+                }
                 is Body.Failed -> Text(stringResource(kind.text), color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = content.padding(Gap.screen))
                 Body.Loading -> Box(if (fill) content else content.height(96.dp), contentAlignment = Alignment.Center) {
                     SlowSpinner()
                 }
             }
         }
+        when {
+            !fill -> fileList()
+            shown is Body.Page -> Box(Modifier.heightIn(max = PINNED_FILES).verticalScroll(rememberScrollState())) {
+                fileList()
+            }
+        }
     }
-}
-
-/** A spinner only for a wait long enough to notice; a saved message shows without one. */
-@Composable
-private fun SlowSpinner() {
-    var shown by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        delay(SPINNER_DELAY_MS)
-        shown = true
-    }
-    if (shown) CircularProgressIndicator()
 }
 
 /** The text, and the quote under it behind a mark that opens it. */
@@ -438,10 +475,11 @@ private fun HiddenImages(note: Int, onShow: () -> Unit) {
 
 /**
  * Who sent a message and when. Open, it shows the address and the full date; closed, the
- * start of the text. With [onToggle] a tap opens or closes the message.
+ * start of the text. Open with [files], a paperclip by the date brings them in sight through
+ * [filesAt]. With [onToggle] a tap opens or closes the message.
  */
 @Composable
-private fun From(message: MessageItem, open: Boolean, onToggle: (() -> Unit)? = null) {
+private fun From(message: MessageItem, open: Boolean, files: Int, filesAt: BringIntoViewRequester, onToggle: (() -> Unit)? = null) {
     val colors = MaterialTheme.colorScheme
     val unread = message.threadUnread > 0u
     val detail = when {
@@ -471,12 +509,17 @@ private fun From(message: MessageItem, open: Boolean, onToggle: (() -> Unit)? = 
             }
         }
         val context = LocalContext.current
-        Text(
-            if (open) longDate(context, message.date) else shortDate(context, message.date),
-            color = colors.onSurfaceVariant,
-            style = Type.Caption,
-            modifier = Modifier.align(Alignment.Top).padding(top = 2.dp),
-        )
+        Column(Modifier.align(Alignment.Top).padding(top = 2.dp), horizontalAlignment = Alignment.End) {
+            Text(
+                if (open) longDate(context, message.date) else shortDate(context, message.date),
+                color = colors.onSurfaceVariant,
+                style = Type.Caption,
+            )
+            if (open && files > 0) {
+                val scope = rememberCoroutineScope()
+                AttachmentMark(files, onClick = { scope.launch { filesAt.bringIntoView() } })
+            }
+        }
     }
 }
 
@@ -516,8 +559,11 @@ private sealed interface Body {
     data class Failed(val text: Int) : Body
 }
 
-/** How long a load runs before its spinner shows. */
-private const val SPINNER_DELAY_MS = 400L
+/** How tall the files under a page that scrolls itself may get before they scroll too. */
+private val PINNED_FILES = 220.dp
+
+/** Where a toast sits: over the reply and the actions. */
+private val TOAST_ABOVE_BARS = 128.dp
 
 /** How long a page waits for its images before it shows without them. */
 private const val IMAGES_WAIT_MS = 2_000L

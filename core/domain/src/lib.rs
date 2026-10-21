@@ -18,8 +18,8 @@ pub use account::{
 pub use encoding::base64;
 pub use folder::{Folder, FolderId, FolderRole, NewFolder};
 pub use message::{
-    Address, Body, Correspondents, Cursor, Flags, ListQuery, ListScope, MessageId, MessageLocation,
-    MessageRow, NewMessage, Sender,
+    Address, Attachment, Body, Correspondents, Cursor, Flags, ListQuery, ListScope, MessageId,
+    MessageLocation, MessageRow, NewMessage, Sender,
 };
 pub use op::{Action, Op, OpId};
 pub use outbox::{

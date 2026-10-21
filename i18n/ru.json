@@ -144,5 +144,21 @@
   "signin_again_with_google": "Войти через Google",
   "account_signed_out": "Нужен вход: новая почта ждёт",
   "error_wrong_account": "Это другой аккаунт Google. Выберите тот, в который входите снова.",
-  "notify_sign_in_channel": "Вход в аккаунты"
+  "notify_sign_in_channel": "Вход в аккаунты",
+  "message_attachments": "Вложения",
+  "attachment_count": "Вложений: %1$d",
+  "attachment_untitled": "Вложение",
+  "attachment_save_all": "Сохранить все",
+  "attachment_open": "Открыть",
+  "attachment_share": "Поделиться",
+  "attachment_save": "Сохранить в Загрузки",
+  "attachment_save_short": "Сохранить",
+  "attachment_open_with": "Открыть в другом приложении",
+  "attachment_open_with_short": "Открыть в…",
+  "attachment_saved": "Сохранено в Загрузки",
+  "attachment_saved_all": "Сохранено в Загрузки: %1$d",
+  "attachment_not_saved": "Не получилось сохранить файл. Проверьте свободное место.",
+  "attachment_no_app": "На телефоне нет приложения, которое открывает этот файл.",
+  "attachment_cant_show": "Этот файл здесь не показать. Откройте его в другом приложении.",
+  "attachment_position": "%1$d из %2$d"
 }

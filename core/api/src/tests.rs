@@ -34,6 +34,7 @@ fn html_is_wrapped_in_a_locked_page() {
     let body = MessageBody::from(Body {
         text: "Hi".into(),
         html: Some("<p>Hi</p>".into()),
+        ..Body::default()
     });
     let page = body.html.unwrap();
     assert!(page.starts_with("<!doctype html>"));
@@ -45,10 +46,34 @@ fn html_is_wrapped_in_a_locked_page() {
 }
 
 #[test]
+fn passes_attachments_on() {
+    let body = MessageBody::from(Body {
+        text: "See the file".into(),
+        attachments: vec![Attachment {
+            part: 3,
+            name: "a.pdf".into(),
+            mime: "application/pdf".into(),
+            size: 10,
+        }],
+        ..Body::default()
+    });
+    assert_eq!(
+        body.attachments,
+        [AttachmentItem {
+            part: 3,
+            name: "a.pdf".into(),
+            mime: "application/pdf".into(),
+            size: 10,
+        }]
+    );
+}
+
+#[test]
 fn holds_back_remote_images_and_counts_them() {
     let body = MessageBody::from(Body {
         text: String::new(),
         html: Some("<img src=https://x.com/a.png><img src=https://x.com/p.gif width=1>".into()),
+        ..Body::default()
     });
     assert_eq!(body.remote_images, 1);
     assert!(!body.html.unwrap().contains("x.com"));
@@ -173,6 +198,7 @@ fn syncs_an_imap_inbox_into_the_list() {
         html: None,
         remote_images: 0,
         shows_images: true,
+        attachments: vec![],
     };
     assert_eq!(body("pass").unwrap(), plain);
     // Saved now: no login, so a wrong password does not matter.
@@ -374,9 +400,12 @@ fn rows_are_marked_only_with_several_accounts() {
         thread_unread: 0,
         senders: Vec::new(),
         role: FolderRole::Inbox,
+        attachments: vec!["a.pdf".into()],
     };
     let first = add("a@example.com");
-    assert_eq!(core.items(vec![row(first)]).unwrap()[0].account, None);
+    let item = &core.items(vec![row(first)]).unwrap()[0];
+    assert_eq!(item.account, None);
+    assert_eq!(item.attachments, ["a.pdf"]);
 
     let second = add("b@example.com");
     let marks: Vec<_> = core

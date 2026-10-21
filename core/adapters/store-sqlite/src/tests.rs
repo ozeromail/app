@@ -442,10 +442,25 @@ fn body_is_saved_with_its_snippet() {
         }
     );
 
-    let body = Body {
+    let file = |part: u32, name: &str| Attachment {
+        part,
+        name: name.into(),
+        mime: "application/pdf".into(),
+        size: 84_000,
+    };
+    let mut body = Body {
         text: "Hi Anna,\nsee you soon".into(),
         html: Some("<p>Hi Anna,</p>".into()),
+        attachments: vec![file(4, "b.pdf"), file(2, "")],
     };
+    store.save_body(id, &body).unwrap();
+    // In part order, the nameless one too.
+    body.attachments.reverse();
+    assert_eq!(store.body(id).unwrap().as_ref(), Some(&body));
+    let rows = list(&store, ListScope::Folder(folder), 10, None);
+    assert_eq!(rows[0].attachments, ["", "b.pdf"]);
+    // Saving again replaces the list.
+    body.attachments = vec![file(3, "c.pdf")];
     store.save_body(id, &body).unwrap();
     assert_eq!(store.body(id).unwrap().as_ref(), Some(&body));
 
@@ -481,7 +496,7 @@ fn without_body_lists_the_newest_inbox_mail_left_to_download() {
     // Newest first: 2, then 3, then 1; 3 already has its body.
     let body = Body {
         text: "Hi".into(),
-        html: None,
+        ..Body::default()
     };
     store.save_body(ids[1], &body).unwrap();
 
@@ -1224,7 +1239,7 @@ fn search_finds_words_in_subject_sender_and_body() {
             id(3),
             &Body {
                 text: "The invoice is attached".into(),
-                html: None,
+                ..Body::default()
             },
         )
         .unwrap();

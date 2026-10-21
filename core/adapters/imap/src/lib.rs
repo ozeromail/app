@@ -34,8 +34,9 @@ use tokio_rustls::rustls::pki_types::ServerName;
 
 /// Any single read or write that takes longer means the connection is dead.
 const TIMEOUT: Duration = Duration::from_secs(30);
-/// Upper bound for one server response, literals included.
-const MAX_RESPONSE: u32 = 16 * 1024 * 1024;
+/// Upper bound for one server response, literals included: a whole message with 25 MB of
+/// files, as the big providers allow, in base64.
+const MAX_RESPONSE: u32 = 40 * 1024 * 1024;
 /// How much of one message `body` downloads; text parts come first, big attachments last.
 const MAX_BODY: NonZeroU32 = NonZeroU32::MIN.saturating_add(4 * 1024 * 1024 - 1);
 /// How often `wait` looks at a folder on a server without IDLE.
@@ -669,34 +670,17 @@ impl MailProvider for ImapSession {
         validity: u32,
         remote_id: &str,
     ) -> Result<Vec<u8>, ProviderError> {
-        let uid: u32 = remote_id
-            .parse()
-            .map_err(|_| protocol(format!("bad UID {remote_id}")))?;
-        // A new UIDVALIDITY means the UID may name another message now.
-        if self.open(folder, false).await?.validity != validity {
-            return Err(ProviderError::Gone);
-        }
-        let items = vec![
-            MessageDataItemName::Uid,
-            MessageDataItemName::BodyExt {
-                section: None,
-                partial: Some((0, MAX_BODY)),
-                peek: true,
-            },
-        ];
-        let fetch =
-            CommandBody::fetch(uid..=uid, items, true).map_err(|_| protocol("bad FETCH"))?;
-        // The server may add FETCH replies about other messages, such as flag changes.
-        // No reply for the UID means the message was expunged.
-        self.run(fetch)
-            .await?
-            .data
-            .into_iter()
-            .find_map(|d| match d {
-                Data::Fetch { items, .. } => message_bytes(items, uid),
-                _ => None,
-            })
-            .ok_or(ProviderError::Gone)
+        self.fetch_message(folder, validity, remote_id, Some((0, MAX_BODY)))
+            .await
+    }
+
+    async fn message(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_id: &str,
+    ) -> Result<Vec<u8>, ProviderError> {
+        self.fetch_message(folder, validity, remote_id, None).await
     }
 
     async fn set_seen(
@@ -833,6 +817,45 @@ impl MailProvider for ImapSession {
 }
 
 impl ImapSession {
+    /// The raw message with `remote_id`, without marking it read: the `partial` bytes of it,
+    /// or all of it up to `MAX_RESPONSE`.
+    async fn fetch_message(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_id: &str,
+        partial: Option<(u32, NonZeroU32)>,
+    ) -> Result<Vec<u8>, ProviderError> {
+        let uid: u32 = remote_id
+            .parse()
+            .map_err(|_| protocol(format!("bad UID {remote_id}")))?;
+        // A new UIDVALIDITY means the UID may name another message now.
+        if self.open(folder, false).await?.validity != validity {
+            return Err(ProviderError::Gone);
+        }
+        let items = vec![
+            MessageDataItemName::Uid,
+            MessageDataItemName::BodyExt {
+                section: None,
+                partial,
+                peek: true,
+            },
+        ];
+        let fetch =
+            CommandBody::fetch(uid..=uid, items, true).map_err(|_| protocol("bad FETCH"))?;
+        // The server may add FETCH replies about other messages, such as flag changes.
+        // No reply for the UID means the message was expunged.
+        self.run(fetch)
+            .await?
+            .data
+            .into_iter()
+            .find_map(|d| match d {
+                Data::Fetch { items, .. } => message_bytes(items, uid),
+                _ => None,
+            })
+            .ok_or(ProviderError::Gone)
+    }
+
     /// Removes the messages in `sets` of the open folder for good.
     async fn purge(&mut self, sets: Vec<SequenceSet>) -> Result<(), ProviderError> {
         if sets.is_empty() {

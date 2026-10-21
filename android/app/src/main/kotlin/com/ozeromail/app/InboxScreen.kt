@@ -1751,6 +1751,7 @@ private fun MessageLine(message: MessageItem, unread: Boolean, dot: Float, accou
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            if (message.attachments.isNotEmpty()) AttachmentChips(message.attachments)
         }
     }
 }

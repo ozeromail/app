@@ -6,6 +6,7 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.annotation.StringRes
 import java.io.File
+import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -20,6 +21,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import uniffi.ozero_api.AccountItem
+import uniffi.ozero_api.AttachmentFile
+import uniffi.ozero_api.AttachmentItem
 import uniffi.ozero_api.Category
 import uniffi.ozero_api.Core
 import uniffi.ozero_api.CoreException
@@ -52,6 +55,15 @@ class Mail(private val context: Context) {
 
     /** The drafts on the phone, last saved first; read again each time one changes. */
     val drafts: StateFlow<List<DraftItem>> = savedDrafts
+
+    /** This run's downloaded attachments; those of earlier runs go, as an id may name another message by now. */
+    private val downloads = File(context.cacheDir, "attachments/${UUID.randomUUID()}")
+
+    init {
+        background.launch {
+            downloads.parentFile?.listFiles()?.filter { it != downloads }?.forEach { it.deleteRecursively() }
+        }
+    }
 
     suspend fun hasAccounts(): Boolean = io { core.accounts().isNotEmpty() }
 
@@ -158,7 +170,23 @@ class Mail(private val context: Context) {
         core.messageBody(message.id, password(message.accountId).orEmpty())
     }
 
-    /** Messages matching every word of [text], newest first, with what [searchServer] found for it. */
+    /**
+     * The attachments' files, those not here yet downloaded together, once a run, into the
+     * app's cache, where other apps may be given them.
+     */
+    suspend fun attachments(message: MessageItem, items: List<AttachmentItem>): List<File> = io {
+        val untitled = context.getString(R.string.attachment_untitled)
+        val files = items.map { File(downloads, "${message.id}-${it.part}/${it.fileName(untitled)}") }
+        val missing = items.zip(files).filter { (_, file) -> !file.exists() }
+        if (missing.isNotEmpty()) {
+            missing.forEach { (_, file) -> file.parentFile?.mkdirs() }
+            val targets = missing.map { (item, file) -> AttachmentFile(item.part, file.path) }
+            core.saveAttachments(message.id, targets, password(message.accountId).orEmpty())
+        }
+        files
+    }
+
+        /** Messages matching every word of [text], newest first, with what [searchServer] found for it. */
     suspend fun search(text: String): List<MessageItem> = io { core.search(text, SEARCH_SIZE) }
 
     /**

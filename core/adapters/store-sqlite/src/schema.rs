@@ -226,6 +226,19 @@ pub const MIGRATIONS: &[&str] = &[
         words      TEXT NOT NULL
     );
     ",
-    // 22: an account whose login the server refused, until the person signs in again.
+    // 22: the files sent with a message, listed when its body is saved; saved bodies
+    // download again to list theirs.
+    "
+    DELETE FROM message_body;
+    CREATE TABLE attachment (
+        message_id INTEGER NOT NULL REFERENCES message(id) ON DELETE CASCADE,
+        part       INTEGER NOT NULL,
+        name       TEXT NOT NULL,
+        mime       TEXT NOT NULL,
+        size       INTEGER NOT NULL,
+        PRIMARY KEY (message_id, part)
+    ) WITHOUT ROWID;
+    ",
+    // 23: an account whose login the server refused, until the person signs in again.
     "ALTER TABLE account ADD COLUMN needs_sign_in INTEGER NOT NULL DEFAULT 0;",
 ];

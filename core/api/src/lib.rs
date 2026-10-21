@@ -10,13 +10,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use ozero_app::ops::push_ops;
 use ozero_app::send::{SentCopy, push_sends};
 use ozero_app::sync::{
-    SyncError, download_body, load_older, prefetch_bodies, search_server, sync_folders, sync_mail,
-    wait_for_mail,
+    SyncError, download_attachments, download_body, load_older, prefetch_bodies, search_server,
+    sync_folders, sync_mail, wait_for_mail,
 };
 use ozero_domain::{
-    Account, AccountId, AccountKind, Action, Address, Body, Category, Changes, Checkpoint, Draft,
-    DraftId, Folder, FolderId, FolderRole, ListQuery, ListScope, MailProvider, MessageId,
-    MessageRow, NewAccount, NewFolder, Older, OpId, OutboxId, ProviderError, RawMessage,
+    Account, AccountId, AccountKind, Action, Address, Attachment, Body, Category, Changes,
+    Checkpoint, Draft, DraftId, Folder, FolderId, FolderRole, ListQuery, ListScope, MailProvider,
+    MessageId, MessageRow, NewAccount, NewFolder, Older, OpId, OutboxId, ProviderError, RawMessage,
     SavedDraft, Sender, Server, Store, StoreError, html, parse_recipients, saves_sent_itself,
 };
 use ozero_gmail::{GmailSession, oauth};
@@ -805,6 +805,45 @@ impl Core {
         })
     }
 
+    /// Writes the message's attachment `part`s to their `path`s, from one download of the
+    /// whole message; each file appears whole or not at all. `secret` as for `message_body`.
+    pub async fn save_attachments(
+        &self,
+        message: i64,
+        files: Vec<AttachmentFile>,
+        secret: String,
+    ) -> Result<(), CoreError> {
+        let location = self.store.location(MessageId(message))?;
+        let account = self.account(location.account_id)?;
+        let mut slot = None;
+        let remote = self.remote(&mut slot, &account, &secret).await?;
+        let parts: Vec<u32> = files.iter().map(|f| f.part).collect();
+        let found =
+            download_attachments(&self.store, remote, &self.parser, &location, &parts).await;
+        drop(slot);
+        let found = self.refused(&account, found)?;
+        // Every part there is gets written; one the whole message lacks is as good as gone.
+        let gone = found.iter().any(Option::is_none);
+        let write = move || {
+            for (file, data) in files.iter().zip(found) {
+                let Some(data) = data else { continue };
+                let partial = format!("{}.partial", file.path);
+                std::fs::write(&partial, data)
+                    .and_then(|()| std::fs::rename(&partial, &file.path))?;
+            }
+            Ok::<_, std::io::Error>(())
+        };
+        let storage = |detail: String| CoreError::Storage { detail };
+        tokio::task::spawn_blocking(write)
+            .await
+            .map_err(|e| storage(e.to_string()))?
+            .map_err(|e| storage(e.to_string()))?;
+        if gone {
+            return Err(CoreError::Gone);
+        }
+        Ok(())
+    }
+
     /// The message's page with its remote images loaded now, for `MessageBody::html`; None
     /// when it has none. An image that does not load stays out.
     pub async fn message_images(&self, message: i64) -> Result<Option<ImagesPage>, CoreError> {
@@ -1294,6 +1333,18 @@ impl MailProvider for Remote {
         }
     }
 
+    async fn message(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_id: &str,
+    ) -> Result<Vec<u8>, ProviderError> {
+        match self {
+            Self::Imap(p) => p.message(folder, validity, remote_id).await,
+            Self::Gmail(p) => p.message(folder, validity, remote_id).await,
+        }
+    }
+
     async fn set_seen(
         &mut self,
         folder: &str,
@@ -1727,6 +1778,41 @@ pub struct MessageBody {
     /// The remote images load without asking: the mail is from a person, or the user chose
     /// to see this sender's.
     pub shows_images: bool,
+    /// The files sent with it; `Core::save_attachments` downloads them.
+    pub attachments: Vec<AttachmentItem>,
+}
+
+/// A file sent with a message.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AttachmentItem {
+    /// What `Core::save_attachments` asks for.
+    pub part: u32,
+    /// The file name as sent; empty when there is none.
+    pub name: String,
+    /// The lowercase content type, such as `application/pdf`.
+    pub mime: String,
+    /// Bytes.
+    pub size: u64,
+}
+
+/// Where `Core::save_attachments` writes an attachment.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AttachmentFile {
+    /// `AttachmentItem::part`.
+    pub part: u32,
+    /// A file path the app may write.
+    pub path: String,
+}
+
+impl From<Attachment> for AttachmentItem {
+    fn from(a: Attachment) -> Self {
+        Self {
+            part: a.part,
+            name: a.name,
+            mime: a.mime,
+            size: a.size,
+        }
+    }
 }
 
 impl From<Body> for MessageBody {
@@ -1743,6 +1829,11 @@ impl From<Body> for MessageBody {
             shows_images: false,
             text: text.to_owned(),
             quote: quote.to_owned(),
+            attachments: body
+                .attachments
+                .into_iter()
+                .map(AttachmentItem::from)
+                .collect(),
         }
     }
 }
@@ -1850,6 +1941,8 @@ pub struct MessageItem {
     pub can_trash: bool,
     /// In mixed lists (the unified inbox, search), set when there is more than one account.
     pub account: Option<AccountMark>,
+    /// The names of its attachments, once its body is downloaded; a name may be empty.
+    pub attachments: Vec<String>,
 }
 
 impl From<MessageRow> for MessageItem {
@@ -1871,6 +1964,7 @@ impl From<MessageRow> for MessageItem {
             can_archive: row.role.allows(Action::Archive),
             can_trash: row.role.allows(Action::Trash),
             account: None,
+            attachments: row.attachments,
         }
     }
 }

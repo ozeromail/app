@@ -95,6 +95,8 @@ pub struct MessageRow {
     pub senders: Vec<Sender>,
     /// What its folder is; in the sent folder, the user wrote it.
     pub role: crate::FolderRole,
+    /// The names of its attachments, once its body is saved.
+    pub attachments: Vec<String>,
 }
 
 /// Someone who wrote in a conversation.
@@ -147,6 +149,21 @@ pub struct Body {
     pub text: String,
     /// The HTML part as sent, if there is one.
     pub html: Option<String>,
+    /// The files sent with it, in order; images the HTML part shows are not among them.
+    pub attachments: Vec<Attachment>,
+}
+
+/// A file sent with a message.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Attachment {
+    /// Which MIME part of the message holds it, counted as `MessageParser` counts.
+    pub part: u32,
+    /// The file name as sent; empty when there is none.
+    pub name: String,
+    /// The lowercase content type, such as `application/pdf`.
+    pub mime: String,
+    /// Decoded size in bytes.
+    pub size: u64,
 }
 
 impl Body {
