@@ -31,6 +31,7 @@
   "compose_subject": "Subject",
   "compose_text": "Message",
   "compose_send": "Send",
+  "action_back": "Back",
   "action_cancel": "Cancel",
   "message_reply": "Reply",
   "inbox_sending": "Sending",

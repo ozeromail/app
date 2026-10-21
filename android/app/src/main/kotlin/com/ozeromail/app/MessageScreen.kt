@@ -84,6 +84,7 @@ fun MessageScreen(
     onDelete: () -> Unit,
     onUnread: () -> Unit,
     onDone: (() -> Unit)?,
+    onBack: () -> Unit,
 ) {
     var more by remember(message.id) { mutableStateOf(false) }
     var thread by remember(message.id) { mutableStateOf(listOf(message)) }
@@ -108,6 +109,7 @@ fun MessageScreen(
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
+            BackArrow(onBack, Modifier.padding(top = 4.dp))
             if (thread.size > 1 || message.threadCount > 1u) {
                 Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
                     Title(message)
@@ -473,7 +475,7 @@ private fun From(message: MessageItem, open: Boolean, onToggle: (() -> Unit)? = 
 @Composable
 private fun Title(message: MessageItem) {
     val colors = MaterialTheme.colorScheme
-    SelectionContainer(Modifier.padding(top = 18.dp)) {
+    SelectionContainer(Modifier.padding(top = 6.dp)) {
         Column {
             Text(
                 message.subjectText(),

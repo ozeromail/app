@@ -86,6 +86,19 @@ fun IconTile(
     }
 }
 
+/** The usual way back, top left, its glyph lined up with the text under it. */
+@Composable
+fun BackArrow(onBack: () -> Unit, modifier: Modifier = Modifier) {
+    val size = 44.dp
+    IconTile(
+        R.drawable.ic_back,
+        stringResource(R.string.action_back),
+        onBack,
+        modifier.padding(start = Gap.screen - (size - Gap.slot) / 2),
+        size = size,
+    )
+}
+
 /** The rounded grey shape of the search field and the quick reply. */
 @Composable
 fun PillBox(
