@@ -1,5 +1,5 @@
 # cargo-deny: licenses, advisories, duplicates and sources.
-# The app is closed source: only permissive licenses, plus file-level MPL-2.0 (UniFFI).
+# The code is public but not licensed for reuse: only permissive licenses, plus file-level MPL-2.0 (UniFFI).
 
 [graph]
 all-features = true
