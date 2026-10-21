@@ -1263,6 +1263,33 @@ fn names_an_account() {
 }
 
 #[test]
+fn prunes_mail_older_than_an_account_keeps() {
+    let store = store();
+    let a = account(&store, "a@example.com");
+    let b = account(&store, "b@example.com");
+    store.set_account_keep(a, 30).unwrap();
+    assert_eq!(store.accounts().unwrap()[0].keep_days, 30);
+    let (inbox_a, inbox_b) = (inbox(&store, a), inbox(&store, b));
+    assert_eq!(store.oldest(inbox_a).unwrap(), None);
+    let old = [message(1, 10), message(2, 20), message(3, 30)];
+    store.save_messages(inbox_a, &old).unwrap();
+    store.save_messages(inbox_b, &old).unwrap();
+    assert_eq!(store.oldest(inbox_a).unwrap(), Some(10));
+    // A queued action keeps its message until the server has it.
+    let held = list(&store, ListScope::Folder(inbox_a), 10, None)
+        .into_iter()
+        .find(|m| m.date == 10)
+        .unwrap();
+    store.queue(held.id, Action::Seen(true), 0).unwrap();
+
+    store.prune(a, 25).unwrap();
+    let (_, known) = store.checkpoint(inbox_a).unwrap();
+    assert_eq!(known.len(), 2);
+    assert_eq!(store.oldest(inbox_a).unwrap(), Some(10));
+    assert_eq!(store.checkpoint(inbox_b).unwrap().1.len(), 3);
+}
+
+#[test]
 fn removing_an_account_removes_its_mail() {
     let store = store();
     let a = account(&store, "a@example.com");

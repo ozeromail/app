@@ -27,8 +27,8 @@ pub use outbox::{
     is_address, parse_recipients, quote, reply_subject, with_quote,
 };
 pub use provider::{
-    Changes, Checkpoint, MailProvider, MailSender, MessageBuilder, MessageParser, ProviderError,
-    RawMessage,
+    Changes, Checkpoint, MailProvider, MailSender, MessageBuilder, MessageParser, Older,
+    ProviderError, RawMessage,
 };
 pub use sort::{Category, Signals};
 pub use store::{Store, StoreError};

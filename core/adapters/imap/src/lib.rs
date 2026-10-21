@@ -18,10 +18,12 @@ use imap_codec::imap_types::mailbox::Mailbox;
 use imap_codec::imap_types::response::{
     Capability, Code, Data, GreetingKind, Response, Status, StatusBody, StatusKind,
 };
+use imap_codec::imap_types::search::SearchKey;
 use imap_codec::imap_types::sequence::{SeqOrUid, Sequence, SequenceSet};
 use imap_codec::{CommandCodec, GreetingCodec, ResponseCodec};
 use ozero_domain::{
-    Changes, Checkpoint, Flags, FolderRole, MailProvider, NewFolder, ProviderError, RawMessage,
+    Changes, Checkpoint, Flags, FolderRole, MailProvider, NewFolder, Older, ProviderError,
+    RawMessage,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -372,7 +374,7 @@ impl ImapSession {
         })
     }
 
-    /// The newest `limit` of a folder's `exists` messages, oldest first.
+    /// The newest `limit` of the open folder's messages 1 to `exists`, oldest first.
     async fn newest(&mut self, exists: u32, limit: u32) -> Result<Vec<RawMessage>, ProviderError> {
         if exists == 0 || limit == 0 {
             return Ok(vec![]);
@@ -531,6 +533,59 @@ impl MailProvider for ImapSession {
             };
         }
         Ok(changes)
+    }
+
+    async fn older(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        known: &[String],
+        _oldest: i64,
+        limit: u32,
+    ) -> Result<Older, ProviderError> {
+        let opened = self.open(folder, false).await?;
+        if opened.validity != validity {
+            return Err(ProviderError::Gone);
+        }
+        let lowest = known
+            .iter()
+            .filter_map(|id| id.parse::<NonZeroU32>().ok())
+            .min();
+        // Sequence numbers grow with UIDs, so the mail below the lowest saved UID is numbered
+        // 1 to `below`: one less than the first number from it on. Asking for those few is
+        // cheaper than for all the older ones. Not `n:*`, see `empty`.
+        let below = match lowest {
+            None => opened.exists,
+            Some(lowest) => {
+                let from = SequenceSet::try_from(lowest.get()..=i32::MAX as u32)
+                    .map_err(|_| protocol("bad UID set"))?;
+                let search = CommandBody::search(None, Vec1::from(SearchKey::Uid(from)), false);
+                self.run(search)
+                    .await?
+                    .data
+                    .into_iter()
+                    .filter_map(|d| match d {
+                        Data::Search(found, ..) => Some(found),
+                        _ => None,
+                    })
+                    .flatten()
+                    .min()
+                    .map_or(opened.exists, |first| first.get() - 1)
+            }
+        };
+        let mut new = self.newest(below, limit).await?;
+        // Mail expunged meanwhile moves the numbers down: only what is older still.
+        if let Some(lowest) = lowest {
+            new.retain(|m| {
+                m.remote_id
+                    .parse::<u32>()
+                    .is_ok_and(|uid| uid < lowest.get())
+            });
+        }
+        Ok(Older {
+            new,
+            more: below > limit,
+        })
     }
 
     async fn body(

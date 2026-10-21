@@ -140,7 +140,7 @@ impl Store for SqliteStore {
         let mut stmt = conn
             .prepare_cached(
                 "SELECT id, kind, email, display_name, server_host, server_port, server_user,
-                        smtp_host, smtp_port, smtp_user, color, label
+                        smtp_host, smtp_port, smtp_user, color, label, keep_days
                  FROM account ORDER BY id",
             )
             .map_err(storage)?;
@@ -160,6 +160,7 @@ impl Store for SqliteStore {
                 smtp: server(7)?,
                 color: r.get(10)?,
                 label: r.get(11)?,
+                keep_days: r.get(12)?,
             })
         });
         rows.and_then(|rows| rows.collect()).map_err(storage)
@@ -193,6 +194,30 @@ impl Store for SqliteStore {
             )
             .map_err(storage)?;
         found(changed)
+    }
+
+    fn set_account_keep(&self, account: AccountId, days: u32) -> Result<(), StoreError> {
+        let changed = self
+            .conn()
+            .execute(
+                "UPDATE account SET keep_days = ?2 WHERE id = ?1",
+                params![account.0, days],
+            )
+            .map_err(storage)?;
+        found(changed)
+    }
+
+    fn prune(&self, account: AccountId, before: i64) -> Result<(), StoreError> {
+        self.conn()
+            .execute(
+                "DELETE FROM message
+                 WHERE folder_id IN (SELECT id FROM folder WHERE account_id = ?1) AND date < ?2
+                   AND NOT EXISTS (SELECT 1 FROM op WHERE op.message_id = message.id)
+                   AND NOT EXISTS (SELECT 1 FROM outbox WHERE outbox.reply_to = message.id)",
+                params![account.0, before],
+            )
+            .map_err(storage)?;
+        Ok(())
     }
 
     fn save_folders(
@@ -275,6 +300,16 @@ impl Store for SqliteStore {
             .and_then(|mut s| s.query_map([folder.0], |r| r.get(0))?.collect())
             .map_err(storage)?;
         Ok((checkpoint, known))
+    }
+
+    fn oldest(&self, folder: FolderId) -> Result<Option<i64>, StoreError> {
+        self.conn()
+            .query_row(
+                "SELECT min(date) FROM message WHERE folder_id = ?1",
+                [folder.0],
+                |r| r.get(0),
+            )
+            .map_err(storage)
     }
 
     fn save_changes(

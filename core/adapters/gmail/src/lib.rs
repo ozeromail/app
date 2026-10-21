@@ -13,8 +13,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ozero_domain::{
-    Changes, Checkpoint, Flags, FolderRole, MailProvider, MailSender, NewFolder, ProviderError,
-    RawMessage,
+    Changes, Checkpoint, Flags, FolderRole, MailProvider, MailSender, NewFolder, Older,
+    ProviderError, RawMessage,
 };
 use ozero_http::{Body, HttpsClient, Response};
 use serde_json::{Value, json};
@@ -142,7 +142,7 @@ impl GmailSession {
         let list = self
             .get(&format!(
                 "/messages?{}&maxResults={}&fields=messages/id",
-                listing(label),
+                listing(label, ""),
                 limit.min(MAX_LIST)
             ))
             .await?;
@@ -300,7 +300,7 @@ impl GmailSession {
             let json = self
                 .get(&format!(
                     "/messages?{}&maxResults=500{page}",
-                    listing(folder)
+                    listing(folder, "")
                 ))
                 .await?;
             for m in json["messages"].as_array().into_iter().flatten() {
@@ -371,6 +371,43 @@ impl MailProvider for GmailSession {
             new: self.newest(folder, limit).await?,
             flags: vec![],
             gone: vec![],
+        })
+    }
+
+    async fn older(
+        &mut self,
+        folder: &str,
+        _validity: u32,
+        known: &[String],
+        oldest: i64,
+        limit: u32,
+    ) -> Result<Older, ProviderError> {
+        // `before:` counts whole seconds: from the oldest saved one's on, leaving out what is saved.
+        let before = match oldest {
+            i64::MAX => String::new(),
+            oldest => format!("before:{}", oldest.saturating_add(1)),
+        };
+        let list = self
+            .get(&format!(
+                "/messages?{}&maxResults={}&fields=messages/id,nextPageToken",
+                listing(folder, &before),
+                limit.min(MAX_LIST)
+            ))
+            .await?;
+        let known: HashSet<&str> = known.iter().map(String::as_str).collect();
+        let mut ids = each(&list["messages"], |m| &m["id"]);
+        ids.retain(|id| !known.contains(id.as_str()));
+        let mut new: Vec<_> = self
+            .headers(&ids)
+            .await?
+            .into_iter()
+            .filter(|m| has(&m.labels, folder))
+            .map(|m| m.raw)
+            .collect();
+        new.sort_by_key(|m| m.received);
+        Ok(Older {
+            new,
+            more: list["nextPageToken"].is_string(),
         })
     }
 
@@ -547,17 +584,24 @@ const APART: [&str; 2] = ["SPAM", "TRASH"];
 /// The other system labels, with their search names: mail in none of them is archived.
 const FILED: [(&str, &str); 3] = [("INBOX", "inbox"), ("SENT", "sent"), ("DRAFT", "drafts")];
 
-/// What lists a folder's messages: its label, or for the archive a search, which leaves spam
-/// and trash out as every list does unless asked.
-fn listing(folder: &str) -> String {
-    if folder == ARCHIVE {
-        let filed: Vec<_> = FILED.iter().map(|(_, n)| format!("-in:{n}")).collect();
-        format!("q={}", percent(&filed.join(" ")))
+/// What lists a folder's messages that match the Gmail search `query`, empty for all: its
+/// label, or for the archive a search, which leaves spam and trash out as every list does
+/// unless asked.
+fn listing(folder: &str, query: &str) -> String {
+    let mut terms = vec![];
+    let mut listing = if folder == ARCHIVE {
+        terms.extend(FILED.iter().map(|(_, n)| format!("-in:{n}")));
+        String::new()
     } else if APART.contains(&folder) {
-        format!("labelIds={}&includeSpamTrash=true", percent(folder))
+        format!("labelIds={}&includeSpamTrash=true&", percent(folder))
     } else {
-        format!("labelIds={}", percent(folder))
+        format!("labelIds={}&", percent(folder))
+    };
+    terms.extend((!query.is_empty()).then(|| query.to_owned()));
+    if !terms.is_empty() {
+        listing.push_str(&format!("q={}", percent(&terms.join(" "))));
     }
+    listing.trim_end_matches('&').to_owned()
 }
 
 fn has(labels: &[String], folder: &str) -> bool {
