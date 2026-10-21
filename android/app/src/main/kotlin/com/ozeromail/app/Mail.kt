@@ -383,7 +383,7 @@ class Mail(private val context: Context) {
                 while (true) {
                     val started = SystemClock.elapsedRealtime()
                     val fine = try {
-                        !core.waitForMail(account.id, password) || onMail()
+                        !io { core.waitForMail(account.id, password) } || onMail()
                     } catch (e: CoreException) {
                         Log.w("Ozero", "wait for mail failed", e)
                         false
