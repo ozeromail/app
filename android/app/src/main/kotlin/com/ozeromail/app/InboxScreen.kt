@@ -1244,7 +1244,7 @@ private fun Tabs(
     tab: Category,
     tabs: List<InboxTab>,
     glide: Animatable<Float, AnimationVector1D>,
-    thumb: () -> Float,
+    thumbAt: () -> Float,
     onPick: (Category, from: Float, velocity: Float) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -1253,7 +1253,7 @@ private fun Tabs(
     val haptics = LocalHapticFeedback.current
     val index = Category.entries.indexOf(tab)
     val last = Category.entries.size - 1
-    val thumbNow by rememberUpdatedState(thumb)
+    val thumbNow by rememberUpdatedState(thumbAt)
     // The thumb's two edges ride springs of their own: the front one leads and the back one is
     // held back as if by water, so the thumb draws out while it moves and gathers as it stops.
     val leftEdge = remember { Animatable(index.toFloat()) }
@@ -1339,7 +1339,7 @@ private fun Tabs(
                 val unread = tabs.find { it.category == category }?.unread ?: 0u
                 // The label darkens as the thumb comes over it, not all at once; read while drawing,
                 // so the glide does not recompose the tabs on every frame.
-                val label = ColorProducer { lerp(colors.onSurfaceVariant, colors.onSurface, (1f - abs(at - thumb())).coerceIn(0f, 1f)) }
+                val label = ColorProducer { lerp(colors.onSurfaceVariant, colors.onSurface, (1f - abs(at - thumbAt())).coerceIn(0f, 1f)) }
                 // A count that changes gives a small nudge, as a float does when something touches it.
                 // Not when the counts first come in from the core.
                 val nudge = remember { Animatable(0f) }
