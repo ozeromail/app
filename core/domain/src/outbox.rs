@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use crate::{AccountId, MessageId};
 
 /// Local id of a message waiting to be sent.
@@ -90,15 +92,42 @@ pub fn with_quote(text: &str, quote: &str) -> String {
 
 /// `Re: ` once, the way mail clients answer.
 pub fn reply_subject(subject: &str) -> String {
+    prefixed(subject, "Re: ", &["re:"])
+}
+
+/// `Fwd: ` once, the way mail clients forward; `Fw: ` counts too.
+pub fn forward_subject(subject: &str) -> String {
+    prefixed(subject, "Fwd: ", &["fwd:", "fw:"])
+}
+
+/// `prefix` before the subject unless it starts with one of `known`, in any case.
+fn prefixed(subject: &str, prefix: &str, known: &[&str]) -> String {
     let trimmed = subject.trim();
-    let prefixed = trimmed
-        .get(..3)
-        .is_some_and(|p| p.eq_ignore_ascii_case("re:"));
-    if prefixed {
+    let has = known.iter().any(|k| {
+        trimmed
+            .get(..k.len())
+            .is_some_and(|p| p.eq_ignore_ascii_case(k))
+    });
+    if has {
         trimmed.to_owned()
     } else {
-        format!("Re: {trimmed}")
+        format!("{prefix}{trimmed}")
     }
+}
+
+/// A forwarded message under the text: `title`, a line for each of its `fields` that has a
+/// value, a blank line, then its `text` as it is.
+pub fn forward_quote(title: &str, fields: &[(&str, &str)], text: &str) -> String {
+    let mut quote = title.to_owned();
+    for (label, value) in fields.iter().filter(|(_, v)| !v.is_empty()) {
+        let _ = write!(quote, "\n{label} {value}");
+    }
+    let text = text.trim();
+    if !text.is_empty() {
+        quote.push_str("\n\n");
+        quote.push_str(text);
+    }
+    quote
 }
 
 #[cfg(test)]
@@ -151,5 +180,27 @@ mod tests {
         assert_eq!(reply_subject("RE: Hi"), "RE: Hi");
         assert_eq!(reply_subject(" "), "Re: ");
         assert_eq!(reply_subject("Отчёт"), "Re: Отчёт");
+    }
+
+    #[test]
+    fn forwards_with_one_fwd() {
+        assert_eq!(forward_subject("Hi"), "Fwd: Hi");
+        assert_eq!(forward_subject(" FWD: Hi"), "FWD: Hi");
+        assert_eq!(forward_subject("Fw: Hi"), "Fw: Hi");
+        assert_eq!(forward_subject("Re: Hi"), "Fwd: Re: Hi");
+        assert_eq!(forward_subject("Отчёт"), "Fwd: Отчёт");
+    }
+
+    #[test]
+    fn forwards_the_text_under_its_header() {
+        let fields = [("From:", "Anna <anna@example.com>"), ("To:", "")];
+        assert_eq!(
+            forward_quote("Forwarded message", &fields, "\nHi\n> old\n"),
+            "Forwarded message\nFrom: Anna <anna@example.com>\n\nHi\n> old"
+        );
+        assert_eq!(
+            forward_quote("Forwarded", &fields, " "),
+            "Forwarded\nFrom: Anna <anna@example.com>"
+        );
     }
 }
