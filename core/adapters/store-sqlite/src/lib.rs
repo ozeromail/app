@@ -828,8 +828,10 @@ impl Store for SqliteStore {
         let id = tx
             .query_row(
                 "INSERT INTO outbox (account_id, recipients, subject, text, reply_to, in_reply_to,
-                                     message_id, date, not_before, quote)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) RETURNING id",
+                                     message_id, date, not_before, quote, forward)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+                         (SELECT id FROM message WHERE id = ?11))
+                 RETURNING id",
                 params![
                     draft.account_id.0,
                     draft.to.join("\n"),
@@ -841,6 +843,7 @@ impl Store for SqliteStore {
                     date,
                     not_before,
                     draft.quote,
+                    draft.forward.map(|m| m.0),
                 ],
                 |r| r.get(0),
             )
@@ -859,7 +862,7 @@ impl Store for SqliteStore {
         let taken = tx
             .query_row(
                 "DELETE FROM outbox WHERE id = ?1 AND (not_before > ?2 OR failed IS NOT NULL)
-                 RETURNING account_id, recipients, subject, text, reply_to, quote",
+                 RETURNING account_id, recipients, subject, text, reply_to, quote, forward",
                 params![id.0, now],
                 |r| {
                     Ok(SavedDraft {
@@ -870,6 +873,7 @@ impl Store for SqliteStore {
                         text: r.get(3)?,
                         reply_to: r.get::<_, Option<i64>>(4)?.map(MessageId),
                         quote: r.get(5)?,
+                        forward: r.get::<_, Option<i64>>(6)?.map(MessageId),
                         saved: now,
                     })
                 },
@@ -896,7 +900,8 @@ impl Store for SqliteStore {
                      account_id = (SELECT id FROM account WHERE id = ?1),
                      recipients = ?2, subject = ?3, text = ?4,
                      reply_to = (SELECT id FROM message WHERE id = ?5),
-                     quote = ?6, saved = ?7
+                     quote = ?6, saved = ?7,
+                     forward = (SELECT id FROM message WHERE id = ?9)
                  WHERE id = ?8",
                 params![
                     draft.account_id.map(|a| a.0),
@@ -907,6 +912,7 @@ impl Store for SqliteStore {
                     draft.quote,
                     draft.saved,
                     id.0,
+                    draft.forward.map(|m| m.0),
                 ],
             )
             .map_err(storage)?;
@@ -918,7 +924,7 @@ impl Store for SqliteStore {
         let conn = self.conn();
         let rows = conn
             .prepare_cached(
-                "SELECT id, account_id, recipients, subject, text, reply_to, quote, saved
+                "SELECT id, account_id, recipients, subject, text, reply_to, quote, saved, forward
                  FROM draft ORDER BY saved DESC, id DESC",
             )
             .and_then(|mut s| {
@@ -931,6 +937,7 @@ impl Store for SqliteStore {
                         text: r.get(4)?,
                         reply_to: r.get::<_, Option<i64>>(5)?.map(MessageId),
                         quote: r.get(6)?,
+                        forward: r.get::<_, Option<i64>>(8)?.map(MessageId),
                         saved: r.get(7)?,
                     })
                 })?
@@ -969,7 +976,7 @@ impl Store for SqliteStore {
         let conn = self.conn();
         let rows = conn
             .prepare_cached(
-                "SELECT id, recipients, subject, text, message_id, in_reply_to, date, quote
+                "SELECT id, recipients, subject, text, message_id, in_reply_to, date, quote, forward
                  FROM outbox
                  WHERE account_id = ?1 AND not_before <= ?2 AND failed IS NULL ORDER BY id",
             )
@@ -983,6 +990,8 @@ impl Store for SqliteStore {
                         message_id: r.get(4)?,
                         in_reply_to: r.get(5)?,
                         date: r.get(6)?,
+                        forward: r.get::<_, Option<i64>>(8)?.map(MessageId),
+                        files: vec![],
                     })
                 })?
                 .collect()
@@ -1673,9 +1682,10 @@ fn found(changed: usize) -> Result<(), StoreError> {
 /// Saves a new draft; an account or answered message that is gone is left out.
 fn insert_draft(conn: &Connection, draft: &SavedDraft) -> Result<DraftId, StoreError> {
     conn.query_row(
-        "INSERT INTO draft (account_id, recipients, subject, text, reply_to, quote, saved)
+        "INSERT INTO draft (account_id, recipients, subject, text, reply_to, quote, saved, forward)
          VALUES ((SELECT id FROM account WHERE id = ?1), ?2, ?3, ?4,
-                 (SELECT id FROM message WHERE id = ?5), ?6, ?7)
+                 (SELECT id FROM message WHERE id = ?5), ?6, ?7,
+                 (SELECT id FROM message WHERE id = ?8))
          RETURNING id",
         params![
             draft.account_id.map(|a| a.0),
@@ -1685,6 +1695,7 @@ fn insert_draft(conn: &Connection, draft: &SavedDraft) -> Result<DraftId, StoreE
             draft.reply_to.map(|m| m.0),
             draft.quote,
             draft.saved,
+            draft.forward.map(|m| m.0),
         ],
         |r| r.get(0),
     )

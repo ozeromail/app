@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ozero_app::ops::push_ops;
-use ozero_app::send::{SentCopy, push_sends};
+use ozero_app::send::{SentCopy, forwarded_files, push_sends};
 use ozero_app::sync::{
     SyncError, download_attachments, download_body, load_older, prefetch_bodies, search_server,
     sync_folders, sync_mail, wait_for_mail,
@@ -16,8 +16,9 @@ use ozero_app::sync::{
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Attachment, Body, Category, Changes,
     Checkpoint, Draft, DraftId, Folder, FolderId, FolderRole, ListQuery, ListScope, MailProvider,
-    MessageId, MessageRow, NewAccount, NewFolder, Older, OpId, OutboxId, ProviderError, RawMessage,
-    SavedDraft, Sender, Server, Store, StoreError, html, parse_recipients, saves_sent_itself,
+    MessageId, MessageRow, NewAccount, NewFolder, Older, OpId, OutboxId, Outgoing, ProviderError,
+    RawMessage, SavedDraft, Sender, Server, Store, StoreError, html, parse_recipients,
+    saves_sent_itself,
 };
 use ozero_gmail::{GmailSession, oauth};
 use ozero_imap::ImapSession;
@@ -350,6 +351,7 @@ impl Core {
             reply_to: Some(message.id),
             quote: String::new(),
             saved: 0,
+            forward: None,
         })
     }
 
@@ -381,6 +383,7 @@ impl Core {
             text,
             reply_to,
             quote,
+            forward,
             ..
         } = draft;
         let to = parse_recipients(&to).ok_or(CoreError::BadRecipients)?;
@@ -396,6 +399,7 @@ impl Core {
             text,
             reply_to: reply_to.map(MessageId),
             quote,
+            forward: forward.map(MessageId),
         };
         let now = now();
         let id = self.store.queue_send(
@@ -442,6 +446,7 @@ impl Core {
             text: draft.text,
             reply_to: draft.reply_to.map(MessageId),
             quote: draft.quote,
+            forward: draft.forward.map(MessageId),
             saved: now(),
         };
         match self.store.save_draft(&saved) {
@@ -802,6 +807,7 @@ impl Core {
             reply_to: None,
             quote: ozero_domain::forward_quote(&labels.title, &fields, &text),
             saved: 0,
+            forward: Some(message.id),
         })
     }
 
@@ -1179,11 +1185,25 @@ impl Core {
         secret: &str,
         slot: &mut Option<Remote>,
     ) -> Result<(), CoreError> {
+        // Mail first: an action may take a forwarded message off the device, and its files
+        // with it. Mail that cannot go does not hold the actions back.
+        let mailed = self.push_mail(account, secret, slot).await;
         let ops = self.store.due(account.id, now())?;
         if !ops.is_empty() {
             let remote = self.remote(slot, account, secret).await?;
             push_ops(&self.store, remote, ops).await?;
         }
+        mailed
+    }
+
+    /// Sends the account's due mail, one message at a time, so only one message's files are
+    /// held.
+    async fn push_mail(
+        &self,
+        account: &Account,
+        secret: &str,
+        slot: &mut Option<Remote>,
+    ) -> Result<(), CoreError> {
         let mail = self.store.due_sends(account.id, now())?;
         if mail.is_empty() {
             return Ok(());
@@ -1193,37 +1213,73 @@ impl Core {
             email: account.email.clone(),
         };
         if account.kind == AccountKind::Gmail {
-            // Gmail keeps the copy in Sent itself.
-            let copy: Option<SentCopy<'_, Remote>> = None;
-            if let Remote::Gmail(gmail) = self.remote(slot, account, secret).await? {
-                push_sends(&self.store, gmail, &MimeBuilder, &from, copy, mail).await?;
+            for message in mail {
+                let message = self.with_files(account, secret, slot, message).await?;
+                // Gmail keeps the copy in Sent itself.
+                let copy: Option<SentCopy<'_, Remote>> = None;
+                if let Remote::Gmail(gmail) = self.remote(slot, account, secret).await? {
+                    let one = vec![message];
+                    push_sends(&self.store, gmail, &MimeBuilder, &from, copy, one).await?;
+                }
             }
             return Ok(());
         }
         let server = account.smtp.as_ref().ok_or(CoreError::NoSmtp)?;
-        let mut smtp = self
-            .signed_in(account, self.send_login(server, secret))
-            .await?;
         let sent = if saves_sent_itself(&server.host) {
             None
         } else {
             let folders = self.store.folders(account.id)?;
             folders.into_iter().find(|f| f.role == FolderRole::Sent)
         };
-        // Without IMAP the mail still goes; only its copy in Sent is missing.
-        let copy = match &sent {
-            Some(folder) => match self.remote(slot, account, secret).await {
-                Ok(provider) => Some(SentCopy {
-                    provider,
-                    folder: &folder.remote_id,
-                }),
+        let (mut smtp, mut no_imap) = (None, false);
+        for message in mail {
+            let message = self.with_files(account, secret, slot, message).await?;
+            // Signed in after the files came, so the session is not left idle meanwhile.
+            let mut session = match smtp.take() {
+                Some(session) => session,
+                None => {
+                    self.signed_in(account, self.send_login(server, secret))
+                        .await?
+                }
+            };
+            // Without IMAP the mail still goes; only its copy in Sent is missing.
+            let copy = match &sent {
+                Some(folder) if !no_imap => match self.remote(slot, account, secret).await {
+                    Ok(provider) => Some(SentCopy {
+                        provider,
+                        folder: &folder.remote_id,
+                    }),
+                    Err(_) => {
+                        no_imap = true;
+                        None
+                    }
+                },
                 _ => None,
-            },
-            None => None,
-        };
-        push_sends(&self.store, &mut smtp, &MimeBuilder, &from, copy, mail).await?;
-        let _ = smtp.quit().await;
+            };
+            let one = vec![message];
+            push_sends(&self.store, &mut session, &MimeBuilder, &from, copy, one).await?;
+            smtp = Some(session);
+        }
+        if let Some(session) = smtp {
+            let _ = session.quit().await;
+        }
         Ok(())
+    }
+
+    /// The message with the files of the message it forwards, read from the server.
+    async fn with_files(
+        &self,
+        account: &Account,
+        secret: &str,
+        slot: &mut Option<Remote>,
+        mut message: Outgoing,
+    ) -> Result<Outgoing, CoreError> {
+        if let Some(original) = message.forward {
+            let remote = self.remote(slot, account, secret).await?;
+            let files = forwarded_files(&self.store, remote, &self.parser, account.id, original);
+            message.files = files.await?;
+        }
+        Ok(message)
     }
 
     async fn send_login(&self, server: &Server, password: &str) -> Result<SmtpSession, CoreError> {
@@ -1729,6 +1785,9 @@ pub struct DraftItem {
     pub quote: String,
     /// When it was last saved, in seconds since the Unix epoch; 0 if never.
     pub saved: i64,
+    /// The forwarded message, whose files go with it.
+    #[uniffi(default = None)]
+    pub forward: Option<i64>,
 }
 
 /// The header words of a forwarded message, in the app's language.
@@ -1752,6 +1811,7 @@ impl From<SavedDraft> for DraftItem {
             reply_to: d.reply_to.map(|m| m.0),
             quote: d.quote,
             saved: d.saved / 1_000,
+            forward: d.forward.map(|m| m.0),
         }
     }
 }

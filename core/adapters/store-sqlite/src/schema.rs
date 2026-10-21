@@ -241,4 +241,10 @@ pub const MIGRATIONS: &[&str] = &[
     ",
     // 23: an account whose login the server refused, until the person signs in again.
     "ALTER TABLE account ADD COLUMN needs_sign_in INTEGER NOT NULL DEFAULT 0;",
+    // 24: the forwarded message of a draft or a message waiting to be sent, whose files go
+    // with it.
+    "
+    ALTER TABLE draft ADD COLUMN forward INTEGER REFERENCES message(id) ON DELETE SET NULL;
+    ALTER TABLE outbox ADD COLUMN forward INTEGER REFERENCES message(id) ON DELETE SET NULL;
+    ",
 ];

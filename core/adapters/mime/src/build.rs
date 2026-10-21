@@ -1,6 +1,7 @@
-//! `MessageBuilder`: plain text messages, written by hand. All output is 7-bit ASCII with CRLF.
+//! `MessageBuilder`: plain text messages, with files if any, written by hand. All output is
+//! 7-bit ASCII with CRLF.
 
-use ozero_domain::{Address, MessageBuilder, Outgoing, base64};
+use ozero_domain::{Address, MessageBuilder, Outgoing, OutgoingFile, base64};
 
 #[derive(Debug, Default)]
 pub struct MimeBuilder;
@@ -8,34 +9,91 @@ pub struct MimeBuilder;
 impl MessageBuilder for MimeBuilder {
     fn build(&self, from: &Address, message: &Outgoing) -> Vec<u8> {
         let mut out = String::new();
-        let mut header = |name: &str, value: &str| {
-            out.push_str(name);
-            out.push_str(": ");
-            out.push_str(value);
-            out.push_str("\r\n");
-        };
-        header("Date", &rfc5322_date(message.date));
-        header("From", &mailbox(from));
+        header(&mut out, "Date", &rfc5322_date(message.date));
+        header(&mut out, "From", &mailbox(from));
         // One address per line keeps each line short (RFC 5322 folding).
-        header("To", &message.to.join(",\r\n "));
-        header("Subject", &encoded_words(&message.subject));
-        header("Message-ID", &format!("<{}>", message.message_id));
+        header(&mut out, "To", &message.to.join(",\r\n "));
+        header(&mut out, "Subject", &encoded_words(&message.subject));
+        header(&mut out, "Message-ID", &format!("<{}>", message.message_id));
         if let Some(parent) = &message.in_reply_to {
             let parent = format!("<{}>", one_line(parent.trim_matches(['<', '>'])));
-            header("In-Reply-To", &parent);
-            header("References", &parent);
+            header(&mut out, "In-Reply-To", &parent);
+            header(&mut out, "References", &parent);
         }
-        header("MIME-Version", "1.0");
-        header("Content-Type", "text/plain; charset=utf-8");
-        header("Content-Transfer-Encoding", "base64");
+        header(&mut out, "MIME-Version", "1.0");
+        if message.files.is_empty() {
+            text(&mut out, &message.text);
+            return out.into_bytes();
+        }
+        // Unique as the message id, and never in base64, which has no `=_`.
+        let local = message.message_id.split('@').next().unwrap_or_default();
+        let boundary = format!("=_{}", one_line(local).replace('"', ""));
+        let content = format!("multipart/mixed; boundary=\"{boundary}\"");
+        header(&mut out, "Content-Type", &content);
         out.push_str("\r\n");
-        let body = base64(crlf(&message.text).as_bytes());
-        // RFC 2045: lines of at most 76 characters; base64 is ASCII, so bytes are characters.
-        for line in body.as_bytes().chunks(76) {
-            out.push_str(&String::from_utf8_lossy(line));
-            out.push_str("\r\n");
+        out.push_str(&format!("--{boundary}\r\n"));
+        text(&mut out, &message.text);
+        for file in &message.files {
+            out.push_str(&format!("--{boundary}\r\n"));
+            attachment(&mut out, file);
         }
+        out.push_str(&format!("--{boundary}--\r\n"));
         out.into_bytes()
+    }
+}
+
+fn header(out: &mut String, name: &str, value: &str) {
+    out.push_str(name);
+    out.push_str(": ");
+    out.push_str(value);
+    out.push_str("\r\n");
+}
+
+/// The text part: its headers, then the text.
+fn text(out: &mut String, text: &str) {
+    header(out, "Content-Type", "text/plain; charset=utf-8");
+    header(out, "Content-Transfer-Encoding", "base64");
+    out.push_str("\r\n");
+    lines(out, crlf(text).as_bytes());
+}
+
+/// A file part: its headers, then the file.
+fn attachment(out: &mut String, file: &OutgoingFile) {
+    let mime = one_line(&file.mime).replace([';', '"', ' '], "");
+    let mime = if mime.contains('/') {
+        mime
+    } else {
+        "application/octet-stream".into()
+    };
+    // Mail apps read encoded words in a quoted name, though RFC 2047 does not ask them to.
+    let name = encoded_words(&file.name.replace(['"', '\\'], ""));
+    // Text comes out of a message as UTF-8, whatever its charset there.
+    let charset = if mime.starts_with("text/") {
+        "; charset=utf-8"
+    } else {
+        ""
+    };
+    header(
+        out,
+        "Content-Type",
+        &format!("{mime}{charset}; name=\"{name}\""),
+    );
+    header(
+        out,
+        "Content-Disposition",
+        &format!("attachment; filename=\"{name}\""),
+    );
+    header(out, "Content-Transfer-Encoding", "base64");
+    out.push_str("\r\n");
+    lines(out, &file.data);
+}
+
+/// `data` in base64, in lines of at most 76 characters (RFC 2045); base64 is ASCII, so bytes
+/// are characters.
+fn lines(out: &mut String, data: &[u8]) {
+    for line in base64(data).as_bytes().chunks(76) {
+        out.push_str(&String::from_utf8_lossy(line));
+        out.push_str("\r\n");
     }
 }
 
@@ -111,7 +169,7 @@ fn rfc5322_date(seconds: i64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use mail_parser::MessageParser;
+    use mail_parser::{MessageParser, MimeHeaders};
     use ozero_domain::OutboxId;
 
     use super::*;
@@ -125,6 +183,8 @@ mod tests {
             message_id: "1.2@example.com".into(),
             in_reply_to: Some("parent@example.org".into()),
             date: 1_791_971_283,
+            forward: None,
+            files: vec![],
         }
     }
 
@@ -177,5 +237,39 @@ mod tests {
         let text = String::from_utf8(raw).unwrap();
         assert!(text.contains("Subject: Hi  Bcc: eve@example.com\r\n"));
         assert!(!text.contains("\r\nBcc:"));
+    }
+
+    #[test]
+    fn sends_files_after_the_text() {
+        let from = Address {
+            name: None,
+            email: "anna@example.com".into(),
+        };
+        let pdf: Vec<u8> = (0..=255).cycle().take(1000).collect();
+        let message = Outgoing {
+            files: vec![
+                OutgoingFile {
+                    name: "Счёт \"октябрь\".pdf".into(),
+                    mime: "application/pdf".into(),
+                    data: pdf.clone(),
+                },
+                OutgoingFile {
+                    name: "notes.txt".into(),
+                    mime: String::new(),
+                    data: b"hi".to_vec(),
+                },
+            ],
+            ..outgoing("Fwd: bill", "See below")
+        };
+        let raw = MimeBuilder.build(&from, &message);
+        assert!(raw.is_ascii());
+        let parsed = MessageParser::default().parse(&raw).unwrap();
+        assert_eq!(parsed.body_text(0).as_deref(), Some("See below"));
+        let files: Vec<_> = parsed.attachments().collect();
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].attachment_name(), Some("Счёт октябрь.pdf"));
+        assert_eq!(files[0].contents(), pdf);
+        assert_eq!(files[1].attachment_name(), Some("notes.txt"));
+        assert_eq!(files[1].contents(), b"hi");
     }
 }
