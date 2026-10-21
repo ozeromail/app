@@ -1197,7 +1197,7 @@ impl Core {
     }
 
     /// Sends the account's due mail, one message at a time, so only one message's files are
-    /// held.
+    /// held. The larger futures are boxed: inline, they overflow a 2 MB stack in debug builds.
     async fn push_mail(
         &self,
         account: &Account,
@@ -1214,10 +1214,10 @@ impl Core {
         };
         if account.kind == AccountKind::Gmail {
             for message in mail {
-                let message = self.with_files(account, secret, slot, message).await?;
+                let message = Box::pin(self.with_files(account, secret, slot, message)).await?;
                 // Gmail keeps the copy in Sent itself.
                 let copy: Option<SentCopy<'_, Remote>> = None;
-                if let Remote::Gmail(gmail) = self.remote(slot, account, secret).await? {
+                if let Remote::Gmail(gmail) = Box::pin(self.remote(slot, account, secret)).await? {
                     let one = vec![message];
                     push_sends(&self.store, gmail, &MimeBuilder, &from, copy, one).await?;
                 }
@@ -1233,7 +1233,7 @@ impl Core {
         };
         let (mut smtp, mut no_imap) = (None, false);
         for message in mail {
-            let message = self.with_files(account, secret, slot, message).await?;
+            let message = Box::pin(self.with_files(account, secret, slot, message)).await?;
             // Signed in after the files came, so the session is not left idle meanwhile.
             let mut session = match smtp.take() {
                 Some(session) => session,
@@ -1244,16 +1244,18 @@ impl Core {
             };
             // Without IMAP the mail still goes; only its copy in Sent is missing.
             let copy = match &sent {
-                Some(folder) if !no_imap => match self.remote(slot, account, secret).await {
-                    Ok(provider) => Some(SentCopy {
-                        provider,
-                        folder: &folder.remote_id,
-                    }),
-                    Err(_) => {
-                        no_imap = true;
-                        None
+                Some(folder) if !no_imap => {
+                    match Box::pin(self.remote(slot, account, secret)).await {
+                        Ok(provider) => Some(SentCopy {
+                            provider,
+                            folder: &folder.remote_id,
+                        }),
+                        Err(_) => {
+                            no_imap = true;
+                            None
+                        }
                     }
-                },
+                }
                 _ => None,
             };
             let one = vec![message];
