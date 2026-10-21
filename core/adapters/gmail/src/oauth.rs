@@ -99,6 +99,8 @@ pub async fn exchange(
             ("code", code),
             ("code_verifier", &sign_in.verifier),
         ],
+        // The code is used up by the first ask; a second would read as refused.
+        false,
     )
     .await?;
     if tokens.refresh.is_none() {
@@ -120,24 +122,29 @@ pub async fn refresh(
             ("grant_type", "refresh_token"),
             ("refresh_token", refresh),
         ],
+        // It only gives another access token.
+        true,
     )
     .await
 }
 
-async fn token(tls: Arc<ClientConfig>, pairs: &[(&str, &str)]) -> Result<Tokens, ProviderError> {
+/// Asks for tokens; `repeatable` if the ask is safe to send twice.
+async fn token(
+    tls: Arc<ClientConfig>,
+    pairs: &[(&str, &str)],
+    repeatable: bool,
+) -> Result<Tokens, ProviderError> {
     let mut http = HttpsClient::new(TOKEN_HOST, 443, tls);
     let body = form(pairs);
-    let response = http
-        .send(
-            "POST",
-            "/token",
-            &[],
-            Some(Body {
-                content_type: "application/x-www-form-urlencoded",
-                data: body.as_bytes(),
-            }),
-        )
-        .await?;
+    let body = Some(Body {
+        content_type: "application/x-www-form-urlencoded",
+        data: body.as_bytes(),
+    });
+    let response = if repeatable {
+        http.send_repeatable("POST", "/token", &[], body).await?
+    } else {
+        http.send("POST", "/token", &[], body).await?
+    };
     let json: Value = serde_json::from_slice(&response.body).unwrap_or(Value::Null);
     if !response.ok() {
         let error = json["error"].as_str().unwrap_or_default();

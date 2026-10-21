@@ -121,18 +121,18 @@ impl HttpsClient {
             Some((conn, used)) if used.elapsed() < IDLE => Some(conn),
             _ => None,
         };
-        let (response, conn) = match reused {
-            Some(conn) => match exchange(conn, &request).await {
-                Ok(done) => done,
-                // The server closed the kept-alive connection before answering; a new one
-                // asks again, but only what is safe to ask twice: a POST may have gone through.
-                Err(Failure::Closed) if repeatable => {
-                    exchange(self.connect().await?, &request).await?
-                }
-                Err(Failure::Closed) => return Err(closed()),
-                Err(Failure::Error(e)) => return Err(e),
-            },
-            None => exchange(self.connect().await?, &request).await?,
+        let conn = match reused {
+            Some(conn) => conn,
+            None => self.connect().await?,
+        };
+        let (response, conn) = match exchange(conn, &request).await {
+            Ok(done) => done,
+            // The server closed the connection before answering: a kept-alive one it dropped
+            // as idle, or a new one it dropped at once. A new one asks again, but only what is
+            // safe to ask twice: a POST may have gone through.
+            Err(Failure::Closed) if repeatable => exchange(self.connect().await?, &request).await?,
+            Err(Failure::Closed) => return Err(closed()),
+            Err(Failure::Error(e)) => return Err(e),
         };
         if let Some(conn) = conn {
             self.conn = Some((conn, Instant::now()));

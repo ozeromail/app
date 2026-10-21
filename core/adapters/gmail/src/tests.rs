@@ -22,10 +22,23 @@ type Routes = Vec<(&'static str, u16, Value)>;
 type Seen = Arc<Mutex<Vec<(String, String, String)>>>;
 
 async fn session(routes: Routes) -> (GmailSession, Seen) {
+    serving(routes, false).await
+}
+
+/// Like `session`, but the server drops its first connection once it has the request.
+async fn serving(routes: Routes, drop_first: bool) -> (GmailSession, Seen) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let seen: Seen = Arc::default();
-    tokio::spawn(serve(listener, routes, seen.clone()));
+    let served = seen.clone();
+    tokio::spawn(async move {
+        if drop_first {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut tls = acceptor().accept(tcp).await.unwrap();
+            let _ = tls.read(&mut [0; 4096]).await;
+        }
+        serve(listener, routes, served).await;
+    });
     let mut roots = RootCertStore::empty();
     roots
         .add(CertificateDer::from_pem_slice(CA).unwrap())
@@ -37,7 +50,7 @@ async fn session(routes: Routes) -> (GmailSession, Seen) {
     (GmailSession::over(http, "token"), seen)
 }
 
-async fn serve(listener: TcpListener, routes: Routes, seen: Seen) {
+fn acceptor() -> TlsAcceptor {
     let certs = CertificateDer::pem_slice_iter(CERT)
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
@@ -46,9 +59,12 @@ async fn serve(listener: TcpListener, routes: Routes, seen: Seen) {
         .with_no_client_auth()
         .with_single_cert(certs, key)
         .unwrap();
-    let acceptor = TlsAcceptor::from(Arc::new(config));
+    TlsAcceptor::from(Arc::new(config))
+}
+
+async fn serve(listener: TcpListener, routes: Routes, seen: Seen) {
     let (tcp, _) = listener.accept().await.unwrap();
-    let mut tls = acceptor.accept(tcp).await.unwrap();
+    let mut tls = acceptor().accept(tcp).await.unwrap();
     let mut buf = Vec::new();
     loop {
         // One request: head, then a body as long as Content-Length says.
@@ -552,4 +568,12 @@ async fn waits_until_the_history_moves_on() {
     let (mut gmail, seen) = session(routes).await;
     assert!(!gmail.wait("INBOX", since(12), wait).await.unwrap());
     assert!(seen.lock().unwrap().len() >= 2);
+}
+
+#[tokio::test]
+async fn asks_again_when_a_new_connection_is_dropped_before_answering() {
+    let routes = vec![("/profile", 200, json!({"historyId": "12"}))];
+    let (mut gmail, seen) = serving(routes, true).await;
+    assert_eq!(gmail.history_id().await, Ok(12));
+    assert_eq!(seen.lock().unwrap().len(), 1);
 }
