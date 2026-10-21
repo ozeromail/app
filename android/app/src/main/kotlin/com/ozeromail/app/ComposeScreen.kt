@@ -121,9 +121,13 @@ fun ComposeScreen(
     // Sent or thrown away: nothing more to keep.
     var finished by remember { mutableStateOf(false) }
 
+    // A forward sends the message's files too, from the account it came to: their names, read
+    // once its body is saved.
+    var forwarded by remember { mutableStateOf<MessageItem?>(null) }
     LaunchedEffect(Unit) {
         try {
             accounts = mail.accounts()
+            forwarded = start.forward?.let { mail.message(it) }
         } catch (e: CoreException) {
             error = e.text()
         }
@@ -132,7 +136,7 @@ fun ComposeScreen(
     val from = accounts.find { it.id == accountId } ?: accounts.firstOrNull()
 
     // Account 0 is kept as none, and opens with the first account again.
-    fun current() = DraftItem(0, accountId, to, subject, text, start.replyTo, quote, 0)
+    fun current() = DraftItem(0, accountId, to, subject, text, start.replyTo, quote, 0, start.forward)
     fun keep() {
         if (changed && !finished) keeper.save(current())
     }
@@ -221,6 +225,8 @@ fun ComposeScreen(
                 )
                 // A forward is its quote, so it stays.
                 val forwarding = original != null && start.replyTo == null
+                val files = forwarded?.takeIf { it.accountId == from?.id }?.attachments.orEmpty()
+                if (files.isNotEmpty()) AttachmentChips(files)
                 if (quote.isNotEmpty()) {
                     Quote(quote, onRemove = { quote = "" }.takeUnless { forwarding })
                 } else if (original != null && quotable) {
