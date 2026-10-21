@@ -10,13 +10,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use ozero_app::ops::push_ops;
 use ozero_app::send::{SentCopy, push_sends};
 use ozero_app::sync::{
-    SyncError, download_body, prefetch_bodies, sync_folders, sync_mail, wait_for_mail,
+    SyncError, download_body, load_older, prefetch_bodies, sync_folders, sync_mail, wait_for_mail,
 };
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Body, Category, Changes, Checkpoint, Draft,
     DraftId, Folder, FolderId, FolderRole, ListQuery, ListScope, MailProvider, MessageId,
-    MessageRow, NewAccount, NewFolder, OpId, OutboxId, ProviderError, SavedDraft, Sender, Server,
-    Store, StoreError, html, parse_recipients, saves_sent_itself,
+    MessageRow, NewAccount, NewFolder, Older, OpId, OutboxId, ProviderError, SavedDraft, Sender,
+    Server, Store, StoreError, html, parse_recipients, saves_sent_itself,
 };
 use ozero_gmail::{GmailSession, oauth};
 use ozero_imap::ImapSession;
@@ -30,12 +30,16 @@ uniffi::setup_scaffolding!();
 /// How many new messages of the inbox and of the sent folder one sync brings in; also of a
 /// folder the user opens.
 const SYNC_LIMIT: u32 = 200;
+/// How many older messages of a folder a list scrolled to its end brings in at a time.
+const OLDER_PAGE: u32 = 100;
+/// Seconds in a day, for how long an account keeps its mail.
+const DAY: i64 = 86_400;
 /// How many of the newest inbox messages `prefetch` downloads whole.
 const PREFETCH: u32 = 20;
 /// Longest wait for new mail on one connection; a mobile network may drop a quiet one sooner.
 const MAIL_WAIT: Duration = Duration::from_secs(5 * 60);
 /// Mail older than this many seconds is not announced: a day.
-const NEWS_AGE: i64 = 86_400;
+const NEWS_AGE: i64 = DAY;
 /// Milliseconds an archived or sent message waits before the server hears of it.
 const HOLD: i64 = 5_000;
 /// The app's Google OAuth client (Android type, so it has no secret).
@@ -94,6 +98,9 @@ pub struct Core {
     /// The last pages read with all their images, newest last, so opening one again is
     /// instant; up to `PAGES_KEPT` times `IMAGES_SIZE` in memory.
     pages: Mutex<VecDeque<KeptPage>>,
+    /// Folders whose server has no older mail to load, with the oldest they had saved then:
+    /// once that changes, say after a reset, they may have again.
+    ended: Mutex<HashMap<FolderId, Option<i64>>>,
 }
 
 /// A page with its images, and the message HTML it was made from.
@@ -144,6 +151,7 @@ impl Core {
             waiting: Mutex::default(),
             tokens: Mutex::default(),
             pages: Mutex::default(),
+            ended: Mutex::default(),
         }))
     }
 
@@ -168,6 +176,16 @@ impl Core {
         Ok(self.store.set_account_label(AccountId(account), &label)?)
     }
 
+    /// Keeps the account's mail of the last `days` days on the device, or all of it with 0:
+    /// older mail goes at once, and lists stop loading older mail there.
+    pub fn set_account_keep(&self, account: i64, days: u32) -> Result<(), CoreError> {
+        let account = AccountId(account);
+        self.store.set_account_keep(account, days)?;
+        // Kept longer, the folders that ended at the old limit have older mail again.
+        self.ended_folders().clear();
+        Ok(self.store.prune(account, keep_since(days))?)
+    }
+
     /// Removes the account and all its mail from the device, once its sync is done; a sync or
     /// push that waited then finds nothing to do. The app forgets its secret.
     pub async fn remove_account(&self, account: i64) -> Result<(), CoreError> {
@@ -184,6 +202,7 @@ impl Core {
             .unwrap_or_else(|p| p.into_inner())
             .remove(&account);
         self.kept_pages().clear();
+        self.ended_folders().clear();
         Ok(())
     }
 
@@ -203,14 +222,10 @@ impl Core {
     }
 
     /// The newest conversations of one tab across all inboxes, newest first: each row is the
-    /// newest message of its conversation.
+    /// newest message of its conversation. Fewer than `limit` once the saved mail ends, so
+    /// `older_mail` can bring in more.
     pub fn unified_inbox(&self, tab: Category, limit: u32) -> Result<Vec<MessageItem>, CoreError> {
-        let rows = self.store.list(&ListQuery {
-            scope: ListScope::Inbox(tab),
-            limit,
-            after: None,
-        })?;
-        self.items(rows)
+        self.list(ListScope::Inbox(tab), INBOX, limit)
     }
 
     /// The folders of every account, in the order the server listed them first.
@@ -233,12 +248,7 @@ impl Core {
             Mailbox::Unified { role } => ListScope::Unified(role),
             Mailbox::Folder { id } => ListScope::Folder(FolderId(id)),
         };
-        let rows = self.store.list(&ListQuery {
-            scope,
-            limit,
-            after: None,
-        })?;
-        self.items(rows)
+        self.list(scope, mailbox, limit)
     }
 
     /// Unread mail in People from the last day that arrived since this or `forget_new_mail`
@@ -589,6 +599,7 @@ impl Core {
         let Some(account) = self.find(id)? else {
             return Ok(());
         };
+        let since = keep_since(account.keep_days);
         let folders: Vec<Folder> = if mailbox == INBOX {
             vec![]
         } else {
@@ -601,9 +612,10 @@ impl Core {
         if mailbox == INBOX || !folders.is_empty() {
             let remote = self.remote(&mut slot, &account, &secret).await?;
             let synced = if mailbox == INBOX {
-                sync_mail(&self.store, remote, &self.parser, id, SYNC_LIMIT).await
+                sync_mail(&self.store, remote, &self.parser, id, SYNC_LIMIT, since).await
             } else {
-                sync_folders(&self.store, remote, &self.parser, &folders, SYNC_LIMIT).await
+                let parser = &self.parser;
+                sync_folders(&self.store, remote, parser, &folders, SYNC_LIMIT, since).await
             };
             self.refused(&account, synced)?;
         }
@@ -611,6 +623,49 @@ impl Core {
             remote.close().await;
         }
         pushed
+    }
+
+    /// Brings in older mail of the account's folders in `mailbox`, for a list scrolled to its
+    /// end: up to `OLDER_PAGE` messages of each, none older than the account keeps. True while
+    /// one of them may have older mail still. `secret` as for `push_actions`.
+    pub async fn older_mail(
+        &self,
+        account: i64,
+        secret: String,
+        mailbox: Mailbox,
+    ) -> Result<bool, CoreError> {
+        let id = AccountId(account);
+        let lock = self.busy(id);
+        let _busy = lock.lock().await;
+        let Some(account) = self.find(id)? else {
+            return Ok(false);
+        };
+        let mut folders = vec![];
+        for folder in self.store.folders(id)? {
+            if mailbox.holds(&folder) && !self.has_ended(folder.id)? {
+                folders.push(folder);
+            }
+        }
+        let since = keep_since(account.keep_days);
+        let (mut slot, mut more) = (None, false);
+        for folder in &folders {
+            let remote = self.remote(&mut slot, &account, &secret).await?;
+            let loaded = load_older(&self.store, remote, &self.parser, folder, OLDER_PAGE, since);
+            match self.refused(&account, loaded.await) {
+                Ok(true) => more = true,
+                Ok(false) => {
+                    let oldest = self.store.oldest(folder.id)?;
+                    self.ended_folders().insert(folder.id, oldest);
+                }
+                // The next sync starts the folder over.
+                Err(CoreError::Gone) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        if let Some(remote) = slot {
+            remote.close().await;
+        }
+        Ok(more)
     }
 
     /// Downloads the missing bodies of the account's newest inbox mail, so it opens at once.
@@ -816,6 +871,44 @@ impl Core {
 
     fn kept_pages(&self) -> std::sync::MutexGuard<'_, VecDeque<KeptPage>> {
         self.pages.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn ended_folders(&self) -> std::sync::MutexGuard<'_, HashMap<FolderId, Option<i64>>> {
+        self.ended.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Whether the folder's server had no older mail when it last loaded some.
+    fn has_ended(&self, folder: FolderId) -> Result<bool, CoreError> {
+        let oldest = self.store.oldest(folder)?;
+        Ok(self.ended_folders().get(&folder) == Some(&oldest))
+    }
+
+    /// The rows of a list of `mailbox`'s folders, as far down as all of them have their mail
+    /// saved: the latest of their oldest saved messages, leaving out those with nothing older
+    /// to load. Mail older than that would leave a gap in the list when the others load theirs.
+    fn list(
+        &self,
+        scope: ListScope,
+        mailbox: Mailbox,
+        limit: u32,
+    ) -> Result<Vec<MessageItem>, CoreError> {
+        let mut rows = self.store.list(&ListQuery {
+            scope,
+            limit,
+            after: None,
+        })?;
+        let mut floor = None;
+        for account in self.store.accounts()? {
+            for folder in self.store.folders(account.id)? {
+                if mailbox.holds(&folder) && !self.has_ended(folder.id)? {
+                    floor = floor.max(self.store.oldest(folder.id)?);
+                }
+            }
+        }
+        if let Some(floor) = floor {
+            rows.retain(|r| r.date >= floor);
+        }
+        self.items(rows)
     }
 
     /// Queues a move held for the undo time and returns its ops for `undo`.
@@ -1071,6 +1164,20 @@ impl MailProvider for Remote {
         }
     }
 
+    async fn older(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        known: &[String],
+        oldest: i64,
+        limit: u32,
+    ) -> Result<Older, ProviderError> {
+        match self {
+            Self::Imap(p) => p.older(folder, validity, known, oldest, limit).await,
+            Self::Gmail(p) => p.older(folder, validity, known, oldest, limit).await,
+        }
+    }
+
     async fn body(
         &mut self,
         folder: &str,
@@ -1162,6 +1269,14 @@ fn message_id(email: &str, now: i64) -> String {
         .filter(|d| !d.is_empty() && d.is_ascii())
         .unwrap_or("localhost");
     format!("{now:x}.{random:016x}@{domain}")
+}
+
+/// Mail received before this, in seconds, is not kept by an account that keeps `days` days.
+fn keep_since(days: u32) -> i64 {
+    match days {
+        0 => i64::MIN,
+        days => now() / 1_000 - i64::from(days) * DAY,
+    }
 }
 
 /// Milliseconds since the Unix epoch.
@@ -1296,6 +1411,8 @@ pub struct AccountItem {
     pub color: u32,
     /// The colour's place in `account_colors`.
     pub color_index: u32,
+    /// How many days back its mail is kept on the device; 0 keeps all of it.
+    pub keep_days: u32,
 }
 
 impl From<Account> for AccountItem {
@@ -1308,6 +1425,7 @@ impl From<Account> for AccountItem {
             email: a.email,
             display_name: a.display_name,
             label: a.label,
+            keep_days: a.keep_days,
         }
     }
 }

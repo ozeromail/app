@@ -129,6 +129,9 @@ fn syncs_an_imap_inbox_into_the_list() {
     sync().unwrap();
     // A second sync updates the same rows.
     sync().unwrap();
+    // The first sync brought the whole inbox.
+    let older = runtime.block_on(core.older_mail(account, "pass".into(), INBOX));
+    assert_eq!(older, Ok(false));
 
     let inbox = core.unified_inbox(Category::People, 50).unwrap();
     let subjects: Vec<_> = inbox.iter().map(|m| m.subject.as_str()).collect();
@@ -253,6 +256,68 @@ fn mailpit_messages() -> String {
     let mut response = String::new();
     http.read_to_string(&mut response).unwrap();
     response
+}
+
+#[test]
+fn a_unified_list_ends_where_an_account_has_older_mail_to_load() {
+    let db = TempDb::new("floor");
+    let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
+    let inbox = |email: &str, dates: &[i64]| {
+        let store = &core.store;
+        let account = store
+            .add_account(&NewAccount {
+                kind: AccountKind::Imap,
+                email: email.into(),
+                display_name: email.into(),
+                server: None,
+                smtp: None,
+            })
+            .unwrap();
+        let folder = NewFolder {
+            remote_id: "INBOX".into(),
+            name: "Inbox".into(),
+            role: FolderRole::Inbox,
+        };
+        let folder = store.save_folders(account, &[folder]).unwrap()[0].id;
+        let new = dates
+            .iter()
+            .map(|&date| ozero_domain::NewMessage {
+                remote_id: format!("{email}{date}"),
+                message_id: None,
+                references: vec![],
+                from: Address {
+                    name: None,
+                    email: "anna@example.com".into(),
+                },
+                answer_to: vec![],
+                recipients: vec![],
+                subject: date.to_string(),
+                snippet: String::new(),
+                date,
+                flags: Default::default(),
+                category: Category::People,
+            })
+            .collect();
+        let checkpoint = store.checkpoint(folder).unwrap().0;
+        let changes = Changes {
+            checkpoint,
+            new,
+            flags: vec![],
+            gone: vec![],
+        };
+        store.save_changes(folder, &changes).unwrap();
+        folder
+    };
+    inbox("a@example.com", &[10, 20, 30]);
+    let b = inbox("b@example.com", &[25, 35]);
+    let dates = || -> Vec<i64> {
+        let rows = core.unified_inbox(Category::People, 50).unwrap();
+        rows.iter().map(|m| m.date).collect()
+    };
+    assert_eq!(dates(), [35, 30, 25]);
+    // Once the other account has nothing older, the first one's mail shows all the way down.
+    core.ended_folders().insert(b, Some(25));
+    assert_eq!(dates(), [35, 30, 25, 20, 10]);
 }
 
 #[test]

@@ -4,13 +4,13 @@ use std::fmt;
 use std::time::Duration;
 
 use ozero_domain::{
-    AccountId, Body, Folder, FolderRole, MailProvider, MessageLocation, MessageParser,
+    AccountId, Body, Changes, Folder, FolderRole, MailProvider, MessageLocation, MessageParser,
     ProviderError, Store, StoreError,
 };
 
-/// Saves the account's folders, then what changed in its inbox and its sent folder since
-/// the last sync: up to `limit` new messages in the inbox and fewer in sent, new flags and
-/// removed messages.
+/// Forgets the account's mail received before `since` (seconds), then saves its folders and
+/// what changed in its inbox and its sent folder since the last sync: up to `limit` new
+/// messages in the inbox and fewer in sent, new flags and removed messages.
 /// The sent folder puts the user's own replies into conversations.
 pub async fn sync_mail(
     store: &dyn Store,
@@ -18,31 +18,71 @@ pub async fn sync_mail(
     parser: &dyn MessageParser,
     account: AccountId,
     limit: u32,
+    since: i64,
 ) -> Result<(), SyncError> {
+    store.prune(account, since)?;
     let folders = provider.folders().await?;
     let folders = store.save_folders(account, &folders)?;
     let inbox = inbox(&folders)?;
-    sync_folder(store, provider, parser, inbox, limit).await?;
+    sync_folder(store, provider, parser, inbox, limit, since).await?;
     // Only context for conversations: a broken sent folder must not stop the inbox.
     if let Some(sent) = folders.iter().find(|f| f.role == FolderRole::Sent) {
-        let _ = sync_folder(store, provider, parser, sent, limit / SENT_SHARE).await;
+        let _ = sync_folder(store, provider, parser, sent, limit / SENT_SHARE, since).await;
     }
     Ok(())
 }
 
-/// Brings what changed in these folders into the store, up to `limit` new messages each:
-/// a folder the user opens. The folder list is the one the last `sync_mail` saved.
+/// Brings what changed in these folders into the store, up to `limit` new messages each and
+/// none received before `since`: a folder the user opens. The folder list is the one the last
+/// `sync_mail` saved.
 pub async fn sync_folders(
     store: &dyn Store,
     provider: &mut impl MailProvider,
     parser: &dyn MessageParser,
     folders: &[Folder],
     limit: u32,
+    since: i64,
 ) -> Result<(), SyncError> {
     for folder in folders {
-        sync_folder(store, provider, parser, folder, limit).await?;
+        sync_folder(store, provider, parser, folder, limit, since).await?;
     }
     Ok(())
+}
+
+/// Saves up to `limit` of the folder's messages just older than the saved ones, none received
+/// before `since`: the next page of a list scrolled to its end. False once the folder has no
+/// older mail to save.
+pub async fn load_older(
+    store: &dyn Store,
+    provider: &mut impl MailProvider,
+    parser: &dyn MessageParser,
+    folder: &Folder,
+    limit: u32,
+    since: i64,
+) -> Result<bool, SyncError> {
+    let (checkpoint, known) = store.checkpoint(folder.id)?;
+    let oldest = store.oldest(folder.id)?.unwrap_or(i64::MAX);
+    let mut older = provider
+        .older(
+            &folder.remote_id,
+            checkpoint.validity,
+            &known,
+            oldest,
+            limit,
+        )
+        .await?;
+    let all = older.new.len();
+    older.new.retain(|m| m.received >= since);
+    // Nothing new would ask for the same page again.
+    let more = older.more && older.new.len() == all && !older.new.is_empty();
+    let changes = Changes {
+        checkpoint,
+        new: older.new,
+        flags: vec![],
+        gone: vec![],
+    };
+    store.save_changes(folder.id, &changes.map(|m| parser.parse(m)))?;
+    Ok(more)
 }
 
 /// Waits until the account's inbox may have changed since its last sync, at most `wait`:
@@ -75,11 +115,13 @@ async fn sync_folder(
     parser: &dyn MessageParser,
     folder: &Folder,
     limit: u32,
+    since: i64,
 ) -> Result<(), SyncError> {
-    let (since, known) = store.checkpoint(folder.id)?;
-    let changes = provider
-        .changes(&folder.remote_id, since, &known, limit)
+    let (checkpoint, known) = store.checkpoint(folder.id)?;
+    let mut changes = provider
+        .changes(&folder.remote_id, checkpoint, &known, limit)
         .await?;
+    changes.new.retain(|m| m.received >= since);
     store.save_changes(folder.id, &changes.map(|m| parser.parse(m)))?;
     Ok(())
 }

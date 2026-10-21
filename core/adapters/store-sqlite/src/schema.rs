@@ -210,4 +210,8 @@ pub const MIGRATIONS: &[&str] = &[
         saved      INTEGER NOT NULL
     );
     ",
+    // 20: how many days back an account's mail is kept; 0 keeps all of it.
+    "
+    ALTER TABLE account ADD COLUMN keep_days INTEGER NOT NULL DEFAULT 0;
+    ",
 ];

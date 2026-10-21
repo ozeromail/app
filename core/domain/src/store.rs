@@ -16,6 +16,11 @@ pub trait Store: Send + Sync {
     fn set_account_color(&self, account: AccountId, color: u32) -> Result<(), StoreError>;
     /// Sets the user's name for the account; empty clears it.
     fn set_account_label(&self, account: AccountId, label: &str) -> Result<(), StoreError>;
+    /// Sets how many days back the account's mail is kept; 0 keeps all of it.
+    fn set_account_keep(&self, account: AccountId, days: u32) -> Result<(), StoreError>;
+    /// Forgets the account's mail received before `before` (seconds), but for mail a queued
+    /// action or message needs.
+    fn prune(&self, account: AccountId, before: i64) -> Result<(), StoreError>;
 
     /// Inserts new folders and updates known ones, matched by `remote_id`.
     fn save_folders(
@@ -27,6 +32,8 @@ pub trait Store: Send + Sync {
 
     /// Where the folder's last sync stopped, and the `remote_id`s of its saved messages.
     fn checkpoint(&self, folder: FolderId) -> Result<(Checkpoint, Vec<String>), StoreError>;
+    /// When the folder's oldest saved message was received, if it has any.
+    fn oldest(&self, folder: FolderId) -> Result<Option<i64>, StoreError>;
     /// Saves a sync in one transaction. A new validity first drops the folder's messages:
     /// their `remote_id`s now name other messages. Messages are matched by `remote_id`,
     /// and a queued action stays on top of what the server sent until it is sent. A new

@@ -203,6 +203,34 @@ async fn starts_with_the_newest_messages() {
 }
 
 #[tokio::test]
+async fn loads_mail_older_than_the_saved_one() {
+    let (mut gmail, seen) = session(vec![
+        (
+            "/messages?labelIds=INBOX&q=before%3A1001",
+            200,
+            json!({"messages": [{"id": "saved"}, {"id": "old"}], "nextPageToken": "x"}),
+        ),
+        (
+            "/messages/old?",
+            200,
+            message("old", &["INBOX"], 900_000, "Old"),
+        ),
+    ])
+    .await;
+    let older = gmail
+        .older("INBOX", 0, &["saved".into()], 1_000, 10)
+        .await
+        .unwrap();
+    let ids: Vec<_> = older.new.iter().map(|m| m.remote_id.as_str()).collect();
+    assert_eq!(ids, ["old"]);
+    assert!(older.more);
+    // What is saved costs no request.
+    let paths: Vec<_> = seen.lock().unwrap().iter().map(|s| s.1.clone()).collect();
+    assert_eq!(paths.len(), 3, "{paths:?}");
+    assert!(paths[0].contains("maxResults=10"));
+}
+
+#[tokio::test]
 async fn follows_the_history() {
     let history = json!({
         "historyId": "120",

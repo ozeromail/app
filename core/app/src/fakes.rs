@@ -9,8 +9,9 @@ use std::time::Duration;
 use ozero_domain::{
     Account, AccountId, Action, Address, Body, Category, Changes, Checkpoint, Correspondents,
     Draft, DraftId, Flags, Folder, FolderId, ListQuery, MailProvider, MailSender, MessageBuilder,
-    MessageId, MessageLocation, MessageParser, MessageRow, NewAccount, NewFolder, NewMessage, Op,
-    OpId, OutboxId, Outgoing, ProviderError, RawMessage, SavedDraft, Store, StoreError, Unsent,
+    MessageId, MessageLocation, MessageParser, MessageRow, NewAccount, NewFolder, NewMessage,
+    Older, Op, OpId, OutboxId, Outgoing, ProviderError, RawMessage, SavedDraft, Store, StoreError,
+    Unsent,
 };
 
 /// Fakes answer at once, so one poll finishes the future.
@@ -34,6 +35,18 @@ pub struct Server {
     pub appended: Vec<(String, Vec<u8>)>,
     /// Each `wait` call: the folder, checkpoint and how long.
     pub waited: Vec<(String, Checkpoint, Duration)>,
+    /// Each `older` call: the folder, validity, known ids, oldest date and limit.
+    pub paged: Vec<(String, u32, Vec<String>, i64, u32)>,
+}
+
+/// A message as `Server` returns it.
+fn raw(remote_id: &str, received: i64) -> RawMessage {
+    RawMessage {
+        remote_id: remote_id.into(),
+        flags: Flags::default(),
+        received,
+        header: b"Hi".to_vec(),
+    }
 }
 
 impl MailProvider for Server {
@@ -55,14 +68,26 @@ impl MailProvider for Server {
                 validity: 9,
                 next: 8,
             },
-            new: vec![RawMessage {
-                remote_id: "7".into(),
-                flags: Flags::default(),
-                received: 100,
-                header: b"Hi".to_vec(),
-            }],
+            new: vec![raw("7", 100)],
             flags: vec![("5".into(), Flags::default())],
             gone: vec!["6".into()],
+        }))
+    }
+
+    /// Two older messages, received at 50 and 60, and more after them.
+    fn older(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        known: &[String],
+        oldest: i64,
+        limit: u32,
+    ) -> impl Future<Output = Result<Older, ProviderError>> + Send {
+        self.paged
+            .push((folder.into(), validity, known.to_vec(), oldest, limit));
+        ready(Ok(Older {
+            new: vec![raw("3", 50), raw("4", 60)],
+            more: true,
         }))
     }
 
@@ -226,6 +251,9 @@ pub struct Memory {
     pub folders: Vec<Folder>,
     /// What `checkpoint` returns, and each `save_changes`; `others` leaves out of it.
     pub checkpoint: (Checkpoint, Vec<String>),
+    /// What `oldest` returns, and each `prune`.
+    pub oldest: Option<i64>,
+    pub pruned: Mutex<Vec<(AccountId, i64)>>,
     pub changes: Mutex<Vec<(FolderId, Changes<NewMessage>)>>,
     pub bodies: Mutex<Vec<(MessageId, Body)>>,
     /// What `without_body` returns.
@@ -271,6 +299,15 @@ impl Store for Memory {
         Ok(())
     }
 
+    fn set_account_keep(&self, _: AccountId, _: u32) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn prune(&self, account: AccountId, before: i64) -> Result<(), StoreError> {
+        self.pruned.lock().unwrap().push((account, before));
+        Ok(())
+    }
+
     fn save_folders(
         &self,
         account: AccountId,
@@ -295,6 +332,10 @@ impl Store for Memory {
 
     fn checkpoint(&self, _: FolderId) -> Result<(Checkpoint, Vec<String>), StoreError> {
         Ok(self.checkpoint.clone())
+    }
+
+    fn oldest(&self, _: FolderId) -> Result<Option<i64>, StoreError> {
+        Ok(self.oldest)
     }
 
     fn save_changes(

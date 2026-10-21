@@ -41,6 +41,8 @@ pub struct Account {
     pub color: u32,
     /// The name the user gave the account on this phone; empty when none.
     pub label: String,
+    /// How many days back its mail is kept on the phone; 0 keeps all of it.
+    pub keep_days: u32,
 }
 
 impl Account {
@@ -99,6 +101,7 @@ mod tests {
             smtp: None,
             color: 0,
             label: String::new(),
+            keep_days: 0,
         };
         assert_eq!(account.name(), "a@example.com");
         account.display_name = "Anna".into();
