@@ -1,6 +1,7 @@
 package com.ozeromail.app
 
 import android.content.Context
+import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
 import androidx.annotation.StringRes
@@ -95,24 +96,35 @@ class Mail(private val context: Context) {
     val googleRedirects = Channel<String>(Channel.CONFLATED)
 
     /**
-     * Starts Google sign-in and returns the page to open in the browser. A second tap opens the
-     * same sign-in, so whichever browser tab finishes it, the answer is one we expect.
+     * Starts Google sign-in and returns the page to open in the browser; [again] signs in to
+     * that saved account, which Google then offers. A second tap opens the same sign-in, so
+     * whichever browser tab finishes it, the answer is one we expect.
      */
-    suspend fun startGoogle(): String = io {
-        (vault.googleSignIn() ?: googleSignIn().also { vault.setGoogleSignIn(it) }).url
+    suspend fun startGoogle(again: AccountItem? = null): String = io {
+        val hint = again?.email
+        val waiting = vault.googleSignIn()?.takeIf { Uri.parse(it.url).getQueryParameter("login_hint") == hint }
+        (waiting ?: googleSignIn(hint).also { vault.setGoogleSignIn(it) }).url
     }
 
     /**
      * Finishes Google sign-in with the address the browser came back to. Like [signIn], the
-     * secret is kept before the account is saved.
+     * secret is kept before the account is saved. With [again], the sign-in was for that saved
+     * account: its new secret replaces the old one and its mail stays.
      */
-    suspend fun finishGoogle(redirect: String) = io {
+    suspend fun finishGoogle(redirect: String, again: AccountItem? = null) = io {
         // No sign-in under way: an old answer, say from a link opened again.
         val start = vault.googleSignIn() ?: throw CoreException.Auth()
-        val account = core.googleAccount(start, redirect)
+        val account = core.googleAccount(start, redirect, again?.id)
         vault.setGoogleSignIn(null)
         vault.setPassword(account.email, account.secret)
-        core.addGmailAccount(account.email)
+        if (again == null) core.addGmailAccount(account.email) else core.signedInAgain(again.id)
+    }
+
+    /** A new password for a saved IMAP account, kept once both its servers accept it. */
+    suspend fun signInAgain(account: AccountItem, password: String) = io {
+        core.checkPassword(account.id, password)
+        vault.setPassword(account.email, password)
+        core.signedInAgain(account.id)
     }
 
     /**
@@ -209,9 +221,9 @@ class Mail(private val context: Context) {
 
     /**
      * Syncs [mailbox] in all accounts at once; the first failure is thrown once every one has
-     * finished.
+     * finished. A refused login is not one: it marks its account, and this returns true.
      */
-    suspend fun refresh(mailbox: Mailbox = INBOX) = io {
+    suspend fun refresh(mailbox: Mailbox = INBOX): Boolean = io {
         // A folder is one account's, so only that account syncs.
         val owner = (mailbox as? Mailbox.Folder)?.let { box -> core.folders().find { it.id == box.id }?.accountId }
         val failures = coroutineScope {
@@ -227,7 +239,8 @@ class Mail(private val context: Context) {
                 }
             }.awaitAll()
         }
-        failures.firstNotNullOfOrNull { it }?.let { throw it }
+        failures.firstOrNull { it != null && it !is CoreException.Auth }?.let { throw it }
+        failures.any { it is CoreException.Auth }
     }
 
     /**
@@ -255,7 +268,8 @@ class Mail(private val context: Context) {
      * app on screen. [onMail] says whether its sync went through.
      */
     suspend fun watch(accounts: List<AccountItem>, onMail: suspend () -> Boolean) = coroutineScope {
-        for (account in accounts) {
+        // One signed out would only be refused again and again.
+        for (account in accounts.filterNot { it.needsSignIn }) {
             launch {
                 val password = io { vault.password(account.email) } ?: return@launch
                 var pause = WATCH_PAUSE_MS
@@ -299,6 +313,7 @@ fun CoreException.text(): Int {
     return when (this) {
         is CoreException.Auth -> R.string.error_auth
         is CoreException.AccountExists -> R.string.error_account_exists
+        is CoreException.WrongAccount -> R.string.error_wrong_account
         is CoreException.Network -> R.string.error_network
         is CoreException.Tls -> R.string.error_tls
         is CoreException.Server -> R.string.error_server

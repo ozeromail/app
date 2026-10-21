@@ -117,5 +117,14 @@
   "select_hint": "Нажмите, чтобы добавить или убрать",
   "action_select_all": "Выбрать все",
   "action_all_from": "Все от %1$s",
-  "action_done_count": "Готово %1$d"
+  "action_done_count": "Готово %1$d",
+  "inbox_signed_out": "Войдите в %1$s снова",
+  "inbox_signed_out_text": "Новая почта подождёт, пока вы не войдёте. Всё, что здесь есть, останется.",
+  "signin_again_title": "Войти снова",
+  "signin_again_google": "Google просит снова войти в %1$s. Почта, папки и настройки останутся на месте.",
+  "signin_again_password": "Сервер больше не принимает пароль для %1$s. Если вы его сменили или это был пароль приложения, введите новый. Почта и настройки останутся.",
+  "signin_again_with_google": "Войти через Google",
+  "account_signed_out": "Нужен вход: новая почта ждёт",
+  "error_wrong_account": "Это другой аккаунт Google. Выберите тот, в который входите снова.",
+  "notify_sign_in_channel": "Вход в аккаунты"
 }

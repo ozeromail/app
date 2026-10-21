@@ -18,6 +18,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import java.util.concurrent.TimeUnit
+import uniffi.ozero_api.AccountItem
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.MessageItem
 
@@ -26,11 +27,23 @@ class MailWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
     override suspend fun doWork(): Result {
         val app = applicationContext as OzeroApp
         val mail = app.mail
+        val signedOut = try {
+            mail.accounts().filter { it.needsSignIn }.map { it.id }
+        } catch (e: CoreException) {
+            Log.w("Ozero", "accounts not read", e)
+            return Result.success()
+        }
         try {
             mail.refresh()
         } catch (e: CoreException) {
             // Other accounts may still have synced; the next run tries again.
             Log.w("Ozero", "background sync failed", e)
+        }
+        // Once, when the server signs an account out; the inbox shows it from then on.
+        if (!app.inForeground) try {
+            notifySignIn(applicationContext, mail.accounts().filter { it.needsSignIn && it.id !in signedOut })
+        } catch (e: CoreException) {
+            Log.w("Ozero", "accounts not read", e)
         }
         try {
             // With the app open, the inbox shows the mail; a notification would only repeat it.
@@ -59,25 +72,52 @@ class MailWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
 }
 
 private const val CHANNEL = "new_mail"
+private const val SIGN_IN_CHANNEL = "sign_in"
 private const val GROUP = "new_mail"
 private const val SUMMARY_ID = 0
 /** More at once is noise; the summary still counts them all. */
 private const val MAX_SHOWN = 5
 
+private fun openInbox(context: Context) = PendingIntent.getActivity(
+    context,
+    0,
+    Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+    PendingIntent.FLAG_IMMUTABLE,
+)
+
+private fun allowed(context: Context) =
+    context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+
+/** Asks to sign in to each account again; a tap opens the inbox, where its card is. */
+private fun notifySignIn(context: Context, accounts: List<AccountItem>) {
+    if (accounts.isEmpty() || !allowed(context)) return
+    val manager = NotificationManagerCompat.from(context)
+    manager.createNotificationChannel(
+        NotificationChannel(SIGN_IN_CHANNEL, context.getString(R.string.notify_sign_in_channel), NotificationManager.IMPORTANCE_DEFAULT),
+    )
+    accounts.forEach { account ->
+        manager.notify(
+            // Apart from the messages' ids, which are positive.
+            -account.id.toInt(),
+            NotificationCompat.Builder(context, SIGN_IN_CHANNEL)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentIntent(openInbox(context))
+                .setAutoCancel(true)
+                .setContentTitle(context.getString(R.string.inbox_signed_out, account.name))
+                .setContentText(context.getString(R.string.inbox_signed_out_text))
+                .build(),
+        )
+    }
+}
+
 /** One notification per message, newest first, grouped under a summary; a tap opens the inbox. */
 private fun notify(context: Context, messages: List<MessageItem>) {
-    if (messages.isEmpty()) return
-    if (context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+    if (messages.isEmpty() || !allowed(context)) return
     val manager = NotificationManagerCompat.from(context)
     manager.createNotificationChannel(
         NotificationChannel(CHANNEL, context.getString(R.string.notify_channel), NotificationManager.IMPORTANCE_DEFAULT),
     )
-    val open = PendingIntent.getActivity(
-        context,
-        0,
-        Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
-        PendingIntent.FLAG_IMMUTABLE,
-    )
+    val open = openInbox(context)
     fun builder() = NotificationCompat.Builder(context, CHANNEL)
         .setSmallIcon(R.drawable.ic_notification)
         .setContentIntent(open)

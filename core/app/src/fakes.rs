@@ -271,6 +271,10 @@ impl Store for Memory {
         Ok(())
     }
 
+    fn set_needs_sign_in(&self, _: AccountId, _: bool) -> Result<(), StoreError> {
+        Ok(())
+    }
+
     fn save_folders(
         &self,
         account: AccountId,

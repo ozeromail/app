@@ -117,5 +117,14 @@
   "select_hint": "Tap to add or remove",
   "action_select_all": "Select all",
   "action_all_from": "All from %1$s",
-  "action_done_count": "Done %1$d"
+  "action_done_count": "Done %1$d",
+  "inbox_signed_out": "Sign in to %1$s again",
+  "inbox_signed_out_text": "New mail waits until you do. Everything here stays.",
+  "signin_again_title": "Sign in again",
+  "signin_again_google": "Google asks you to sign in to %1$s again. Your mail, folders and settings stay as they are.",
+  "signin_again_password": "The server no longer accepts the password for %1$s. If you changed it, or it was an app password, enter the new one. Your mail and settings stay.",
+  "signin_again_with_google": "Sign in with Google",
+  "account_signed_out": "Signed out: new mail waits",
+  "error_wrong_account": "That is another Google account. Choose the one you are signing in to again.",
+  "notify_sign_in_channel": "Account sign-in"
 }

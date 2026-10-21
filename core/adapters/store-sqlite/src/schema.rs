@@ -196,4 +196,6 @@ pub const MIGRATIONS: &[&str] = &[
     "
     ALTER TABLE account ADD COLUMN label TEXT NOT NULL DEFAULT '';
     ",
+    // 19: an account whose login the server refused, until the person signs in again.
+    "ALTER TABLE account ADD COLUMN needs_sign_in INTEGER NOT NULL DEFAULT 0;",
 ];

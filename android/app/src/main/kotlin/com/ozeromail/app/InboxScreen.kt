@@ -198,6 +198,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var unsent by remember { mutableStateOf(emptyList<UnsentItem>()) }
     var searching by rememberSaveable { mutableStateOf(false) }
     var addingAccount by rememberSaveable { mutableStateOf(false) }
+    // The account being signed in to again, by id.
+    var signingIn by rememberSaveable { mutableStateOf<Long?>(null) }
     var accountsOpen by rememberSaveable { mutableStateOf(false) }
     var accounts by remember { mutableStateOf(emptyList<AccountItem>()) }
     var folders by remember { mutableStateOf(emptyList<FolderItem>()) }
@@ -286,8 +288,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         syncing = true
         error = null
         val started = SystemClock.elapsedRealtime()
+        // A refused login shows as its account's card over the list, not as an error.
+        var refused = false
         val synced = try {
-            mail.refresh(box)
+            refused = mail.refresh(box)
             if (box == Mail.INBOX) lastSync = started
             true
         } catch (e: CoreException) {
@@ -304,8 +308,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             MailWorker.clearNotifications(context)
             mail.prefetch()
         }
-        // The first read may have failed; a sync is a good moment to try again.
-        if (accounts.isEmpty()) loadAccounts()
+        // The first read may have failed; and an account may need signing in again now, or no more.
+        if (accounts.isEmpty() || refused) loadAccounts()
         try {
             load()
         } finally {
@@ -365,7 +369,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         }
     }
     // While the app is on screen, new mail shows as it arrives.
-    LifecycleStartEffect(accounts.map { it.id }) {
+    // An account signed in to again starts waiting, with its new secret.
+    LifecycleStartEffect(accounts.map { it.id to it.needsSignIn }) {
         val watching = scope.launch {
             mail.watch(accounts) { sync() }
         }
@@ -484,13 +489,14 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         act(rows)
     }
 
-    val screen = screenOf(composing, open, addingAccount, searching)
+    val again = accounts.find { it.id == signingIn }
+    val screen = screenOf(composing, open, addingAccount, again, searching)
     // Where back leads: the same screens with the top one gone.
     val behind: Screen? = when (screen) {
         Screen.Inbox -> null
-        Screen.Search, Screen.AddAccount -> Screen.Inbox
-        is Screen.Read -> screenOf(null, null, addingAccount, searching)
-        is Screen.Write -> screenOf(null, open, addingAccount, searching)
+        Screen.Search, Screen.AddAccount, is Screen.SignInAgain -> Screen.Inbox
+        is Screen.Read -> screenOf(null, null, addingAccount, again, searching)
+        is Screen.Write -> screenOf(null, open, addingAccount, again, searching)
     }
 
     fun closeSearch() {
@@ -503,6 +509,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             Screen.Inbox -> Unit
             Screen.Search -> closeSearch()
             Screen.AddAccount -> addingAccount = false
+            is Screen.SignInAgain -> signingIn = null
             // Back reloads the list: the message now has a snippet.
             is Screen.Read -> {
                 open = null
@@ -591,6 +598,15 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         },
                         onCancel = ::back,
                     )
+                    is Screen.SignInAgain -> SignInScreen(
+                        mail,
+                        onSignedIn = {
+                            signingIn = null
+                            scope.launch { sync() }
+                        },
+                        onCancel = ::back,
+                        again = shown.account,
+                    )
                     Screen.Search -> SearchScreen(
                         mail,
                         query,
@@ -614,6 +630,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         owner = mailboxOwner(mailbox, openFolder, accounts),
                         accounts = accounts,
                         unsent = if (mailbox == Mail.INBOX) unsent else emptyList(),
+                        signedOut = if (mailbox == Mail.INBOX) accounts.filter { it.needsSignIn } else emptyList(),
+                        onSignIn = { signingIn = it.id },
                         swipes = swipes,
                         swipeTip = swipeTip,
                         onSwipeTip = {
@@ -685,6 +703,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             onLabel = { account, label ->
                 changeAccount { mail.setAccountLabel(account, label) }
             },
+            onSignIn = { account ->
+                accountsOpen = false
+                signingIn = account.id
+            },
             onRemove = { account ->
                 accountsOpen = false
                 scope.launch {
@@ -737,11 +759,18 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
 }
 
 /** The screen on top: a message being written, then one being read, then the rest. */
-private fun screenOf(composing: Composing?, open: MessageItem?, addingAccount: Boolean, searching: Boolean): Screen =
+private fun screenOf(
+    composing: Composing?,
+    open: MessageItem?,
+    addingAccount: Boolean,
+    again: AccountItem?,
+    searching: Boolean,
+): Screen =
     composing?.let { Screen.Write(it) }
         ?: open?.let { Screen.Read(it) }
         ?: when {
             addingAccount -> Screen.AddAccount
+            again != null -> Screen.SignInAgain(again)
             searching -> Screen.Search
             else -> Screen.Inbox
         }
@@ -751,6 +780,7 @@ private sealed class Screen(val depth: Int) {
     data object Inbox : Screen(0)
     data object Search : Screen(1)
     data object AddAccount : Screen(1)
+    data class SignInAgain(val account: AccountItem) : Screen(1)
     data class Read(val message: MessageItem) : Screen(2)
     data class Write(val composing: Composing) : Screen(3)
 }
@@ -797,6 +827,9 @@ private fun InboxList(
     owner: String?,
     accounts: List<AccountItem>,
     unsent: List<UnsentItem>,
+    /** Accounts whose server refused the login, each with a card to sign in again. */
+    signedOut: List<AccountItem>,
+    onSignIn: (AccountItem) -> Unit,
     swipes: Swipes,
     swipeTip: Boolean,
     onSwipeTip: () -> Unit,
@@ -890,7 +923,7 @@ private fun InboxList(
         closedAt = Int.MAX_VALUE
     }
     // How many messages are scrolled past, so the rows on screen pour in from the top one down.
-    val leading = 1 + unsent.size + (if (swipeTip && messages.isNotEmpty()) 1 else 0) + (if (lake) 1 else 0)
+    val leading = 1 + signedOut.size + unsent.size + (if (swipeTip && messages.isNotEmpty()) 1 else 0) + (if (lake) 1 else 0)
     val firstRow by remember(leading) { derivedStateOf { (listState.firstVisibleItemIndex - leading).coerceAtLeast(0) } }
     // The list leaves to the side the thumb moves away from, and the next one comes in from the other.
     val slide = Modifier.glided { glide.value }
@@ -932,8 +965,11 @@ private fun InboxList(
                 contentPadding = PaddingValues(top = top, bottom = dockHeight + 16.dp),
             ) {
                 item(key = "title") { Hero(shownTitle, shownOwner, onBack) }
+                items(signedOut, key = { "signed-out-${it.id}" }) { account ->
+                    Afloat(glide, depth = { 0 }, modifier = rowMove().then(sink)) { SignedOutRow(account, onClick = { onSignIn(account) }) }
+                }
                 items(unsent, key = { "unsent-${it.id}" }) { failed ->
-                    Afloat(glide, depth = { 0 }, modifier = rowMove().then(sink)) { UnsentRow(failed, Modifier, onClick = { onUnsent(failed) }) }
+                    Afloat(glide, depth = { 0 }, modifier = rowMove().then(sink)) { UnsentRow(failed, onClick = { onUnsent(failed) }) }
                 }
                 if (swipeTip && messages.isNotEmpty()) {
                     item(key = "tip") { Afloat(glide, depth = { 0 }, modifier = rowMove().then(sink)) { SwipeTip(swipes, onSwipeTip) } }
@@ -1410,27 +1446,46 @@ private fun Category.label(): Int = when (this) {
     Category.NEWSLETTERS -> R.string.tab_newsletters
 }
 
+/** An account whose server refused the login, calm as nothing is lost; a tap signs in again. */
+@Composable
+private fun SignedOutRow(account: AccountItem, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    NoticeRow(
+        stringResource(R.string.inbox_signed_out, account.name),
+        stringResource(R.string.inbox_signed_out_text),
+        colors.primary,
+        colors.surfaceContainer,
+        onClick,
+    )
+}
+
 /** A message the server refused; a tap opens it to fix. */
 @Composable
-private fun UnsentRow(unsent: UnsentItem, modifier: Modifier, onClick: () -> Unit) {
+private fun UnsentRow(unsent: UnsentItem, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
+    NoticeRow(
+        stringResource(R.string.inbox_not_sent),
+        unsent.subject.ifBlank { stringResource(R.string.inbox_no_subject) },
+        colors.error,
+        colors.error.copy(alpha = 0.1f),
+        onClick,
+    )
+}
+
+/** A card over the list that asks for a tap: a [title] in [tint] over one line of [text]. */
+@Composable
+private fun NoticeRow(title: String, text: String, tint: Color, background: Color, onClick: () -> Unit) {
     Column(
-        modifier
+        Modifier
             .fillMaxWidth()
             .padding(horizontal = Gap.card, vertical = 4.dp)
             .clip(RoundedCornerShape(Radius.tile))
-            .background(colors.error.copy(alpha = 0.1f))
+            .background(background)
             .clickable(onClick = onClick)
             .padding(horizontal = Gap.inCard, vertical = 12.dp),
     ) {
-        Text(stringResource(R.string.inbox_not_sent), color = colors.error, style = Type.Subject, fontWeight = Weight.SemiBold)
-        Text(
-            unsent.subject.ifBlank { stringResource(R.string.inbox_no_subject) },
-            color = colors.onSurfaceVariant,
-            style = Type.Text,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Text(title, color = tint, style = Type.Subject, fontWeight = Weight.SemiBold)
+        Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant, style = Type.Text, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }
 

@@ -16,6 +16,8 @@ pub trait Store: Send + Sync {
     fn set_account_color(&self, account: AccountId, color: u32) -> Result<(), StoreError>;
     /// Sets the user's name for the account; empty clears it.
     fn set_account_label(&self, account: AccountId, label: &str) -> Result<(), StoreError>;
+    /// Marks whether the account waits for the person to sign in again.
+    fn set_needs_sign_in(&self, account: AccountId, needs: bool) -> Result<(), StoreError>;
 
     /// Inserts new folders and updates known ones, matched by `remote_id`.
     fn save_folders(

@@ -30,12 +30,16 @@ pub struct SignIn {
     pub state: String,
 }
 
-/// Starts a sign-in for the app's OAuth client.
-pub fn sign_in(client_id: &str, redirect: &str) -> Result<SignIn, ProviderError> {
+/// Starts a sign-in for the app's OAuth client; with `email`, Google offers that account.
+pub fn sign_in(
+    client_id: &str,
+    redirect: &str,
+    email: Option<&str>,
+) -> Result<SignIn, ProviderError> {
     let verifier = base64url(&random::<32>()?);
     let state = base64url(&random::<16>()?);
     let challenge = base64url(digest(&SHA256, verifier.as_bytes()).as_ref());
-    let query = form(&[
+    let mut pairs = vec![
         ("client_id", client_id),
         ("redirect_uri", redirect),
         ("response_type", "code"),
@@ -43,7 +47,9 @@ pub fn sign_in(client_id: &str, redirect: &str) -> Result<SignIn, ProviderError>
         ("code_challenge", &challenge),
         ("code_challenge_method", "S256"),
         ("state", &state),
-    ]);
+    ];
+    pairs.extend(email.map(|e| ("login_hint", e)));
+    let query = form(&pairs);
     Ok(SignIn {
         url: format!("{AUTH_URL}?{query}"),
         verifier,
@@ -177,7 +183,7 @@ mod tests {
 
     #[test]
     fn signs_in_with_pkce() {
-        let start = sign_in("id.apps", "app:/r").unwrap();
+        let start = sign_in("id.apps", "app:/r", None).unwrap();
         assert_eq!(start.verifier.len(), 43);
         let challenge = base64url(digest(&SHA256, start.verifier.as_bytes()).as_ref());
         assert_eq!(query_value(&start.url, "code_challenge"), Some(challenge));
@@ -186,12 +192,25 @@ mod tests {
             Some("app:/r")
         );
         assert_eq!(query_value(&start.url, "scope").as_deref(), Some(SCOPE));
-        assert_ne!(sign_in("id.apps", "app:/r").unwrap().state, start.state);
+        assert_ne!(
+            sign_in("id.apps", "app:/r", None).unwrap().state,
+            start.state
+        );
+        assert_eq!(query_value(&start.url, "login_hint"), None);
+    }
+
+    #[test]
+    fn offers_the_account_to_sign_in_again() {
+        let start = sign_in("id", "app:/r", Some("a+b@gmail.com")).unwrap();
+        assert_eq!(
+            query_value(&start.url, "login_hint").as_deref(),
+            Some("a+b@gmail.com")
+        );
     }
 
     #[test]
     fn reads_the_answer() {
-        let start = sign_in("id", "app:/r").unwrap();
+        let start = sign_in("id", "app:/r", None).unwrap();
         let state = &start.state;
         assert_eq!(
             code(&format!("app:/r?state={state}&code=4%2Fx"), &start),

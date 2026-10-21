@@ -1240,6 +1240,21 @@ fn names_an_account() {
 }
 
 #[test]
+fn marks_an_account_that_needs_sign_in() {
+    let store = store();
+    let a = account(&store, "a@example.com");
+    assert!(!store.accounts().unwrap()[0].needs_sign_in);
+    store.set_needs_sign_in(a, true).unwrap();
+    assert!(store.accounts().unwrap()[0].needs_sign_in);
+    store.set_needs_sign_in(a, false).unwrap();
+    assert!(!store.accounts().unwrap()[0].needs_sign_in);
+    assert_eq!(
+        store.set_needs_sign_in(AccountId(99), true),
+        Err(StoreError::NotFound)
+    );
+}
+
+#[test]
 fn removing_an_account_removes_its_mail() {
     let store = store();
     let a = account(&store, "a@example.com");

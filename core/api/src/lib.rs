@@ -72,10 +72,11 @@ pub fn suggested_smtp_host(email: String) -> Option<String> {
 }
 
 /// Starts Google sign-in: the app opens `url` in the browser and keeps the rest for
-/// `google_account` when the browser comes back to `GOOGLE_REDIRECT`.
+/// `google_account` when the browser comes back to `GOOGLE_REDIRECT`. With `email`, to sign
+/// in to a saved account again, Google offers that account.
 #[uniffi::export]
-pub fn google_sign_in() -> Result<GoogleSignIn, CoreError> {
-    Ok(oauth::sign_in(GOOGLE_CLIENT_ID, GOOGLE_REDIRECT)?.into())
+pub fn google_sign_in(email: Option<String>) -> Result<GoogleSignIn, CoreError> {
+    Ok(oauth::sign_in(GOOGLE_CLIENT_ID, GOOGLE_REDIRECT, email.as_deref())?.into())
 }
 
 /// The mail core of one app install: the encrypted database and the network.
@@ -184,6 +185,18 @@ impl Core {
             .unwrap_or_else(|p| p.into_inner())
             .remove(&account);
         self.kept_pages().clear();
+        Ok(())
+    }
+
+    /// The account works again after `check_password` or `google_account` for it, once the
+    /// app has kept the new secret: its mail and queued work go on where they stopped.
+    pub fn signed_in_again(&self, account: i64) -> Result<(), CoreError> {
+        let account = AccountId(account);
+        self.store.set_needs_sign_in(account, false)?;
+        self.tokens
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&account);
         Ok(())
     }
 
@@ -447,12 +460,31 @@ impl Core {
         Ok(self.store.add_account(&account)?.0)
     }
 
+    /// Checks a new password of a saved IMAP account on both its servers, for signing in
+    /// again; `signed_in_again` follows once the app has kept it.
+    pub async fn check_password(&self, account: i64, password: String) -> Result<(), CoreError> {
+        let account = self.account(AccountId(account))?;
+        match &account.smtp {
+            Some(smtp) => {
+                tokio::try_join!(
+                    self.connect(&account, &password),
+                    self.send_login(smtp, &password)
+                )?;
+            }
+            None => drop(self.connect(&account, &password).await?),
+        }
+        Ok(())
+    }
+
     /// Finishes Google sign-in with the address the browser came back to: the account's
-    /// address and the secret the app keeps for it. `add_gmail_account` then saves it.
+    /// address and the secret the app keeps for it. `add_gmail_account` then saves it; or,
+    /// with `again`, the sign-in was for that saved account, and `signed_in_again` follows.
+    /// Fails with `WrongAccount` if the person chose another Google account.
     pub async fn google_account(
         &self,
         sign_in: GoogleSignIn,
         redirect: String,
+        again: Option<i64>,
     ) -> Result<GoogleAccount, CoreError> {
         let start = oauth::SignIn::from(sign_in);
         let code = oauth::code(&redirect, &start)?;
@@ -466,8 +498,17 @@ impl Core {
         )
         .await?;
         let email = GmailSession::new(tls, &tokens.access).email().await?;
-        if self.exists(&email)? {
-            return Err(CoreError::AccountExists);
+        match again {
+            Some(id)
+                if !self
+                    .account(AccountId(id))?
+                    .email
+                    .eq_ignore_ascii_case(&email) =>
+            {
+                return Err(CoreError::WrongAccount);
+            }
+            None if self.exists(&email)? => return Err(CoreError::AccountExists),
+            _ => {}
         }
         Ok(GoogleAccount {
             email,
@@ -817,19 +858,26 @@ impl Core {
         if let Some(remote) = slot {
             return Ok(remote);
         }
-        let remote = match account.kind {
-            AccountKind::Imap => Remote::Imap(self.connect(account, secret).await?),
-            AccountKind::Gmail => {
-                let token = self.access_token(account.id, secret).await?;
-                Remote::Gmail(GmailSession::new(self.tls()?, &token))
-            }
-            AccountKind::Graph => {
-                return Err(CoreError::Storage {
-                    detail: "Outlook accounts are not supported yet".into(),
-                });
-            }
+        // Not until the person signs in again: a server may lock an account after many
+        // refused logins.
+        if account.needs_sign_in {
+            return Err(CoreError::Auth);
+        }
+        let opened = async {
+            Ok(match account.kind {
+                AccountKind::Imap => Remote::Imap(self.connect(account, secret).await?),
+                AccountKind::Gmail => {
+                    let token = self.access_token(account.id, secret).await?;
+                    Remote::Gmail(GmailSession::new(self.tls()?, &token))
+                }
+                AccountKind::Graph => {
+                    return Err(CoreError::Storage {
+                        detail: "Outlook accounts are not supported yet".into(),
+                    });
+                }
+            })
         };
-        Ok(slot.insert(remote))
+        Ok(slot.insert(self.refused(account, opened.await)?))
     }
 
     /// A Gmail access token: the one from earlier while it works, else a new one.
@@ -850,7 +898,7 @@ impl Core {
     }
 
     /// Passes `result` on; a refused login drops the account's access token, so the next
-    /// call gets a new one.
+    /// call gets a new one, and marks the account as needing the person to sign in again.
     fn refused<T, E: Into<CoreError>>(
         &self,
         account: &Account,
@@ -858,8 +906,14 @@ impl Core {
     ) -> Result<T, CoreError> {
         let result = result.map_err(Into::into);
         if let Err(CoreError::Auth) = result {
-            let mut tokens = self.tokens.lock().unwrap_or_else(|p| p.into_inner());
-            tokens.remove(&account.id);
+            self.tokens
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .remove(&account.id);
+            // An account removed meanwhile has nothing to mark.
+            if !account.needs_sign_in {
+                let _ = self.store.set_needs_sign_in(account.id, true);
+            }
         }
         result
     }
@@ -1191,6 +1245,14 @@ impl From<Folder> for FolderItem {
     }
 }
 
+/// How the core talks to the account's server.
+#[uniffi::remote(Enum)]
+pub enum AccountKind {
+    Imap,
+    Gmail,
+    Graph,
+}
+
 /// Inbox tab, sorted by rules on the device.
 #[uniffi::remote(Enum)]
 pub enum Category {
@@ -1218,6 +1280,9 @@ pub struct AccountItem {
     pub color: u32,
     /// The colour's place in `account_colors`.
     pub color_index: u32,
+    pub kind: AccountKind,
+    /// The server refused the saved secret: mail stops until the person signs in again.
+    pub needs_sign_in: bool,
 }
 
 impl From<Account> for AccountItem {
@@ -1230,6 +1295,8 @@ impl From<Account> for AccountItem {
             email: a.email,
             display_name: a.display_name,
             label: a.label,
+            kind: a.kind,
+            needs_sign_in: a.needs_sign_in,
         }
     }
 }
@@ -1549,6 +1616,8 @@ pub enum CoreError {
     TooNew,
     /// An account with this email is already added.
     AccountExists,
+    /// Signing in again chose another account than the one asked for.
+    WrongAccount,
     /// The server refused the login.
     Auth,
     Network {
@@ -1582,6 +1651,7 @@ impl fmt::Display for CoreError {
             Self::WrongKey => write!(f, "the database key is wrong"),
             Self::TooNew => write!(f, "the database is from a newer app version"),
             Self::AccountExists => write!(f, "the account is already added"),
+            Self::WrongAccount => write!(f, "another account signed in"),
             Self::Auth => write!(f, "the server refused the login"),
             Self::Network { detail } => write!(f, "network error: {detail}"),
             Self::Tls { detail } => write!(f, "TLS setup failed: {detail}"),

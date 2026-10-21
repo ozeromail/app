@@ -41,6 +41,9 @@ pub struct Account {
     pub color: u32,
     /// The name the user gave the account on this phone; empty when none.
     pub label: String,
+    /// The server refused the saved password or Google secret: the account waits for the
+    /// person to sign in again, its mail and queued work kept.
+    pub needs_sign_in: bool,
 }
 
 impl Account {
@@ -99,6 +102,7 @@ mod tests {
             smtp: None,
             color: 0,
             label: String::new(),
+            needs_sign_in: false,
         };
         assert_eq!(account.name(), "a@example.com");
         account.display_name = "Anna".into();
