@@ -835,7 +835,7 @@ private fun InboxList(
     LaunchedEffect(messages) { hadMail = messages.isNotEmpty() && messages !== oldTabList }
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     // The compact title shows once the large one has scrolled under the status bar.
-    val titleGone = with(density) { 24.dp.roundToPx() }
+    val titleGone = with(density) { 62.dp.roundToPx() }
     val scrolled by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > titleGone } }
     val pull = rememberPullToRefreshState()
     // There is one water, under the title, and it stays put: a pull over an empty list's lake
@@ -1046,8 +1046,9 @@ private fun mailboxOwner(mailbox: Mailbox, folder: FolderItem?, accounts: List<A
 @Composable
 private fun Hero(title: String, subtitle: String?, onBack: (() -> Unit)?) {
     Column {
-        onBack?.let { BackArrow(it, Modifier.padding(top = 4.dp)) }
-        Column(Modifier.padding(start = Gap.screen, end = Gap.screen, top = if (onBack == null) 12.dp else 2.dp, bottom = 14.dp)) {
+        // The arrow's row is there even without it, so every title sits at the same height.
+        Box(Modifier.padding(top = 4.dp).height(44.dp)) { onBack?.let { BackArrow(it) } }
+        Column(Modifier.padding(start = Gap.screen, end = Gap.screen, top = 2.dp, bottom = 14.dp)) {
             LargeTitle(title)
             if (subtitle != null) {
                 Text(

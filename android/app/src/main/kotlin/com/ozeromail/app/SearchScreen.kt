@@ -67,6 +67,7 @@ fun SearchScreen(
     }
     val colors = MaterialTheme.colorScheme
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+        BackArrow(onBack, Modifier.padding(top = 4.dp))
         LazyColumn(Modifier.weight(1f)) {
             val (shownFor, messages) = found ?: ("" to emptyList())
             if (shownFor == query && query.isNotBlank() && messages.isEmpty()) {
