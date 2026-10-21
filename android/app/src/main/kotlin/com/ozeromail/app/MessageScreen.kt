@@ -89,6 +89,7 @@ fun MessageScreen(
     onForward: (MessageItem) -> Unit,
     onDelete: () -> Unit,
     onUnread: () -> Unit,
+    onMoveToInbox: (() -> Unit)?,
     onDone: (() -> Unit)?,
     onBack: () -> Unit,
 ) {
@@ -188,6 +189,12 @@ fun MessageScreen(
             SheetAction(R.drawable.ic_unread, stringResource(R.string.action_mark_unread), MaterialTheme.colorScheme.onSurface) {
                 more = false
                 onUnread()
+            }
+            onMoveToInbox?.let { move ->
+                SheetAction(R.drawable.ic_inbox, stringResource(R.string.action_move_to_inbox), MaterialTheme.colorScheme.onSurface) {
+                    more = false
+                    move()
+                }
             }
         }
         AttachmentActions(files)
