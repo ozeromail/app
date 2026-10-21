@@ -14,6 +14,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -196,12 +197,12 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
 private fun Choose(busy: Boolean, onCancel: (() -> Unit)?, onGoogle: () -> Unit, onPick: (Provider?) -> Unit) {
     val colors = MaterialTheme.colorScheme
     Column(Modifier.fillMaxSize()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            LargeTitle(stringResource(R.string.signin_title), Modifier.weight(1f))
-            if (onCancel != null) {
-                TextButton(onClick = onCancel, enabled = !busy) { Text(stringResource(R.string.action_cancel)) }
-            }
+        // Adding another account goes back to the mail; the arrow's row is there even without
+        // it, so the title sits where the next step's does.
+        Box(Modifier.padding(bottom = 12.dp).height(44.dp)) {
+            if (onCancel != null) StepBack(stringResource(R.string.action_back), onCancel, busy)
         }
+        LargeTitle(stringResource(R.string.signin_title))
         Text(
             stringResource(R.string.signin_text),
             color = colors.onSurfaceVariant,
@@ -280,16 +281,7 @@ private fun Credentials(
     }
 
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        // The back arrow's glyph lines up with the title below it.
-        val back = 44.dp
-        IconTile(
-            R.drawable.ic_back,
-            stringResource(R.string.signin_title),
-            onBack,
-            Modifier.offset(x = -(back - Gap.slot) / 2),
-            size = back,
-            enabled = !busy,
-        )
+        StepBack(stringResource(R.string.signin_title), onBack, busy)
         LargeTitle(stringResource(provider?.label ?: R.string.signin_other))
         if (provider != null) {
             Text(stringResource(R.string.signin_app_password_text), color = colors.onSurfaceVariant)
@@ -378,4 +370,11 @@ private fun Field(
         keyboardActions = KeyboardActions(onDone = { onDone?.invoke() }),
         modifier = modifier,
     )
+}
+
+/** A back arrow over a step's title, its glyph lined up with the title. */
+@Composable
+private fun StepBack(label: String, onBack: () -> Unit, busy: Boolean) {
+    val back = 44.dp
+    IconTile(R.drawable.ic_back, label, onBack, Modifier.offset(x = -(back - Gap.slot) / 2), size = back, enabled = !busy)
 }
