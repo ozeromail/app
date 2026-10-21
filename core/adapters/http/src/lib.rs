@@ -258,16 +258,24 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
         timed(self.stream.flush()).await
     }
 
-    /// Reads more into `buf`; false at the end of the stream.
-    async fn fill(&mut self) -> Result<bool, ProviderError> {
+    /// Reads more into `buf`; false at the end of the stream. A connection dropped without a
+    /// TLS goodbye, as servers drop idle ones, is `Closed`.
+    async fn fill(&mut self) -> Result<bool, Failure> {
         let mut chunk = [0; 16 * 1024];
-        let n = timed(self.stream.read(&mut chunk)).await?;
+        let n = match tokio::time::timeout(TIMEOUT, self.stream.read(&mut chunk)).await {
+            Ok(Ok(n)) => n,
+            Ok(Err(e)) if dropped(&e) => return Err(Failure::Closed),
+            Ok(Err(e)) => return Err(ProviderError::Network(e.to_string()).into()),
+            Err(_) => return Err(ProviderError::Network("timed out".into()).into()),
+        };
         self.buf.extend_from_slice(&chunk[..n]);
         Ok(n > 0)
     }
 
     /// The response and whether the connection can carry another request.
     async fn response(&mut self) -> Result<(Response, bool), Failure> {
+        // Whether any byte of an answer came, an interim response's too.
+        let mut answered = !self.buf.is_empty();
         let (mut response, length, close) = loop {
             if let Some(head) = self.head()? {
                 break head;
@@ -275,13 +283,18 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
             if self.buf.len() > MAX_HEAD {
                 return Err(protocol("response head too long").into());
             }
-            if !self.fill().await? {
-                return Err(if self.buf.is_empty() {
-                    Failure::Closed
-                } else {
+            let more = match self.fill().await {
+                Err(Failure::Closed) => false,
+                more => more?,
+            };
+            if !more {
+                return Err(if answered {
                     closed().into()
+                } else {
+                    Failure::Closed
                 });
             }
+            answered = true;
         };
         response.body = match length {
             Length::None => Vec::new(),
@@ -455,6 +468,15 @@ async fn timed<T, E: std::fmt::Display>(
         Ok(result) => result.map_err(|e| ProviderError::Network(e.to_string())),
         Err(_) => Err(ProviderError::Network("timed out".into())),
     }
+}
+
+/// The peer went away mid-connection rather than closing it.
+fn dropped(e: &std::io::Error) -> bool {
+    use std::io::ErrorKind::{BrokenPipe, ConnectionAborted, ConnectionReset, UnexpectedEof};
+    matches!(
+        e.kind(),
+        UnexpectedEof | ConnectionReset | ConnectionAborted | BrokenPipe
+    )
 }
 
 fn closed() -> ProviderError {
