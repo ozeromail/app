@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Snackbar
@@ -36,9 +37,12 @@ import androidx.compose.material3.SnackbarVisuals
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -60,6 +64,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import uniffi.ozero_api.Mailbox
 
 /** A square-ish button holding one icon, as in the bottom bars. */
@@ -301,17 +306,44 @@ fun Toast(state: SnackbarHostState, onGo: (Mailbox) -> Unit, modifier: Modifier 
  */
 @Composable
 fun <T : Any> Reveal(value: T?, modifier: Modifier = Modifier, content: @Composable (T) -> Unit) {
-    val last = remember { mutableStateOf(value) }
-    SideEffect { if (value != null) last.value = value }
+    val last = rememberLast(value)
     AnimatedVisibility(
         value != null,
         modifier,
         enter = expandVertically(Motion.calm(Motion.NOTE)) + fadeIn(Motion.calm(Motion.NOTE)),
         exit = shrinkVertically(Motion.calm(Motion.NOTE)) + fadeOut(Motion.calm(Motion.SMALL)),
     ) {
-        (value ?: last.value)?.let { content(it) }
+        last?.let { content(it) }
     }
 }
+
+/** [value], or while it is null the last one it was: for something that closes with it still in it. */
+@Composable
+fun <T : Any> rememberLast(value: T?): T? {
+    val last = remember { mutableStateOf(value) }
+    SideEffect { if (value != null) last.value = value }
+    return value ?: last.value
+}
+
+/** The small spinner inside a button or a tile. */
+@Composable
+fun Spinner(color: Color) {
+    CircularProgressIndicator(Modifier.size(18.dp), color = color, strokeWidth = 2.dp)
+}
+
+/** A spinner only for a wait long enough to notice; a saved message shows without one. */
+@Composable
+fun SlowSpinner() {
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(SPINNER_DELAY_MS)
+        shown = true
+    }
+    if (shown) CircularProgressIndicator()
+}
+
+/** How long a load runs before its spinner shows. */
+private const val SPINNER_DELAY_MS = 400L
 
 /** Tells [onChange] when a finger comes down and when the last one lifts, taking nothing from what is below. */
 fun Modifier.whilePressed(onChange: (Boolean) -> Unit): Modifier = pointerInput(Unit) {
