@@ -35,7 +35,13 @@ async fn serving(routes: Routes, drop_first: bool) -> (GmailSession, Seen) {
         if drop_first {
             let (tcp, _) = listener.accept().await.unwrap();
             let mut tls = acceptor().accept(tcp).await.unwrap();
-            let _ = tls.read(&mut [0; 4096]).await;
+            // The whole request, so the drop is a clean close, not a reset.
+            let mut head = Vec::new();
+            while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                let mut chunk = [0; 4096];
+                let n = tls.read(&mut chunk).await.unwrap();
+                head.extend_from_slice(&chunk[..n]);
+            }
         }
         serve(listener, routes, served).await;
     });
@@ -576,4 +582,11 @@ async fn asks_again_when_a_new_connection_is_dropped_before_answering() {
     let (mut gmail, seen) = serving(routes, true).await;
     assert_eq!(gmail.history_id().await, Ok(12));
     assert_eq!(seen.lock().unwrap().len(), 1);
+
+    // A POST may have gone through: it is not sent again.
+    let routes = vec![("/messages/batchModify", 204, json!({}))];
+    let (mut gmail, seen) = serving(routes, true).await;
+    let ids = ["m1".to_owned()];
+    assert!(gmail.move_to("INBOX", 0, &ids, ARCHIVE).await.is_err());
+    assert!(seen.lock().unwrap().is_empty());
 }
