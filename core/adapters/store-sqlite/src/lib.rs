@@ -197,14 +197,25 @@ impl Store for SqliteStore {
     }
 
     fn set_account_keep(&self, account: AccountId, days: u32) -> Result<(), StoreError> {
-        let changed = self
-            .conn()
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        let changed = tx
             .execute(
-                "UPDATE account SET keep_days = ?2 WHERE id = ?1",
+                "UPDATE account SET keep_days = ?2 WHERE id = ?1 AND keep_days != ?2",
                 params![account.0, days],
             )
             .map_err(storage)?;
-        found(changed)
+        // Kept longer, a folder that ended at the old limit may have older mail again.
+        if changed > 0 {
+            tx.execute(
+                "UPDATE folder SET older_done = 0 WHERE account_id = ?1",
+                [account.0],
+            )
+            .map_err(storage)?;
+        } else {
+            require(&tx, "SELECT 1 FROM account WHERE id = ?1", account.0)?;
+        }
+        tx.commit().map_err(storage)
     }
 
     fn prune(&self, account: AccountId, before: i64) -> Result<(), StoreError> {
@@ -310,6 +321,29 @@ impl Store for SqliteStore {
                 |r| r.get(0),
             )
             .map_err(storage)
+    }
+
+    fn older_done(&self, folder: FolderId) -> Result<bool, StoreError> {
+        self.conn()
+            .query_row(
+                "SELECT older_done FROM folder WHERE id = ?1",
+                [folder.0],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(storage)?
+            .ok_or(StoreError::NotFound)
+    }
+
+    fn set_older_done(&self, folder: FolderId, done: bool) -> Result<(), StoreError> {
+        let changed = self
+            .conn()
+            .execute(
+                "UPDATE folder SET older_done = ?2 WHERE id = ?1",
+                params![folder.0, done],
+            )
+            .map_err(storage)?;
+        found(changed)
     }
 
     fn save_changes(
@@ -1013,7 +1047,7 @@ fn reset_if_new(tx: &Transaction<'_>, folder: FolderId, validity: u32) -> Result
         tx.execute("DELETE FROM message WHERE folder_id = ?1", [folder.0])
             .map_err(storage)?;
         tx.execute(
-            "UPDATE folder SET validity = ?2, next_id = 0 WHERE id = ?1",
+            "UPDATE folder SET validity = ?2, next_id = 0, older_done = 0 WHERE id = ?1",
             params![folder.0, validity],
         )
         .map_err(storage)?;

@@ -198,10 +198,9 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var listSize by remember { mutableIntStateOf(PAGE) }
     // The saved mail ended before `listSize`: more has to come from the servers.
     var savedEnds by remember { mutableStateOf(false) }
-    // Mailboxes whose servers have no older mail, and whether some is on its way.
-    var olderEnded by remember { mutableStateOf(emptySet<Mailbox>()) }
+    // Older mail is on its way from the servers.
     var loadingOlder by remember { mutableStateOf(false) }
-    // Counts the loads of older mail, so the list looks at its end again after each.
+    // Counts the loads that found more older mail, so the list looks at its end again after each.
     var olderLoads by remember { mutableIntStateOf(0) }
     var error by remember { mutableStateOf<Int?>(null) }
     var open by remember { mutableStateOf<MessageItem?>(null) }
@@ -298,11 +297,11 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             return
         }
         val box = mailbox
-        if (loadingOlder || box in olderEnded || box !in syncedBoxes) return
+        if (loadingOlder || box !in syncedBoxes) return
         loadingOlder = true
         try {
-            if (!mail.older(box)) olderEnded += box
-            olderLoads++
+            // Once the servers have nothing older, the core answers without asking them.
+            if (mail.older(box)) olderLoads++
         } catch (e: CoreException) {
             error = e.text()
         } finally {
@@ -383,8 +382,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         listState.scrollToItem(0)
     }
     // Near the end of the list, the next rows come before the finger gets there.
+    // Also for a list the core cuts short to nothing.
     LaunchedEffect(tab, mailbox, messages.size, olderLoads, syncedBoxes) {
-        if (messages.isEmpty()) return@LaunchedEffect
         snapshotFlow {
             val info = listState.layoutInfo
             val last = info.visibleItemsInfo.lastOrNull()?.index ?: return@snapshotFlow false
@@ -812,8 +811,6 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 changeAccount { mail.setAccountLabel(account, label) }
             },
             onKeepDays = { account, days ->
-                // Kept longer, mail that ended at the old limit can load again.
-                olderEnded = emptySet()
                 changeAccount { mail.setKeepDays(account, days) }
             },
             onRemove = { account ->

@@ -387,16 +387,24 @@ impl MailProvider for GmailSession {
             i64::MAX => String::new(),
             oldest => format!("before:{}", oldest.saturating_add(1)),
         };
-        let list = self
-            .get(&format!(
-                "/messages?{}&maxResults={}&fields=messages/id,nextPageToken",
-                listing(folder, &before),
-                limit.min(MAX_LIST)
-            ))
-            .await?;
         let known: HashSet<&str> = known.iter().map(String::as_str).collect();
-        let mut ids = each(&list["messages"], |m| &m["id"]);
-        ids.retain(|id| !known.contains(id.as_str()));
+        let mut page = String::new();
+        // A page of only saved mail, say many messages in the oldest saved second, goes on.
+        let (ids, more) = loop {
+            let list = self
+                .get(&format!(
+                    "/messages?{}&maxResults={}&fields=messages/id,nextPageToken{page}",
+                    listing(folder, &before),
+                    limit.min(MAX_LIST)
+                ))
+                .await?;
+            let mut ids = each(&list["messages"], |m| &m["id"]);
+            ids.retain(|id| !known.contains(id.as_str()));
+            match list["nextPageToken"].as_str() {
+                Some(token) if ids.is_empty() => page = format!("&pageToken={}", percent(token)),
+                token => break (ids, token.is_some()),
+            }
+        };
         let mut new: Vec<_> = self
             .headers(&ids)
             .await?
@@ -405,10 +413,7 @@ impl MailProvider for GmailSession {
             .map(|m| m.raw)
             .collect();
         new.sort_by_key(|m| m.received);
-        Ok(Older {
-            new,
-            more: list["nextPageToken"].is_string(),
-        })
+        Ok(Older { new, more })
     }
 
     async fn body(

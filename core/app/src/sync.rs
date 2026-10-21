@@ -51,7 +51,7 @@ pub async fn sync_folders(
 
 /// Saves up to `limit` of the folder's messages just older than the saved ones, none received
 /// before `since`: the next page of a list scrolled to its end. False once the folder has no
-/// older mail to save.
+/// older mail to save, which the store then remembers.
 pub async fn load_older(
     store: &dyn Store,
     provider: &mut impl MailProvider,
@@ -82,6 +82,9 @@ pub async fn load_older(
         gone: vec![],
     };
     store.save_changes(folder.id, &changes.map(|m| parser.parse(m)))?;
+    if !more {
+        store.set_older_done(folder.id, true)?;
+    }
     Ok(more)
 }
 

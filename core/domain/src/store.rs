@@ -34,6 +34,10 @@ pub trait Store: Send + Sync {
     fn checkpoint(&self, folder: FolderId) -> Result<(Checkpoint, Vec<String>), StoreError>;
     /// When the folder's oldest saved message was received, if it has any.
     fn oldest(&self, folder: FolderId) -> Result<Option<i64>, StoreError>;
+    /// Whether the folder's server had no older mail to load, or none the account keeps. A
+    /// new validity, or a longer time the account keeps mail, makes it false again.
+    fn older_done(&self, folder: FolderId) -> Result<bool, StoreError>;
+    fn set_older_done(&self, folder: FolderId, done: bool) -> Result<(), StoreError>;
     /// Saves a sync in one transaction. A new validity first drops the folder's messages:
     /// their `remote_id`s now name other messages. Messages are matched by `remote_id`,
     /// and a queued action stays on top of what the server sent until it is sent. A new

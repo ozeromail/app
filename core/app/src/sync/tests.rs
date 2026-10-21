@@ -123,6 +123,7 @@ fn loads_older_mail_below_the_saved_one() {
     assert_eq!(saved.checkpoint, since);
     let ids: Vec<_> = saved.new.iter().map(|m| m.remote_id.as_str()).collect();
     assert_eq!(ids, ["3", "4"]);
+    assert!(store.older_done.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -142,6 +143,7 @@ fn older_mail_stops_at_what_the_account_keeps() {
         .map(|m| m.remote_id.as_str())
         .collect();
     assert_eq!(ids, ["4"]);
+    assert_eq!(*store.older_done.lock().unwrap(), [(FolderId(4), true)]);
 }
 
 #[test]
