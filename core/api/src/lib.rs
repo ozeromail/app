@@ -1960,10 +1960,11 @@ fn sandboxed(html: &str, styled: bool) -> String {
     );
     // White under the letter only: the web view can stay taller than its page, and below the
     // page the screen shows through. A clear image on the root keeps the body's background
-    // from spreading to the whole canvas.
+    // from spreading to the whole canvas; as an inline block the body grows as wide as a
+    // table wider than the screen, so its white goes along.
     const LIGHT: &str = concat!(
         "html{color-scheme:light;background:linear-gradient(transparent,transparent)}",
-        "body{background:#fff}",
+        "body{background:#fff;display:inline-block;min-width:100%;box-sizing:border-box}",
     );
     // The app's own colours and reading type, kept in step with the Android Theme.kt and Type.kt
     // (Literata at its default optical size; where the app does not serve it, the system serif).
