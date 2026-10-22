@@ -75,6 +75,8 @@
   "signin_yahoo": "Yahoo",
   "signin_yandex": "Яндекс",
   "signin_mailru": "Mail.ru",
+  "signin_gmail": "Gmail по паролю приложения",
+  "signin_gmail_text": "Если вход через Google не пускает, подойдёт пароль приложения: включите двухэтапную аутентификацию в аккаунте Google и создайте его.",
   "signin_other": "Другая почта",
   "signin_app_password": "Пароль приложения",
   "signin_app_password_text": "Этот сервис просит пароль приложения, а не обычный пароль. Создать его можно за минуту.",

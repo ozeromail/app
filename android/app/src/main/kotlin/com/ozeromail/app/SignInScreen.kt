@@ -65,14 +65,27 @@ import uniffi.ozero_api.Endpoint
 import uniffi.ozero_api.suggestedImapHost
 import uniffi.ozero_api.suggestedSmtpHost
 
-/** A mail service with known servers and a page where its app passwords are made. */
+/**
+ * A mail service with known servers, a page where its app passwords are made, and [hint]
+ * on what making one takes.
+ */
 private enum class Provider(
     @StringRes val label: Int,
     val imap: String,
     val smtp: String,
     val smtpPort: Int,
     val appPasswords: String,
+    @StringRes val hint: Int = R.string.signin_app_password_text,
 ) {
+    // For those Google sign-in does not let in yet.
+    GMAIL(
+        R.string.signin_gmail,
+        "imap.gmail.com",
+        "smtp.gmail.com",
+        Mail.SMTPS_PORT,
+        "https://myaccount.google.com/apppasswords",
+        R.string.signin_gmail_text,
+    ),
     ICLOUD(R.string.signin_icloud, "imap.mail.me.com", "smtp.mail.me.com", 587, "https://account.apple.com/account/manage"),
     YAHOO(R.string.signin_yahoo, "imap.mail.yahoo.com", "smtp.mail.yahoo.com", Mail.SMTPS_PORT, "https://login.yahoo.com/account/security"),
     YANDEX(R.string.signin_yandex, "imap.yandex.com", "smtp.yandex.com", Mail.SMTPS_PORT, "https://id.yandex.ru/security/app-passwords"),
@@ -345,7 +358,7 @@ private fun Credentials(
         StepBack(stringResource(R.string.signin_title), onBack, busy)
         LargeTitle(stringResource(provider?.label ?: R.string.signin_other))
         if (provider != null) {
-            Text(stringResource(R.string.signin_app_password_text), color = colors.onSurfaceVariant)
+            Text(stringResource(provider.hint), color = colors.onSurfaceVariant)
             TextButton(
                 onClick = { onAppPasswords(provider.appPasswords) },
                 enabled = !busy,
