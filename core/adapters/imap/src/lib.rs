@@ -70,6 +70,8 @@ pub struct ImapSession {
     stream: Stream,
     fragments: Fragmentizer,
     next_tag: u32,
+    /// What the server can do once logged in, from the LOGIN reply or asked for once.
+    capabilities: Option<Vec<Capability<'static>>>,
 }
 
 impl std::fmt::Debug for ImapSession {
@@ -126,6 +128,7 @@ impl ImapSession {
             stream,
             fragments: Fragmentizer::new(MAX_RESPONSE),
             next_tag: 1,
+            capabilities: None,
         };
         if session.greeting().await? == GreetingKind::PreAuth {
             return Ok(session);
@@ -134,7 +137,20 @@ impl ImapSession {
         let login = CommandBody::login(user, password).map_err(|_| ProviderError::Auth)?;
         let reply = session.send(login).await?;
         match (reply.kind, &reply.code) {
-            (StatusKind::Ok, _) => Ok(session),
+            (StatusKind::Ok, code) => {
+                // In the reply's code or an untagged CAPABILITY, as Gmail sends it.
+                let untagged = reply.data.iter().find_map(|d| match d {
+                    Data::Capability(caps) => Some(caps),
+                    _ => None,
+                });
+                if let Some(caps) = untagged.or(match code {
+                    Some(Code::Capability(caps)) => Some(caps),
+                    _ => None,
+                }) {
+                    session.capabilities = Some(caps.as_ref().to_vec());
+                }
+                Ok(session)
+            }
             // RFC 5530: the server is down or busy, the password may be right.
             (StatusKind::No, Some(code)) if is_temporary(code) => {
                 Err(ProviderError::Network(format!("LOGIN: {}", reply.text)))
@@ -215,19 +231,44 @@ impl ImapSession {
         Ok(self.capabilities().await?.contains(&Capability::Idle))
     }
 
-    /// What the server can do, as CAPABILITY lists it now.
-    async fn capabilities(&mut self) -> Result<Vec<Capability<'static>>, ProviderError> {
+    /// Whether the server is Gmail, where folders are labels.
+    async fn is_gmail(&mut self) -> Result<bool, ProviderError> {
         Ok(self
-            .run(CommandBody::Capability)
+            .capabilities()
             .await?
-            .data
-            .into_iter()
-            .filter_map(|d| match d {
-                Data::Capability(caps) => Some(caps.into_inner()),
-                _ => None,
-            })
-            .flatten()
-            .collect())
+            .iter()
+            .any(|c| c.to_string().eq_ignore_ascii_case("X-GM-EXT-1")))
+    }
+
+    /// Whether `folder` is Gmail's All Mail, which holds every message whatever its labels.
+    async fn is_all_mail(&mut self, folder: &str) -> Result<bool, ProviderError> {
+        if !self.is_gmail().await? {
+            return Ok(false);
+        }
+        let list = CommandBody::list("", folder).map_err(|_| protocol("bad LIST"))?;
+        Ok(self.run(list).await?.data.iter().any(|d| {
+            matches!(d, Data::List { items, .. }
+                if items.iter().any(|i| i.to_string().eq_ignore_ascii_case("\\All")))
+        }))
+    }
+
+    /// What the server can do; asked for at most once a session.
+    async fn capabilities(&mut self) -> Result<&[Capability<'static>], ProviderError> {
+        if self.capabilities.is_none() {
+            let caps = self
+                .run(CommandBody::Capability)
+                .await?
+                .data
+                .into_iter()
+                .filter_map(|d| match d {
+                    Data::Capability(caps) => Some(caps.into_inner()),
+                    _ => None,
+                })
+                .flatten()
+                .collect();
+            self.capabilities = Some(caps);
+        }
+        Ok(self.capabilities.as_deref().unwrap_or_default())
     }
 
     /// Waits in IDLE (RFC 2177) until the server reports a change in the open folder, at
@@ -505,6 +546,7 @@ struct Opened {
 
 impl MailProvider for ImapSession {
     async fn folders(&mut self) -> Result<Vec<NewFolder>, ProviderError> {
+        let gmail = self.is_gmail().await?;
         let list = CommandBody::list("", "*").map_err(|_| protocol("bad LIST"))?;
         Ok(self
             .run(list)
@@ -512,7 +554,7 @@ impl MailProvider for ImapSession {
             .data
             .into_iter()
             .filter_map(|d| match d {
-                Data::List { items, mailbox, .. } => folder(&items, &mailbox),
+                Data::List { items, mailbox, .. } => folder(&items, &mailbox, gmail),
                 _ => None,
             })
             .collect())
@@ -724,13 +766,25 @@ impl MailProvider for ImapSession {
         to: &str,
     ) -> Result<Moved, ProviderError> {
         let to = Mailbox::try_from(to).map_err(|_| protocol("bad folder name"))?;
+        // Mail taken out of Gmail's All Mail goes to the trash; a copy only adds the label.
+        let copy = self.is_all_mail(folder).await?;
         // RFC 6851 MOVE; every server we target has it.
         let replies = self
             .each_chunk(folder, validity, remote_ids, |uids| {
-                Ok(CommandBody::Move {
-                    sequence_set: uids.try_into().map_err(|_| protocol("bad UID set"))?,
-                    mailbox: to.clone(),
-                    uid: true,
+                let sequence_set = uids.try_into().map_err(|_| protocol("bad UID set"))?;
+                let mailbox = to.clone();
+                Ok(if copy {
+                    CommandBody::Copy {
+                        sequence_set,
+                        mailbox,
+                        uid: true,
+                    }
+                } else {
+                    CommandBody::Move {
+                        sequence_set,
+                        mailbox,
+                        uid: true,
+                    }
                 })
             })
             .await?;
@@ -983,8 +1037,13 @@ fn message_bytes<'a>(
     data.filter(|_| found == Some(uid))
 }
 
-/// A LIST entry that can hold messages.
-fn folder(items: &[FlagNameAttribute<'_>], mailbox: &Mailbox<'_>) -> Option<NewFolder> {
+/// A LIST entry that can hold messages. On Gmail, archiving is moving to All Mail (`\All`),
+/// and Important (`\Important`) is left out, as it only repeats mail from other folders.
+fn folder(
+    items: &[FlagNameAttribute<'_>],
+    mailbox: &Mailbox<'_>,
+    gmail: bool,
+) -> Option<NewFolder> {
     let mut role = FolderRole::Custom;
     for item in items {
         match item {
@@ -992,10 +1051,16 @@ fn folder(items: &[FlagNameAttribute<'_>], mailbox: &Mailbox<'_>) -> Option<NewF
             // Special-use roles and LIST-EXTENDED's \NonExistent arrive as extensions.
             FlagNameAttribute::Extension(_) => {
                 let attr = item.to_string();
-                if attr.eq_ignore_ascii_case("\\NonExistent") {
+                if attr.eq_ignore_ascii_case("\\NonExistent")
+                    || gmail && attr.eq_ignore_ascii_case("\\Important")
+                {
                     return None;
                 }
-                role = FolderRole::from_special_use(&attr).unwrap_or(role);
+                role = match FolderRole::from_special_use(&attr) {
+                    Some(special) => special,
+                    None if gmail && attr.eq_ignore_ascii_case("\\All") => FolderRole::Archive,
+                    None => role,
+                };
             }
             _ => {}
         }
@@ -1114,6 +1179,8 @@ fn protocol(msg: impl Into<String>) -> ProviderError {
 
 #[cfg(test)]
 mod tests {
+    use imap_codec::imap_types::core::Atom;
+
     use super::*;
 
     #[test]
@@ -1128,5 +1195,20 @@ mod tests {
             .unwrap(),
         );
         assert_eq!(uid_list(&set, 6).collect::<Vec<_>>(), [7, 1, 2, 3, 10, 11]);
+    }
+
+    #[test]
+    fn archives_to_all_mail_on_gmail_only() {
+        let listed = |attr: &str, gmail| {
+            let items = [FlagNameAttribute::from(Atom::try_from(attr).unwrap())];
+            let mailbox = Mailbox::try_from("[Gmail]/Folder").unwrap();
+            folder(&items, &mailbox, gmail).map(|f| f.role)
+        };
+        assert_eq!(listed("All", true), Some(FolderRole::Archive));
+        assert_eq!(listed("All", false), Some(FolderRole::Custom));
+        assert_eq!(listed("Important", true), None);
+        assert_eq!(listed("Important", false), Some(FolderRole::Custom));
+        assert_eq!(listed("Trash", true), Some(FolderRole::Trash));
+        assert_eq!(listed("Sent", true), Some(FolderRole::Sent));
     }
 }
