@@ -50,6 +50,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -138,7 +139,10 @@ import androidx.lifecycle.compose.LifecycleStartEffect
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -170,6 +174,9 @@ private const val BLIP_MS = 60_000L
 /** How many more rows the list reads at a time, and how far from its end it starts to. */
 private const val PAGE = 100
 private const val AHEAD = 20
+
+/** Rows read of each other tab: what shows of its page as it glides past. */
+private const val PAGE_ROWS = 12
 
 /** A folder by its id, which is positive; the unified mailboxes as their role below zero. */
 private val MailboxSaver = Saver<Mailbox, Long>(
@@ -221,6 +228,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var writing by remember { mutableStateOf(false) }
     var tab by rememberSaveable { mutableStateOf(Category.PEOPLE) }
     var tabs by remember { mutableStateOf(emptyList<InboxTab>()) }
+    // The first rows of the other tabs, so a tab glides in with its mail already there.
+    var others by remember { mutableStateOf(emptyMap<Category, List<MessageItem>>()) }
+    // The list shown is the next tab's first rows, until its saved list is read: it has no end to scroll to yet.
+    var preview by remember { mutableStateOf(false) }
     var inboxEmpty by remember { mutableStateOf(false) }
     var unsent by remember { mutableStateOf(emptyList<UnsentItem>()) }
     var searching by rememberSaveable { mutableStateOf(false) }
@@ -268,6 +279,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             // A tab or mailbox picked meanwhile loads its own list.
             if (tab to mailbox == shown) {
                 messages = found
+                preview = false
                 savedEnds = found.size < size
             }
         } catch (e: CoreException) {
@@ -296,9 +308,23 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         }
     }
 
+    suspend fun loadOthers() {
+        if (mailbox != Mail.INBOX) return
+        val showing = tab
+        try {
+            val read = coroutineScope {
+                Category.entries.filter { it != showing }.map { it to async { mail.inbox(it, PAGE_ROWS) } }
+            }.map { (category, rows) -> category to rows.await() }
+            others = others + read
+        } catch (e: CoreException) {
+            Log.w("Ozero", "other tabs", e)
+        }
+    }
+
     suspend fun load() {
         loadList()
         counts()
+        loadOthers()
     }
 
     /**
@@ -410,7 +436,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     }
     // Near the end of the list, the next rows come before the finger gets there.
     // Also for a list the core cuts short to nothing.
-    LaunchedEffect(tab, mailbox, messages.size, olderLoads, syncedBoxes) {
+    LaunchedEffect(tab, mailbox, messages.size, olderLoads, syncedBoxes, preview) {
+        if (preview) return@LaunchedEffect
         snapshotFlow {
             val info = listState.layoutInfo
             val last = info.visibleItemsInfo.lastOrNull()?.index ?: return@snapshotFlow false
@@ -794,6 +821,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         loadingOlder = loadingOlder,
                         tab = tab,
                         tabs = tabs,
+                        others = others,
                         inboxEmpty = inboxEmpty,
                         error = error,
                         snackbar = snackbar,
@@ -809,7 +837,16 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         },
                         onOpen = { open = it },
                         onSwipe = ::swiped,
-                        onTab = { tab = it },
+                        onTab = { next ->
+                            // The next tab's rows are there at once, so its page comes in with them;
+                            // the saved list follows. The one left keeps its rows to leave with.
+                            others = others + (tab to messages)
+                            others[next]?.let {
+                                messages = it
+                                preview = true
+                            }
+                            tab = next
+                        },
                         onAccounts = { accountsOpen = true },
                         onSearch = { searching = true },
                         onCompose = { composing = Composing(NEW_DRAFT) },
@@ -1002,6 +1039,8 @@ private fun InboxList(
     loadingOlder: Boolean,
     tab: Category,
     tabs: List<InboxTab>,
+    /** The first rows of the other tabs, shown as their pages glide past. */
+    others: Map<Category, List<MessageItem>>,
     inboxEmpty: Boolean,
     error: Int?,
     snackbar: SnackbarHostState,
@@ -1058,10 +1097,20 @@ private fun InboxList(
     // There is one water, under the title, and it stays put: a pull over an empty list's lake
     // gathers a drop over it, and a pull on a list moves the rows down to uncover the same water.
     val lake = messages.isEmpty() && (!syncing || listLoaded) && error == null
-    val drops = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
-    // After a sync the gap stays open until its water has calmed, so the calm is seen.
+    // Each pull that lets go past a third of the way drops a drop, sized by how far it went.
+    val drops = remember { MutableSharedFlow<Float>(extraBufferCapacity = 1) }
+    // After a sync the gap stays open until its water has calmed, so the calm is seen; and after
+    // a tug, until its drop is in. The finger can pull again meanwhile, from there.
     var waterCalm by remember { mutableStateOf(true) }
-    val sink = if (lake) Modifier else Modifier.graphicsLayer { translationY = pullGap(pull.distanceFraction) }
+    val held = remember { Animatable(0f) }
+    val holdTo = if (!lake && (refreshing || !waterCalm)) 1f else 0f
+    LaunchedEffect(holdTo) { held.animateTo(holdTo, Motion.settle()) }
+    val lakeNow by rememberUpdatedState(lake)
+    val holdNow by rememberUpdatedState(holdTo)
+    var pressing by remember { mutableStateOf(false) }
+    // How far the list is down, in pulls: with the finger, or held, and a finger pulls on from where it is held.
+    val opened = { maxOf(pull.distanceFraction, held.value + if (pressing) pull.distanceFraction * 0.6f else 0f) }
+    val sink = if (lake) Modifier else Modifier.graphicsLayer { translationY = pullGap(opened()) }
     // Where the title ends on screen, or null once it has scrolled away.
     val underTitle = {
         val info = listState.layoutInfo
@@ -1069,12 +1118,24 @@ private fun InboxList(
     }
     // Where the tabs are between two of them, in tabs: the thumb and the list follow it.
     val glide = remember { Animatable(0f) }
+    val page = Category.entries.indexOf(tab)
+    // The page just left, which keeps going from where it was let go: from the row at the top.
+    var leaving by remember { mutableStateOf<Leaving?>(null) }
     val glideScope = rememberCoroutineScope()
     // The tab the thumb counts from. It changes in the same moment as the glide, so the thumb
     // never sees one without the other, while the tab itself changes at once.
-    var thumbTab by remember { mutableIntStateOf(Category.entries.indexOf(tab)) }
-    LaunchedEffect(tab) { if (!glide.isRunning) thumbTab = Category.entries.indexOf(tab) }
+    var thumbTab by remember { mutableIntStateOf(page) }
+    LaunchedEffect(tab) { if (!glide.isRunning) thumbTab = page }
+    // Where the thumb is, in tabs from the first: it moves on without a jump as a tab is picked,
+    // so every page reads where it is from it.
+    val thumb = { thumbTab + glide.value }
     val pick: (Category, Float, Float) -> Unit = { next, from, velocity ->
+        val info = listState.layoutInfo
+        leaving = info.visibleItemsInfo.firstOrNull { it.key is Long }?.let { row ->
+            val skip = messages.indexOfFirst { it.id == row.key }.coerceAtLeast(0)
+            val gap = if (lake) 0f else with(density) { pullGap(opened()) }
+            Leaving(tab, messages.drop(skip).take(PAGE_ROWS), row.offset - info.viewportStartOffset + gap)
+        }
         onTab(next)
         glideScope.launch {
             glide.snapTo(from)
@@ -1094,23 +1155,57 @@ private fun InboxList(
     val leading = 1 + signedOut.size + unsent.size + (if (swipeTip && messages.isNotEmpty()) 1 else 0) + (if (lake) 1 else 0)
     val firstRow by remember(leading) { derivedStateOf { (listState.firstVisibleItemIndex - leading).coerceAtLeast(0) } }
     // The list leaves to the side the thumb moves away from, and the next one comes in from the other.
-    val slide = Modifier.glided { glide.value }
+    val slide = Modifier.glided { thumb() - page }
     val mini by animateFloatAsState(if (scrolled) 1f else 0f, Motion.calm(Motion.SMALL), label = "title")
     Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
+        // The other tabs' pages, under the list: the one left goes on from where the finger let it
+        // go, and the next shows under the finger before it is picked.
+        if (inbox && !allEmpty) {
+            Category.entries.forEachIndexed { at, category ->
+                if (category == tab) return@forEachIndexed
+                val from = leaving?.takeIf { it.tab == category }
+                key(category) {
+                    Page(
+                        at = at,
+                        rows = from?.rows ?: others[category].orEmpty(),
+                        words = emptyWords(inbox = true, allEmpty = false, category),
+                        water = !lake,
+                        thumb = thumb,
+                        top = { from?.top ?: underTitle() ?: with(density) { (top + 48.dp).toPx() } },
+                        onGone = { if (leaving?.tab == category) leaving = null },
+                    )
+                }
+            }
+        }
         PullToRefreshBox(
-            // The empty list keeps its own water and does not hold the gap open.
-            isRefreshing = (refreshing || !waterCalm) && !lake,
-            onRefresh = {
-                drops.tryEmit(Unit)
-                onSync()
+            // The list is never held by the pull itself, so a finger can pull again at any time:
+            // every pull drops a drop, and one that goes all the way syncs, unless one runs.
+            isRefreshing = false,
+            onRefresh = { if (!refreshing) onSync() },
+            modifier = Modifier.fillMaxSize().whilePressed { down ->
+                if (down) {
+                    pressing = true
+                    return@whilePressed
+                }
+                val f = pull.distanceFraction
+                if (f >= TUG) drops.tryEmit(f)
+                // The list stays where the finger left it, and is held or let go from there.
+                val at = opened()
+                pressing = false
+                if (!lakeNow && at > held.value) {
+                    glideScope.launch {
+                        held.snapTo(at)
+                        held.animateTo(holdNow, Motion.settle())
+                    }
+                }
             },
-            modifier = Modifier.fillMaxSize(),
             state = pull,
             // The rows move down with the finger and still water shows in the gap they leave.
             indicator = {
                 if (!lake) {
                     PullWater(
                         fraction = { pull.distanceFraction },
+                        depth = { with(density) { pullGap(opened()) } },
                         refreshing = refreshing,
                         top = underTitle,
                         drops = drops,
@@ -1135,13 +1230,13 @@ private fun InboxList(
             ) {
                 item(key = "title") { Hero(shownTitle, shownOwner, onBack) }
                 items(signedOut, key = { "signed-out-${it.id}" }) { account ->
-                    Afloat(glide, depth = { 0 }, modifier = rowMove().then(sink)) { SignedOutRow(account, onClick = { onSignIn(account) }) }
+                    Afloat(thumb, page, depth = { 0 }, modifier = rowMove().then(sink)) { SignedOutRow(account, onClick = { onSignIn(account) }) }
                 }
                 items(unsent, key = { "unsent-${it.id}" }) { failed ->
-                    Afloat(glide, depth = { 0 }, modifier = rowMove().then(sink)) { UnsentRow(failed, onClick = { onUnsent(failed) }) }
+                    Afloat(thumb, page, depth = { 0 }, modifier = rowMove().then(sink)) { UnsentRow(failed, onClick = { onUnsent(failed) }) }
                 }
                 if (swipeTip && messages.isNotEmpty()) {
-                    item(key = "tip") { Afloat(glide, depth = { 0 }, modifier = rowMove().then(sink)) { SwipeTip(swipes, onSwipeTip) } }
+                    item(key = "tip") { Afloat(thumb, page, depth = { 0 }, modifier = rowMove().then(sink)) { SwipeTip(swipes, onSwipeTip) } }
                 }
                 if (lake) {
                     item(key = "empty") {
@@ -1154,14 +1249,10 @@ private fun InboxList(
                             snapshotFlow { glide.isRunning || glide.value != 0f }.first { !it }
                             fresh = false
                         }
-                        val fade = if (fresh) Modifier.graphicsLayer { alpha = glidedAlpha(glide.value) } else Modifier
+                        val fade = if (fresh) Modifier.graphicsLayer { alpha = glidedAlpha(thumb() - page) } else Modifier
                         Box(Modifier.animateItem(fadeInSpec = null, placementSpec = null, fadeOutSpec = Motion.calm(Motion.SMALL)).then(fade)) {
                             key(mailbox) {
-                                val (title, text) = when {
-                                    !inbox -> R.string.tab_empty_title to R.string.folder_empty
-                                    allEmpty || tab == Category.PEOPLE -> R.string.inbox_zero_title to R.string.inbox_zero_text
-                                    else -> R.string.tab_empty_title to R.string.tab_empty_text
-                                }
+                                val (title, text) = emptyWords(inbox, allEmpty, tab)
                                 StillNote(
                                     stringResource(title),
                                     stringResource(text),
@@ -1171,7 +1262,7 @@ private fun InboxList(
                                     refreshing = refreshing,
                                     pulled = { pull.distanceFraction },
                                     drops = drops,
-                                    glide = { glide.value },
+                                    glide = thumb,
                                     wordsModifier = if (allEmpty) Modifier else slide,
                                 )
                             }
@@ -1182,7 +1273,8 @@ private fun InboxList(
                     // Rows below one that left close up after it, each a little later than the one above.
                     val behind = if (index >= closedAt) index - closedAt + 1 else 0
                     Afloat(
-                        glide,
+                        thumb,
+                        page,
                         depth = { (index - firstRow).coerceIn(0, 8) },
                         modifier = rowMove(Motion.behind(behind.coerceAtMost(6), Motion.CLOSE, IntOffset.VisibilityThreshold)).then(sink),
                         pull = rowPull,
@@ -1263,7 +1355,7 @@ private fun InboxList(
                 tab = tab,
                 tabs = tabs.takeIf { inbox },
                 glide = glide,
-                thumb = { thumbTab + glide.value },
+                thumb = thumb,
                 accounts = accounts,
                 onTab = pick,
                 onAccounts = onAccounts,
@@ -1861,26 +1953,89 @@ private const val PULLED_MS = 1100L
 private const val CLOSING_MS = 2000L
 
 /**
- * A row afloat. It follows the tabs' [glide] on a spring of its own, softer the further [depth]
- * it is down the screen, so a tab's list pours in from the top; and, given a [pull], it is drawn
- * a little way after the row a finger holds.
+ * A row afloat on the tab [page]. It follows the tabs' [thumb] on a spring of its own, softer the
+ * further [depth] it is down the screen, so a tab's list pours in from the top; and, given a
+ * [pull], it is drawn a little way after the row a finger holds.
  */
 @Composable
 private fun Afloat(
-    glide: Animatable<Float, AnimationVector1D>,
+    thumb: () -> Float,
+    page: Int,
     depth: () -> Int,
     modifier: Modifier,
     pull: Pull? = null,
     index: Int = 0,
     content: @Composable () -> Unit,
 ) {
-    val along = remember { Animatable(glide.value) }
+    val along = remember { Animatable(thumb()) }
     val drawn = remember { Animatable(0f) }
     val depthNow by rememberUpdatedState(depth)
-    LaunchedEffect(glide) { along.follow({ Motion.behind(depthNow(), Motion.POUR) }) { glide.value } }
+    val thumbNow by rememberUpdatedState(thumb)
+    LaunchedEffect(Unit) { along.follow({ Motion.behind(depthNow(), Motion.POUR) }) { thumbNow() } }
     if (pull != null) LaunchedEffect(pull, index) { drawn.follow({ Motion.drift() }) { pull.near(index) } }
-    Column(modifier.glided { along.value }.graphicsLayer { translationX = drawn.value }) { content() }
+    Column(modifier.glided { along.value - page }.graphicsLayer { translationX = drawn.value }) { content() }
 }
+
+/**
+ * The page of the tab [at], under the list while the thumb is near: its first [rows], or its
+ * [words] once it is empty, over still [water] where the list has none of its own to share.
+ */
+@Composable
+private fun Page(at: Int, rows: List<MessageItem>, words: Pair<Int, Int>, water: Boolean, thumb: () -> Float, top: () -> Float, onGone: () -> Unit) {
+    val thumbNow by rememberUpdatedState(thumb)
+    var near by remember { mutableStateOf(false) }
+    // Rows further down follow later, so the page stays a little after the thumb has gone.
+    LaunchedEffect(at) {
+        snapshotFlow { abs(at - thumbNow()) < 0.99f }.collectLatest { now ->
+            if (now) {
+                near = true
+            } else {
+                delay(PAGE_LINGER_MS)
+                near = false
+                onGone()
+            }
+        }
+    }
+    if (!near) return
+    Column(Modifier.fillMaxWidth().offset { IntOffset(0, top().roundToInt()) }) {
+        if (rows.isEmpty()) {
+            // The water stays where it is and only shows; the words go with the page.
+            StillNote(
+                stringResource(words.first),
+                stringResource(words.second),
+                drawIn = false,
+                water = { if (water) glidedAlpha(thumb() - at) else 0f },
+                wordsModifier = Modifier.glided { thumb() - at },
+            )
+        } else {
+            val colors = MaterialTheme.colorScheme
+            rows.forEachIndexed { index, message ->
+                Afloat(thumb, at, depth = { index.coerceAtMost(8) }, modifier = Modifier) {
+                    if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.screen), color = colors.outlineVariant)
+                    MessageRow(message, onClick = {})
+                }
+            }
+        }
+    }
+}
+
+/** A page as it was left: its [tab], the rows from the top one on screen, and where that one was. */
+private class Leaving(val tab: Category, val rows: List<MessageItem>, val top: Float)
+
+/** What an empty list says: an empty folder, the whole inbox or its first tab done, or another tab done. */
+private fun emptyWords(inbox: Boolean, allEmpty: Boolean, tab: Category): Pair<Int, Int> = when {
+    !inbox -> R.string.tab_empty_title to R.string.folder_empty
+    allEmpty || tab == Category.PEOPLE -> R.string.inbox_zero_title to R.string.inbox_zero_text
+    else -> R.string.tab_empty_title to R.string.tab_empty_text
+}
+
+/** How long a page stays after the thumb has left it, while its lower rows catch up. */
+private const val PAGE_LINGER_MS = 1200L
+
+/** How far a pull must go, in pulls, to drop a drop when let go. */
+private const val TUG = 1f / 3f
+
+
 
 /** Something on a tab's page, [at] tabs from its place: it leaves to the side the thumb moves away from and fades. */
 private fun Modifier.glided(at: () -> Float): Modifier = graphicsLayer {
