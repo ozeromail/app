@@ -311,6 +311,8 @@ pub struct Memory {
     /// What `unclaimed` returns.
     pub unclaimed: Vec<Folder>,
     pub reverted: Mutex<Vec<OpId>>,
+    /// How many of `reverted` `take_reverted` told of.
+    pub told: Mutex<usize>,
     pub sent: Mutex<Vec<OutboxId>>,
     pub refused: Mutex<Vec<(OutboxId, String)>>,
 }
@@ -565,5 +567,13 @@ impl Store for Memory {
             .unwrap()
             .extend(ops.iter().map(|o| o.id));
         Ok(())
+    }
+
+    fn take_reverted(&self) -> Result<bool, StoreError> {
+        let reverted = self.reverted.lock().unwrap().len();
+        let mut told = self.told.lock().unwrap();
+        let new = reverted > *told;
+        *told = reverted;
+        Ok(new)
     }
 }

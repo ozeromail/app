@@ -112,6 +112,30 @@ fn rejects_a_short_key() {
 }
 
 #[test]
+fn wakes_the_app_when_the_database_changes() {
+    let db = TempDb::new("changed");
+    let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let waiting = runtime.block_on(async {
+        let wait = core.changed(0);
+        tokio::time::timeout(Duration::from_millis(50), wait).await
+    });
+    assert!(waiting.is_err());
+    core.add_gmail_account("a@example.com".into()).unwrap();
+    let seen = runtime.block_on(core.changed(0));
+    assert!(seen > 0);
+    // Reading changes nothing.
+    core.accounts().unwrap();
+    let waiting = runtime.block_on(async {
+        tokio::time::timeout(Duration::from_millis(50), core.changed(seen)).await
+    });
+    assert!(waiting.is_err());
+}
+
+#[test]
 #[ignore = "needs tools/dovecot-test.sh"]
 fn syncs_an_imap_inbox_into_the_list() {
     let db = TempDb::new("sync");
