@@ -70,6 +70,21 @@ fn a_refusal_reverts_and_a_gone_folder_finishes() {
 }
 
 #[test]
+fn a_rejection_reverts_and_the_rest_still_goes() {
+    let store = store(vec![
+        op(1, "A", "5", Action::Seen(true)),
+        op(2, "B", "6", Action::Seen(true)),
+    ]);
+    let mut server = Server {
+        refuse: vec![ProviderError::Rejected("400 Bad Request".into())],
+        ..Server::default()
+    };
+    run(push_ops(&store, &mut server, store.ops.clone())).unwrap();
+    assert_eq!(*store.reverted.lock().unwrap(), [OpId(1)]);
+    assert_eq!(*store.finished.lock().unwrap(), [OpId(2)]);
+}
+
+#[test]
 fn a_network_failure_keeps_the_rest_queued() {
     let store = store(vec![
         op(1, "A", "5", Action::Seen(true)),

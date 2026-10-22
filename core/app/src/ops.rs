@@ -52,7 +52,8 @@ pub async fn push_ops(
         match sent {
             // Gone: the messages are no longer there, and the next sync drops them.
             Ok(()) | Err(ProviderError::Gone) => store.finish(&ops)?,
-            Err(ProviderError::Protocol(_)) => store.revert(&ops)?,
+            // Refused for good: trying again would hold back every action after it.
+            Err(ProviderError::Protocol(_) | ProviderError::Rejected(_)) => store.revert(&ops)?,
             Err(e) => return Err(e.into()),
         }
     }

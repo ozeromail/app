@@ -505,10 +505,9 @@ async fn maps_errors() {
         gmail.send("me", &[], b"x").await,
         Err(ProviderError::Rejected("400 Invalid To header".into()))
     );
-    // A refused action is undone on the device, not stuck in the queue.
     assert!(matches!(
         gmail.set_seen("INBOX", 0, &["a".into()], true).await,
-        Err(ProviderError::Protocol(_))
+        Err(ProviderError::Rejected(_))
     ));
     assert_eq!(gmail.email().await, Err(ProviderError::Auth));
     assert!(matches!(
