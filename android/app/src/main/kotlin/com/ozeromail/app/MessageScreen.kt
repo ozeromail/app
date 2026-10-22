@@ -6,6 +6,7 @@ import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -57,6 +58,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -364,7 +366,16 @@ private fun LetterBody(
                     } else {
                         content.padding(top = 4.dp)
                     }
-                    HtmlView(kind.html, kind.images, page)
+                    // A long page takes a while to draw: a cover with the spinner stays over it until it
+                    // shows. The page itself draws all along, as a hidden web view might not.
+                    var drawn by remember { mutableStateOf(false) }
+                    val cover by animateFloatAsState(if (drawn) 0f else 1f, Motion.calm(Motion.SMALL), label = "cover")
+                    Box(content) {
+                        HtmlView(kind.html, kind.images, page, onShown = { drawn = true })
+                        if (cover > 0f) {
+                            Box(Modifier.graphicsLayer { alpha = cover }.background(MaterialTheme.colorScheme.background)) { BodySpinner(fill) }
+                        }
+                    }
                 }
                 is Body.Plain -> if (fill) {
                     Column(content.verticalScroll(rememberScrollState())) {
@@ -375,9 +386,7 @@ private fun LetterBody(
                     PlainText(kind.text, kind.quote, content)
                 }
                 is Body.Failed -> Text(stringResource(kind.text), color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = content.padding(Gap.screen))
-                Body.Loading -> Box(if (fill) content else content.height(96.dp), contentAlignment = Alignment.Center) {
-                    SlowSpinner()
-                }
+                Body.Loading -> BodySpinner(fill)
             }
         }
         when {
@@ -386,6 +395,14 @@ private fun LetterBody(
                 fileList()
             }
         }
+    }
+}
+
+/** A body still loading: the spinner in the middle of the screen, or of a short space in a conversation. */
+@Composable
+private fun BodySpinner(fill: Boolean) {
+    Box(if (fill) Modifier.fillMaxSize() else Modifier.fillMaxWidth().height(96.dp), contentAlignment = Alignment.Center) {
+        SlowSpinner()
     }
 }
 

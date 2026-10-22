@@ -589,8 +589,9 @@ private fun PdfPage(doc: PdfDocument, index: Int, width: Int) {
             .fillMaxWidth()
             .aspectRatio(size.width.toFloat() / size.height.coerceAtLeast(1))
             .background(Color.White),
+        contentAlignment = Alignment.Center,
     ) {
-        page?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds) }
+        page?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds) } ?: SlowSpinner()
     }
 }
 
