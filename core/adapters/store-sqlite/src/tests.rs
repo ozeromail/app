@@ -590,11 +590,46 @@ fn revert_restores_the_state_before_the_first_action() {
 
     store.queue(id, Action::Seen(true), 0).unwrap();
     let ops = store.due(account, 0).unwrap();
+    assert!(!store.take_reverted().unwrap());
     store.revert(&ops).unwrap();
     assert_eq!(seen(&store, folder), [false]);
     assert!(store.due(account, 0).unwrap().is_empty());
-    // Already gone: nothing to do.
+    assert!(store.take_reverted().unwrap());
+    assert!(!store.take_reverted().unwrap());
+    // Already gone: nothing to do, and nothing to tell.
     store.revert(&ops).unwrap();
+    assert!(!store.take_reverted().unwrap());
+}
+
+#[test]
+fn tells_of_committed_changes_only() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    let store = store();
+    let changes = Arc::new(AtomicU32::new(0));
+    let counted = changes.clone();
+    store
+        .on_change(move || {
+            counted.fetch_add(1, Ordering::Relaxed);
+        })
+        .unwrap();
+    let count = || changes.load(Ordering::Relaxed);
+
+    let account = account(&store, "a@example.com");
+    assert_eq!(count(), 1);
+    store.accounts().unwrap();
+    assert_eq!(count(), 1);
+    let folder = inbox(&store, account);
+    store.save_messages(folder, &[message(1, 100)]).unwrap();
+    let id = list(&store, ListScope::Folder(folder), 10, None)[0].id;
+    let before = count();
+    store.queue(id, Action::Seen(true), 0).unwrap();
+    assert_eq!(count(), before + 1);
+    // Refused: rolled back, nothing changed.
+    store
+        .queue(MessageId(99), Action::Seen(true), 0)
+        .unwrap_err();
+    assert_eq!(count(), before + 1);
 }
 
 fn archive_folder(store: &SqliteStore, account: AccountId) {

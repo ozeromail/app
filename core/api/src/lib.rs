@@ -103,6 +103,8 @@ pub struct Core {
     /// The last pages read with all their images, newest last, so opening one again is
     /// instant; up to `PAGES_KEPT` times `IMAGES_SIZE` in memory.
     pages: Mutex<VecDeque<KeptPage>>,
+    /// How many writes changed the database since it was opened, for `changed`.
+    changes: Arc<tokio::sync::watch::Sender<u64>>,
 }
 
 /// A page with its images, and the message HTML it was made from.
@@ -145,15 +147,26 @@ impl Core {
     #[uniffi::constructor]
     pub fn open(path: String, key: Vec<u8>) -> Result<Arc<Self>, CoreError> {
         let key: [u8; 32] = key.try_into().map_err(|_| CoreError::WrongKey)?;
+        let store = SqliteStore::open(Path::new(&path), &key)?;
+        let changes = Arc::new(tokio::sync::watch::Sender::new(0));
+        let changed = changes.clone();
+        store.on_change(move || changed.send_modify(|n| *n += 1))?;
         Ok(Arc::new(Self {
-            store: SqliteStore::open(Path::new(&path), &key)?,
+            store,
             parser: MimeParser::default(),
             tls: OnceLock::new(),
             busy: Mutex::default(),
             waiting: Mutex::default(),
             tokens: Mutex::default(),
             pages: Mutex::default(),
+            changes,
         }))
+    }
+
+    /// Whether actions the server refused were undone on the device since this was last
+    /// called, so the app can say so.
+    pub fn take_reverted(&self) -> Result<bool, CoreError> {
+        Ok(self.store.take_reverted()?)
     }
 
     /// The accounts in the order they were added.
@@ -493,6 +506,15 @@ impl Core {
 
 #[uniffi::export(async_runtime = "tokio")]
 impl Core {
+    /// Waits until the database changes after `seen`, the number the last call returned (0
+    /// the first time), and returns the new number: at once if it changed meanwhile. Screens
+    /// read their data again then.
+    pub async fn changed(&self, seen: u64) -> u64 {
+        let mut changes = self.changes.subscribe();
+        // The sender lives as long as `self`, so the wait never fails.
+        changes.wait_for(|n| *n != seen).await.map_or(seen, |n| *n)
+    }
+
     /// Saves an IMAP account once both servers have accepted the login; `email` is the login
     /// name on both.
     pub async fn add_imap_account(

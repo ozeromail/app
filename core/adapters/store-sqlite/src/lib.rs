@@ -60,6 +60,19 @@ impl SqliteStore {
         })
     }
 
+    /// Calls `changed` as each write commits; reads and refused writes do not. It runs while
+    /// the database is held, so it must not use the store.
+    pub fn on_change(&self, changed: impl Fn() + Send + 'static) -> Result<(), StoreError> {
+        // SQLite calls it only for transactions that wrote, but before they are on disk.
+        self.conn()
+            .commit_hook(Some(move || {
+                changed();
+                // Never turns the commit into a rollback.
+                false
+            }))
+            .map_err(storage)
+    }
+
     fn conn(&self) -> MutexGuard<'_, Connection> {
         // A panic while holding the lock cannot leave a half-written transaction, so reuse the connection.
         self.conn
@@ -1164,17 +1177,36 @@ impl Store for SqliteStore {
     fn revert(&self, ops: &[Op]) -> Result<(), StoreError> {
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(storage)?;
+        let mut reverted = false;
         for op in ops {
             // Gone or changed since it was read: nothing of this op to undo.
             let (_, value) = stored(op.action);
-            take_back(
+            reverted |= take_back(
                 &tx,
                 "DELETE FROM op WHERE id = ?1 AND value = ?2 RETURNING message_id, kind, undo, copy",
                 op.id,
                 value,
             )?;
         }
+        if reverted {
+            tx.execute("UPDATE notice SET reverted = 1", [])
+                .map_err(storage)?;
+        }
         tx.commit().map_err(storage)
+    }
+
+    fn take_reverted(&self) -> Result<bool, StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        let reverted = tx
+            .query_row("SELECT reverted FROM notice", [], |r| r.get(0))
+            .map_err(storage)?;
+        if reverted {
+            tx.execute("UPDATE notice SET reverted = 0", [])
+                .map_err(storage)?;
+        }
+        tx.commit().map_err(storage)?;
+        Ok(reverted)
     }
 }
 

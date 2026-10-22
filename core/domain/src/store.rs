@@ -170,6 +170,8 @@ pub trait Store: Send + Sync {
     /// The server refused the actions for good: undo them on the device and forget them.
     /// Ops gone or changed since `due` are left alone.
     fn revert(&self, ops: &[Op]) -> Result<(), StoreError>;
+    /// Whether `revert` undid actions since this was last called.
+    fn take_reverted(&self) -> Result<bool, StoreError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

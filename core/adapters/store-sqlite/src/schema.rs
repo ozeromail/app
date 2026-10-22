@@ -256,4 +256,10 @@ pub const MIGRATIONS: &[&str] = &[
     ALTER TABLE op ADD COLUMN copy INTEGER REFERENCES message(id) ON DELETE SET NULL;
     CREATE INDEX op_copy ON op(copy) WHERE copy IS NOT NULL;
     ",
+    // 26: whether the server refused actions that were then undone on the device, until the
+    // app has told the person.
+    "
+    CREATE TABLE notice (reverted INTEGER NOT NULL);
+    INSERT INTO notice VALUES (0);
+    ",
 ];
