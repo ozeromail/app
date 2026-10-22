@@ -49,10 +49,10 @@ pub struct Account {
 }
 
 impl Account {
-    /// What the apps call the account: the user's name for it, else the sender name, else
-    /// the address.
+    /// What the apps call the account: the user's name for it, else the address. Not the
+    /// sender name: a person's accounts all share it, so it would not tell them apart.
     pub fn name(&self) -> &str {
-        [&self.label, &self.display_name, &self.email]
+        [&self.label, &self.email]
             .into_iter()
             .map(|n| n.trim())
             .find(|n| !n.is_empty())
@@ -109,7 +109,7 @@ mod tests {
         };
         assert_eq!(account.name(), "a@example.com");
         account.display_name = "Anna".into();
-        assert_eq!(account.name(), "Anna");
+        assert_eq!(account.name(), "a@example.com");
         account.label = "Work".into();
         assert_eq!(account.name(), "Work");
     }

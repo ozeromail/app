@@ -124,7 +124,8 @@ fn wakes_the_app_when_the_database_changes() {
         tokio::time::timeout(Duration::from_millis(50), wait).await
     });
     assert!(waiting.is_err());
-    core.add_gmail_account("a@example.com".into()).unwrap();
+    core.add_gmail_account("a@example.com".into(), None)
+        .unwrap();
     let seen = runtime.block_on(core.changed(0));
     assert!(seen > 0);
     // Reading changes nothing.
@@ -202,7 +203,7 @@ fn syncs_an_imap_inbox_into_the_list() {
     runtime
         .block_on(core.check_password(account, "pass".into()))
         .unwrap();
-    core.signed_in_again(account).unwrap();
+    core.signed_in_again(account, None).unwrap();
     assert!(!needs_sign_in());
     sync().unwrap();
 
@@ -492,13 +493,16 @@ fn rows_are_marked_only_with_several_accounts() {
 fn saves_a_gmail_account_that_can_send() {
     let db = TempDb::new("gmail");
     let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
-    let id = core.add_gmail_account("me@gmail.com".into()).unwrap();
+    let id = core
+        .add_gmail_account("me@gmail.com".into(), Some("Anna".into()))
+        .unwrap();
     assert_eq!(
-        core.add_gmail_account("Me@Gmail.com".into()),
+        core.add_gmail_account("Me@Gmail.com".into(), None),
         Err(CoreError::AccountExists)
     );
     let account = core.account(AccountId(id)).unwrap();
     assert_eq!((account.kind, account.smtp), (AccountKind::Gmail, None));
+    assert_eq!(account.display_name, "Anna");
     // Gmail sends over its API, so no SMTP server is needed.
     core.send(DraftItem {
         id: 0,
@@ -518,7 +522,7 @@ fn saves_a_gmail_account_that_can_send() {
 fn removes_an_account_at_once_while_it_syncs() {
     let db = TempDb::new("remove");
     let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
-    let id = core.add_gmail_account("me@gmail.com".into()).unwrap();
+    let id = core.add_gmail_account("me@gmail.com".into(), None).unwrap();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -541,7 +545,7 @@ fn removes_an_account_at_once_while_it_syncs() {
 fn signs_in_to_a_gmail_account_again() {
     let db = TempDb::new("again");
     let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
-    let id = core.add_gmail_account("me@gmail.com".into()).unwrap();
+    let id = core.add_gmail_account("me@gmail.com".into(), None).unwrap();
     let needs_sign_in = || core.accounts().unwrap()[0].needs_sign_in;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
@@ -561,7 +565,7 @@ fn signs_in_to_a_gmail_account_again() {
     assert!(needs_sign_in());
     assert_eq!(login(Ok(())), Err(CoreError::Auth));
     assert_eq!(core.accounts().unwrap()[0].kind, AccountKind::Gmail);
-    core.signed_in_again(id).unwrap();
+    core.signed_in_again(id, None).unwrap();
     assert!(!needs_sign_in());
     assert_eq!(login(Ok(())), Ok(()));
 }

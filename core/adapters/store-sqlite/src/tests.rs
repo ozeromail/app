@@ -1749,6 +1749,8 @@ fn sets_an_account_color() {
 fn names_an_account() {
     let store = store();
     let a = account(&store, "a@example.com");
+    store.set_account_name(a, "Anna").unwrap();
+    assert_eq!(store.accounts().unwrap()[0].display_name, "Anna");
     store.set_account_label(a, " Work ").unwrap();
     assert_eq!(store.accounts().unwrap()[0].label, "Work");
     store.set_account_label(a, "").unwrap();

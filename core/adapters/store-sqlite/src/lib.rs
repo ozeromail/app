@@ -217,6 +217,17 @@ impl Store for SqliteStore {
         found(changed)
     }
 
+    fn set_account_name(&self, account: AccountId, name: &str) -> Result<(), StoreError> {
+        let changed = self
+            .conn()
+            .execute(
+                "UPDATE account SET display_name = ?2 WHERE id = ?1",
+                params![account.0, name.trim()],
+            )
+            .map_err(storage)?;
+        found(changed)
+    }
+
     fn set_account_label(&self, account: AccountId, label: &str) -> Result<(), StoreError> {
         let changed = self
             .conn()

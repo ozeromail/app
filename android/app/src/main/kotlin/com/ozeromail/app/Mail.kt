@@ -185,14 +185,14 @@ class Mail(private val context: Context) {
         vault.setGoogleSignIn(null)
         // Under the saved address, which Google may write in other letter case.
         vault.setPassword(again?.email ?: account.email, account.secret)
-        if (again == null) core.addGmailAccount(account.email) else core.signedInAgain(again.id)
+        if (again == null) core.addGmailAccount(account.email, account.name) else core.signedInAgain(again.id, account.name)
     }
 
     /** A new password for a saved IMAP account, kept once both its servers accept it. */
     suspend fun signInAgain(account: AccountItem, password: String) = io {
         core.checkPassword(account.id, password)
         vault.setPassword(account.email, password)
-        core.signedInAgain(account.id)
+        core.signedInAgain(account.id, null)
     }
 
     /**
