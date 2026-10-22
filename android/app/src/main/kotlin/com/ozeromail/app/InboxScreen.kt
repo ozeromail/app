@@ -3,6 +3,9 @@ package com.ozeromail.app
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.icu.text.DateFormat
 import android.os.SystemClock
 import android.text.format.DateUtils
@@ -139,9 +142,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -484,6 +494,18 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             mail.watch(accounts) { sync(quiet = true) }
         }
         onStopOrDispose { watching.cancel() }
+    }
+    // Once the phone is back online, a failed sync goes again at once rather than at its next
+    // turn, and the error goes with it.
+    LifecycleStartEffect(Unit) {
+        val back = scope.launch {
+            backOnline(context).collect {
+                if (offlineSince == null && error != R.string.error_network) return@collect
+                sync(quiet = true)
+                if (mailbox != Mail.INBOX) sync(mailbox, quiet = true)
+            }
+        }
+        onStopOrDispose { back.cancel() }
     }
 
     /** Shows a toast without undo, in place of any other. */
@@ -2042,3 +2064,21 @@ private fun Modifier.glided(at: () -> Float): Modifier = graphicsLayer {
 
 /** How much of a list shows [at] a glide: it is gone before the tabs are halfway. */
 private fun glidedAlpha(at: Float) = 1f - (abs(at) * 1.2f).coerceAtMost(1f)
+
+/** Each time the phone's network reaches the internet again; not for how it is now. */
+private fun backOnline(context: Context): Flow<Unit> = callbackFlow {
+    val connectivity = context.getSystemService(ConnectivityManager::class.java)
+    // How it is now, so the first report of the same is not taken for a return.
+    send(connectivity.getNetworkCapabilities(connectivity.activeNetwork)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true)
+    val callback = object : ConnectivityManager.NetworkCallback() {
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+            trySend(capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED))
+        }
+
+        override fun onLost(network: Network) {
+            trySend(false)
+        }
+    }
+    connectivity.registerDefaultNetworkCallback(callback)
+    awaitClose { connectivity.unregisterNetworkCallback(callback) }
+}.distinctUntilChanged().drop(1).filter { it }.map {}
