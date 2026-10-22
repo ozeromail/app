@@ -126,6 +126,7 @@
   "action_empty_junk": "Очистить спам",
   "inbox_deleted": "Удалено навсегда",
   "inbox_emptied": "Папка очищена",
+  "inbox_reverted": "Сервер не принял часть изменений, они отменены",
   "select_count": "Выбрано: %1$d",
   "select_hint": "Нажмите, чтобы добавить или убрать",
   "action_select_all": "Выбрать все",

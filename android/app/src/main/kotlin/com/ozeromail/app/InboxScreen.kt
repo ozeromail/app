@@ -252,13 +252,13 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     val trashed = stringResource(R.string.inbox_trashed)
     val deleted = stringResource(R.string.inbox_deleted)
     val emptied = stringResource(R.string.inbox_emptied)
+    val reverted = stringResource(R.string.inbox_reverted)
     val undo = stringResource(R.string.action_undo)
     val sending = stringResource(R.string.inbox_sending)
     val draftSaved = stringResource(R.string.draft_saved)
     val draftDeleted = stringResource(R.string.draft_deleted)
 
     val drafts by mail.drafts.collectAsState()
-    LaunchedEffect(Unit) { mail.loadDrafts() }
 
     suspend fun loadList() {
         val shown = tab to mailbox
@@ -325,7 +325,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         loadList()
     }
 
-    /** Saves a change to an account, then shows it in the sheet and on the rows. */
+    /** Saves a change to an account; the sheet and the rows show it once it is saved. */
     fun changeAccount(change: suspend () -> Unit) {
         scope.launch {
             try {
@@ -333,8 +333,6 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             } catch (e: CoreException) {
                 error = e.text()
             }
-            loadAccounts()
-            loadList()
         }
     }
 
@@ -482,6 +480,21 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         return result == SnackbarResult.ActionPerformed
     }
 
+    // What changed the mail, here or in the background, shows at once; so does an action the
+    // server refused and the phone undid.
+    LaunchedEffect(Unit) {
+        mail.changes.collect {
+            load()
+            loadAccounts()
+            try {
+                // After the toast on screen, which may still offer Undo.
+                if (mail.takeReverted()) scope.launch { snackbar.showSnackbar(reverted) }
+            } catch (e: CoreException) {
+                error = e.text()
+            }
+        }
+    }
+
     /**
      * Opens compose with the draft [make] gives for [original], once at a time; not if the
      * user has left the message meanwhile, as a forward may wait for its text to download.
@@ -564,13 +577,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                     error = e.text()
                 }
             }
-            if (moved.isNotEmpty()) {
-                messages = messages.filterNot { it.id in moved }
-                counts()
-            }
+            if (moved.isNotEmpty()) messages = messages.filterNot { it.id in moved }
             // Also after success: a list read before the archive may bring the row back.
             reset()
-            if (moved.isNotEmpty() && offerUndo(toast, go.takeIf { it != mailbox }) && mail.undo(actions)) load()
+            if (moved.isNotEmpty() && offerUndo(toast, go.takeIf { it != mailbox })) mail.undo(actions)
         }
     }
 
@@ -592,8 +602,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 return@launch
             }
             if (mailbox == from) messages = emptyList()
-            counts()
-            if (offerUndo(emptied) && mail.undo(actions)) load()
+            if (offerUndo(emptied)) mail.undo(actions)
         }
     }
 
@@ -618,7 +627,6 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             messages = messages.map {
                 if (it.id in marked) it.copy(seen = read, threadUnread = if (read) 0u else 1u) else it
             }
-            counts()
             reset()
         }
     }
@@ -726,7 +734,6 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                 } catch (e: CoreException) {
                                     error = e.text()
                                 }
-                                load()
                             }
                         },
                         onMoveToInbox = {

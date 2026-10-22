@@ -16,8 +16,15 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.onSubscription
+import kotlinx.coroutines.flow.retryWhen
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import uniffi.ozero_api.AccountItem
@@ -53,7 +60,7 @@ class Mail(private val context: Context) {
 
     private val savedDrafts = MutableStateFlow(emptyList<DraftItem>())
 
-    /** The drafts on the phone, last saved first; read again each time one changes. */
+    /** The drafts on the phone, last saved first; read again each time the database changes. */
     val drafts: StateFlow<List<DraftItem>> = savedDrafts
 
     /** This run's downloaded attachments; those of earlier runs go, as an id may name another message by now. */
@@ -64,6 +71,34 @@ class Mail(private val context: Context) {
             downloads.parentFile?.listFiles()?.filter { it != downloads }?.forEach { it.deleteRecursively() }
         }
     }
+
+    /** Each change to the database, here or in the background, at most every [CHANGE_PAUSE_MS]. */
+    private val changed = flow {
+        var seen = 0uL
+        while (true) {
+            seen = io { core.changed(seen) }
+            emit(Unit)
+            delay(CHANGE_PAUSE_MS)
+        }
+    }.retryWhen { e, _ ->
+        // Say the database did not open: the screens show that error themselves.
+        Log.w("Ozero", "changes not read", e)
+        delay(CHANGE_RETRY_MS)
+        true
+    }.shareIn(background, SharingStarted.Eagerly)
+
+    /**
+     * Emits at once, then each time the database changes: screens read what they show then.
+     * One that is busy reading gets one more emission for all the changes meanwhile.
+     */
+    val changes: Flow<Unit> = changed.onSubscription { emit(Unit) }.conflate()
+
+    init {
+        background.launch { changes.collect { loadDrafts() } }
+    }
+
+    /** Whether actions the server refused were undone on the phone since the last call. */
+    suspend fun takeReverted(): Boolean = io { core.takeReverted() }
 
     suspend fun hasAccounts(): Boolean = io { core.accounts().isNotEmpty() }
 
@@ -80,8 +115,6 @@ class Mail(private val context: Context) {
     suspend fun removeAccount(account: AccountItem) = io {
         core.removeAccount(account.id)
         vault.forgetPassword(account.email)
-        // Its drafts went with it.
-        loadDrafts()
     }
 
     /** The newest [limit] conversations of a tab; fewer once the saved mail ends, see [older]. */
@@ -271,16 +304,15 @@ class Mail(private val context: Context) {
      */
     suspend fun send(draft: DraftItem): Long {
         val id = io { core.send(draft) }
-        if (draft.id != 0L) loadDrafts()
         push(draft.accountId)
         return id
     }
 
     /** Keeps [draft] on the phone; a new one if its id is 0. Returns its id. */
-    suspend fun saveDraft(draft: DraftItem): Long = io { core.saveDraft(draft) }.also { loadDrafts() }
+    suspend fun saveDraft(draft: DraftItem): Long = io { core.saveDraft(draft) }
 
     /** Reads [drafts] again; on failure they stay as they were. */
-    suspend fun loadDrafts() {
+    private suspend fun loadDrafts() {
         try {
             savedDrafts.value = io { core.drafts() }
         } catch (e: CoreException) {
@@ -288,10 +320,7 @@ class Mail(private val context: Context) {
         }
     }
 
-    suspend fun deleteDraft(id: Long) {
-        io { core.deleteDraft(id) }
-        loadDrafts()
-    }
+    suspend fun deleteDraft(id: Long) = io { core.deleteDraft(id) }
 
     /** Saves a message being written as it changes, starting from the saved draft [id], or 0. */
     fun keeper(id: Long) = DraftKeeper(this, background, id)
@@ -303,7 +332,7 @@ class Mail(private val context: Context) {
     suspend fun unsent(): List<UnsentItem> = io { core.unsent() }
 
     /** Takes back a message that has not gone out yet, to edit it again as a draft; null if too late. */
-    suspend fun undoSend(id: Long): DraftItem? = io { core.undoSend(id) }?.also { loadDrafts() }
+    suspend fun undoSend(id: Long): DraftItem? = io { core.undoSend(id) }
 
     /**
      * Sends the account's queued actions and mail once there is a network, waiting for held
@@ -416,6 +445,9 @@ class Mail(private val context: Context) {
         const val SMTPS_PORT = 465
         private const val SEARCH_SIZE = 100u
         private const val WATCH_PAUSE_MS = 5_000L
+        /** A sync writes many times; the screens read again at most this often. */
+        private const val CHANGE_PAUSE_MS = 250L
+        private const val CHANGE_RETRY_MS = 5_000L
         private const val WATCH_PAUSE_MAX_MS = 5 * 60_000L
 
         /** How long a server search answer stays good enough to not ask again. */

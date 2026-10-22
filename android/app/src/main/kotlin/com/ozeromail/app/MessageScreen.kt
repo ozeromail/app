@@ -108,10 +108,18 @@ fun MessageScreen(
     DisposableEffect(bodies) { onDispose { expectGone(bodies, "bodies of a closed conversation") } }
     LaunchedEffect(message.id) {
         try {
-            thread = mail.thread(message)
             if (message.threadUnread > 0u) mail.markRead(message)
         } catch (e: CoreException) {
             error = e.text()
+        }
+        // A reply that comes in meanwhile joins the conversation.
+        mail.changes.collect {
+            try {
+                // Gone from the phone, say moved: what is on screen stays.
+                mail.thread(message).takeIf { it.isNotEmpty() }?.let { thread = it }
+            } catch (e: CoreException) {
+                error = e.text()
+            }
         }
     }
     fun isOpen(m: MessageItem) = opened[m.id] ?: (m.id == message.id)
