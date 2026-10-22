@@ -317,34 +317,32 @@ impl Core {
         Ok(rows.into_iter().map(MessageItem::from).collect())
     }
 
-    /// Marks a message's conversation read, or the message alone unread, on the device at once;
-    /// `push_actions` tells the server.
-    pub fn mark_read(&self, message: i64, seen: bool) -> Result<(), CoreError> {
+    /// Marks the messages' conversations read, or the messages alone unread, on the device at
+    /// once and in one go; `push_actions` tells the server.
+    pub fn mark_read(&self, messages: Vec<i64>, seen: bool) -> Result<(), CoreError> {
         self.store
-            .queue(MessageId(message), Action::Seen(seen), now())?;
+            .queue_all(&with(messages, Action::Seen(seen)), now())?;
         Ok(())
     }
 
-    /// Takes a message's conversation out of the lists at once and holds the move to the
-    /// archive for `HOLD`, so `undo` can take it back. Returns the actions for `undo`.
-    /// Fails with `NoArchive` if the account has no archive folder.
-    pub fn archive(&self, message: i64) -> Result<Vec<i64>, CoreError> {
-        self.hold_move(message, Action::Archive)
+    /// Takes the messages' conversations out of the lists at once, all or none, and holds the
+    /// move to the archive for `HOLD`, so `undo` can take it back. Returns the actions for
+    /// `undo`. Fails with `NoArchive` if an account has no archive folder.
+    pub fn archive(&self, messages: Vec<i64>) -> Result<Vec<i64>, CoreError> {
+        self.hold_move(messages, Action::Archive)
     }
 
     /// As `archive`, back into the inbox: for mail in the archive, trash or spam.
-    pub fn move_to_inbox(&self, message: i64) -> Result<Vec<i64>, CoreError> {
-        self.hold_move(message, Action::Inbox)
+    pub fn move_to_inbox(&self, messages: Vec<i64>) -> Result<Vec<i64>, CoreError> {
+        self.hold_move(messages, Action::Inbox)
     }
 
-    /// As `archive`, into the trash. Fails with `NoTrash` if the account has no trash folder.
-    pub fn trash(&self, message: i64) -> Result<Vec<i64>, CoreError> {
-        self.hold_move(message, Action::Trash)
-    }
-
-    /// As `archive`, but gone from the server for good: for mail in the trash only.
-    pub fn delete_forever(&self, message: i64) -> Result<Vec<i64>, CoreError> {
-        self.hold_move(message, Action::Delete)
+    /// As `archive`, `messages` into the trash and `forever`, mail in the trash, gone from the
+    /// server for good. Fails with `NoTrash` if an account has no trash folder.
+    pub fn delete(&self, messages: Vec<i64>, forever: Vec<i64>) -> Result<Vec<i64>, CoreError> {
+        let mut actions = with(messages, Action::Trash);
+        actions.extend(with(forever, Action::Delete));
+        Ok(ids(self.store.queue_all(&actions, now() + HOLD)?))
     }
 
     /// Empties a trash or spam mailbox for good, every account's for a unified one, held like
@@ -1072,12 +1070,10 @@ impl Core {
     }
 
     /// Queues a move held for the undo time and returns its ops for `undo`.
-    fn hold_move(&self, message: i64, action: Action) -> Result<Vec<i64>, CoreError> {
-        Ok(ids(self.store.queue(
-            MessageId(message),
-            action,
-            now() + HOLD,
-        )?))
+    fn hold_move(&self, messages: Vec<i64>, action: Action) -> Result<Vec<i64>, CoreError> {
+        Ok(ids(self
+            .store
+            .queue_all(&with(messages, action), now() + HOLD)?))
     }
 
     /// List rows, marked with their account when there is more than one.
@@ -1637,6 +1633,14 @@ pub enum Mailbox {
 /// Held actions as the apps pass them back to `undo`.
 fn ids(ops: Vec<OpId>) -> Vec<i64> {
     ops.into_iter().map(|op| op.0).collect()
+}
+
+/// Each message with `action`.
+fn with(messages: Vec<i64>, action: Action) -> Vec<(MessageId, Action)> {
+    messages
+        .into_iter()
+        .map(|id| (MessageId(id), action))
+        .collect()
 }
 
 const INBOX: Mailbox = Mailbox::Unified {

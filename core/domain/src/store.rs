@@ -111,6 +111,16 @@ pub trait Store: Send + Sync {
         message: MessageId,
         action: Action,
         not_before: i64,
+    ) -> Result<Vec<OpId>, StoreError> {
+        self.queue_all(&[(message, action)], not_before)
+    }
+    /// As `queue` for each message and its action, all in one transaction: all of them or, on
+    /// an error, none. A message whose conversation an earlier one already took along is left
+    /// alone.
+    fn queue_all(
+        &self,
+        actions: &[(MessageId, Action)],
+        not_before: i64,
     ) -> Result<Vec<OpId>, StoreError>;
     /// Queues `Action::Empty` on every message of a folder, as `queue` would one by one, and
     /// `Action::Delete` on copies of mail moved there. Fails with `NotAllowed` for any folder

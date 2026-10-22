@@ -1486,6 +1486,53 @@ fn actions_apply_to_the_whole_conversation() {
 }
 
 #[test]
+fn many_messages_move_in_one_go_or_not_at_all() {
+    let store = store();
+    let first = account(&store, "a@example.com");
+    let folder = inbox(&store, first);
+    archive_folder(&store, first);
+    store
+        .save_messages(
+            folder,
+            &[message(1, 100), reply(2, 200, &[1]), message(3, 300)],
+        )
+        .unwrap();
+    let all = ids(&list(&store, ListScope::Folder(folder), 10, None));
+    let other = account(&store, "b@example.com");
+    let elsewhere = inbox(&store, other);
+    store.save_messages(elsewhere, &[message(4, 400)]).unwrap();
+    let stuck = list(&store, ListScope::Folder(elsewhere), 10, None)[0].id;
+
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    let commits = Arc::new(AtomicU32::new(0));
+    let counted = commits.clone();
+    store
+        .on_change(move || {
+            counted.fetch_add(1, Ordering::Relaxed);
+        })
+        .unwrap();
+    // The other account has no archive: nothing moves.
+    let mut some: Vec<_> = all.iter().map(|&id| (id, Action::Archive)).collect();
+    some.push((stuck, Action::Archive));
+    assert_eq!(
+        store.queue_all(&some, 50).unwrap_err(),
+        StoreError::NoArchive
+    );
+    assert_eq!(list(&store, ListScope::Folder(folder), 10, None).len(), 2);
+    assert!(store.due(first, 50).unwrap().is_empty());
+
+    // Both rows, the first taking its conversation along, in one commit.
+    let all: Vec<_> = all.into_iter().map(|id| (id, Action::Archive)).collect();
+    let ops = store.queue_all(&all, 50).unwrap();
+    assert_eq!(ops.len(), 3);
+    assert_eq!(commits.load(Ordering::Relaxed), 1);
+    assert!(list(&store, ListScope::Folder(folder), 10, None).is_empty());
+    assert!(store.undo(&ops, 49).unwrap());
+    assert_eq!(list(&store, ListScope::Folder(folder), 10, None).len(), 2);
+}
+
+#[test]
 fn a_conversation_reads_its_index() {
     let store = store();
     let conn = store.conn();
