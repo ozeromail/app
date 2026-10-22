@@ -2084,10 +2084,13 @@ pub struct MessageItem {
     pub account: Option<AccountMark>,
     /// The names of its attachments, once its body is downloaded; a name may be empty.
     pub attachments: Vec<String>,
+    /// The user sent it and it waits to go: nothing can be done to it until it has.
+    pub sending: bool,
 }
 
 impl From<MessageRow> for MessageItem {
     fn from(row: MessageRow) -> Self {
+        let allows = |action| !row.sending && row.role.allows(action);
         Self {
             id: row.id.0,
             account_id: row.account_id.0,
@@ -2102,11 +2105,12 @@ impl From<MessageRow> for MessageItem {
             thread_unread: row.thread_unread,
             senders: row.senders.into_iter().map(SenderItem::from).collect(),
             sent: row.role == FolderRole::Sent,
-            can_archive: row.role.allows(Action::Archive),
-            can_trash: row.role.allows(Action::Trash),
-            can_move_to_inbox: row.role.allows(Action::Inbox),
+            can_archive: allows(Action::Archive),
+            can_trash: allows(Action::Trash),
+            can_move_to_inbox: allows(Action::Inbox),
             account: None,
             attachments: row.attachments,
+            sending: row.sending,
         }
     }
 }

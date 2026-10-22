@@ -458,6 +458,7 @@ fn rows_are_marked_only_with_several_accounts() {
         senders: Vec::new(),
         role: FolderRole::Inbox,
         attachments: vec!["a.pdf".into()],
+        sending: false,
     };
     let first = add("a@example.com");
     let item = &core.items(vec![row(first)]).unwrap()[0];

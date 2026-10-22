@@ -262,4 +262,10 @@ pub const MIGRATIONS: &[&str] = &[
     CREATE TABLE notice (reverted INTEGER NOT NULL);
     INSERT INTO notice VALUES (0);
     ",
+    // 27: a message waiting to be sent shows in the sent folder at once, as a stand-in
+    // (`outbox.copy`) that a sync of that folder later gives the server's id.
+    "
+    ALTER TABLE outbox ADD COLUMN copy INTEGER REFERENCES message(id) ON DELETE SET NULL;
+    CREATE INDEX outbox_copy ON outbox(copy) WHERE copy IS NOT NULL;
+    ",
 ];
