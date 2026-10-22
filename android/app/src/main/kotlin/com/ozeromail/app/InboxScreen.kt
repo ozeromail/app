@@ -1872,7 +1872,8 @@ private fun MessageLine(message: MessageItem, unread: Boolean, dot: Float, accou
                     )
                 }
                 Text(
-                    shortDate(LocalContext.current, message.date),
+                    // Not out yet: once the server has it, its date shows.
+                    if (message.sending) stringResource(R.string.inbox_sending) else shortDate(LocalContext.current, message.date),
                     color = if (unread) colors.onSurface else colors.onSurfaceVariant,
                     style = Type.Caption,
                 )
