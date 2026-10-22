@@ -725,7 +725,12 @@ impl Core {
         if let Some(remote) = slot {
             remote.close().await;
         }
-        self.refused(&account, found)
+        let hits = self.refused(&account, found)?;
+        log::info!(
+            "server search for account {}: {hits} results over its folders",
+            account.id.0
+        );
+        Ok(())
     }
 
     /// Keeps the account's mail of the last `days` days on the device, or all of it with 0:

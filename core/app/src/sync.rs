@@ -91,6 +91,7 @@ pub async fn load_older(
 /// Asks the server for the newest `limit` messages of each of the account's folders that
 /// have every word of `text`, and saves them as what its search found. Trash, spam and
 /// drafts are left out, as local search leaves them; so is a folder reset since its sync.
+/// Returns how many results the folders gave, a message in two folders counted twice.
 pub async fn search_server(
     store: &dyn Store,
     provider: &mut impl MailProvider,
@@ -98,7 +99,7 @@ pub async fn search_server(
     account: AccountId,
     text: &str,
     limit: u32,
-) -> Result<(), SyncError> {
+) -> Result<usize, SyncError> {
     let mut found = vec![];
     for folder in store.folders(account)? {
         if !matches!(
@@ -125,7 +126,7 @@ pub async fn search_server(
         ));
     }
     store.save_found(account, text, &found)?;
-    Ok(())
+    Ok(found.iter().map(|(_, m)| m.len()).sum())
 }
 
 /// Waits until the account's inbox may have changed since its last sync, at most `wait`:
