@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.icu.text.DateFormat
 import android.os.SystemClock
 import android.text.format.DateUtils
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
@@ -163,6 +164,9 @@ import java.util.Date
 /** How soon after a sync a return to the app syncs again. */
 private const val RESYNC_MS = 30_000L
 
+/** How long syncs on their own may fail on the network before the error shows. */
+private const val BLIP_MS = 60_000L
+
 /** How many more rows the list reads at a time, and how far from its end it starts to. */
 private const val PAGE = 100
 private const val AHEAD = 20
@@ -189,10 +193,13 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var messages by remember { mutableStateOf(emptyList<MessageItem>()) }
     var mailbox by rememberSaveable(stateSaver = MailboxSaver) { mutableStateOf<Mailbox>(Mail.INBOX) }
     var syncing by remember { mutableStateOf(false) }
-    // A sync asked for while one runs, say for a new account, runs right after it.
-    var syncAgain by remember { mutableStateOf(emptySet<Mailbox>()) }
+    // A sync asked for while one runs, say for a new account, runs right after it; quiet if
+    // every ask for it was.
+    var syncAgain by remember { mutableStateOf(emptyMap<Mailbox, Boolean>()) }
     // When the last sync that went through began.
     var lastSync by remember { mutableLongStateOf(-RESYNC_MS) }
+    // Since when syncs on their own have met no network, if they do.
+    var offlineSince by remember { mutableStateOf<Long?>(null) }
     // Only a pull shows the spinner; syncs on their own stay quiet over the saved mail.
     var pulled by remember { mutableStateOf(false) }
     // Mailboxes synced since the app opened: until then, their empty list waits for its mail.
@@ -333,24 +340,34 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
 
     /**
      * Syncs [box] in every account; false if one failed. One asked for while one runs follows
-     * it.
+     * it. A [quiet] one, not asked for by the user, keeps a short network blip off the screen,
+     * and the error already there until it goes through: the app tries again soon on its own.
      */
-    suspend fun sync(box: Mailbox = Mail.INBOX): Boolean {
+    suspend fun sync(box: Mailbox = Mail.INBOX, quiet: Boolean = false): Boolean {
         if (syncing) {
-            syncAgain += box
+            syncAgain += box to (quiet && syncAgain[box] != false)
             return true
         }
         syncing = true
-        error = null
+        if (!quiet) error = null
         val started = SystemClock.elapsedRealtime()
         // A refused login shows as its account's card over the list, not as an error.
         var refused = false
         val synced = try {
             refused = mail.refresh(box)
             if (box == Mail.INBOX) lastSync = started
+            offlineSince = null
+            error = null
             true
         } catch (e: CoreException) {
-            error = e.text()
+            // Another error means the network is there.
+            val since = if (e is CoreException.Network) offlineSince ?: started else null
+            offlineSince = since
+            if (quiet && since != null && started - since < BLIP_MS) {
+                Log.w("Ozero", "sync failed", e)
+            } else {
+                error = e.text()
+            }
             false
         }
         if (box == Mail.INBOX) {
@@ -371,9 +388,9 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             syncing = false
         }
         if (synced) syncedBoxes += box
-        syncAgain.firstOrNull()?.let {
-            syncAgain -= it
-            return sync(it)
+        syncAgain.entries.firstOrNull()?.let { (next, quietly) ->
+            syncAgain -= next
+            return sync(next, quietly)
         }
         // The pulled drop lands before the gap closes, however quick the sync.
         if (pulled) delay(started + PULLED_MS - SystemClock.elapsedRealtime())
@@ -427,10 +444,12 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     // On opening and on every return to the app: mail that came meanwhile shows without a pull.
     // Not again right after one, as when back from the file picker or a link.
     LifecycleEventEffect(Lifecycle.Event.ON_START) {
+        // A failure from before the app was away says nothing about the network now.
+        offlineSince = null
         if (SystemClock.elapsedRealtime() - lastSync > RESYNC_MS) {
             scope.launch {
-                sync()
-                if (mailbox != Mail.INBOX) sync(mailbox)
+                sync(quiet = true)
+                if (mailbox != Mail.INBOX) sync(mailbox, quiet = true)
             }
         }
     }
@@ -438,7 +457,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     // An account signed in to again starts waiting, with its new secret.
     LifecycleStartEffect(accounts.map { it.id to it.needsSignIn }) {
         val watching = scope.launch {
-            mail.watch(accounts) { sync() }
+            mail.watch(accounts) { sync(quiet = true) }
         }
         onStopOrDispose { watching.cancel() }
     }
