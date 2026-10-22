@@ -60,6 +60,8 @@
   "message_reply_all": "Reply all",
   "compose_add_quote": "Add quote",
   "compose_quote_header": "%1$s, %2$s wrote:",
+  "compose_quoted": "The quote goes under your text",
+  "compose_forwarded": "The forwarded message goes under your text",
   "message_images_hidden": "Images are hidden, so the sender can’t tell you opened this.",
   "action_show": "Show",
   "feedback_write": "Write to the author",
