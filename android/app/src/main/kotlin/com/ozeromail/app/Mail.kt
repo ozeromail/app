@@ -294,8 +294,10 @@ class Mail(private val context: Context) {
         core.forward(message, labels, date, password(message.accountId).orEmpty())
     }
 
-    /** The saved text of [message] quoted under [header]; empty while its body is not saved. */
-    suspend fun quote(message: MessageItem, header: String): String = io { core.quote(message.id, header) }
+    /** The text of [message] quoted under [header]; downloaded if it is not saved. */
+    suspend fun quote(message: MessageItem, header: String): String = io {
+        core.quote(message.id, header, password(message.accountId).orEmpty())
+    }
 
     /** Takes back an archive that has not gone to the server yet; false if too late. */
     suspend fun undo(actions: List<Long>): Boolean = io { core.undo(actions) }
