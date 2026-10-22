@@ -294,11 +294,7 @@ impl GmailSession {
         body: impl Fn(&[String]) -> Value,
     ) -> Result<(), ProviderError> {
         for chunk in ids.chunks(MAX_MODIFY) {
-            match self.post(path, &body(chunk)).await {
-                // Undone on the device rather than retried forever.
-                Err(ProviderError::Rejected(e)) => return Err(ProviderError::Protocol(e)),
-                other => other?,
-            };
+            self.post(path, &body(chunk)).await?;
         }
         Ok(())
     }
