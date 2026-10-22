@@ -1958,7 +1958,13 @@ fn sandboxed(html: &str, styled: bool) -> String {
         "font:700 13px/22px sans-serif;letter-spacing:1px}",
         "details.ozero-quote>summary::-webkit-details-marker{display:none}",
     );
-    const LIGHT: &str = "html{color-scheme:light;background:#fff}";
+    // White under the letter only: the web view can stay taller than its page, and below the
+    // page the screen shows through. A clear image on the root keeps the body's background
+    // from spreading to the whole canvas.
+    const LIGHT: &str = concat!(
+        "html{color-scheme:light;background:linear-gradient(transparent,transparent)}",
+        "body{background:#fff}",
+    );
     // The app's own colours and reading type, kept in step with the Android Theme.kt and Type.kt
     // (Literata at its default optical size; where the app does not serve it, the system serif).
     // The web view is clear, so the screen shows through.
