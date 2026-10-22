@@ -25,6 +25,8 @@ ozero-store-sqlite.workspace = true
 # `macros` to log in to IMAP and SMTP at once.
 tokio = { version = "1.53", default-features = false, features = ["rt", "net", "time", "sync", "macros"] }
 uniffi = { workspace = true, features = ["tokio"] }
+# Log records; only Android has a logger for them, which writes to logcat.
+log = "0.4"
 
 # Android's certificate verifier is set up from Kotlin through one JNI call.
 [target.'cfg(target_os = "android")'.dependencies]
@@ -32,7 +34,6 @@ jni = { version = "0.22", default-features = false }
 rustls-platform-verifier.workspace = true
 # Sends `log` records, such as why a certificate was rejected, to logcat.
 android_logger = { version = "0.15", default-features = false }
-log = "0.4"
 
 [lints]
 workspace = true
