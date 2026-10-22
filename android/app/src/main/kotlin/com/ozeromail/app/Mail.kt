@@ -305,17 +305,16 @@ class Mail(private val context: Context) {
     /** Takes back a message that has not gone out yet, to edit it again as a draft; null if too late. */
     suspend fun undoSend(id: Long): DraftItem? = io { core.undoSend(id) }?.also { loadDrafts() }
 
-    /** Sends the account's queued actions in the background, waiting for held ones. */
-    private fun push(accountId: Long) {
-        background.launch {
-            try {
-                val password = password(accountId) ?: return@launch
-                core.pushActions(accountId, password)
-            } catch (e: Exception) {
-                // Still queued: the next push or sync sends it. Nothing here may crash the app.
-                Log.w("Ozero", "push failed", e)
-            }
-        }
+    /**
+     * Sends the account's queued actions and mail once there is a network, waiting for held
+     * ones, also if the app is closed meanwhile.
+     */
+    private fun push(accountId: Long) = PushWorker.enqueue(context, accountId)
+
+    /** Sends the account's queued actions and mail now, waiting for held ones; see [push]. */
+    suspend fun pushNow(accountId: Long) {
+        val password = io { password(accountId) } ?: return
+        io { core.pushActions(accountId, password) }
     }
 
     /**
