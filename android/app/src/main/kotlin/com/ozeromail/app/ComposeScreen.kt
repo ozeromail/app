@@ -224,11 +224,11 @@ fun ComposeScreen(
                     modifier = Modifier.heightIn(min = if (keyboard) 72.dp else 168.dp, max = if (keyboard) 168.dp else 320.dp),
                 )
                 // A forward is its quote, so it stays.
-                val forwarding = original != null && start.replyTo == null
+                val forwarding = start.forward != null
                 val files = forwarded?.takeIf { it.accountId == from?.id }?.attachments.orEmpty()
                 if (files.isNotEmpty()) AttachmentChips(files)
                 if (quote.isNotEmpty()) {
-                    Quote(quote, onRemove = { quote = "" }.takeUnless { forwarding })
+                    Quote(quote.takeIf { original == null }, forwarding, onRemove = { quote = "" }.takeUnless { forwarding })
                 } else if (original != null && quotable) {
                     Pill(stringResource(R.string.compose_add_quote), height = 32.dp, onClick = {
                         val header = context.getString(R.string.compose_quote_header, longDate(context, original.date), original.sender)
@@ -335,16 +335,19 @@ private fun Original(mail: Mail, message: MessageItem, modifier: Modifier) {
     }
 }
 
-/** The quoted original under the text, with a way to take it out if [onRemove] is set. */
+/**
+ * The quoted original under the text, or with [text] null only that it goes there: its text is
+ * in the card above already. A way to take it out if [onRemove] is set.
+ */
 @Composable
-private fun Quote(quote: String, onRemove: (() -> Unit)?) {
+private fun Quote(text: String?, forwarding: Boolean, onRemove: (() -> Unit)?) {
     val colors = MaterialTheme.colorScheme
-    Row(verticalAlignment = Alignment.Top) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
-            quote,
+            text ?: stringResource(if (forwarding) R.string.compose_forwarded else R.string.compose_quoted),
             color = colors.onSurfaceVariant,
             style = Type.Text,
-            maxLines = 6,
+            maxLines = if (text == null) 1 else 6,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier
                 .weight(1f)
