@@ -2,15 +2,16 @@
 
 mod schema;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Attachment, Body, Category, Changes,
     Checkpoint, Correspondents, Draft, DraftId, Flags, Folder, FolderId, FolderRole, ListQuery,
-    ListScope, MessageId, MessageLocation, MessageRow, NewAccount, NewFolder, NewMessage, Op, OpId,
-    OutboxId, Outgoing, SavedDraft, Sender, Server, Store, StoreError, Unsent, with_quote,
+    ListScope, MessageId, MessageLocation, MessageRow, Moved, NewAccount, NewFolder, NewMessage,
+    Op, OpId, OutboxId, Outgoing, SavedDraft, Sender, Server, Store, StoreError, Unsent,
+    with_quote,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{
@@ -1126,6 +1127,26 @@ impl Store for SqliteStore {
         tx.commit().map_err(storage)
     }
 
+    fn land(&self, ops: &[Op], moved: &Moved) -> Result<(), StoreError> {
+        let new: HashMap<&str, &str> = moved
+            .ids
+            .iter()
+            .map(|(old, new)| (old.as_str(), new.as_str()))
+            .collect();
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        {
+            let mut land = tx.prepare_cached(LAND).map_err(storage)?;
+            for op in ops {
+                if let Some(id) = new.get(op.location.remote_id.as_str()) {
+                    land.execute(params![op.id.0, id, moved.validity])
+                        .map_err(storage)?;
+                }
+            }
+        }
+        tx.commit().map_err(storage)
+    }
+
     fn unclaimed(&self, account: AccountId) -> Result<Vec<Folder>, StoreError> {
         let conn = self.conn();
         let rows = conn
@@ -1500,6 +1521,15 @@ const CLAIM: &str = concat!(
     " ORDER BY m.id LIMIT 1)
        AND NOT EXISTS (SELECT 1 FROM message WHERE folder_id = ?1 AND remote_id = ?3)"
 );
+
+/// Gives the copy op `?1` made the server's id `?2`, if its folder has validity `?3` or that
+/// is NULL.
+const LAND: &str = "
+    UPDATE message SET remote_id = ?2, stand_in = 0
+    WHERE id = (SELECT copy FROM op WHERE id = ?1) AND stand_in = 1
+      AND (?3 IS NULL OR ?3 = (SELECT validity FROM folder WHERE id = message.folder_id))
+      AND NOT EXISTS (SELECT 1 FROM message x
+                      WHERE x.folder_id = message.folder_id AND x.remote_id = ?2)";
 
 /// Sets the flags of a saved message from the server's, under a queued action.
 const SAVE_FLAGS: &str = concat!(

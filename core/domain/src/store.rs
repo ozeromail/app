@@ -2,8 +2,8 @@ use std::fmt;
 
 use crate::{
     Account, AccountId, Action, Body, Category, Changes, Checkpoint, Correspondents, Draft,
-    DraftId, Folder, FolderId, ListQuery, MessageId, MessageLocation, MessageRow, NewAccount,
-    NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing, SavedDraft, Unsent,
+    DraftId, Folder, FolderId, ListQuery, MessageId, MessageLocation, MessageRow, Moved,
+    NewAccount, NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing, SavedDraft, Unsent,
 };
 
 /// Local database port. The UI reads only from here; sync writes here.
@@ -129,8 +129,13 @@ pub trait Store: Send + Sync {
     /// The server has the actions: forget them, unless the user changed one since `due`.
     /// A moved message is dropped: its copy shows it in the folder it went to.
     fn finish(&self, ops: &[Op]) -> Result<(), StoreError>;
-    /// The account's folders with copies of moved mail whose move the server has: a sync of
-    /// them puts the server's own messages in their place, so actions on them can be sent.
+    /// Gives the copies the moves of `ops` made the ids the server gave their messages, where
+    /// the folder still has the validity they belong to: the copies are the server's messages
+    /// from now on. Call it before `finish`.
+    fn land(&self, ops: &[Op], moved: &Moved) -> Result<(), StoreError>;
+    /// The account's folders with copies of moved mail whose move the server has, but whose
+    /// ids it did not tell: a sync of them puts the server's own messages in their place, so
+    /// actions on them can be sent.
     fn unclaimed(&self, account: AccountId) -> Result<Vec<Folder>, StoreError>;
     /// Queues a message to be sent from `not_before`, and forgets the saved draft it was
     /// written in, if any. Fails with `NotFound` if the account or the message it answers is

@@ -14,6 +14,7 @@ use imap_codec::encode::{Encoder, Fragment};
 use imap_codec::fragmentizer::Fragmentizer;
 use imap_codec::imap_types::command::{Command, CommandBody};
 use imap_codec::imap_types::core::{AString, Charset, LiteralMode, Vec1};
+use imap_codec::imap_types::extensions::uidplus::{UidElement, UidSet};
 use imap_codec::imap_types::fetch::{MessageDataItem, MessageDataItemName, Section};
 use imap_codec::imap_types::flag::{Flag, FlagFetch, FlagNameAttribute, StoreResponse, StoreType};
 use imap_codec::imap_types::mailbox::Mailbox;
@@ -24,7 +25,7 @@ use imap_codec::imap_types::search::SearchKey;
 use imap_codec::imap_types::sequence::{SeqOrUid, Sequence, SequenceSet};
 use imap_codec::{CommandCodec, GreetingCodec, ResponseCodec};
 use ozero_domain::{
-    Changes, Checkpoint, Flags, FolderRole, MailProvider, NewFolder, Older, ProviderError,
+    Changes, Checkpoint, Flags, FolderRole, MailProvider, Moved, NewFolder, Older, ProviderError,
     RawMessage,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -712,6 +713,7 @@ impl MailProvider for ImapSession {
                 .map_err(|_| protocol("bad STORE"))
         })
         .await
+        .map(drop)
     }
 
     async fn move_to(
@@ -720,17 +722,39 @@ impl MailProvider for ImapSession {
         validity: u32,
         remote_ids: &[String],
         to: &str,
-    ) -> Result<(), ProviderError> {
+    ) -> Result<Moved, ProviderError> {
         let to = Mailbox::try_from(to).map_err(|_| protocol("bad folder name"))?;
         // RFC 6851 MOVE; every server we target has it.
-        self.each_chunk(folder, validity, remote_ids, |uids| {
-            Ok(CommandBody::Move {
-                sequence_set: uids.try_into().map_err(|_| protocol("bad UID set"))?,
-                mailbox: to.clone(),
-                uid: true,
+        let replies = self
+            .each_chunk(folder, validity, remote_ids, |uids| {
+                Ok(CommandBody::Move {
+                    sequence_set: uids.try_into().map_err(|_| protocol("bad UID set"))?,
+                    mailbox: to.clone(),
+                    uid: true,
+                })
             })
-        })
-        .await
+            .await?;
+        let mut moved = Moved::default();
+        for reply in &replies {
+            // UIDPLUS (RFC 4315) names the new UIDs, before the expunges or in the end.
+            for code in reply.codes.iter().chain(&reply.code) {
+                if let Code::CopyUid {
+                    uid_validity,
+                    source,
+                    destination,
+                } = code
+                {
+                    moved.validity = Some(uid_validity.get());
+                    // As many as were moved: a server cannot make us count to u32::MAX.
+                    let ids = uid_list(source, remote_ids.len())
+                        .zip(uid_list(destination, remote_ids.len()));
+                    moved
+                        .ids
+                        .extend(ids.map(|(old, new)| (old.to_string(), new.to_string())));
+                }
+            }
+        }
+        Ok(moved)
     }
 
     async fn delete(
@@ -903,20 +927,33 @@ impl ImapSession {
         validity: u32,
         remote_ids: &[String],
         command: impl Fn(&[NonZeroU32]) -> Result<CommandBody<'a>, ProviderError>,
-    ) -> Result<(), ProviderError> {
+    ) -> Result<Vec<Reply>, ProviderError> {
         let uids = uids(remote_ids)?;
         if uids.is_empty() {
-            return Ok(());
+            return Ok(vec![]);
         }
         if self.open(folder, true).await?.validity != validity {
             return Err(ProviderError::Gone);
         }
         // Chunks keep each command line well under server limits.
+        let mut replies = vec![];
         for chunk in uids.chunks(UID_CHUNK) {
-            self.run(command(chunk)?).await?;
+            replies.push(self.run(command(chunk)?).await?);
         }
-        Ok(())
+        Ok(replies)
     }
+}
+
+/// The UIDs of a UIDPLUS set in its order, at most `limit` of them.
+fn uid_list(set: &UidSet, limit: usize) -> impl Iterator<Item = u32> + '_ {
+    set.0
+        .as_ref()
+        .iter()
+        .flat_map(|element| match *element {
+            UidElement::Single(uid) => uid.get()..=uid.get(),
+            UidElement::Range(a, b) => a.get().min(b.get())..=a.get().max(b.get()),
+        })
+        .take(limit)
 }
 
 /// Message ids as IMAP UIDs.
@@ -1073,4 +1110,23 @@ async fn timed_for<T, E: std::fmt::Display>(
 
 fn protocol(msg: impl Into<String>) -> ProviderError {
     ProviderError::Protocol(msg.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lists_a_uid_set_in_order_up_to_a_limit() {
+        let n = |v| NonZeroU32::new(v).unwrap();
+        let set = UidSet(
+            Vec1::try_from(vec![
+                UidElement::Single(n(7)),
+                UidElement::Range(n(3), n(1)),
+                UidElement::Range(n(10), n(u32::MAX)),
+            ])
+            .unwrap(),
+        );
+        assert_eq!(uid_list(&set, 6).collect::<Vec<_>>(), [7, 1, 2, 3, 10, 11]);
+    }
 }

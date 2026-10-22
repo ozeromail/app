@@ -9,9 +9,9 @@ use std::time::Duration;
 use ozero_domain::{
     Account, AccountId, Action, Address, Body, Category, Changes, Checkpoint, Correspondents,
     Draft, DraftId, Flags, Folder, FolderId, ListQuery, MailProvider, MailSender, MessageBuilder,
-    MessageId, MessageLocation, MessageParser, MessageRow, NewAccount, NewFolder, NewMessage,
-    Older, Op, OpId, OutboxId, Outgoing, ProviderError, RawMessage, SavedDraft, Store, StoreError,
-    Unsent,
+    MessageId, MessageLocation, MessageParser, MessageRow, Moved, NewAccount, NewFolder,
+    NewMessage, Older, Op, OpId, OutboxId, Outgoing, ProviderError, RawMessage, SavedDraft, Store,
+    StoreError, Unsent,
 };
 
 /// Fakes answer at once, so one poll finishes the future.
@@ -141,9 +141,20 @@ impl MailProvider for Server {
         validity: u32,
         remote_ids: &[String],
         to: &str,
-    ) -> impl Future<Output = Result<(), ProviderError>> + Send {
+    ) -> impl Future<Output = Result<Moved, ProviderError>> + Send {
         self.moved_to.push(to.into());
-        ready(self.apply(folder, validity, remote_ids, Action::Archive))
+        // There a message's id gets a 0 at the end.
+        let moved = Moved {
+            validity: Some(validity),
+            ids: remote_ids
+                .iter()
+                .map(|id| (id.clone(), format!("{id}0")))
+                .collect(),
+        };
+        ready(
+            self.apply(folder, validity, remote_ids, Action::Archive)
+                .map(|()| moved),
+        )
     }
 
     fn delete(
@@ -295,6 +306,8 @@ pub struct Memory {
     /// What `due` returns, and which ops were finished or reverted.
     pub ops: Vec<Op>,
     pub finished: Mutex<Vec<OpId>>,
+    /// Each `land`.
+    pub landed: Mutex<Vec<Moved>>,
     /// What `unclaimed` returns.
     pub unclaimed: Vec<Folder>,
     pub reverted: Mutex<Vec<OpId>>,
@@ -489,6 +502,11 @@ impl Store for Memory {
             .lock()
             .unwrap()
             .extend(ops.iter().map(|o| o.id));
+        Ok(())
+    }
+
+    fn land(&self, _: &[Op], moved: &Moved) -> Result<(), StoreError> {
+        self.landed.lock().unwrap().push(moved.clone());
         Ok(())
     }
 

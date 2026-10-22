@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ozero_domain::{
-    Changes, Checkpoint, Flags, FolderRole, MailProvider, MailSender, NewFolder, Older,
+    Changes, Checkpoint, Flags, FolderRole, MailProvider, MailSender, Moved, NewFolder, Older,
     ProviderError, RawMessage,
 };
 use ozero_http::{Body, HttpsClient, Response};
@@ -487,7 +487,7 @@ impl MailProvider for GmailSession {
         _validity: u32,
         remote_ids: &[String],
         to: &str,
-    ) -> Result<(), ProviderError> {
+    ) -> Result<Moved, ProviderError> {
         // Into spam or the trash a message keeps its labels, as in Gmail itself, so it comes
         // back where it was; meanwhile `has` shows it nowhere else.
         let from = if APART.contains(&to) {
@@ -496,7 +496,15 @@ impl MailProvider for GmailSession {
             label(folder)
         };
         self.modify(remote_ids, label(to).as_slice(), from.as_slice())
-            .await
+            .await?;
+        // A label changes, the message and its id stay.
+        Ok(Moved {
+            validity: None,
+            ids: remote_ids
+                .iter()
+                .map(|id| (id.clone(), id.clone()))
+                .collect(),
+        })
     }
 
     async fn delete(

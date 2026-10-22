@@ -100,6 +100,10 @@ fn archives_after_setting_read_state() {
     let actions: Vec<_> = server.applied.iter().map(|a| a.3).collect();
     assert_eq!(actions, [Action::Seen(true), Action::Archive]);
     assert_eq!(server.moved_to, ["Archive"]);
+    // The ids the server gave go to the store before the move is finished.
+    let landed = store.landed.lock().unwrap();
+    assert_eq!(landed[0].ids, [("5".to_owned(), "50".to_owned())]);
+    assert_eq!(landed[0].validity, Some(9));
 }
 
 #[test]
