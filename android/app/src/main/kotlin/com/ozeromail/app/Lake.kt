@@ -17,7 +17,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.MotionDurationScale
@@ -57,9 +60,10 @@ import kotlinx.coroutines.flow.emptyFlow
  * it, at rest until something moves it. With [drawIn], as the last message leaves, a drop lands
  * on the water and the horizon comes out of its waves. A touch sends a wave out too. [grey] water
  * is for plain empty folders: it never draws in. While [waiting] for the list's mail, the words
- * hold back; a long wait stirs the water, as does a pull's sync while [refreshing]. As the
+ * hold back and the water swells, as it does through a pull's sync while [refreshing]. As the
  * list is [pulled], a drop gathers over the water, growing with the pull, and falls once on each of
- * [drops]. [wordsModifier] moves the words alone, while the water stays.
+ * [drops]. The tabs' [glide] sends a wave along it. [wordsModifier] moves the words alone, while
+ * the water stays.
  */
 @Composable
 fun StillNote(
@@ -71,6 +75,7 @@ fun StillNote(
     refreshing: Boolean = false,
     pulled: () -> Float = { 0f },
     drops: Flow<Unit> = emptyFlow(),
+    glide: () -> Float = { 0f },
     wordsModifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -86,7 +91,7 @@ fun StillNote(
         // Grey water still takes a drop of the accent's color: a drop is a drop.
         val water = if (grey) colors.outline else colors.accent
         Canvas(Modifier.fillMaxWidth().height(LAKE_HEIGHT).touches(still)) {
-            still.draw(this, water, colors.accent, HORIZON, size.height, pulled(), FALL)
+            still.draw(this, water, colors.accent, HORIZON, size.height, pulled(), FALL, glide())
         }
         Column(
             wordsModifier.graphicsLayer {
@@ -112,17 +117,30 @@ fun StillNote(
  * The same water as an empty list's, under the title, in the gap the list opens as it is
  * pulled: the water stays where it is and the list uncovers it. [top] is where the gap begins,
  * or null while the title is off screen. As in the empty list, a drop gathers with [fraction]
- * and falls once on each of [drops]; a long refresh stirs the water.
+ * and falls once on each of [drops]; the water swells through the sync. [onCalm] hears whether the
+ * water has calmed since, so the list can wait for it before it covers the water.
  */
 @Composable
-fun PullWater(fraction: () -> Float, refreshing: Boolean, top: () -> Float?, drops: Flow<Unit>, modifier: Modifier = Modifier) {
+fun PullWater(
+    fraction: () -> Float,
+    refreshing: Boolean,
+    top: () -> Float?,
+    drops: Flow<Unit>,
+    onCalm: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val water = MaterialTheme.colorScheme.accent
     val still = rememberStill(fall = false)
     LaunchedEffect(refreshing) { still.beat = refreshing }
     LaunchedEffect(drops) { drops.collect { still.release() } }
+    LaunchedEffect(still) { snapshotFlow { still.calmed }.collect(onCalm) }
     Canvas(modifier) {
         val depth = pullGap(fraction())
-        val y = top() ?: return@Canvas
+        val y = top() ?: run {
+            // Out of sight, the water still calms, so the list need not wait for it.
+            still.advance()
+            return@Canvas
+        }
         // Drawn even when closed, so the water hears that the pull is over.
         translate(top = y) {
             clipRect(top = 0f, bottom = depth) {
@@ -199,10 +217,9 @@ private class Still(private var falling: Boolean) {
     /** Wakes the clock of water at rest. */
     val wake = Channel<Unit>(Channel.CONFLATED)
 
-    /** A wait: a long one stirs the water until it is over. */
+    /** A wait: the water swells until it is over. */
     var beat = false
         set(value) {
-            if (value && !field) waited = 0f
             field = value
             wake.trySend(Unit)
         }
@@ -219,28 +236,61 @@ private class Still(private var falling: Boolean) {
     private var pulled = 0f
     private var released = false
     private var spent = false
-    private var waited = 0f
-    private var stir = 0f
+    private var sincePulse = 0f
+    private var sea = 0f
     private var wobble = 0f
     private var wobbleV = 0f
     private var wasFull = false
     private var calm = 0f
     private var horizon = 0f
+    private var land = 0f
     private var middle = 0f
     private var tint = Color.Unspecified
     private var line: Brush = SolidColor(Color.Transparent)
     private var glow: Brush = SolidColor(Color.Transparent)
 
+    // The surface along the horizon: how far each point across is lifted, in dp, and how fast it
+    // moves. Drops, touches and the tabs push it; a wave runs along it, comes back off the banks
+    // and dies away.
+    private val height = FloatArray(SPAN)
+    private val speed = FloatArray(SPAN)
+    // Earlier shapes of it, so a nearer streak sees a wave a moment later, as if it came closer.
+    private val past = Array(PAST) { FloatArray(SPAN) }
+    private var pastAt = 0
+    private var pastTick = 0
+    private var rough = 0f
+    private var moving = 0f
+    private var glidAt = 0f
+    private var glideV = 0f
+    private var push = 0f
+    private var jolt = 0f
+    private val ys = FloatArray(LINE_POINTS)
+    private val glints = FloatArray(LINE_POINTS)
+    private val soft = FloatArray(LINE_POINTS)
+
+    /** Whether a wait's swell has gone, or never came. */
+    var calmed by mutableStateOf(true)
+        private set
+
+    /** Whether the surface is level, so lines are drawn straight. */
+    private val flat get() = sea == 0f && settled
+
+    /** Whether the surface has stopped moving. */
+    private val settled get() = rough < 0.05f && moving < 0.01f
+
     val ready get() = !frozen && level > 0.5f && middle > 0f
 
     /** Whether something on the water is moving, so every frame counts. */
     val busy
-        get() = beat || stir > 0.05f || released || drops.isNotEmpty() || jets.isNotEmpty() || waves.isNotEmpty() || rising ||
-            abs(wobble) > 0.002f || abs(wobbleV) > 0.02f || (falling && now - begun < WORDS + WORDS_MS)
+        get() = beat || released || drops.isNotEmpty() || jets.isNotEmpty() || waves.isNotEmpty() || rising ||
+            abs(wobble) > 0.002f || abs(wobbleV) > 0.02f || (falling && now - begun < WORDS + WORDS_MS) ||
+            !flat || abs(jolt) > 1f || abs(glideV) > 0.01f
 
     /** The clock goes to sleep: the next frame starts afresh rather than a step late. */
     fun rest() {
         stepped = -1
+        glideV = 0f
+        jolt = 0f
     }
 
     /** Water that never moves, for when the system's animations are off. */
@@ -269,6 +319,7 @@ private class Still(private var falling: Boolean) {
     /** A wave from under a finger at [x], [y] dp. */
     fun touch(x: Float, y: Float) {
         waves += Wave(x, maxOf(y, horizon + 6f), 0.55f)
+        kick(x, -22f)
         wake.trySend(Unit)
     }
 
@@ -286,15 +337,26 @@ private class Still(private var falling: Boolean) {
     }
 
     private fun step(dt: Float, land: Float) {
-        waited += dt
         if (released) {
             released = false
             spent = true
             letGo(hanging(maxOf(pulled, 1f)), land)
         }
-        // One drop a pull. A long wait stirs the water instead: the reflection sways until it is over.
-        val stirring = beat && waited > STIR_AFTER && ready
-        stir += ((if (stirring) 1f else 0f) - stir) * min(1f, dt / STIR_EASE)
+        // A wait swells the water once nothing is falling; a faint ring now and then comes from
+        // where the drop fell. When the wait is over, the swell lies down.
+        val swelling = beat && ready && drops.isEmpty()
+        sea += ((if (swelling) 1f else 0f) - sea) * min(1f, dt / SEA_EASE)
+        if (!swelling && sea < 0.002f) sea = 0f
+        val lying = !swelling && sea < 0.06f
+        if (lying != calmed) calmed = lying
+        sincePulse = if (swelling) sincePulse + dt else 0f
+        if (sincePulse > PULSE_EVERY) {
+            sincePulse -= PULSE_EVERY
+            waves += Wave(middle, land, 0.16f)
+        }
+        // The tabs' push, smoothed: a finger's speed comes in steps.
+        jolt += (push - jolt) * min(1f, dt * 25f)
+        flow(dt)
         // The hanging drop gives a little jolt as it fills, and trembles as it settles.
         val full = !spent && pulled >= 1f
         if (full && !wasFull) wobbleV += 2.4f
@@ -308,6 +370,7 @@ private class Still(private var falling: Boolean) {
             if (d.y < d.land) return@removeAll false
             val e = maxOf(0.18f, min(1f, d.r / 6.6f))
             waves += Wave(d.x, d.land, e)
+            kick(d.x, -40f * e)
             // A real drop throws a tiny one back up, which falls again as a smaller ring.
             if (d.r > 2f) jets += Jet(d.x, d.land, -sqrt(2f * G * 4f * e + 40f), d.land)
             if (d.opens) rising = true
@@ -327,11 +390,95 @@ private class Still(private var falling: Boolean) {
             energy += a
             a < 0.015f
         }
-        calm += (maxOf(min(1f, energy), stir * STIR) - calm) * min(1f, dt * 2f)
+        calm += (min(1f, energy) - calm) * min(1f, dt * 2f)
         if (rising) {
             level = min(1f, level + dt * 1000f / LEVEL_MS)
             if (level >= 1f) rising = false
         }
+    }
+
+    /** One step of the surface: a damped wave between two banks, thicker once the wait is over. */
+    private fun flow(dt: Float) {
+        if (settled && abs(jolt) < 1f) return
+        val damping = if (beat) 0.9f else 1.5f
+        val mid = (SPAN - 1) / 2f
+        for (i in 0 until SPAN) {
+            val bend = height[if (i > 0) i - 1 else 1] - 2 * height[i] + height[if (i < SPAN - 1) i + 1 else SPAN - 2]
+            // A sideways jolt of the tabs presses the water toward one bank.
+            speed[i] += (STIFF * bend - damping * speed[i] - jolt * JOLT * (i - mid) / mid) * dt
+        }
+        var fast = 0f
+        rough = 0f
+        for (i in 0 until SPAN) {
+            height[i] += speed[i] * dt
+            fast = maxOf(fast, abs(speed[i]))
+            rough = maxOf(rough, abs(height[i]))
+        }
+        moving += (min(1f, fast / 25f) - moving) * min(1f, dt * 4f)
+        if (settled && abs(jolt) < 1f) {
+            // Level again, past shapes too, so the next wave starts from still water.
+            height.fill(0f)
+            speed.fill(0f)
+            past.forEach { it.fill(0f) }
+            moving = 0f
+            return
+        }
+        if (++pastTick % 2 == 0) {
+            pastAt = (pastAt + 1) % PAST
+            height.copyInto(past[pastAt])
+        }
+    }
+
+    /** Pushes the surface at [x] dp. Water is not lost: what is pressed down rises around it. */
+    private fun kick(x: Float, amount: Float) {
+        var mean = 0f
+        for (i in 0 until SPAN) {
+            val d = middle - BANKS + i * SPACING - x
+            speed[i] += amount * exp(-d * d / (2 * KICK * KICK))
+            mean += speed[i]
+        }
+        mean /= SPAN
+        for (i in 0 until SPAN) speed[i] -= mean
+        moving = maxOf(moving, 0.02f)
+        wake.trySend(Unit)
+    }
+
+    /** How far the surface is lifted at [x] dp on a line [near] the viewer, 0 at the horizon. */
+    private fun rise(x: Float, near: Float, t: Float): Float {
+        val shape = if (near > 0f) past[(pastAt - (near * 12f).toInt() + PAST * 2) % PAST] else height
+        val at = ((x - (middle - BANKS)) / SPACING).coerceIn(0f, SPAN - 1f)
+        val i = min(at.toInt(), SPAN - 2)
+        val r = at - i
+        var y = (shape[i] * (1f - r) + shape[i + 1] * r) * (1f + 0.7f * near)
+        if (sea > 0f) {
+            for (s in SWELLS) y += s.amp * (1.6f + 1.3f * near) * sea * sin(s.dir * s.k * (x - middle) - s.w * t + s.phase + near * 1.4f)
+        }
+        return y
+    }
+
+    /**
+     * Steps the water up to [now], for the tabs standing at [glide]. Drawing does it, and so does
+     * water out of sight, which is not drawn but still calms.
+     */
+    fun advance(glide: Float = glidAt) {
+        if (glide != glidAt && stepped < 0) wake.trySend(Unit)
+        var dt = if (stepped < 0) 0f else min(0.05f, (now - stepped) / 1000f)
+        stepped = now
+        // How sharply the tabs move. A snap to the next tab is a jump, not a move.
+        if (dt > 0f) {
+            val v = if (abs(glide - glidAt) > 0.5f) glideV else (glide - glidAt) / dt
+            push = ((v - glideV) / dt).coerceIn(-JOLT_MAX, JOLT_MAX)
+            glideV = v
+        } else {
+            push = 0f
+        }
+        glidAt = glide
+        while (dt > 0f) {
+            val s = min(dt, 1f / 120f)
+            step(s, land)
+            dt -= s
+        }
+        if (busy) wake.trySend(Unit)
     }
 
     /** Brushes one unit across, scaled into place, so a frame makes no new shaders. */
@@ -343,33 +490,26 @@ private class Still(private var falling: Boolean) {
     }
 
     /**
-     * The horizon lies [line] down, drops gather [pull] near the top and land [fall] under the
-     * horizon; the water ends at [bottom] px. Water is [water], drops [drop].
+     * The horizon lies [surface] down, drops gather [pull] near the top and land [fall] under the
+     * horizon; the water ends at [bottom] px. Water is [water], drops [drop]. The tabs stand at [glide].
      */
-    fun draw(scope: DrawScope, water: Color, drop: Color, surface: Dp, bottom: Float, pull: Float, fall: Dp) = with(scope) {
+    fun draw(scope: DrawScope, water: Color, drop: Color, surface: Dp, bottom: Float, pull: Float, fall: Dp, glide: Float = 0f) = with(scope) {
         val u = density
         val hz = surface.value
-        val land = hz + fall.value
         horizon = hz
         middle = size.width / u / 2
         // A pull moves nothing else, so it wakes the clock; nothing gathers again until the list is back.
         if (pull != pulled) wake.trySend(Unit)
         pulled = pull
         if (pull <= 0f) spent = false
+        land = hz + fall.value
         if (falling && level == 0f && !rising && drops.isEmpty() && begun >= 0) {
             // The last message has left: a drop falls and the water comes out of its waves.
             drops += Drop(middle, hz - 70f, 120f, land, 2.8f, 0.9f, opens = true)
         }
-        var dt = if (stepped < 0) 0f else min(0.05f, (now - stepped) / 1000f)
-        stepped = now
-        while (dt > 0f) {
-            val s = min(dt, 1f / 120f)
-            step(s, land)
-            dt -= s
-        }
-        if (busy) wake.trySend(Unit)
+        advance(glide)
         paint(water)
-        val t = now / 1000f
+        val t = (now - begun) / 1000f
         val cx = middle * u
         val hzPx = hz * u
         val lv = Calm.transform(level)
@@ -377,25 +517,27 @@ private class Still(private var falling: Boolean) {
         clipRect(top = hzPx, bottom = bottom) {
             if (lv > 0f) {
                 // The reflection: a soft glow under the horizon, flattened by perspective, and a
-                // few streaks that only stir when the water does.
+                // few streaks that only stir when the water does. It breathes deeper while the water swells.
                 val r = 150.dp.toPx() * lv + 1f
+                val flatten = r * 0.32f * (1f + 0.14f * sea * sin(t * 1.3f))
                 withTransform({
                     translate(cx, hzPx)
-                    scale(r, r * 0.32f, Offset.Zero)
+                    scale(r, flatten, Offset.Zero)
                 }) {
-                    drawRect(glow, Offset(-1f, 0f), Size(2f, (bottom - hzPx) / (r * 0.32f)), alpha = 0.14f)
+                    drawRect(glow, Offset(-1f, 0f), Size(2f, (bottom - hzPx) / flatten), alpha = 0.14f + 0.04f * sea)
                 }
                 STREAKS.forEachIndexed { i, s ->
                     val stir = calm * 5f * sin(t * (2.1f + i * 0.7f) + i)
                     val y = hz + s.dy + calm * 0.8f * sin(t * 3f + i)
                     val half = s.half * lv * (1f + calm * 0.06f * sin(t * 2.3f + i))
-                    faded(s.alpha, cx + stir * u, half * u, y * u, stroke)
+                    waterline(s.alpha, middle + stir, half, y, (i + 1) / 4f, t, water, stroke)
                 }
             }
             // Waves: two or three crests an impact, slowing as they spread, fading with distance.
             for (w in waves) {
                 val spread = 64f * sqrt(w.e) * (1f - exp(-w.t / 0.85f)) + 7f * w.t
                 val depth = ((w.y - hz) / 220f).coerceIn(0f, 1f)
+                val lift = rise(w.x, 0.8f, t)
                 for (k in 0..2) {
                     val r = spread - k * (6f + 5f * w.t)
                     if (r <= 0.5f) continue
@@ -404,7 +546,7 @@ private class Still(private var falling: Boolean) {
                     if (alpha < 0.01f) continue
                     val rx = r * (1f + 0.8f * depth) * u
                     val ry = rx * (0.13f + 0.3f * depth)
-                    val at = Offset(w.x * u - rx, w.y * u - ry)
+                    val at = Offset(w.x * u - rx, (w.y + lift) * u - ry)
                     val oval = Size(rx * 2, ry * 2)
                     // The near side of a crest catches more light than the far one.
                     drawArc(water.copy(alpha = min(1f, alpha * 1.15f)), 0f, 180f, false, at, oval, style = Stroke(stroke))
@@ -419,7 +561,7 @@ private class Still(private var falling: Boolean) {
                 drawOval(drop.copy(alpha = 0.22f * near), Offset((d.x - d.r) * u, (y - d.r * 0.45f) * u), Size(d.r * 2 * u, d.r * 0.9f * u))
             }
         }
-        if (lv > 0f) faded(0.55f, cx, 150.dp.toPx() * lv, hzPx, stroke)
+        if (lv > 0f) waterline(0.55f, middle, 150f * lv, hz, 0f, t, water, stroke)
         // The gathering drop grows with the pull, a round bead that fills into a drop.
         val gathering = if (!spent && !released && ready) pull else 0f
         if (gathering > 0.02f) {
@@ -451,6 +593,48 @@ private class Still(private var falling: Boolean) {
         rotate(20f, Offset(gx, gy)) {
             drawOval(Color.White.copy(alpha = 0.4f), Offset(gx - r * 0.16f * u, gy - r * 0.3f * u), Size(r * 0.32f * u, r * 0.6f * u))
         }
+    }
+
+    /**
+     * A hairline on the water, [half] dp to each side of [x] at [y] dp, on a line [near] the viewer:
+     * straight while the water is level; otherwise it follows the surface and lights up where a
+     * wave's face turns to the eye.
+     */
+    private fun DrawScope.waterline(alpha: Float, x: Float, half: Float, y: Float, near: Float, t: Float, color: Color, width: Float) {
+        val u = density
+        val n = min(LINE_POINTS - 1, (half * 2 / SPACING).toInt())
+        if (flat || n < 4) return faded(alpha, x * u, half * u, y * u, width)
+        val gap = half * 2 / n
+        for (i in 0..n) ys[i] = y + rise(x - half + i * gap, near, t)
+        // The slope over a few dp, so light catches whole faces of a wave, not single points.
+        val facing = 0.06f + 0.05f * near
+        val light = min(1f, sea * 2f + calm + moving)
+        for (i in 0..n) {
+            val l = maxOf(0, i - 2)
+            val r = min(n, i + 2)
+            val d = (abs(ys[r] - ys[l]) / ((r - l) * gap) - facing) / 0.05f
+            glints[i] = if (light < 0.01f) 0f else exp(-d * d) * light
+        }
+        // Softened twice, through a second buffer so it stays even.
+        blur(glints, soft, n)
+        blur(soft, glints, n)
+        // The line fades out at both ends, as a straight one does, with glints over it.
+        val base = alpha * (1f - 0.45f * sea)
+        val bright = min(0.42f, alpha * 2.6f)
+        for (i in 1..n) {
+            val x0 = x - half + (i - 1) * gap
+            val fade = maxOf(0f, 1f - abs(x0 + gap / 2 - x) / half)
+            val a = base * fade + bright * (glints[i] + glints[i - 1]) / 2 * sqrt(fade)
+            if (a < 0.004f) continue
+            drawLine(color.copy(alpha = min(1f, a)), Offset(x0 * u, ys[i - 1] * u), Offset((x0 + gap) * u, ys[i] * u), width)
+        }
+    }
+
+    /** Softens [from] into [into], over points 0 to [n]; the ends stay. */
+    private fun blur(from: FloatArray, into: FloatArray, n: Int) {
+        into[0] = from[0]
+        into[n] = from[n]
+        for (i in 1 until n) into[i] = (from[i - 1] + from[i] * 2 + from[i + 1]) / 4
     }
 
     /** A hairline [half] to each side of [x], fading out at both ends. */
@@ -489,10 +673,41 @@ private val PULL_FALL = 24.dp
 private const val G = 760f
 private const val DROP_STEPS = 48
 
-/** A wait longer than this, in seconds, stirs the water: how much, and how slowly it comes and goes. */
-private const val STIR_AFTER = 1.4f
-private const val STIR = 0.7f
-private const val STIR_EASE = 1.2f
+/** How slowly a wait's swell comes and goes, in seconds, and how often a faint ring goes out. */
+private const val SEA_EASE = 0.72f
+private const val PULSE_EVERY = 2.6f
+
+/** The surface: points across, dp between them, a wave's speed along it in dp a second, its banks dp from the middle. */
+private const val SPAN = 101
+private const val SPACING = 3f
+private const val WAVE_SPEED = 150f
+private const val BANKS = 150f
+private const val STIFF = WAVE_SPEED * WAVE_SPEED / (SPACING * SPACING)
+
+/** How wide a push is, in dp. */
+private const val KICK = 13f
+
+/** Earlier shapes kept for nearer streaks, one every two steps. */
+private const val PAST = 20
+private const val LINE_POINTS = 104
+
+/** How hard the tabs push the water, and the sharpest move it feels, in tabs a second squared. */
+private const val JOLT = 6f
+private const val JOLT_MAX = 800f
+
+/** A swell's wave, by the deep-water law ω = √(g·k): longer waves run faster. */
+private class Swell(length: Float, val amp: Float, val dir: Float, val phase: Float) {
+    val k = 2f * PI.toFloat() / length
+    val w = sqrt(SWELL_G * k)
+}
+
+private const val SWELL_G = 118f
+private val SWELLS = listOf(
+    Swell(150f, 1.25f, 1f, 0f),
+    Swell(96f, 0.85f, -1f, 1.7f),
+    Swell(60f, 0.5f, 1f, 4.1f),
+    Swell(40f, 0.22f, -1f, 2.6f),
+)
 private const val LEVEL_MS = 1900f
 private const val WORDS = 1300f
 private const val WORDS_MS = 1000f
