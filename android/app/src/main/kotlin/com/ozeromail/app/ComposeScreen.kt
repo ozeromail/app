@@ -235,7 +235,7 @@ fun ComposeScreen(
                         scope.launch {
                             try {
                                 quote = mail.quote(original, header)
-                                // Nothing saved to quote.
+                                // Nothing to quote.
                                 quotable = quote.isNotEmpty()
                             } catch (e: CoreException) {
                                 error = e.text()

@@ -261,6 +261,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     val archived = stringResource(R.string.inbox_archived)
     val movedBack = stringResource(R.string.inbox_moved_back)
     val trashed = stringResource(R.string.inbox_trashed)
+    val undoLate = stringResource(R.string.inbox_undo_late)
     val deleted = stringResource(R.string.inbox_deleted)
     val emptied = stringResource(R.string.inbox_emptied)
     val reverted = stringResource(R.string.inbox_reverted)
@@ -507,6 +508,11 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         return result == SnackbarResult.ActionPerformed
     }
 
+    /** Takes [actions] back, or says the server already has them. */
+    suspend fun takeBack(actions: List<Long>) {
+        if (!mail.undo(actions)) note(undoLate)
+    }
+
     // What changed the mail, here or in the background, shows at once; so does an action the
     // server refused and the phone undid.
     LaunchedEffect(Unit) {
@@ -605,7 +611,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             messages = messages.filterNot { it.id in moved }
             // Also after success: a list read before the archive may bring the row back.
             reset()
-            if (offerUndo(toast, go.takeIf { it != mailbox })) mail.undo(actions)
+            if (offerUndo(toast, go.takeIf { it != mailbox })) takeBack(actions)
         }
     }
 
@@ -626,7 +632,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 return@launch
             }
             if (mailbox == from) messages = emptyList()
-            if (offerUndo(emptied)) mail.undo(actions)
+            if (offerUndo(emptied)) takeBack(actions)
         }
     }
 
