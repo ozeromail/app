@@ -1,7 +1,6 @@
 package com.ozeromail.app
 
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FiniteAnimationSpec
@@ -10,20 +9,27 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import kotlin.math.abs
+import kotlin.math.min
 import kotlin.math.pow
-import kotlinx.coroutines.flow.collectLatest
+import kotlin.math.sqrt
+import kotlinx.coroutines.flow.first
 
 /**
- * Spacing shared by every screen. Text lines up on [screen]; controls in the bottom bars
+ * Spacing shared by every screen. Text lines up on [screen], message rows on [row]; controls in the bottom bars
  * and the cards in a list keep their own edges, so each kind of thing sits the same way
  * everywhere.
  */
 object Gap {
     /** Titles, headers, fields and body text from the screen edge. */
     val screen = 20.dp
+
+    /** A message row's text from the screen edge: room for the unread dot alone before it. */
+    val row = 30.dp
 
     /** Rows of a sheet from its edge. */
     val sheet = 22.dp
@@ -129,12 +135,46 @@ object Motion {
 }
 
 /**
- * Keeps this value following [target] for as long as it is called: each new target takes over
- * the motion where it is, so the value never jumps, with the [spec] for that moment.
+ * Keeps this value following [target] for as long as it is called, on the [spring] for that
+ * moment, until it is within [rest] of it. It moves on every frame, from where it is and as fast as it was going, even while a
+ * finger moves the target on every frame too; a fresh animation each time would start still.
  */
-suspend fun Animatable<Float, AnimationVector1D>.follow(spec: (to: Float) -> AnimationSpec<Float>, target: () -> Float) {
-    snapshotFlow(target).collectLatest { animateTo(it, spec(it)) }
+suspend fun Animatable<Float, AnimationVector1D>.follow(spring: (to: Float) -> SpringSpec<Float>, rest: Float = 0.001f, target: () -> Float) {
+    var speed = 0f
+    var then = -1L
+    while (true) {
+        val to = target()
+        if (value == to && speed == 0f) {
+            snapshotFlow(target).first { it != value }
+            then = -1L
+            continue
+        }
+        val now = withFrameNanos { it }
+        // A stalled frame counts as a short one, so nothing leaps; the first moves at once.
+        var left = if (then < 0) FIRST_STEP_S else min(now - then, MAX_STEP_NS) / 1e9f
+        then = now
+        val spec = spring(to)
+        val k = spec.stiffness
+        val c = 2f * spec.dampingRatio * sqrt(k)
+        var x = value - to
+        // Small steps keep a stiff spring steady.
+        while (left > 0f) {
+            val dt = min(left, SUB_STEP_S)
+            speed += (-k * x - c * speed) * dt
+            x += speed * dt
+            left -= dt
+        }
+        if (abs(x) < rest && abs(speed) < rest * 10f) {
+            x = 0f
+            speed = 0f
+        }
+        snapTo(to + x)
+    }
 }
+
+private const val MAX_STEP_NS = 50_000_000L
+private const val SUB_STEP_S = 0.004f
+private const val FIRST_STEP_S = 1f / 60f
 
 /** A list row that slides into its new place when rows above it come or go. */
 fun LazyItemScope.rowMove(placement: FiniteAnimationSpec<IntOffset> = Motion.Row): Modifier =

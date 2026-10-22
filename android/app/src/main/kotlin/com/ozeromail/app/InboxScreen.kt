@@ -101,6 +101,7 @@ import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.VisibilityThreshold
 import androidx.compose.runtime.mutableIntStateOf
@@ -115,9 +116,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
@@ -127,7 +126,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -827,7 +825,6 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                             settings.swipeTipSeen = true
                         },
                         messages = messages,
-                        loadingOlder = loadingOlder,
                         tab = tab,
                         tabs = tabs,
                         others = others,
@@ -1044,8 +1041,6 @@ private fun InboxList(
     swipeTip: Boolean,
     onSwipeTip: () -> Unit,
     messages: List<MessageItem>,
-    /** Older mail is on its way from the servers. */
-    loadingOlder: Boolean,
     tab: Category,
     tabs: List<InboxTab>,
     /** The first rows of the other tabs, shown as their pages glide past. */
@@ -1117,6 +1112,12 @@ private fun InboxList(
     val lakeNow by rememberUpdatedState(lake)
     val holdNow by rememberUpdatedState(holdTo)
     var pressing by remember { mutableStateOf(false) }
+    // A pull the list never heard end, as when the screen changed under the finger, would leave
+    // its drop hanging: once the finger is up, and in another folder, the pull goes back.
+    suspend fun settlePull() {
+        if (!pressing && pull.distanceFraction > 0f) pull.animateToHidden()
+    }
+    LaunchedEffect(mailbox) { settlePull() }
     // How far the list is down, in pulls: with the finger, or held, and a finger pulls on from where it is held.
     val opened = { maxOf(pull.distanceFraction, held.value + if (pressing) pull.distanceFraction * 0.6f else 0f) }
     val sink = if (lake) Modifier else Modifier.graphicsLayer { translationY = pullGap(opened()) }
@@ -1198,6 +1199,11 @@ private fun InboxList(
                 }
                 val f = pull.distanceFraction
                 if (f >= TUG) drops.tryEmit(f)
+                // After the list has had its own say on this release.
+                glideScope.launch {
+                    withFrameNanos {}
+                    settlePull()
+                }
                 // The list stays where the finger left it, and is held or let go from there.
                 val at = opened()
                 pressing = false
@@ -1213,6 +1219,7 @@ private fun InboxList(
             indicator = {
                 if (!lake) {
                     PullWater(
+                        grey = !inbox,
                         fraction = { pull.distanceFraction },
                         depth = { with(density) { pullGap(opened()) } },
                         refreshing = refreshing,
@@ -1289,7 +1296,7 @@ private fun InboxList(
                         pull = rowPull,
                         index = index,
                     ) {
-                        if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.screen), color = colors.outlineVariant)
+                        if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.row), color = colors.outlineVariant)
                         SwipeRow(
                             message,
                             swipes,
@@ -1314,17 +1321,6 @@ private fun InboxList(
                                 },
                             )
                         }
-                    }
-                }
-                if (loadingOlder) {
-                    item(key = "older") {
-                        Text(
-                            stringResource(R.string.inbox_loading_older),
-                            color = colors.onSurfaceVariant,
-                            style = Type.Caption,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp).animateItem(),
-                        )
                     }
                 }
             }
@@ -1787,8 +1783,8 @@ val AccountItem.tint: Color
 fun rgb(color: UInt) = Color(0xFF000000 or color.toLong())
 
 /**
- * A row of a list. Unread shows as a blue dot and bold text; with several accounts, a strip
- * of the account's colour on the left and its name by the time mark it. While [choosing]
+ * A row of a list. Unread shows as a blue dot and bold text; with several accounts, the
+ * account's name by the time, after a small dot of its colour, marks it. While [choosing]
  * (0 to 1 as it begins), the row moves over for its mark, filled when [chosen].
  */
 @Composable
@@ -1808,30 +1804,14 @@ internal fun MessageRow(message: MessageItem, onClick: () -> Unit, choosing: Flo
 @Composable
 private fun MessageLine(message: MessageItem, unread: Boolean, dot: Float, account: AccountMark?, shift: Dp, modifier: Modifier) {
     val colors = MaterialTheme.colorScheme
+    // The left edge holds only the unread dot; the account's colour sits by its name.
     Row(
         modifier
             .fillMaxWidth()
-            .then(
-                if (account == null) {
-                    Modifier
-                } else {
-                    Modifier.drawBehind {
-                        val inset = 10.dp.toPx()
-                        val width = 4.dp.toPx()
-                        // Rounded on the right only: the left corners sit off the edge.
-                        drawRoundRect(
-                            account.tint,
-                            topLeft = Offset(-width, inset),
-                            size = Size(width * 2, size.height - inset * 2),
-                            cornerRadius = CornerRadius(3.dp.toPx()),
-                        )
-                    }
-                },
-            )
-            .padding(start = Gap.screen + shift, end = 16.dp, top = 12.dp, bottom = 12.dp),
+            .padding(start = Gap.row + shift, end = 18.dp, top = 16.dp, bottom = 16.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // The sender and count take what is left, so the time always ends at the edge.
                 Row(Modifier.weight(1f).padding(end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1843,11 +1823,11 @@ private fun MessageLine(message: MessageItem, unread: Boolean, dot: Float, accou
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier
                             .weight(1f, fill = false)
-                            // The unread dot hangs in the margin, so text lines up with the title.
+                            // The unread dot hangs in the margin before the text.
                             .drawBehind {
                                 if (dot > 0f) {
-                                    val x = if (layoutDirection == LayoutDirection.Ltr) -9.dp.toPx() else size.width + 9.dp.toPx()
-                                    drawCircle(colors.accent.copy(alpha = dot), 4.dp.toPx() * (0.4f + 0.6f * dot), Offset(x, size.height / 2))
+                                    val x = if (layoutDirection == LayoutDirection.Ltr) -13.5.dp.toPx() else size.width + 13.5.dp.toPx()
+                                    drawCircle(colors.accent.copy(alpha = dot), 3.5.dp.toPx() * (0.4f + 0.6f * dot), Offset(x, size.height / 2))
                                 }
                             },
                     )
@@ -1864,13 +1844,14 @@ private fun MessageLine(message: MessageItem, unread: Boolean, dot: Float, accou
                     }
                 }
                 account?.let {
+                    AccountDot(it.tint, size = 6.dp)
                     Text(
                         it.name,
                         color = colors.onSurfaceVariant,
                         style = Type.Label,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.widthIn(max = 70.dp).padding(end = 8.dp),
+                        modifier = Modifier.widthIn(max = 70.dp).padding(start = 5.dp, end = 8.dp),
                     )
                 }
                 Text(
@@ -1954,7 +1935,10 @@ private fun thumbSpring(velocity: Float): SpringSpec<Float> = if (abs(velocity) 
 private const val FLING = 2f
 
 /** A tab thumb's edge: the front one leads, quicker than the finger's spring; the back one follows through the water. */
-private fun edgeSpring(lead: Boolean): SpringSpec<Float> = spring(dampingRatio = 1f, stiffness = if (lead) 1540f else 315f)
+private fun edgeSpring(lead: Boolean): SpringSpec<Float> = if (lead) EDGE_LEADS else EDGE_FOLLOWS
+
+private val EDGE_LEADS = spring<Float>(dampingRatio = 1f, stiffness = 1540f)
+private val EDGE_FOLLOWS = spring<Float>(dampingRatio = 1f, stiffness = 315f)
 
 /** The least a pulled refresh lasts: the drop's fall and its first rings. */
 private const val PULLED_MS = 1100L
@@ -1982,7 +1966,7 @@ private fun Afloat(
     val depthNow by rememberUpdatedState(depth)
     val thumbNow by rememberUpdatedState(thumb)
     LaunchedEffect(Unit) { along.follow({ Motion.behind(depthNow(), Motion.POUR) }) { thumbNow() } }
-    if (pull != null) LaunchedEffect(pull, index) { drawn.follow({ Motion.drift() }) { pull.near(index) } }
+    if (pull != null) LaunchedEffect(pull, index) { drawn.follow({ DRIFT }, rest = 0.5f) { pull.near(index) } }
     Column(modifier.glided { along.value - page }.graphicsLayer { translationX = drawn.value }) { content() }
 }
 
@@ -2021,7 +2005,7 @@ private fun Page(at: Int, rows: List<MessageItem>, words: Pair<Int, Int>, water:
             val colors = MaterialTheme.colorScheme
             rows.forEachIndexed { index, message ->
                 Afloat(thumb, at, depth = { index.coerceAtMost(8) }, modifier = Modifier) {
-                    if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.screen), color = colors.outlineVariant)
+                    if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.row), color = colors.outlineVariant)
                     MessageRow(message, onClick = {})
                 }
             }
@@ -2041,6 +2025,9 @@ private fun emptyWords(inbox: Boolean, allEmpty: Boolean, tab: Category): Pair<I
 
 /** How long a page stays after the thumb has left it, while its lower rows catch up. */
 private const val PAGE_LINGER_MS = 1200L
+
+/** How a row's neighbours drift after it, as through water. */
+private val DRIFT = Motion.drift<Float>()
 
 /** How far a pull must go, in pulls, to drop a drop when let go. */
 private const val TUG = 1f / 3f

@@ -95,7 +95,7 @@ fun SearchScreen(
             // new places or the note fading out would pass over the rows that appear at once.
             itemsIndexed(messages, key = { _, it -> it.id }) { index, message ->
                 Column {
-                    if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.screen), color = colors.outlineVariant)
+                    if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.row), color = colors.outlineVariant)
                     MessageRow(message, onClick = { onOpen(message) })
                 }
             }

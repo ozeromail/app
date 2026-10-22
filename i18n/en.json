@@ -108,7 +108,6 @@
   "action_unread": "Unread",
   "account_name": "Name",
   "account_name_hint": "Shown in the list and on your mail; only on this phone.",
-  "inbox_loading_older": "Loading older mail…",
   "inbox_checking": "Checking for mail…",
   "account_keep": "Keep on this phone",
   "account_keep_month": "Month",
