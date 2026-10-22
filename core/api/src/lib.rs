@@ -1212,17 +1212,18 @@ impl Core {
         // Mail first: an action may take a forwarded message off the device, and its files
         // with it. Mail that cannot go does not hold the actions back.
         let mailed = self.push_mail(account, secret, slot).await;
-        self.send_ops(account, secret, slot).await?;
+        // Boxed, as below: connecting inline overflows a debug build's stack.
+        Box::pin(self.send_ops(account, secret, slot)).await?;
         // Moved mail shows in its new folder as a copy; a sync there brings the server's own,
         // so what the person did to the copy meanwhile can go too.
         let unclaimed = self.store.unclaimed(account.id)?;
         if !unclaimed.is_empty() {
-            let remote = self.remote(slot, account, secret).await?;
+            let remote = Box::pin(self.remote(slot, account, secret)).await?;
             let (parser, since) = (&self.parser, keep_since(account.keep_days));
             let synced = sync_folders(&self.store, remote, parser, &unclaimed, SYNC_LIMIT, since);
             // The actions went already: what waits on the copies goes with a later push.
-            if synced.await.is_ok() {
-                self.send_ops(account, secret, slot).await?;
+            if Box::pin(synced).await.is_ok() {
+                Box::pin(self.send_ops(account, secret, slot)).await?;
             }
         }
         mailed
