@@ -526,7 +526,11 @@ private fun From(message: MessageItem, open: Boolean, files: Int, filesAt: Bring
         val context = LocalContext.current
         Column(Modifier.align(Alignment.Top).padding(top = 2.dp), horizontalAlignment = Alignment.End) {
             Text(
-                if (open) longDate(context, message.date) else shortDate(context, message.date),
+                when {
+                    message.sending -> stringResource(R.string.inbox_sending)
+                    open -> longDate(context, message.date)
+                    else -> shortDate(context, message.date)
+                },
                 color = colors.onSurfaceVariant,
                 style = Type.Caption,
             )
