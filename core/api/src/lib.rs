@@ -1535,6 +1535,11 @@ mod android {
         _class: JClass<'caller>,
         context: JObject<'caller>,
     ) {
+        android_logger::init_once(
+            android_logger::Config::default()
+                .with_tag("ozero")
+                .with_max_level(log::LevelFilter::Info),
+        );
         env.with_env(|env| {
             rustls_platform_verifier::android::init_with_env(env, context)?;
             READY.store(true, Ordering::Release);

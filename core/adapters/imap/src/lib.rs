@@ -1,6 +1,8 @@
 //! `MailProvider` over IMAP4rev1. Parsing is imap-codec's; the session flow is ours.
 
 mod utf7;
+#[cfg(any(target_os = "android", test))]
+mod verify;
 
 use std::collections::HashSet;
 use std::num::NonZeroU32;
@@ -80,10 +82,20 @@ pub use tokio_rustls::rustls;
 /// TLS settings that trust the same root certificates as the OS.
 /// On Android the verifier must be initialized from Kotlin first.
 pub fn platform_tls() -> Result<Arc<ClientConfig>, ProviderError> {
-    use rustls_platform_verifier::ConfigVerifierExt;
-    ClientConfig::with_platform_verifier()
-        .map(Arc::new)
-        .map_err(|e| ProviderError::Network(e.to_string()))
+    use tokio_rustls::rustls::client::danger::ServerCertVerifier;
+
+    let builder = ClientConfig::builder();
+    let os: Arc<dyn ServerCertVerifier> = Arc::new(
+        rustls_platform_verifier::Verifier::new(builder.crypto_provider().clone())
+            .map_err(|e| ProviderError::Network(e.to_string()))?,
+    );
+    #[cfg(target_os = "android")]
+    let os = Arc::new(verify::RecheckRevoked(os));
+    let config = builder
+        .dangerous()
+        .with_custom_certificate_verifier(os)
+        .with_no_client_auth();
+    Ok(Arc::new(config))
 }
 
 /// The tagged end of a command and the untagged responses before it.
