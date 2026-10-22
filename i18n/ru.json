@@ -108,6 +108,7 @@
   "account_name": "Название",
   "account_name_hint": "Видно в списке и у писем, только на этом телефоне.",
   "inbox_loading_older": "Загружаются старые письма…",
+  "inbox_checking": "Проверка почты…",
   "account_keep": "Хранить на телефоне",
   "account_keep_month": "Месяц",
   "account_keep_quarter": "3 месяца",
