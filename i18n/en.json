@@ -120,6 +120,7 @@
   "folder_all_flagged": "All flagged",
   "folder_all_sent": "All sent",
   "folder_all_archive": "All archived",
+  "folder_all_trash": "All trash",
   "action_delete_forever": "Delete forever",
   "action_empty_trash": "Empty Trash",
   "action_empty_junk": "Empty Spam",

@@ -334,12 +334,26 @@ impl Core {
         self.hold_move(message, Action::Delete)
     }
 
-    /// Empties a trash or spam folder for good, held like `archive`: on the server too, mail
-    /// the app has not loaded included. Returns the actions for `undo`.
-    pub fn empty_folder(&self, folder: i64) -> Result<Vec<i64>, CoreError> {
-        Ok(ids(self
-            .store
-            .queue_empty(FolderId(folder), now() + HOLD)?))
+    /// Empties a trash or spam mailbox for good, every account's for a unified one, held like
+    /// `archive`: on the server too, mail the app has not loaded included. Returns the actions
+    /// for `undo`.
+    pub fn empty_mailbox(&self, mailbox: Mailbox) -> Result<Vec<i64>, CoreError> {
+        let folders = match mailbox {
+            Mailbox::Folder { id } => vec![FolderId(id)],
+            Mailbox::Unified { role } => {
+                let mut folders = vec![];
+                for account in self.store.accounts()? {
+                    let all = self.store.folders(account.id)?;
+                    folders.extend(all.into_iter().filter(|f| f.role == role).map(|f| f.id));
+                }
+                folders
+            }
+        };
+        let mut ops = vec![];
+        for folder in folders {
+            ops.extend(self.store.queue_empty(folder, now() + HOLD)?);
+        }
+        Ok(ids(ops))
     }
 
     /// An answer to `message` from the account that got it, `Re: ` once: to its sender, or
@@ -1198,12 +1212,35 @@ impl Core {
         // Mail first: an action may take a forwarded message off the device, and its files
         // with it. Mail that cannot go does not hold the actions back.
         let mailed = self.push_mail(account, secret, slot).await;
+        self.send_ops(account, secret, slot).await?;
+        // Moved mail shows in its new folder as a copy; a sync there brings the server's own,
+        // so what the person did to the copy meanwhile can go too.
+        let unclaimed = self.store.unclaimed(account.id)?;
+        if !unclaimed.is_empty() {
+            let remote = self.remote(slot, account, secret).await?;
+            let (parser, since) = (&self.parser, keep_since(account.keep_days));
+            let synced = sync_folders(&self.store, remote, parser, &unclaimed, SYNC_LIMIT, since);
+            // The actions went already: what waits on the copies goes with a later push.
+            if synced.await.is_ok() {
+                self.send_ops(account, secret, slot).await?;
+            }
+        }
+        mailed
+    }
+
+    /// Sends the account's due actions; connects only when there are any.
+    async fn send_ops(
+        &self,
+        account: &Account,
+        secret: &str,
+        slot: &mut Option<Remote>,
+    ) -> Result<(), CoreError> {
         let ops = self.store.due(account.id, now())?;
         if !ops.is_empty() {
             let remote = self.remote(slot, account, secret).await?;
             push_ops(&self.store, remote, ops).await?;
         }
-        mailed
+        Ok(())
     }
 
     /// Sends the account's due mail, one message at a time, so only one message's files are

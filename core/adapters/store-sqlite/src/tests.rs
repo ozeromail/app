@@ -722,10 +722,9 @@ fn trash_moves_the_message_like_archive() {
     assert_eq!(store.location(id).unwrap_err(), StoreError::NotFound);
 }
 
-#[test]
-fn deletes_for_good_only_from_the_trash() {
-    let store = store();
-    let account = account(&store, "a@example.com");
+/// An account with an inbox and a trash.
+fn inbox_and_trash(store: &SqliteStore) -> (AccountId, FolderId, FolderId) {
+    let account = account(store, "a@example.com");
     let folders = store
         .save_folders(
             account,
@@ -743,7 +742,186 @@ fn deletes_for_good_only_from_the_trash() {
             ],
         )
         .unwrap();
-    let (inbox, trash) = (folders[0].id, folders[1].id);
+    (account, folders[0].id, folders[1].id)
+}
+
+/// `message(uid)` as the server lists it in another folder, under `remote_id`.
+fn moved(uid: u32, date: i64, remote_id: &str) -> NewMessage {
+    NewMessage {
+        remote_id: remote_id.into(),
+        ..message(uid, date)
+    }
+}
+
+fn ids(rows: &[MessageRow]) -> Vec<MessageId> {
+    rows.iter().map(|r| r.id).collect()
+}
+
+#[test]
+fn moved_mail_shows_in_its_new_folder_at_once() {
+    let store = store();
+    let (account, inbox, trash) = inbox_and_trash(&store);
+    store
+        .save_messages(inbox, &[message(1, 100), message(2, 200)])
+        .unwrap();
+    let rows = list(&store, ListScope::Folder(inbox), 10, None);
+    let (two, one) = (rows[0].id, rows[1].id);
+    let body = Body {
+        text: "Hi".into(),
+        ..Body::default()
+    };
+    store.save_body(one, &body).unwrap();
+    store.queue(one, Action::Seen(true), 0).unwrap();
+    store.finish(&store.due(account, 0).unwrap()).unwrap();
+
+    let held = store.queue(one, Action::Trash, 50).unwrap();
+    store.queue(two, Action::Trash, 50).unwrap();
+    assert!(list(&store, ListScope::Folder(inbox), 10, None).is_empty());
+    let copies = list(&store, ListScope::Unified(FolderRole::Trash), 10, None);
+    assert_eq!(copies.len(), 2);
+    let copy = copies[1].id;
+    assert_eq!(copies[1].role, FolderRole::Trash);
+    assert!(copies[1].flags.seen);
+    assert_eq!(store.body(copy).unwrap(), Some(body));
+    // Until the move is sent, the message is where it was.
+    assert_eq!(
+        store.location(copy).unwrap(),
+        MessageLocation {
+            id: copy,
+            ..store.location(one).unwrap()
+        }
+    );
+    // Taking the move back takes the copy too.
+    assert!(store.undo(&held, 49).unwrap());
+    assert_eq!(
+        ids(&list(&store, ListScope::Folder(inbox), 10, None)),
+        [one]
+    );
+    assert_eq!(list(&store, ListScope::Folder(trash), 10, None).len(), 1);
+    assert_eq!(store.body(copy).unwrap(), None);
+
+    // A sync of the trash before the server has the move keeps the copy.
+    store.save_messages(trash, &[message(3, 50)]).unwrap();
+    assert_eq!(list(&store, ListScope::Folder(trash), 10, None).len(), 2);
+    let due = store.due(account, 50).unwrap();
+    assert_eq!(due.len(), 1);
+    assert!(store.unclaimed(account).unwrap().is_empty());
+    store.finish(&due).unwrap();
+    let copy = list(&store, ListScope::Folder(trash), 10, None)[0].id;
+    assert_eq!(
+        store.location(copy).unwrap().remote_id,
+        format!("~{}", two.0)
+    );
+    store.queue(copy, Action::Seen(false), 60).unwrap();
+    assert!(store.due(account, 60).unwrap().is_empty());
+    assert_eq!(store.next_send(account).unwrap(), None);
+    let unclaimed = store.unclaimed(account).unwrap();
+    assert_eq!(unclaimed.iter().map(|f| f.id).collect::<Vec<_>>(), [trash]);
+    // Not something the server knows by that id.
+    assert_eq!(store.checkpoint(trash).unwrap().1, ["3"]);
+
+    // The server's own takes the copy's place, under its id.
+    store.save_messages(trash, &[moved(2, 200, "7")]).unwrap();
+    let rows = list(&store, ListScope::Folder(trash), 10, None);
+    assert_eq!((rows.len(), rows[0].id), (2, copy));
+    assert_eq!(store.location(copy).unwrap().remote_id, "7");
+    assert!(store.unclaimed(account).unwrap().is_empty());
+    assert_eq!(store.due(account, 60).unwrap()[0].location.remote_id, "7");
+}
+
+#[test]
+fn a_copy_the_server_does_not_bring_goes() {
+    let store = store();
+    let (account, inbox, trash) = inbox_and_trash(&store);
+    store.save_messages(inbox, &[message(1, 100)]).unwrap();
+    let id = list(&store, ListScope::Folder(inbox), 10, None)[0].id;
+    store.queue(id, Action::Trash, 0).unwrap();
+    store.finish(&store.due(account, 0).unwrap()).unwrap();
+    assert_eq!(list(&store, ListScope::Folder(trash), 10, None).len(), 1);
+    // A page of older mail leaves it.
+    store.save_messages(trash, &[message(4, 50)]).unwrap();
+    assert_eq!(list(&store, ListScope::Folder(trash), 10, None).len(), 2);
+    let checkpoint = Checkpoint {
+        validity: 0,
+        next: 6,
+    };
+    store
+        .save_changes(trash, &changes(checkpoint, vec![message(5, 500)]))
+        .unwrap();
+    let rows = list(&store, ListScope::Folder(trash), 10, None);
+    assert_eq!(subjects(&rows), ["Subject 5", "Subject 4"]);
+}
+
+#[test]
+fn a_new_validity_keeps_copies_for_the_server_to_claim() {
+    let store = store();
+    let (account, inbox, trash) = inbox_and_trash(&store);
+    store.save_messages(inbox, &[message(1, 100)]).unwrap();
+    let id = list(&store, ListScope::Folder(inbox), 10, None)[0].id;
+    store.queue(id, Action::Trash, 0).unwrap();
+    store.finish(&store.due(account, 0).unwrap()).unwrap();
+    let copy = list(&store, ListScope::Folder(trash), 10, None)[0].id;
+    let checkpoint = Checkpoint {
+        validity: 9,
+        next: 0,
+    };
+    store
+        .save_changes(trash, &changes(checkpoint, vec![moved(1, 100, "4")]))
+        .unwrap();
+    assert_eq!(
+        ids(&list(&store, ListScope::Folder(trash), 10, None)),
+        [copy]
+    );
+}
+
+#[test]
+fn trash_a_batch_then_empty_the_trash() {
+    let store = store();
+    let (account, inbox, trash) = inbox_and_trash(&store);
+    store
+        .save_messages(inbox, &[message(1, 100), message(2, 200)])
+        .unwrap();
+    store.save_messages(trash, &[message(3, 300)]).unwrap();
+    for row in list(&store, ListScope::Folder(inbox), 10, None) {
+        store.queue(row.id, Action::Trash, 10).unwrap();
+    }
+    assert_eq!(list(&store, ListScope::Folder(trash), 10, None).len(), 3);
+
+    // Emptying shows at once; the copies are deleted by id once the server has them there.
+    let emptied = store.queue_empty(trash, 20).unwrap();
+    assert_eq!(emptied.len(), 3);
+    assert!(list(&store, ListScope::Folder(trash), 10, None).is_empty());
+    assert!(list(&store, ListScope::Folder(inbox), 10, None).is_empty());
+    let due = store.due(account, 20).unwrap();
+    let actions: Vec<_> = due.iter().map(|o| o.action).collect();
+    assert_eq!(actions, [Action::Trash, Action::Trash, Action::Empty]);
+    assert!(store.others(&due[2..]).unwrap().is_empty());
+    store.finish(&due).unwrap();
+    assert!(store.due(account, 20).unwrap().is_empty());
+    assert_eq!(store.unclaimed(account).unwrap().len(), 1);
+
+    store
+        .save_messages(trash, &[moved(1, 100, "8"), moved(2, 200, "9")])
+        .unwrap();
+    assert!(list(&store, ListScope::Folder(trash), 10, None).is_empty());
+    let due = store.due(account, 20).unwrap();
+    let mut sent: Vec<_> = due
+        .iter()
+        .map(|o| (o.action, o.location.remote_id.as_str()))
+        .collect();
+    sent.sort_unstable();
+    assert_eq!(sent, [(Action::Delete, "8"), (Action::Delete, "9")]);
+    store.finish(&due).unwrap();
+    assert!(store.due(account, 20).unwrap().is_empty());
+    assert!(store.unclaimed(account).unwrap().is_empty());
+    store.save_messages(trash, &[]).unwrap();
+    assert!(list(&store, ListScope::Folder(trash), 10, None).is_empty());
+}
+
+#[test]
+fn deletes_for_good_only_from_the_trash() {
+    let store = store();
+    let (account, inbox, trash) = inbox_and_trash(&store);
     store.save_messages(inbox, &[message(1, 100)]).unwrap();
     store
         .save_messages(trash, &[message(2, 200), message(3, 300)])
@@ -1336,8 +1514,14 @@ fn search_finds_words_in_subject_sender_and_body() {
     assert_eq!(found("  "), "");
 
     archive_folder(&store, account);
+    // Being archived, it is found once: in the archive.
     store.queue(id(3), Action::Archive, 0).unwrap();
-    assert_eq!(found("anna"), "Subject 1");
+    assert_eq!(found("anna"), "Subject 3, Subject 1");
+    let archived = &store.search("invoice", 10).unwrap()[0];
+    assert_eq!(
+        (archived.id == id(3), archived.role),
+        (false, FolderRole::Archive)
+    );
 }
 
 #[test]

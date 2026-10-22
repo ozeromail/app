@@ -295,6 +295,8 @@ pub struct Memory {
     /// What `due` returns, and which ops were finished or reverted.
     pub ops: Vec<Op>,
     pub finished: Mutex<Vec<OpId>>,
+    /// What `unclaimed` returns.
+    pub unclaimed: Vec<Folder>,
     pub reverted: Mutex<Vec<OpId>>,
     pub sent: Mutex<Vec<OutboxId>>,
     pub refused: Mutex<Vec<(OutboxId, String)>>,
@@ -488,6 +490,10 @@ impl Store for Memory {
             .unwrap()
             .extend(ops.iter().map(|o| o.id));
         Ok(())
+    }
+
+    fn unclaimed(&self, _: AccountId) -> Result<Vec<Folder>, StoreError> {
+        Ok(self.unclaimed.clone())
     }
 
     fn queue_send(

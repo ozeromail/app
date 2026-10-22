@@ -231,10 +231,11 @@ class Mail(private val context: Context) {
     /** As [archive], but gone from the server for good: for mail in the trash. */
     suspend fun deleteForever(message: MessageItem): List<Long> = move(message) { core.deleteForever(it) }
 
-    /** Empties a trash or spam [folder] for good, mail not loaded included, held like [archive]. */
-    suspend fun emptyFolder(folder: FolderItem): List<Long> {
-        val actions = io { core.emptyFolder(folder.id) }
-        push(folder.accountId)
+    /** Empties a trash or spam [mailbox] for good, mail not loaded included, held like [archive]. */
+    suspend fun emptyMailbox(mailbox: Mailbox): List<Long> {
+        val actions = io { core.emptyMailbox(mailbox) }
+        // An account with nothing to send does not connect.
+        io { core.accounts() }.forEach { push(it.id) }
         return actions
     }
 

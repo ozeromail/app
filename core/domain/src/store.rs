@@ -102,16 +102,19 @@ pub trait Store: Send + Sync {
     /// Applies the action to the message's conversation in its folder and inbox tab now, in one transaction,
     /// and queues it for the server from `not_before`: the message itself, and the others
     /// where it changes something; marking unread leaves the others alone. It replaces queued actions of the same kind. Lists leave
-    /// out a message being moved; a move fails with `NoArchive` or `NoTrash` if the account
-    /// has no such folder, and with `NotAllowed` where the message's folder does not allow it.
+    /// out a message being moved, and show a copy of it in the folder it goes to until a sync
+    /// of that folder brings the server's own; actions on the copy wait for that. A move fails
+    /// with `NoArchive` or `NoTrash` if the account has no such folder, and with `NotAllowed`
+    /// where the message's folder does not allow it.
     fn queue(
         &self,
         message: MessageId,
         action: Action,
         not_before: i64,
     ) -> Result<Vec<OpId>, StoreError>;
-    /// Queues `Action::Empty` on every message of a folder, as `queue` would one by one.
-    /// Fails with `NotAllowed` for any folder but the trash or spam.
+    /// Queues `Action::Empty` on every message of a folder, as `queue` would one by one, and
+    /// `Action::Delete` on copies of mail moved there. Fails with `NotAllowed` for any folder
+    /// but the trash or spam.
     fn queue_empty(&self, folder: FolderId, not_before: i64) -> Result<Vec<OpId>, StoreError>;
     /// The `remote_id`s of the messages saved in the folder of `ops` that they leave out.
     fn others(&self, ops: &[Op]) -> Result<Vec<String>, StoreError>;
@@ -120,11 +123,15 @@ pub trait Store: Send + Sync {
     fn undo(&self, ops: &[OpId], now: i64) -> Result<bool, StoreError>;
     /// When the account's next held action or message may be sent, if one is held.
     fn next_send(&self, account: AccountId) -> Result<Option<i64>, StoreError>;
-    /// The account's queued actions that may be sent at `now`, oldest first.
+    /// The account's queued actions that may be sent at `now`, oldest first, but those on
+    /// copies of moved mail.
     fn due(&self, account: AccountId, now: i64) -> Result<Vec<Op>, StoreError>;
     /// The server has the actions: forget them, unless the user changed one since `due`.
-    /// An archived message is dropped: it now lives in a folder that is synced on its own.
+    /// A moved message is dropped: its copy shows it in the folder it went to.
     fn finish(&self, ops: &[Op]) -> Result<(), StoreError>;
+    /// The account's folders with copies of moved mail whose move the server has: a sync of
+    /// them puts the server's own messages in their place, so actions on them can be sent.
+    fn unclaimed(&self, account: AccountId) -> Result<Vec<Folder>, StoreError>;
     /// Queues a message to be sent from `not_before`, and forgets the saved draft it was
     /// written in, if any. Fails with `NotFound` if the account or the message it answers is
     /// gone.
