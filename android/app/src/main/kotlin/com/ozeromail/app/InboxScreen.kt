@@ -581,12 +581,12 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         remove(gone, if (forever) deleted else trashed, FolderRole.TRASH.takeUnless { forever }, move, reset)
     }
 
-    /** Empties a trash or spam folder for good, on the server too; the toast can take it back for a moment. */
-    fun empty(folder: FolderItem) {
+    /** Empties the open trash or spam for good, on the server too; the toast can take it back for a moment. */
+    fun empty() {
         val from = mailbox
         scope.launch {
             val actions = try {
-                mail.emptyFolder(folder)
+                mail.emptyMailbox(from)
             } catch (e: CoreException) {
                 error = e.text()
                 return@launch
@@ -815,7 +815,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         onCompose = { composing = Composing(NEW_DRAFT) },
                         onGo = { mailbox = it },
                         onBack = { mailbox = Mail.INBOX }.takeIf { mailbox != Mail.INBOX },
-                        empty = openFolder?.let { folder -> folder.role.emptyLabel()?.let { it to { empty(folder) } } },
+                        empty = mailboxRole(mailbox, openFolder)?.emptyLabel()?.let { it to { empty() } },
                         chosen = chosen,
                         onChoose = { chosen = it },
                         onRead = { read -> choice { setRead(it, read) } },
@@ -1307,6 +1307,12 @@ private fun InboxList(
 private fun mailboxTitle(mailbox: Mailbox, folder: FolderItem?): String = when (mailbox) {
     is Mailbox.Unified -> mailbox.role.title("")
     is Mailbox.Folder -> folder?.title().orEmpty()
+}
+
+/** What the mailbox holds: its role, or [folder]'s. */
+private fun mailboxRole(mailbox: Mailbox, folder: FolderItem?): FolderRole? = when (mailbox) {
+    is Mailbox.Unified -> mailbox.role
+    is Mailbox.Folder -> folder?.role
 }
 
 /** Whose mail it is, when there are several accounts: all of theirs, or [folder]'s account's. */

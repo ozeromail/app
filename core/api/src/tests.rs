@@ -304,6 +304,27 @@ fn syncs_an_imap_inbox_into_the_list() {
         headers.iter().any(|h| h.contains("Message-ID: <")),
         "{headers:?}"
     );
+
+    // Archived mail shows in the archive at once; after the push the server's copy takes its
+    // place under the same id.
+    let archive = Mailbox::Unified {
+        role: FolderRole::Archive,
+    };
+    let archived = || {
+        let rows = core.mailbox(archive, 50).unwrap();
+        rows.into_iter()
+            .find(|m| m.subject == "Message 3")
+            .map(|m| m.id)
+    };
+    core.archive(inbox[0].id).unwrap();
+    let copy = archived().unwrap();
+    runtime
+        .block_on(core.push_actions(account, "pass".into()))
+        .unwrap();
+    assert_eq!(archived(), Some(copy));
+    let location = core.store.location(MessageId(copy)).unwrap();
+    assert_eq!(location.folder_remote_id, "Archive");
+    assert!(location.remote_id.parse::<u32>().is_ok(), "{location:?}");
 }
 
 /// The message list of the Mailpit test server, as JSON.

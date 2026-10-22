@@ -247,4 +247,13 @@ pub const MIGRATIONS: &[&str] = &[
     ALTER TABLE draft ADD COLUMN forward INTEGER REFERENCES message(id) ON DELETE SET NULL;
     ALTER TABLE outbox ADD COLUMN forward INTEGER REFERENCES message(id) ON DELETE SET NULL;
     ",
+    // 25: a moved message shows in the folder it goes to at once, as a copy. `stand_in` marks
+    // the copy until a sync of that folder finds the server's own message; `op.copy` is the
+    // copy a move made, dropped with the move.
+    "
+    ALTER TABLE message ADD COLUMN stand_in INTEGER NOT NULL DEFAULT 0;
+    CREATE INDEX message_stand_in ON message(folder_id) WHERE stand_in = 1;
+    ALTER TABLE op ADD COLUMN copy INTEGER REFERENCES message(id) ON DELETE SET NULL;
+    CREATE INDEX op_copy ON op(copy) WHERE copy IS NOT NULL;
+    ",
 ];

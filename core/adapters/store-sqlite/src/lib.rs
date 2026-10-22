@@ -103,6 +103,19 @@ fn migrate(conn: &Connection) -> Result<(), StoreError> {
     Ok(())
 }
 
+/// `$m` is a copy of moved mail whose move the server has, so a sync can find the server's
+/// own message in its place.
+macro_rules! unclaimed {
+    ($m:literal) => {
+        concat!(
+            $m,
+            ".stand_in = 1 AND NOT EXISTS (SELECT 1 FROM op WHERE op.copy = ",
+            $m,
+            ".id)"
+        )
+    };
+}
+
 impl Store for SqliteStore {
     fn add_account(&self, account: &NewAccount) -> Result<AccountId, StoreError> {
         let mut conn = self.conn();
@@ -292,15 +305,7 @@ impl Store for SqliteStore {
                 "SELECT id, remote_id, name, role FROM folder WHERE account_id = ?1 ORDER BY id",
             )
             .map_err(storage)?;
-        let rows = stmt.query_map([account.0], |r| {
-            Ok(Folder {
-                id: FolderId(r.get(0)?),
-                account_id: account,
-                remote_id: r.get(1)?,
-                name: r.get(2)?,
-                role: r.get::<_, Role>(3)?.0,
-            })
-        });
+        let rows = stmt.query_map([account.0], folder_row(account));
         rows.and_then(|rows| rows.collect()).map_err(storage)
     }
 
@@ -322,7 +327,9 @@ impl Store for SqliteStore {
             .map_err(storage)?
             .ok_or(StoreError::NotFound)?;
         let known = conn
-            .prepare_cached("SELECT remote_id FROM message WHERE folder_id = ?1 AND found = 0")
+            .prepare_cached(
+                "SELECT remote_id FROM message WHERE folder_id = ?1 AND found = 0 AND stand_in = 0",
+            )
             .and_then(|mut s| s.query_map([folder.0], |r| r.get(0))?.collect())
             .map_err(storage)?;
         Ok((checkpoint, known))
@@ -331,7 +338,7 @@ impl Store for SqliteStore {
     fn oldest(&self, folder: FolderId) -> Result<Option<i64>, StoreError> {
         self.conn()
             .query_row(
-                "SELECT min(date) FROM message WHERE folder_id = ?1 AND found = 0",
+                "SELECT min(date) FROM message WHERE folder_id = ?1 AND found = 0 AND stand_in = 0",
                 [folder.0],
                 |r| r.get(0),
             )
@@ -368,6 +375,20 @@ impl Store for SqliteStore {
     ) -> Result<(), StoreError> {
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(storage)?;
+        // A page of older mail keeps the checkpoint, and never holds mail moved here since.
+        let reached_new: bool = tx
+            .query_row(
+                "SELECT validity IS NOT ?2 OR next_id IS NOT ?3 FROM folder WHERE id = ?1",
+                params![
+                    folder.0,
+                    changes.checkpoint.validity,
+                    i64::try_from(changes.checkpoint.next).unwrap_or(0)
+                ],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(storage)?
+            .unwrap_or(false);
         reset_if_new(&tx, folder, changes.checkpoint.validity)?;
         {
             let mut flags = tx.prepare_cached(SAVE_FLAGS).map_err(storage)?;
@@ -385,6 +406,18 @@ impl Store for SqliteStore {
             }
         }
         upsert_messages(&tx, folder, &changes.new)?;
+        // A copy of moved mail the server's own did not take the place of: the server has it
+        // somewhere this sync did not reach, such as older mail.
+        if reached_new {
+            tx.execute(
+                concat!(
+                    "DELETE FROM message WHERE folder_id = ?1 AND ",
+                    unclaimed!("message")
+                ),
+                [folder.0],
+            )
+            .map_err(storage)?;
+        }
         tx.execute(
             "UPDATE folder SET next_id = ?2 WHERE id = ?1 AND next_id IS NOT ?2",
             params![
@@ -566,8 +599,10 @@ impl Store for SqliteStore {
     fn location(&self, message: MessageId) -> Result<MessageLocation, StoreError> {
         self.conn()
             .prepare_cached(
+                // A copy of moved mail is where the message is until the move is sent.
                 "SELECT f.account_id, f.remote_id, f.validity, m.remote_id
-                 FROM message m JOIN folder f ON f.id = m.folder_id WHERE m.id = ?1",
+                 FROM message m JOIN folder f ON f.id = m.folder_id
+                 WHERE m.id = coalesce((SELECT message_id FROM op WHERE copy = ?1), ?1)",
             )
             .and_then(|mut s| {
                 s.query_row([message.0], |r| {
@@ -732,13 +767,22 @@ impl Store for SqliteStore {
         let ids = tx
             .prepare_cached(FOLDER_MESSAGES)
             .and_then(|mut s| {
-                s.query_map([folder.0], |r| r.get(0))?
-                    .collect::<Result<Vec<i64>, _>>()
+                s.query_map([folder.0], |r| Ok((r.get(0)?, r.get(1)?)))?
+                    .collect::<Result<Vec<(i64, bool)>, _>>()
             })
             .map_err(storage)?;
+        // A copy of moved mail goes on its own once the server has it there: emptying again
+        // then would take what arrived since.
         let ops = ids
             .into_iter()
-            .map(|id| queue_one(&tx, MessageId(id), Action::Empty, not_before))
+            .map(|(id, stand_in)| {
+                let action = if stand_in {
+                    Action::Delete
+                } else {
+                    Action::Empty
+                };
+                queue_one(&tx, MessageId(id), action, not_before)
+            })
             .collect::<Result<Vec<_>, _>>()?;
         tx.commit().map_err(storage)?;
         Ok(ops)
@@ -752,7 +796,7 @@ impl Store for SqliteStore {
             .conn()
             .prepare_cached(
                 "SELECT m.remote_id FROM message m JOIN folder f ON f.id = m.folder_id
-                 WHERE f.account_id = ?1 AND f.remote_id = ?2",
+                 WHERE f.account_id = ?1 AND f.remote_id = ?2 AND m.stand_in = 0",
             )
             .and_then(|mut s| {
                 s.query_map(
@@ -774,7 +818,8 @@ impl Store for SqliteStore {
         for op in ops {
             let taken = take_back(
                 &tx,
-                "DELETE FROM op WHERE id = ?1 AND not_before > ?2 RETURNING message_id, kind, undo",
+                "DELETE FROM op WHERE id = ?1 AND not_before > ?2
+                 RETURNING message_id, kind, undo, copy",
                 *op,
                 now,
             )?;
@@ -793,7 +838,7 @@ impl Store for SqliteStore {
                      SELECT min(o.not_before) AS at
                      FROM op o JOIN message m ON m.id = o.message_id
                      JOIN folder f ON f.id = m.folder_id
-                     WHERE f.account_id = ?1
+                     WHERE f.account_id = ?1 AND m.stand_in = 0
                      UNION ALL
                      SELECT min(not_before) FROM outbox WHERE account_id = ?1 AND failed IS NULL
                  )",
@@ -1027,7 +1072,7 @@ impl Store for SqliteStore {
                 "SELECT o.id, o.kind, o.value, m.id, f.remote_id, f.validity, m.remote_id, t.remote_id
                  FROM op o JOIN message m ON m.id = o.message_id JOIN folder f ON f.id = m.folder_id
                  LEFT JOIN folder t ON t.id = o.target
-                 WHERE f.account_id = ?1 AND o.not_before <= ?2
+                 WHERE f.account_id = ?1 AND o.not_before <= ?2 AND m.stand_in = 0
                  ORDER BY o.id",
             )
             .and_then(|mut s| {
@@ -1059,9 +1104,6 @@ impl Store for SqliteStore {
             let mut delete = tx
                 .prepare_cached("DELETE FROM op WHERE id = ?1 AND value = ?2 RETURNING message_id")
                 .map_err(storage)?;
-            let mut drop_message = tx
-                .prepare_cached("DELETE FROM message WHERE id = ?1")
-                .map_err(storage)?;
             for op in ops {
                 let (_, value) = stored(op.action);
                 let gone: Option<i64> = delete
@@ -1077,11 +1119,25 @@ impl Store for SqliteStore {
                     | Action::Empty,
                 ) = (gone, op.action)
                 {
-                    drop_message.execute([message]).map_err(storage)?;
+                    drop_message(&tx, message)?;
                 }
             }
         }
         tx.commit().map_err(storage)
+    }
+
+    fn unclaimed(&self, account: AccountId) -> Result<Vec<Folder>, StoreError> {
+        let conn = self.conn();
+        let rows = conn
+            .prepare_cached(concat!(
+                "SELECT f.id, f.remote_id, f.name, f.role FROM folder f
+                 WHERE f.account_id = ?1 AND EXISTS (
+                     SELECT 1 FROM message m WHERE m.folder_id = f.id AND ",
+                unclaimed!("m"),
+                ") ORDER BY f.id"
+            ))
+            .and_then(|mut s| s.query_map([account.0], folder_row(account))?.collect());
+        rows.map_err(storage)
     }
 
     fn revert(&self, ops: &[Op]) -> Result<(), StoreError> {
@@ -1092,7 +1148,7 @@ impl Store for SqliteStore {
             let (_, value) = stored(op.action);
             take_back(
                 &tx,
-                "DELETE FROM op WHERE id = ?1 AND value = ?2 RETURNING message_id, kind, undo",
+                "DELETE FROM op WHERE id = ?1 AND value = ?2 RETURNING message_id, kind, undo, copy",
                 op.id,
                 value,
             )?;
@@ -1109,14 +1165,16 @@ fn queue_one(
     not_before: i64,
 ) -> Result<OpId, StoreError> {
     let (kind, value) = stored(action);
-    let (flags, queued): (u8, Option<i64>) = tx
+    let (flags, queued, old_copy): (u8, Option<i64>, Option<i64>) = tx
         .prepare_cached(
-            "SELECT m.flags, o.undo FROM message m
+            "SELECT m.flags, o.undo, o.copy FROM message m
              LEFT JOIN op o ON o.message_id = m.id AND o.kind = ?2 WHERE m.id = ?1",
         )
         .and_then(|mut s| {
-            s.query_row(params![message.0, kind], |r| Ok((r.get(0)?, r.get(1)?)))
-                .optional()
+            s.query_row(params![message.0, kind], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
+            .optional()
         })
         .map_err(storage)?
         .ok_or(StoreError::NotFound)?;
@@ -1132,24 +1190,60 @@ fn queue_one(
         Action::Inbox => (0, Some(role_folder(tx, message, FolderRole::Inbox)?)),
         Action::Delete | Action::Empty => (0, None),
     };
+    if let Some(old) = old_copy {
+        drop_message(tx, old)?;
+    }
+    let copy = target
+        .map(|folder| copy_into(tx, message, folder))
+        .transpose()?;
     // Kept even when it undoes itself: a push may be sending the older value right now.
     let id = tx
         .prepare_cached(
-            "INSERT INTO op (message_id, kind, value, undo, not_before, target)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "INSERT INTO op (message_id, kind, value, undo, not_before, target, copy)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT (message_id, kind) DO UPDATE SET
                  value = excluded.value, not_before = excluded.not_before,
-                 target = excluded.target
+                 target = excluded.target, copy = excluded.copy
              RETURNING id",
         )
         .and_then(|mut s| {
             s.query_row(
-                params![message.0, kind, value, undo, not_before, target],
+                params![message.0, kind, value, undo, not_before, target, copy],
                 |r| r.get(0),
             )
         })
         .map_err(storage)?;
     Ok(OpId(id))
+}
+
+/// Shows a message being moved in `folder` at once: a copy with its body, files and
+/// conversation, marked as standing in for the server's own until a sync finds that.
+fn copy_into(tx: &Transaction<'_>, message: MessageId, folder: i64) -> Result<i64, StoreError> {
+    let copy: i64 = tx
+        .prepare_cached(
+            "INSERT INTO message (folder_id, remote_id, message_id, from_name, from_email,
+                                  subject, snippet, date, flags, category, answer_to, recipients,
+                                  thread_id, stand_in)
+             SELECT ?2, '~' || id, message_id, from_name, from_email, subject, snippet, date,
+                    flags, category, answer_to, recipients, thread_id, 1
+             FROM message WHERE id = ?1
+             RETURNING id",
+        )
+        .and_then(|mut s| s.query_row(params![message.0, folder], |r| r.get(0)))
+        .map_err(storage)?;
+    for sql in [
+        "INSERT INTO message_body (message_id, text, html)
+         SELECT ?2, text, html FROM message_body WHERE message_id = ?1",
+        "INSERT INTO attachment (message_id, part, name, mime, size)
+         SELECT ?2, part, name, mime, size FROM attachment WHERE message_id = ?1",
+        "INSERT INTO message_ref (message_id, ref)
+         SELECT ?2, ref FROM message_ref WHERE message_id = ?1",
+    ] {
+        tx.prepare_cached(sql)
+            .and_then(|mut s| s.execute(params![message.0, copy]))
+            .map_err(storage)?;
+    }
+    Ok(copy)
 }
 
 /// Records the folder's validity; when it changed, drops its messages and checkpoint.
@@ -1164,8 +1258,12 @@ fn reset_if_new(tx: &Transaction<'_>, folder: FolderId, validity: u32) -> Result
         .map_err(storage)?
         .ok_or(StoreError::NotFound)?;
     if current != validity {
-        tx.execute("DELETE FROM message WHERE folder_id = ?1", [folder.0])
-            .map_err(storage)?;
+        // Copies of moved mail wait for the server's own, which the sync brings.
+        tx.execute(
+            "DELETE FROM message WHERE folder_id = ?1 AND stand_in = 0",
+            [folder.0],
+        )
+        .map_err(storage)?;
         tx.execute(
             "UPDATE folder SET validity = ?2, next_id = 0, older_done = 0 WHERE id = ?1",
             params![folder.0, validity],
@@ -1190,7 +1288,20 @@ fn upsert_messages(
             |r| r.get(0),
         )
         .map_err(storage)?;
+    // The server's own copy of moved mail takes the place of ours, which keeps its id.
+    let mut claim = tx.prepare_cached(CLAIM).map_err(storage)?;
+    let copies: bool = tx
+        .prepare_cached(
+            "SELECT EXISTS (SELECT 1 FROM message WHERE folder_id = ?1 AND stand_in = 1)",
+        )
+        .and_then(|mut s| s.query_row([folder.0], |r| r.get(0)))
+        .map_err(storage)?;
     for m in messages {
+        if let Some(message_id) = m.message_id.as_ref().filter(|_| copies) {
+            claim
+                .execute(params![folder.0, message_id, m.remote_id])
+                .map_err(storage)?;
+        }
         write_message(&mut upsert, folder, m)?;
         link_thread(tx, account, folder, m)?;
     }
@@ -1306,6 +1417,26 @@ fn role_folder(
     .ok_or(missing)
 }
 
+fn drop_message(tx: &Transaction<'_>, message: i64) -> Result<(), StoreError> {
+    tx.prepare_cached("DELETE FROM message WHERE id = ?1")
+        .and_then(|mut s| s.execute([message]))
+        .map(|_| ())
+        .map_err(storage)
+}
+
+/// Reads `id, remote_id, name, role` of one of the account's folders.
+fn folder_row(account: AccountId) -> impl Fn(&Row<'_>) -> rusqlite::Result<Folder> {
+    move |r| {
+        Ok(Folder {
+            id: FolderId(r.get(0)?),
+            account_id: account,
+            remote_id: r.get(1)?,
+            name: r.get(2)?,
+            role: r.get::<_, Role>(3)?.0,
+        })
+    }
+}
+
 fn folder_role(tx: &Transaction<'_>, message: MessageId) -> Result<FolderRole, StoreError> {
     tx.prepare_cached(
         "SELECT f.role FROM message m JOIN folder f ON f.id = m.folder_id WHERE m.id = ?1",
@@ -1315,25 +1446,29 @@ fn folder_role(tx: &Transaction<'_>, message: MessageId) -> Result<FolderRole, S
     .map_err(storage)
 }
 
-/// Drops the op if `sql`, a `DELETE ... RETURNING message_id, kind, undo` with the op id
-/// as `?1` and `arg` as `?2`, finds it, and restores what it changed on the device.
+/// Drops the op if `sql`, a `DELETE ... RETURNING message_id, kind, undo, copy` with the op
+/// id as `?1` and `arg` as `?2`, finds it, and restores what it changed on the device.
 fn take_back(tx: &Transaction<'_>, sql: &str, op: OpId, arg: i64) -> Result<bool, StoreError> {
-    let found: Option<(i64, StoredAction, i64)> = tx
+    let found: Option<(i64, StoredAction, i64, Option<i64>)> = tx
         .prepare_cached(sql)
         .and_then(|mut s| {
             s.query_row(params![op.0, arg], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
             })
             .optional()
         })
         .map_err(storage)?;
-    let Some((message, kind, undo)) = found else {
+    let Some((message, kind, undo, copy)) = found else {
         return Ok(false);
     };
     match kind.with(undo) {
         Action::Seen(seen) => set_seen(tx, message, seen)?,
-        // Without its op the message shows in its folder again.
-        Action::Archive | Action::Trash | Action::Inbox | Action::Delete | Action::Empty => {}
+        // Without its op the message shows in its folder again, and its copy goes.
+        Action::Archive | Action::Trash | Action::Inbox | Action::Delete | Action::Empty => {
+            if let Some(copy) = copy {
+                drop_message(tx, copy)?;
+            }
+        }
     }
     Ok(true)
 }
@@ -1355,6 +1490,16 @@ macro_rules! merged_flags {
         )
     };
 }
+
+/// Gives a copy of moved mail in folder `?1` with Message-ID `?2`, whose move the server has,
+/// the server's id `?3`: it is no longer a stand-in.
+const CLAIM: &str = concat!(
+    "UPDATE message SET remote_id = ?3, stand_in = 0
+     WHERE id = (SELECT id FROM message m WHERE m.folder_id = ?1 AND m.message_id = ?2 AND ",
+    unclaimed!("m"),
+    " ORDER BY m.id LIMIT 1)
+       AND NOT EXISTS (SELECT 1 FROM message WHERE folder_id = ?1 AND remote_id = ?3)"
+);
 
 /// Sets the flags of a saved message from the server's, under a queued action.
 const SAVE_FLAGS: &str = concat!(
@@ -1617,6 +1762,7 @@ const WITHOUT_BODY: &str = concat!(
     "SELECT m.id, f.remote_id, f.validity, m.remote_id
      FROM (SELECT id, folder_id, remote_id, date FROM message
            WHERE folder_id IN (SELECT id FROM folder WHERE account_id = ?1 AND role = 'inbox')
+             AND stand_in = 0
            ORDER BY date DESC, id DESC LIMIT ?2) m
      JOIN folder f ON f.id = m.folder_id
      WHERE NOT EXISTS (SELECT 1 FROM message_body b WHERE b.message_id = m.id) AND ",
@@ -1625,7 +1771,7 @@ const WITHOUT_BODY: &str = concat!(
 );
 
 const FOLDER_MESSAGES: &str = concat!(
-    "SELECT m.id FROM message m WHERE m.folder_id = ?1 AND ",
+    "SELECT m.id, m.stand_in FROM message m WHERE m.folder_id = ?1 AND ",
     not_moving!()
 );
 

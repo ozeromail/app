@@ -187,7 +187,7 @@ private fun Folders(
 }
 
 /** The mailboxes shared by all accounts, in order. */
-private val UNIFIED = listOf(FolderRole.INBOX, FolderRole.FLAGGED, FolderRole.SENT, FolderRole.ARCHIVE)
+private val UNIFIED = listOf(FolderRole.INBOX, FolderRole.FLAGGED, FolderRole.SENT, FolderRole.ARCHIVE, FolderRole.TRASH)
 
 /** System folders first in the usual order, then the account's own by name. */
 private val FOLDER_ORDER = compareBy<FolderItem>({ it.role.rank() }, { it.name.lowercase() })
@@ -237,6 +237,7 @@ private fun FolderRole.allTitle(): String = when (this) {
     FolderRole.FLAGGED -> stringResource(R.string.folder_all_flagged)
     FolderRole.SENT -> stringResource(R.string.folder_all_sent)
     FolderRole.ARCHIVE -> stringResource(R.string.folder_all_archive)
+    FolderRole.TRASH -> stringResource(R.string.folder_all_trash)
     else -> stringResource(R.string.folder_all_inbox)
 }
 
