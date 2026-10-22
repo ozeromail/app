@@ -1947,8 +1947,10 @@ fn sandboxed(html: &str, styled: bool) -> String {
         "; ",
         "base-uri 'none'; form-action 'none'\">",
         "<meta http-equiv=\"x-dns-prefetch-control\" content=\"off\">",
-        // No initial scale: a page wider than the screen opens zoomed out to fit it.
-        "<meta name=\"viewport\" content=\"width=device-width\">",
+        // No initial scale: a page wider than the screen opens zoomed out to fit it, but not
+        // below a scale where its text can still be read; the rest scrolls sideways. A page up to
+        // about 800 px wide still fits a phone.
+        "<meta name=\"viewport\" content=\"width=device-width,minimum-scale=0.48\">",
         "<style>body{margin:0;padding:0 16px 16px;overflow-wrap:break-word}",
         "img{max-width:100%;height:auto}",
         "details.ozero-quote>summary{list-style:none;display:inline-block;margin:10px 0;",

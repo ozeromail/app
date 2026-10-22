@@ -51,7 +51,7 @@ private fun WebView.configure(images: List<RemoteImage?>) {
         allowFileAccess = false
         allowContentAccess = false
         blockNetworkLoads = true
-        // A page wider than the screen opens zoomed out to fit it, as in Gmail, and can be pinched.
+        // A page wider than the screen opens zoomed out to fit it, down to the page's minimum scale, and can be pinched.
         loadWithOverviewMode = true
         useWideViewPort = true
         builtInZoomControls = true
