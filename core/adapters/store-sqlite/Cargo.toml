@@ -9,7 +9,7 @@ publish.workspace = true
 
 [dependencies]
 ozero-domain.workspace = true
-rusqlite = { version = "0.40", default-features = false, features = ["bundled-sqlcipher-vendored-openssl", "cache"] }
+rusqlite = { version = "0.40", default-features = false, features = ["bundled-sqlcipher-vendored-openssl", "cache", "hooks"] }
 
 [lints]
 workspace = true
