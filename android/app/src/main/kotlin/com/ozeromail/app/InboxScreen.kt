@@ -590,32 +590,29 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
      * The messages leave the list at once, for their account's folder of [role] if they go to
      * one; the toast can take them all back for a moment, or show that folder.
      */
-    fun remove(gone: List<MessageItem>, toast: String, role: FolderRole?, move: suspend (MessageItem) -> List<Long>, reset: () -> Unit = {}) {
+    fun remove(gone: List<MessageItem>, toast: String, role: FolderRole?, move: suspend (List<MessageItem>) -> List<Long>, reset: () -> Unit = {}) {
         val account = gone.map { it.accountId }.distinct().singleOrNull()
         val go = folders.find { it.accountId == account && it.role == role }?.let { Mailbox.Folder(it.id) }
         scope.launch {
-            val moved = mutableSetOf<Long>()
-            val actions = mutableListOf<Long>()
-            for (message in gone) {
-                try {
-                    actions += move(message)
-                    moved += message.id
-                } catch (e: CoreException) {
-                    error = e.text()
-                }
+            val actions = try {
+                move(gone)
+            } catch (e: CoreException) {
+                error = e.text()
+                reset()
+                return@launch
             }
-            if (moved.isNotEmpty()) messages = messages.filterNot { it.id in moved }
+            val moved = gone.map { it.id }.toSet()
+            messages = messages.filterNot { it.id in moved }
             // Also after success: a list read before the archive may bring the row back.
             reset()
-            if (moved.isNotEmpty() && offerUndo(toast, go.takeIf { it != mailbox })) mail.undo(actions)
+            if (offerUndo(toast, go.takeIf { it != mailbox })) mail.undo(actions)
         }
     }
 
     /** Delete: into the trash, or for good from there. */
     fun delete(gone: List<MessageItem>, reset: () -> Unit = {}) {
         val forever = gone.none { it.canTrash }
-        val move: suspend (MessageItem) -> List<Long> = { if (it.canTrash) mail.trash(it) else mail.deleteForever(it) }
-        remove(gone, if (forever) deleted else trashed, FolderRole.TRASH.takeUnless { forever }, move, reset)
+        remove(gone, if (forever) deleted else trashed, FolderRole.TRASH.takeUnless { forever }, mail::delete, reset)
     }
 
     /** Empties the open trash or spam for good, on the server too; the toast can take it back for a moment. */
@@ -642,15 +639,14 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     /** Marks the rows [read] or unread; they stay in the list either way. */
     fun setRead(rows: List<MessageItem>, read: Boolean, reset: () -> Unit = {}) {
         scope.launch {
-            val marked = mutableSetOf<Long>()
-            for (row in rows) {
-                try {
-                    mail.markRead(row, seen = read)
-                    marked += row.id
-                } catch (e: CoreException) {
-                    error = e.text()
-                }
+            try {
+                mail.markRead(rows, seen = read)
+            } catch (e: CoreException) {
+                error = e.text()
+                reset()
+                return@launch
             }
+            val marked = rows.map { it.id }.toSet()
             messages = messages.map {
                 if (it.id in marked) it.copy(seen = read, threadUnread = if (read) 0u else 1u) else it
             }
@@ -757,7 +753,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                             open = null
                             scope.launch {
                                 try {
-                                    mail.markRead(shown.message, seen = false)
+                                    mail.markRead(listOf(shown.message), seen = false)
                                 } catch (e: CoreException) {
                                     error = e.text()
                                 }

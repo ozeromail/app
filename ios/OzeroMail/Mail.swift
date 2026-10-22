@@ -95,14 +95,14 @@ final class Mail: Sendable {
     /// Marks the message's conversation read on the device now, so the list shows it on return;
     /// the server hears about it in the background.
     func markRead(_ message: MessageItem) throws {
-        try core.markRead(message: message.id, seen: true)
+        try core.markRead(messages: [message.id], seen: true)
         push(account: message.accountId)
     }
 
     /// Takes the message's conversation out of the inbox now and returns the actions for `undo`.
     /// The server gets the move once the undo time is over.
     func archive(_ message: MessageItem) throws -> [Int64] {
-        let actions = try core.archive(message: message.id)
+        let actions = try core.archive(messages: [message.id])
         push(account: message.accountId)
         return actions
     }

@@ -241,28 +241,28 @@ class Mail(private val context: Context) {
     suspend fun thread(message: MessageItem): List<MessageItem> = io { core.thread(message.id) }
 
     /**
-     * Marks the message's conversation read, or unread, on the device now, so the list shows it on return;
-     * the server hears about it in the background.
+     * Marks the messages' conversations read, or the messages unread, on the device now and in one go,
+     * so the list shows it on return; the server hears about it in the background.
      */
-    suspend fun markRead(message: MessageItem, seen: Boolean = true) {
-        io { core.markRead(message.id, seen) }
-        push(message.accountId)
+    suspend fun markRead(messages: List<MessageItem>, seen: Boolean = true) {
+        io { core.markRead(messages.map { it.id }, seen) }
+        push(messages)
     }
 
     /**
-     * Takes the message's conversation out of the inbox now and returns the actions for [undo].
-     * The server gets the move once the undo time is over.
+     * Takes the messages' conversations out of the inbox now, all or none, and returns the actions for
+     * [undo]. The server gets the move once the undo time is over.
      */
-    suspend fun archive(message: MessageItem): List<Long> = move(message) { core.archive(it) }
+    suspend fun archive(messages: List<MessageItem>): List<Long> = move(messages) { core.archive(it) }
 
     /** As [archive], back into the inbox: for mail in the archive, trash or spam. */
-    suspend fun moveToInbox(message: MessageItem): List<Long> = move(message) { core.moveToInbox(it) }
+    suspend fun moveToInbox(messages: List<MessageItem>): List<Long> = move(messages) { core.moveToInbox(it) }
 
-    /** As [archive], into the trash. */
-    suspend fun trash(message: MessageItem): List<Long> = move(message) { core.trash(it) }
-
-    /** As [archive], but gone from the server for good: for mail in the trash. */
-    suspend fun deleteForever(message: MessageItem): List<Long> = move(message) { core.deleteForever(it) }
+    /** As [archive], into the trash, or gone from the server for good for mail already there. */
+    suspend fun delete(messages: List<MessageItem>): List<Long> {
+        val (toTrash, forever) = messages.partition { it.canTrash }
+        return move(messages) { core.delete(toTrash.map { it.id }, forever.map { it.id }) }
+    }
 
     /** Empties a trash or spam [mailbox] for good, mail not loaded included, held like [archive]. */
     suspend fun emptyMailbox(mailbox: Mailbox): List<Long> {
@@ -272,11 +272,13 @@ class Mail(private val context: Context) {
         return actions
     }
 
-    private suspend fun move(message: MessageItem, queue: (Long) -> List<Long>): List<Long> {
-        val actions = io { queue(message.id) }
-        push(message.accountId)
+    private suspend fun move(messages: List<MessageItem>, queue: (List<Long>) -> List<Long>): List<Long> {
+        val actions = io { queue(messages.map { it.id }) }
+        push(messages)
         return actions
     }
+
+    private fun push(messages: List<MessageItem>) = messages.map { it.accountId }.distinct().forEach(::push)
 
     /** [message]'s page with its remote images loaded; null when it has none. */
     suspend fun images(message: MessageItem): ImagesPage? = io { core.messageImages(message.id) }
