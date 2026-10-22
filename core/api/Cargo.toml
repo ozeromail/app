@@ -30,6 +30,9 @@ uniffi = { workspace = true, features = ["tokio"] }
 [target.'cfg(target_os = "android")'.dependencies]
 jni = { version = "0.22", default-features = false }
 rustls-platform-verifier.workspace = true
+# Sends `log` records, such as why a certificate was rejected, to logcat.
+android_logger = { version = "0.15", default-features = false }
+log = "0.4"
 
 [lints]
 workspace = true
