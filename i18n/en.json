@@ -75,6 +75,8 @@
   "signin_yahoo": "Yahoo",
   "signin_yandex": "Yandex",
   "signin_mailru": "Mail.ru",
+  "signin_gmail": "Gmail with an app password",
+  "signin_gmail_text": "If Google sign-in does not let you in, an app password will: turn on 2-Step Verification in your Google Account, then make one.",
   "signin_other": "Other mail",
   "signin_app_password": "App password",
   "signin_app_password_text": "This service asks for an app password, not your usual one. Making one takes a minute.",
