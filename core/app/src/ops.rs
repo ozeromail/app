@@ -31,7 +31,12 @@ pub async fn push_ops(
         let sent = match (action, to) {
             (Action::Seen(seen), _) => provider.set_seen(&folder, validity, &ids, seen).await,
             (Action::Archive | Action::Trash | Action::Inbox, Some(to)) => {
-                provider.move_to(&folder, validity, &ids, &to).await
+                // The copies in the folder they went to take the ids the server gave.
+                let moved = provider.move_to(&folder, validity, &ids, &to).await;
+                if let Ok(moved) = &moved {
+                    store.land(&ops, moved)?;
+                }
+                moved.map(drop)
             }
             (Action::Delete, _) => provider.delete(&folder, validity, &ids).await,
             (Action::Empty, _) => {

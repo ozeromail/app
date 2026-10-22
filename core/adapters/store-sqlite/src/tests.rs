@@ -830,6 +830,42 @@ fn moved_mail_shows_in_its_new_folder_at_once() {
 }
 
 #[test]
+fn a_copy_takes_the_id_the_server_gave_its_message() {
+    let store = store();
+    let (account, inbox, trash) = inbox_and_trash(&store);
+    store.set_validity(trash, 4).unwrap();
+    store
+        .save_messages(inbox, &[message(1, 100), message(2, 200)])
+        .unwrap();
+    for row in list(&store, ListScope::Folder(inbox), 10, None) {
+        store.queue(row.id, Action::Trash, 0).unwrap();
+    }
+    let due = store.due(account, 0).unwrap();
+    let copies = ids(&list(&store, ListScope::Folder(trash), 10, None));
+    // Only for the validity the trash has.
+    let moved = |validity| Moved {
+        validity,
+        ids: vec![("1".into(), "21".into()), ("2".into(), "22".into())],
+    };
+    store.land(&due, &moved(Some(5))).unwrap();
+    assert_eq!(store.location(copies[0]).unwrap().remote_id, "2");
+    store.land(&due, &moved(Some(4))).unwrap();
+    store.finish(&due).unwrap();
+    assert!(store.unclaimed(account).unwrap().is_empty());
+    let landed: Vec<_> = copies
+        .iter()
+        .map(|id| store.location(*id).unwrap().remote_id)
+        .collect();
+    assert_eq!(landed, ["22", "21"]);
+    // The server knows them by these ids: a sync keeps them.
+    store.save_messages(trash, &[]).unwrap();
+    assert_eq!(
+        ids(&list(&store, ListScope::Folder(trash), 10, None)),
+        copies
+    );
+}
+
+#[test]
 fn a_copy_the_server_does_not_bring_goes() {
     let store = store();
     let (account, inbox, trash) = inbox_and_trash(&store);

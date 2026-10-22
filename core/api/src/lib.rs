@@ -16,9 +16,9 @@ use ozero_app::sync::{
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Attachment, Body, Category, Changes,
     Checkpoint, Draft, DraftId, Folder, FolderId, FolderRole, ListQuery, ListScope, MailProvider,
-    MessageId, MessageRow, NewAccount, NewFolder, Older, OpId, OutboxId, Outgoing, ProviderError,
-    RawMessage, SavedDraft, Sender, Server, Store, StoreError, html, parse_recipients,
-    saves_sent_itself,
+    MessageId, MessageRow, Moved, NewAccount, NewFolder, Older, OpId, OutboxId, Outgoing,
+    ProviderError, RawMessage, SavedDraft, Sender, Server, Store, StoreError, html,
+    parse_recipients, saves_sent_itself,
 };
 use ozero_gmail::{GmailSession, oauth};
 use ozero_imap::ImapSession;
@@ -1469,7 +1469,7 @@ impl MailProvider for Remote {
         validity: u32,
         remote_ids: &[String],
         to: &str,
-    ) -> Result<(), ProviderError> {
+    ) -> Result<Moved, ProviderError> {
         match self {
             Self::Imap(p) => p.move_to(folder, validity, remote_ids, to).await,
             Self::Gmail(p) => p.move_to(folder, validity, remote_ids, to).await,

@@ -49,6 +49,16 @@ impl<M> Changes<M> {
     }
 }
 
+/// Where moved messages are now: their ids in the folder they went to.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Moved {
+    /// The validity of that folder the new ids belong to; None where an id is the same in
+    /// every folder, as in Gmail.
+    pub validity: Option<u32>,
+    /// Each message the server told about: its id before the move and after it.
+    pub ids: Vec<(String, String)>,
+}
+
 /// Mail of a folder older than what is saved of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Older {
@@ -127,14 +137,15 @@ pub trait MailProvider: Send {
         seen: bool,
     ) -> impl Future<Output = Result<(), ProviderError>> + Send;
 
-    /// Moves messages of a folder into folder `to`, like `set_seen` otherwise.
+    /// Moves messages of a folder into folder `to`, like `set_seen` otherwise, and returns
+    /// the ids they have there, as far as the server tells.
     fn move_to(
         &mut self,
         folder: &str,
         validity: u32,
         remote_ids: &[String],
         to: &str,
-    ) -> impl Future<Output = Result<(), ProviderError>> + Send;
+    ) -> impl Future<Output = Result<Moved, ProviderError>> + Send;
 
     /// Removes messages of a folder from the server for good, like `set_seen` otherwise.
     fn delete(

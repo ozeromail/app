@@ -191,12 +191,17 @@ async fn moves_messages_to_another_folder() {
     // Its own folders, so other tests keep their messages.
     let mut imap = session().await;
     let validity = recent(&mut imap, "Moves", 1).await.checkpoint.validity;
-    imap.move_to("Moves", validity, &["1".into()], "Archive")
+    let moved = imap
+        .move_to("Moves", validity, &["1".into()], "Archive")
         .await
         .unwrap();
     assert!(recent(&mut imap, "Moves", 10).await.new.is_empty());
-    let archived = recent(&mut imap, "Archive", 10).await.new;
+    let archive = recent(&mut imap, "Archive", 10).await;
+    let archived = archive.new;
     assert_eq!(archived.len(), 1);
+    // UIDPLUS names its id there.
+    assert_eq!(moved.validity, Some(archive.checkpoint.validity));
+    assert_eq!(moved.ids, [("1".into(), archived[0].remote_id.clone())]);
     let header = String::from_utf8_lossy(&archived[0].header);
     assert!(header.contains("Subject: Move me"), "{header}");
     // The inbox tabs need the list headers.
