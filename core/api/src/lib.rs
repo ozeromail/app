@@ -190,12 +190,10 @@ impl Core {
         Ok(self.store.set_account_label(AccountId(account), &label)?)
     }
 
-    /// Removes the account and all its mail from the device, once its sync is done; a sync or
-    /// push that waited then finds nothing to do. The app forgets its secret.
-    pub async fn remove_account(&self, account: i64) -> Result<(), CoreError> {
+    /// Removes the account and all its mail from the device at once; a sync or push under way
+    /// or waiting then ends without an error. The app forgets its secret.
+    pub fn remove_account(&self, account: i64) -> Result<(), CoreError> {
         let account = AccountId(account);
-        let lock = self.busy(account);
-        let _busy = lock.lock().await;
         self.store.remove_account(account)?;
         self.tokens
             .lock()
@@ -385,12 +383,15 @@ impl Core {
         })
     }
 
-    /// The saved text of `message` under `header`, each line marked with `>`; empty while
-    /// its body is not saved.
-    pub fn quote(&self, message: i64, header: String) -> Result<String, CoreError> {
-        let Some(body) = self.store.body(MessageId(message))? else {
-            return Ok(String::new());
-        };
+    /// The text of `message` under `header`, each line marked with `>`; downloaded if it is
+    /// not saved. `secret` as for `message_body`.
+    pub async fn quote(
+        &self,
+        message: i64,
+        header: String,
+        secret: String,
+    ) -> Result<String, CoreError> {
+        let body = self.body(MessageId(message), &secret).await?;
         Ok(ozero_domain::quote(header, &body.text))
     }
 
@@ -604,52 +605,57 @@ impl Core {
     /// it does not connect. After a failure they stay queued for the next push or sync.
     /// `secret` is the account's password, or its Google secret.
     pub async fn push_actions(&self, account: i64, secret: String) -> Result<(), CoreError> {
-        let account = self.account(AccountId(account))?;
-        let mut waiter = None;
-        loop {
-            let wait = {
-                let lock = self.busy(account.id);
-                let _busy = lock.lock().await;
-                // Removed while this push waited: nothing to send.
-                let found = self.find(account.id);
-                if !matches!(found, Ok(Some(_))) {
-                    drop(waiter.take());
-                    return found.map(drop);
-                }
-                // Read under the lock: a push that waited finds what the one before it sent gone.
-                let step = async {
-                    let mut remote = None;
-                    self.push_due(&account, &secret, &mut remote).await?;
-                    if let Some(remote) = remote {
-                        remote.close().await;
-                    }
-                    Ok::<_, CoreError>(self.store.next_send(account.id)?)
-                }
-                .await;
-                // The waiter is taken and given up under the lock, so a push that finds it
-                // taken can leave its held action to the waiting push.
-                let wait = match step {
-                    Ok(next) => next.map_or(0, |at| at - now()),
-                    Err(e) => {
+        let id = AccountId(account);
+        let pushed = async {
+            let account = self.account(id)?;
+            let mut waiter = None;
+            loop {
+                let wait = {
+                    let lock = self.busy(account.id);
+                    let _busy = lock.lock().await;
+                    // Removed already: nothing to send.
+                    let found = self.find(account.id);
+                    if !matches!(found, Ok(Some(_))) {
                         drop(waiter.take());
-                        return self.refused(&account, Err(e));
+                        return found.map(drop);
                     }
-                };
-                let Ok(wait @ 1..) = u64::try_from(wait) else {
-                    drop(waiter.take());
-                    return Ok(());
-                };
-                if waiter.is_none() {
-                    waiter = Waiter::claim(&self.waiting, account.id);
-                    if waiter.is_none() {
+                    // Read under the lock: a push that waited finds what the one before it sent gone.
+                    let step = async {
+                        let mut remote = None;
+                        self.push_due(&account, &secret, &mut remote).await?;
+                        if let Some(remote) = remote {
+                            remote.close().await;
+                        }
+                        Ok::<_, CoreError>(self.store.next_send(account.id)?)
+                    }
+                    .await;
+                    // The waiter is taken and given up under the lock, so a push that finds it
+                    // taken can leave its held action to the waiting push.
+                    let wait = match step {
+                        Ok(next) => next.map_or(0, |at| at - now()),
+                        Err(e) => {
+                            drop(waiter.take());
+                            return self.refused(&account, Err(e));
+                        }
+                    };
+                    let Ok(wait @ 1..) = u64::try_from(wait) else {
+                        drop(waiter.take());
                         return Ok(());
+                    };
+                    if waiter.is_none() {
+                        waiter = Waiter::claim(&self.waiting, account.id);
+                        if waiter.is_none() {
+                            return Ok(());
+                        }
                     }
-                }
-                wait
-            };
-            // Without the lock, so a sync can run meanwhile.
-            tokio::time::sleep(Duration::from_millis(wait)).await;
+                    wait
+                };
+                // Without the lock, so a sync can run meanwhile.
+                tokio::time::sleep(Duration::from_millis(wait)).await;
+            }
         }
+        .await;
+        self.unless_removed(id, pushed)
     }
 
     /// Sends the account's queued actions and mail, then brings its folders and what changed
@@ -667,36 +673,40 @@ impl Core {
         mailbox: Mailbox,
     ) -> Result<(), CoreError> {
         let id = AccountId(account);
-        let lock = self.busy(id);
-        let _busy = lock.lock().await;
-        // Read under the lock: an account removed meanwhile has nothing to sync.
-        let Some(account) = self.find(id)? else {
-            return Ok(());
-        };
-        let since = keep_since(account.keep_days);
-        let folders: Vec<Folder> = if mailbox == INBOX {
-            vec![]
-        } else {
-            let all = self.store.folders(id)?;
-            all.into_iter().filter(|f| mailbox.holds(f)).collect()
-        };
-        let mut slot = None;
-        // A send that fails, say on a broken SMTP server, must not stop new mail coming in.
-        let pushed = self.refused(&account, self.push_due(&account, &secret, &mut slot).await);
-        if mailbox == INBOX || !folders.is_empty() {
-            let remote = self.remote(&mut slot, &account, &secret).await?;
-            let synced = if mailbox == INBOX {
-                sync_mail(&self.store, remote, &self.parser, id, SYNC_LIMIT, since).await
-            } else {
-                let parser = &self.parser;
-                sync_folders(&self.store, remote, parser, &folders, SYNC_LIMIT, since).await
+        let synced = async {
+            let lock = self.busy(id);
+            let _busy = lock.lock().await;
+            // Removed already: nothing to sync.
+            let Some(account) = self.find(id)? else {
+                return Ok(());
             };
-            self.refused(&account, synced)?;
+            let since = keep_since(account.keep_days);
+            let folders: Vec<Folder> = if mailbox == INBOX {
+                vec![]
+            } else {
+                let all = self.store.folders(id)?;
+                all.into_iter().filter(|f| mailbox.holds(f)).collect()
+            };
+            let mut slot = None;
+            // A send that fails, say on a broken SMTP server, must not stop new mail coming in.
+            let pushed = self.refused(&account, self.push_due(&account, &secret, &mut slot).await);
+            if mailbox == INBOX || !folders.is_empty() {
+                let remote = self.remote(&mut slot, &account, &secret).await?;
+                let synced = if mailbox == INBOX {
+                    sync_mail(&self.store, remote, &self.parser, id, SYNC_LIMIT, since).await
+                } else {
+                    let parser = &self.parser;
+                    sync_folders(&self.store, remote, parser, &folders, SYNC_LIMIT, since).await
+                };
+                self.refused(&account, synced)?;
+            }
+            if let Some(remote) = slot {
+                remote.close().await;
+            }
+            pushed
         }
-        if let Some(remote) = slot {
-            remote.close().await;
-        }
-        pushed
+        .await;
+        self.unless_removed(id, synced)
     }
 
     /// Brings in older mail of the account's folders in `mailbox`, for a list scrolled to its
@@ -709,28 +719,33 @@ impl Core {
         mailbox: Mailbox,
     ) -> Result<bool, CoreError> {
         let id = AccountId(account);
-        let lock = self.busy(id);
-        let _busy = lock.lock().await;
-        let Some(account) = self.find(id)? else {
-            return Ok(false);
-        };
-        let folders = self.loadable(id, mailbox)?;
-        let since = keep_since(account.keep_days);
-        let (mut slot, mut more) = (None, false);
-        for (folder, _) in &folders {
-            let remote = self.remote(&mut slot, &account, &secret).await?;
-            let loaded = load_older(&self.store, remote, &self.parser, folder, OLDER_PAGE, since);
-            match self.refused(&account, loaded.await) {
-                Ok(true) => more = true,
-                // The next sync starts the folder over.
-                Ok(false) | Err(CoreError::Gone) => {}
-                Err(e) => return Err(e),
+        let loaded = async {
+            let lock = self.busy(id);
+            let _busy = lock.lock().await;
+            let Some(account) = self.find(id)? else {
+                return Ok(false);
+            };
+            let folders = self.loadable(id, mailbox)?;
+            let since = keep_since(account.keep_days);
+            let (mut slot, mut more) = (None, false);
+            for (folder, _) in &folders {
+                let remote = self.remote(&mut slot, &account, &secret).await?;
+                let loaded =
+                    load_older(&self.store, remote, &self.parser, folder, OLDER_PAGE, since);
+                match self.refused(&account, loaded.await) {
+                    Ok(true) => more = true,
+                    // The next sync starts the folder over.
+                    Ok(false) | Err(CoreError::Gone) => {}
+                    Err(e) => return Err(e),
+                }
             }
+            if let Some(remote) = slot {
+                remote.close().await;
+            }
+            Ok(more)
         }
-        if let Some(remote) = slot {
-            remote.close().await;
-        }
-        Ok(more)
+        .await;
+        self.unless_removed(id, loaded)
     }
 
     /// Searches the account's mail on its server for every word of `text`, mail older than it
@@ -768,14 +783,19 @@ impl Core {
     }
 
     /// Keeps the account's mail of the last `days` days on the device, or all of it with 0:
-    /// older mail goes at once, and lists stop loading older mail there. Waits for a sync
-    /// under way, which may save mail by the old limit.
+    /// older mail goes at once, and lists stop loading older mail there. Returns after a sync
+    /// under way, which may save mail by the old limit, and takes that out too.
     pub async fn set_account_keep(&self, account: i64, days: u32) -> Result<(), CoreError> {
         let account = AccountId(account);
-        let lock = self.busy(account);
-        let _busy = lock.lock().await;
         self.store.set_account_keep(account, days)?;
-        Ok(self.store.prune(account, keep_since(days))?)
+        let since = keep_since(days);
+        self.store.prune(account, since)?;
+        let lock = self.busy(account);
+        if lock.try_lock().is_ok() {
+            return Ok(());
+        }
+        let _busy = lock.lock().await;
+        Ok(self.store.prune(account, since)?)
     }
 
     /// Downloads the missing bodies of the account's newest inbox mail, so it opens at once.
@@ -1097,6 +1117,18 @@ impl Core {
                 }
             })
             .collect())
+    }
+
+    /// `result`, or nothing done if it failed because the account was removed meanwhile.
+    fn unless_removed<T: Default>(
+        &self,
+        account: AccountId,
+        result: Result<T, CoreError>,
+    ) -> Result<T, CoreError> {
+        match result {
+            Err(_) if matches!(self.find(account), Ok(None)) => Ok(T::default()),
+            result => result,
+        }
     }
 
     fn busy(&self, account: AccountId) -> Arc<tokio::sync::Mutex<()>> {
