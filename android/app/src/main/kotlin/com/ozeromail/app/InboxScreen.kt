@@ -3,6 +3,7 @@ package com.ozeromail.app
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.icu.text.DateFormat
 import android.os.SystemClock
 import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -154,6 +155,10 @@ import uniffi.ozero_api.Mailbox
 import uniffi.ozero_api.MessageItem
 import uniffi.ozero_api.UnsentItem
 import uniffi.ozero_api.undoSeconds
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.util.Date
 
 /** How soon after a sync a return to the app syncs again. */
 private const val RESYNC_MS = 30_000L
@@ -1787,22 +1792,29 @@ private fun firstName(name: String): String {
 fun MessageItem.subjectText(): String = subject.ifBlank { stringResource(R.string.inbox_no_subject) }
 
 /** Time for today, otherwise the date; the year only when it is not this year. */
-fun shortDate(context: Context, seconds: Long): String {
-    val millis = seconds * 1000
-    val flags = if (DateUtils.isToday(millis)) {
-        DateUtils.FORMAT_SHOW_TIME
-    } else {
-        DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH
-    }
-    return DateUtils.formatDateTime(context, millis, flags)
-}
+fun shortDate(context: Context, seconds: Long): String =
+    format(context, seconds, if (DateUtils.isToday(seconds * 1000)) time(context) else day(seconds))
 
 /** The date and time, as a message header shows them. */
-fun longDate(context: Context, seconds: Long): String = DateUtils.formatDateTime(
-    context,
-    seconds * 1000,
-    DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_SHOW_TIME or DateUtils.FORMAT_ABBREV_MONTH,
-)
+fun longDate(context: Context, seconds: Long): String = format(context, seconds, day(seconds) + time(context))
+
+/**
+ * [seconds] by an ICU skeleton, in the language the app shows: with a per-app language that is
+ * not the system's, DateUtils would still name months in the system's.
+ */
+private fun format(context: Context, seconds: Long, skeleton: String): String =
+    DateFormat.getInstanceForSkeleton(skeleton, context.resources.configuration.locales[0])
+        .format(Date(seconds * 1000))
+
+/** Day and short month, and the year when it is not this one. */
+private fun day(seconds: Long): String {
+    val zone = ZoneId.systemDefault()
+    val thisYear = Instant.ofEpochSecond(seconds).atZone(zone).year == LocalDate.now(zone).year
+    return if (thisYear) "MMMd" else "yMMMd"
+}
+
+/** Hours and minutes, on the clock the user chose. */
+private fun time(context: Context): String = if (android.text.format.DateFormat.is24HourFormat(context)) "Hm" else "hm"
 
 /** A released thumb: a little give after a fling, since the finger threw it; flat otherwise. */
 private fun thumbSpring(velocity: Float): SpringSpec<Float> = if (abs(velocity) > FLING) Motion.fling() else Motion.settle()
