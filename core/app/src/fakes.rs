@@ -472,7 +472,7 @@ impl Store for Memory {
         Ok(None)
     }
 
-    fn queue(&self, _: MessageId, _: Action, _: i64) -> Result<Vec<OpId>, StoreError> {
+    fn queue_all(&self, _: &[(MessageId, Action)], _: i64) -> Result<Vec<OpId>, StoreError> {
         Ok(vec![OpId(1)])
     }
 

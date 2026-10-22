@@ -728,42 +728,17 @@ impl Store for SqliteStore {
         }))
     }
 
-    fn queue(
+    fn queue_all(
         &self,
-        message: MessageId,
-        action: Action,
+        actions: &[(MessageId, Action)],
         not_before: i64,
     ) -> Result<Vec<OpId>, StoreError> {
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(storage)?;
-        let ids = tx
-            .prepare_cached(THREAD_IDS)
-            .and_then(|mut s| {
-                s.query_map([message.0], |r| Ok((r.get(0)?, r.get::<_, u8>(1)?)))?
-                    .collect::<Result<Vec<(i64, u8)>, _>>()
-            })
-            .map_err(storage)?;
-        if ids.is_empty() {
-            return Err(StoreError::NotFound);
-        }
-        if !matches!(action, Action::Seen(_)) && !folder_role(&tx, message)?.allows(action) {
-            return Err(StoreError::NotAllowed);
-        }
+        let mut taken = HashSet::new();
         let mut ops = vec![];
-        for (id, flags) in ids {
-            // The rest of the conversation only where it changes something; unread is
-            // only the message itself.
-            let changes = match action {
-                Action::Seen(seen) => seen && flags & SEEN == 0,
-                Action::Archive
-                | Action::Trash
-                | Action::Inbox
-                | Action::Delete
-                | Action::Empty => true,
-            };
-            if id == message.0 || changes {
-                ops.push(queue_one(&tx, MessageId(id), action, not_before)?);
-            }
+        for &(message, action) in actions {
+            ops.extend(queue_thread(&tx, message, action, not_before, &mut taken)?);
         }
         tx.commit().map_err(storage)?;
         Ok(ops)
@@ -1231,6 +1206,49 @@ impl Store for SqliteStore {
         tx.commit().map_err(storage)?;
         Ok(reverted)
     }
+}
+
+/// `queue` within `tx`, adding the messages it queues to `taken`; nothing for a message
+/// already there.
+fn queue_thread(
+    tx: &Transaction<'_>,
+    message: MessageId,
+    action: Action,
+    not_before: i64,
+    taken: &mut HashSet<i64>,
+) -> Result<Vec<OpId>, StoreError> {
+    if taken.contains(&message.0) {
+        return Ok(vec![]);
+    }
+    let ids = tx
+        .prepare_cached(THREAD_IDS)
+        .and_then(|mut s| {
+            s.query_map([message.0], |r| Ok((r.get(0)?, r.get::<_, u8>(1)?)))?
+                .collect::<Result<Vec<(i64, u8)>, _>>()
+        })
+        .map_err(storage)?;
+    if ids.is_empty() {
+        return Err(StoreError::NotFound);
+    }
+    if !matches!(action, Action::Seen(_)) && !folder_role(tx, message)?.allows(action) {
+        return Err(StoreError::NotAllowed);
+    }
+    let mut ops = vec![];
+    for (id, flags) in ids {
+        // The rest of the conversation only where it changes something; unread is
+        // only the message itself.
+        let changes = match action {
+            Action::Seen(seen) => seen && flags & SEEN == 0,
+            Action::Archive | Action::Trash | Action::Inbox | Action::Delete | Action::Empty => {
+                true
+            }
+        };
+        if id == message.0 || changes {
+            ops.push(queue_one(tx, MessageId(id), action, not_before)?);
+            taken.insert(id);
+        }
+    }
+    Ok(ops)
 }
 
 /// Applies the action to one message now and queues it, replacing a queued one of its kind.

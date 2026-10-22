@@ -260,7 +260,7 @@ fn syncs_an_imap_inbox_into_the_list() {
     // Read on the device at once, on the server after the push; then unread again.
     let first = inbox[2].id;
     for seen in [true, false] {
-        core.mark_read(first, seen).unwrap();
+        core.mark_read(vec![first], seen).unwrap();
         assert_eq!(
             core.unified_inbox(Category::People, 50).unwrap()[2].seen,
             seen
@@ -342,7 +342,8 @@ fn syncs_an_imap_inbox_into_the_list() {
         role: FolderRole::Trash,
     };
     let trashed = || core.mailbox(trash, 50).unwrap().first().map(|m| m.id);
-    core.trash(core.mailbox(filed, 50).unwrap()[0].id).unwrap();
+    core.delete(vec![core.mailbox(filed, 50).unwrap()[0].id], vec![])
+        .unwrap();
     assert!(core.mailbox(filed, 50).unwrap().is_empty());
     let copy = trashed().unwrap();
     runtime
