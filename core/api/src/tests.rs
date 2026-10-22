@@ -515,6 +515,29 @@ fn saves_a_gmail_account_that_can_send() {
 }
 
 #[test]
+fn removes_an_account_at_once_while_it_syncs() {
+    let db = TempDb::new("remove");
+    let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
+    let id = core.add_gmail_account("me@gmail.com".into()).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    // As a sync under way would.
+    let lock = core.busy(AccountId(id));
+    let syncing = lock.try_lock().unwrap();
+    core.remove_account(id).unwrap();
+    assert!(core.accounts().unwrap().is_empty());
+    drop(syncing);
+    // What waited for it ends quietly.
+    assert_eq!(runtime.block_on(core.sync(id, String::new())), Ok(()));
+    assert_eq!(
+        runtime.block_on(core.push_actions(id, String::new())),
+        Ok(())
+    );
+}
+
+#[test]
 fn signs_in_to_a_gmail_account_again() {
     let db = TempDb::new("again");
     let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
