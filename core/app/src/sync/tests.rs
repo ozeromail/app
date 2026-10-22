@@ -322,7 +322,7 @@ fn searches_the_server_in_the_folders_local_search_covers() {
         ..Memory::default()
     };
     let mut server = Server::default();
-    run(search_server(
+    let hits = run(search_server(
         &store,
         &mut server,
         &Parser,
@@ -331,6 +331,7 @@ fn searches_the_server_in_the_folders_local_search_covers() {
         5,
     ))
     .unwrap();
+    assert_eq!(hits, 1);
     let asked: Vec<_> = server.searched.iter().map(|s| s.0.as_str()).collect();
     assert_eq!(asked, ["INBOX", "Gone", "Refused"]);
     assert_eq!(server.searched[0].2, "invoice");
