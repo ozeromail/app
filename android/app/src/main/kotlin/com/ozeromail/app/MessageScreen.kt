@@ -108,7 +108,7 @@ fun MessageScreen(
     DisposableEffect(bodies) { onDispose { expectGone(bodies, "bodies of a closed conversation") } }
     LaunchedEffect(message.id) {
         try {
-            if (message.threadUnread > 0u) mail.markRead(message)
+            if (message.threadUnread > 0u) mail.markRead(listOf(message))
         } catch (e: CoreException) {
             error = e.text()
         }
