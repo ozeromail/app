@@ -126,6 +126,7 @@
   "action_empty_junk": "Empty Spam",
   "inbox_deleted": "Deleted forever",
   "inbox_emptied": "Folder emptied",
+  "inbox_reverted": "The server refused some changes, so they were undone",
   "select_count": "%1$d selected",
   "select_hint": "Tap to add or remove",
   "action_select_all": "Select all",
