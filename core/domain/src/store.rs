@@ -14,6 +14,8 @@ pub trait Store: Send + Sync {
     fn remove_account(&self, account: AccountId) -> Result<(), StoreError>;
     /// Sets the account's colour, an index into the apps' palette.
     fn set_account_color(&self, account: AccountId, color: u32) -> Result<(), StoreError>;
+    /// Sets the name the account's mail goes out under.
+    fn set_account_name(&self, account: AccountId, name: &str) -> Result<(), StoreError>;
     /// Sets the user's name for the account; empty clears it.
     fn set_account_label(&self, account: AccountId, label: &str) -> Result<(), StoreError>;
     /// Sets how many days back the account's mail is kept; 0 keeps all of it.

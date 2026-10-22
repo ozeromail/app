@@ -480,6 +480,27 @@ async fn sends_and_reads_raw_messages() {
 }
 
 #[tokio::test]
+async fn reads_the_name_mail_goes_out_under() {
+    let (mut gmail, _) = session(vec![(
+        "/settings/sendAs",
+        200,
+        json!({"sendAs": [
+            {"sendAsEmail": "alias@example.com", "displayName": "Alias"},
+            {"sendAsEmail": "me@gmail.com", "displayName": " Anna Petrova ", "isPrimary": true},
+        ]}),
+    )])
+    .await;
+    assert_eq!(gmail.name().await, Ok(Some("Anna Petrova".into())));
+    let (mut gmail, _) = session(vec![(
+        "/settings/sendAs",
+        200,
+        json!({"sendAs": [{"sendAsEmail": "me@gmail.com", "displayName": "", "isPrimary": true}]}),
+    )])
+    .await;
+    assert_eq!(gmail.name().await, Ok(None));
+}
+
+#[tokio::test]
 async fn maps_errors() {
     let (mut gmail, _) = session(vec![
         (

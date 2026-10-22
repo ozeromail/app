@@ -73,6 +73,20 @@ impl GmailSession {
             .ok_or_else(|| protocol("no address in the profile"))
     }
 
+    /// The name its mail goes out under, as set in Gmail; None when there is none.
+    pub async fn name(&mut self) -> Result<Option<String>, ProviderError> {
+        let list = self.get("/settings/sendAs").await?;
+        Ok(list["sendAs"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|s| s["isPrimary"].as_bool() == Some(true))
+            .and_then(|s| s["displayName"].as_str())
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .map(str::to_owned))
+    }
+
     async fn get(&mut self, path: &str) -> Result<Value, ProviderError> {
         self.call("GET", path, None).await
     }

@@ -87,6 +87,15 @@ pub fn google_sign_in(email: Option<String>) -> Result<GoogleSignIn, CoreError> 
     Ok(oauth::sign_in(GOOGLE_CLIENT_ID, GOOGLE_REDIRECT, email.as_deref())?.into())
 }
 
+/// The name the mailbox's mail goes out under, as set in Gmail. Without it the mail goes out
+/// under the address alone, so a failure to read it stops nothing.
+async fn sender_name(gmail: &mut GmailSession) -> Option<String> {
+    gmail.name().await.unwrap_or_else(|e| {
+        log::warn!("no sender name from Gmail: {e:?}");
+        None
+    })
+}
+
 /// The mail core of one app install: the encrypted database and the network.
 #[derive(uniffi::Object)]
 pub struct Core {
@@ -97,6 +106,9 @@ pub struct Core {
     busy: Mutex<HashMap<AccountId, Arc<tokio::sync::Mutex<()>>>>,
     /// Accounts with a push waiting for held actions to come due.
     waiting: Mutex<HashSet<AccountId>>,
+    /// Gmail accounts asked for their sender name since the core opened: one saved before
+    /// names were read has none.
+    named: Mutex<HashSet<AccountId>>,
     /// Gmail access tokens and until when they work, by the wall clock: a monotonic one stops
     /// while the phone sleeps, and the token would look fresh for too long.
     tokens: Mutex<HashMap<AccountId, (String, SystemTime)>>,
@@ -157,6 +169,7 @@ impl Core {
             tls: OnceLock::new(),
             busy: Mutex::default(),
             waiting: Mutex::default(),
+            named: Mutex::default(),
             tokens: Mutex::default(),
             pages: Mutex::default(),
             changes,
@@ -208,9 +221,13 @@ impl Core {
     }
 
     /// The account works again after `check_password` or `google_account` for it, once the
-    /// app has kept the new secret: its mail and queued work go on where they stopped.
-    pub fn signed_in_again(&self, account: i64) -> Result<(), CoreError> {
+    /// app has kept the new secret: its mail and queued work go on where they stopped. A Gmail
+    /// account takes the sender `name` Gmail has now.
+    pub fn signed_in_again(&self, account: i64, name: Option<String>) -> Result<(), CoreError> {
         let account = AccountId(account);
+        if let Some(name) = name {
+            self.store.set_account_name(account, &name)?;
+        }
         self.store.set_needs_sign_in(account, false)?;
         self.tokens
             .lock()
@@ -220,13 +237,13 @@ impl Core {
     }
 
     /// Saves the Gmail account `google_account` returned, once the app has kept its secret.
-    pub fn add_gmail_account(&self, email: String) -> Result<i64, CoreError> {
+    pub fn add_gmail_account(&self, email: String, name: Option<String>) -> Result<i64, CoreError> {
         if self.exists(&email)? {
             return Err(CoreError::AccountExists);
         }
         let account = NewAccount {
             kind: AccountKind::Gmail,
-            display_name: email.clone(),
+            display_name: name.unwrap_or_else(|| email.clone()),
             email,
             server: None,
             smtp: None,
@@ -562,8 +579,9 @@ impl Core {
     }
 
     /// Finishes Google sign-in with the address the browser came back to: the account's
-    /// address and the secret the app keeps for it. `add_gmail_account` then saves it; or,
-    /// with `again`, the sign-in was for that saved account, and `signed_in_again` follows.
+    /// address, its sender name and the secret the app keeps for it. `add_gmail_account` then
+    /// saves it; or, with `again`, the sign-in was for that saved account, and
+    /// `signed_in_again` follows.
     /// Fails with `WrongAccount` if the person chose another Google account.
     pub async fn google_account(
         &self,
@@ -582,7 +600,8 @@ impl Core {
             &start,
         )
         .await?;
-        let email = GmailSession::new(tls, &tokens.access).email().await?;
+        let mut gmail = GmailSession::new(tls, &tokens.access);
+        let email = gmail.email().await?;
         match again {
             Some(id)
                 if !self
@@ -597,6 +616,7 @@ impl Core {
         }
         Ok(GoogleAccount {
             email,
+            name: sender_name(&mut gmail).await,
             secret: tokens.refresh.unwrap_or_default(),
         })
     }
@@ -1294,6 +1314,39 @@ impl Core {
         Ok(())
     }
 
+    /// The sender name of a Gmail account saved before names were read, asked for once a
+    /// session; a failure stops nothing, and the next send asks again.
+    async fn gmail_name(
+        &self,
+        account: &Account,
+        secret: &str,
+        slot: &mut Option<Remote>,
+    ) -> Option<String> {
+        if self.named().contains(&account.id) {
+            return None;
+        }
+        let Ok(Remote::Gmail(gmail)) = Box::pin(self.remote(slot, account, secret)).await else {
+            return None;
+        };
+        let name = match gmail.name().await {
+            Ok(name) => name,
+            Err(e) => {
+                log::warn!("no sender name from Gmail: {e:?}");
+                return None;
+            }
+        };
+        self.named().insert(account.id);
+        let name = name?;
+        if let Err(e) = self.store.set_account_name(account.id, &name) {
+            log::warn!("sender name not saved: {e:?}");
+        }
+        Some(name)
+    }
+
+    fn named(&self) -> std::sync::MutexGuard<'_, HashSet<AccountId>> {
+        self.named.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     /// Sends the account's due mail, one message at a time, so only one message's files are
     /// held. The larger futures are boxed: inline, they overflow a 2 MB stack in debug builds.
     async fn push_mail(
@@ -1306,11 +1359,14 @@ impl Core {
         if mail.is_empty() {
             return Ok(());
         }
-        let from = Address {
+        let mut from = Address {
             name: Some(account.display_name.clone()).filter(|n| *n != account.email),
             email: account.email.clone(),
         };
         if account.kind == AccountKind::Gmail {
+            if from.name.is_none() {
+                from.name = Box::pin(self.gmail_name(account, secret, slot)).await;
+            }
             for message in mail {
                 let message = Box::pin(self.with_files(account, secret, slot, message)).await?;
                 // Gmail keeps the copy in Sent itself.
@@ -1735,7 +1791,7 @@ pub struct AccountItem {
     pub id: i64,
     pub email: String,
     pub display_name: String,
-    /// What to call the account: the user's name for it, else `display_name`, else `email`.
+    /// What to call the account: the user's name for it, else `email`.
     pub name: String,
     /// The user's name for it; empty when none.
     pub label: String,
@@ -1852,6 +1908,8 @@ impl From<GoogleSignIn> for oauth::SignIn {
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct GoogleAccount {
     pub email: String,
+    /// The name its mail goes out under, as set in Gmail.
+    pub name: Option<String>,
     /// The refresh token: the platform keeps it like a password.
     pub secret: String,
 }

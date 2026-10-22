@@ -346,6 +346,10 @@ impl Store for Memory {
         Ok(())
     }
 
+    fn set_account_name(&self, _: AccountId, _: &str) -> Result<(), StoreError> {
+        Ok(())
+    }
+
     fn set_account_label(&self, _: AccountId, _: &str) -> Result<(), StoreError> {
         Ok(())
     }
