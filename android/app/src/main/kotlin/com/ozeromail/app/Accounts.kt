@@ -425,8 +425,13 @@ private fun LabelField(account: AccountItem, onLabel: (String) -> Unit) {
         onValueChange = { label = it },
         label = { Text(stringResource(R.string.account_name)) },
         // What the account is called without a name of its own.
-        placeholder = { Text(account.displayName.ifBlank { account.email }) },
-        supportingText = { Text(stringResource(R.string.account_name_hint)) },
+        placeholder = { Text(account.email) },
+        supportingText = {
+            val sender = account.displayName.trim()
+            val hint = stringResource(R.string.account_name_hint)
+            // The sender name is not what the list shows, so it is said here.
+            Text(if (sender.isEmpty() || sender == account.email) hint else stringResource(R.string.account_sender, hint, sender))
+        },
         shape = RoundedCornerShape(Radius.medium),
         singleLine = true,
         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),

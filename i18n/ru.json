@@ -110,6 +110,7 @@
   "action_unread": "Не прочитано",
   "account_name": "Название",
   "account_name_hint": "Видно в списке и у писем, только на этом телефоне.",
+  "account_sender": "%1$s Письма уходят от имени %2$s.",
   "inbox_checking": "Проверка почты…",
   "account_keep": "Хранить на телефоне",
   "account_keep_month": "Месяц",

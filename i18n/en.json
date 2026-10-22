@@ -110,6 +110,7 @@
   "action_unread": "Unread",
   "account_name": "Name",
   "account_name_hint": "Shown in the list and on your mail; only on this phone.",
+  "account_sender": "%1$s Your mail goes out as %2$s.",
   "inbox_checking": "Checking for mail…",
   "account_keep": "Keep on this phone",
   "account_keep_month": "Month",
