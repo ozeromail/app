@@ -117,13 +117,15 @@ fn migrate(conn: &Connection) -> Result<(), StoreError> {
     Ok(())
 }
 
-/// `$m` is a copy of moved mail whose move the server has, so a sync can find the server's
-/// own message in its place.
+/// `$m` is a copy of moved mail whose move the server has, or of sent mail the server took,
+/// so a sync can find the server's own message in its place.
 macro_rules! unclaimed {
     ($m:literal) => {
         concat!(
             $m,
             ".stand_in = 1 AND NOT EXISTS (SELECT 1 FROM op WHERE op.copy = ",
+            $m,
+            ".id) AND NOT EXISTS (SELECT 1 FROM outbox WHERE outbox.copy = ",
             $m,
             ".id)"
         )
@@ -915,6 +917,14 @@ impl Store for SqliteStore {
             tx.execute("DELETE FROM draft WHERE id = ?1", [saved.0])
                 .map_err(storage)?;
         }
+        let copy = copy_into_sent(&tx, draft, message_id, in_reply_to.as_deref(), date)?;
+        if let Some(copy) = copy {
+            tx.execute(
+                "UPDATE outbox SET copy = ?2 WHERE id = ?1",
+                params![id, copy],
+            )
+            .map_err(storage)?;
+        }
         tx.commit().map_err(storage)?;
         Ok(OutboxId(id))
     }
@@ -925,10 +935,10 @@ impl Store for SqliteStore {
         let taken = tx
             .query_row(
                 "DELETE FROM outbox WHERE id = ?1 AND (not_before > ?2 OR failed IS NOT NULL)
-                 RETURNING account_id, recipients, subject, text, reply_to, quote, forward",
+                 RETURNING account_id, recipients, subject, text, reply_to, quote, forward, copy",
                 params![id.0, now],
                 |r| {
-                    Ok(SavedDraft {
+                    let draft = SavedDraft {
                         id: None,
                         account_id: Some(AccountId(r.get(0)?)),
                         to: recipients(&r.get::<_, String>(1)?).join(", "),
@@ -938,14 +948,18 @@ impl Store for SqliteStore {
                         quote: r.get(5)?,
                         forward: r.get::<_, Option<i64>>(6)?.map(MessageId),
                         saved: now,
-                    })
+                    };
+                    Ok((draft, r.get::<_, Option<i64>>(7)?))
                 },
             )
             .optional()
             .map_err(storage)?;
-        let Some(mut draft) = taken else {
+        let Some((mut draft, copy)) = taken else {
             return Ok(None);
         };
+        if let Some(copy) = copy {
+            drop_message(&tx, copy)?;
+        }
         draft.id = Some(insert_draft(&tx, &draft)?);
         tx.commit().map_err(storage)?;
         Ok(Some(draft))
@@ -1070,13 +1084,22 @@ impl Store for SqliteStore {
     }
 
     fn refused(&self, id: OutboxId, reason: &str) -> Result<(), StoreError> {
-        self.conn()
-            .execute(
-                "UPDATE outbox SET failed = ?2 WHERE id = ?1",
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        let copy: Option<i64> = tx
+            .query_row(
+                "UPDATE outbox SET failed = ?2 WHERE id = ?1 RETURNING copy",
                 params![id.0, reason],
+                |r| r.get(0),
             )
-            .map(|_| ())
-            .map_err(storage)
+            .optional()
+            .map_err(storage)?
+            .flatten();
+        // It shows among the refused ones, not as sent.
+        if let Some(copy) = copy {
+            drop_message(&tx, copy)?;
+        }
+        tx.commit().map_err(storage)
     }
 
     fn due(&self, account: AccountId, now: i64) -> Result<Vec<Op>, StoreError> {
@@ -1267,6 +1290,77 @@ fn queue_one(
         })
         .map_err(storage)?;
     Ok(OpId(id))
+}
+
+/// Shows a message waiting in the outbox in its account's sent folder at once, as copies of
+/// moved mail show: the stand-in's id, or None without a sent folder. Its Message-ID, new
+/// to each message, keeps its remote id apart from every other stand-in's.
+fn copy_into_sent(
+    tx: &Transaction<'_>,
+    draft: &Draft,
+    message_id: &str,
+    in_reply_to: Option<&str>,
+    date: i64,
+) -> Result<Option<i64>, StoreError> {
+    let Some(folder) = tx
+        .prepare_cached("SELECT id FROM folder WHERE account_id = ?1 AND role = 'sent' LIMIT 1")
+        .and_then(|mut s| {
+            s.query_row([draft.account_id.0], |r| r.get::<_, i64>(0))
+                .optional()
+        })
+        .map_err(storage)?
+    else {
+        return Ok(None);
+    };
+    let body = Body {
+        text: with_quote(&draft.text, &draft.quote),
+        ..Body::default()
+    };
+    let copy: i64 = tx
+        .prepare_cached(
+            "INSERT INTO message (folder_id, remote_id, message_id, from_name, from_email,
+                                  subject, snippet, date, flags, recipients, thread_id, stand_in)
+             SELECT ?1, '~' || ?2, ?2, display_name, email, ?3, ?4, ?5, 1, ?6,
+                    (SELECT thread_id FROM message WHERE id = ?7), 1
+             FROM account WHERE id = ?8
+             RETURNING id",
+        )
+        .and_then(|mut s| {
+            s.query_row(
+                params![
+                    folder,
+                    message_id,
+                    draft.subject,
+                    body.snippet(),
+                    date,
+                    draft.to.join("\n"),
+                    draft.reply_to.map(|m| m.0),
+                    draft.account_id.0,
+                ],
+                |r| r.get(0),
+            )
+        })
+        .map_err(storage)?;
+    // Its own conversation unless it answers one.
+    tx.execute(
+        "UPDATE message SET thread_id = id WHERE id = ?1 AND thread_id IS NULL",
+        [copy],
+    )
+    .map_err(storage)?;
+    tx.execute(
+        "INSERT INTO message_body (message_id, text) VALUES (?1, ?2)",
+        params![copy, body.text],
+    )
+    .map_err(storage)?;
+    // The server's copy links to the same conversation by the answered message's id.
+    if let Some(parent) = in_reply_to {
+        tx.execute(
+            "INSERT INTO message_ref (message_id, ref) VALUES (?1, ?2)",
+            params![copy, parent],
+        )
+        .map_err(storage)?;
+    }
+    Ok(Some(copy))
 }
 
 /// Shows a message being moved in `folder` at once: a copy with its body, files and
@@ -1679,7 +1773,8 @@ macro_rules! message_from {
                     m.flags, ",
             $thread,
             ", f.role, (SELECT group_concat(part || char(31) || name, char(30)) FROM attachment
-                         WHERE message_id = m.id)",
+                         WHERE message_id = m.id),
+                    m.stand_in = 1 AND EXISTS (SELECT 1 FROM outbox WHERE copy = m.id)",
             " FROM message m JOIN folder f ON f.id = m.folder_id"
         )
     };
@@ -1742,7 +1837,8 @@ const THREAD_IDS: &str = concat!(
     "SELECT m.id, m.flags FROM message m
      JOIN message s ON s.thread_id = m.thread_id AND s.folder_id = m.folder_id
          AND s.category = m.category
-     WHERE s.id = ?1 AND ",
+     WHERE s.id = ?1
+       AND NOT EXISTS (SELECT 1 FROM outbox WHERE outbox.copy = m.id) AND ",
     not_moving!(),
     " ORDER BY m.date, m.id"
 );
@@ -1948,6 +2044,7 @@ fn message_row(r: &Row<'_>) -> rusqlite::Result<MessageRow> {
         senders,
         role: r.get::<_, Role>(10)?.0,
         attachments: parse_attachments(&r.get::<_, Option<String>>(11)?.unwrap_or_default()),
+        sending: r.get(12)?,
     })
 }
 

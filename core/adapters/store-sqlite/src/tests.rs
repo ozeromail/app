@@ -1223,6 +1223,87 @@ fn a_reply_answers_the_message_id() {
 }
 
 #[test]
+fn a_message_on_its_way_shows_in_sent_and_its_conversation() {
+    let store = store();
+    let a = account(&store, "a@example.com");
+    let folders = store
+        .save_folders(
+            a,
+            &[
+                NewFolder {
+                    remote_id: "INBOX".into(),
+                    name: "Inbox".into(),
+                    role: FolderRole::Inbox,
+                },
+                NewFolder {
+                    remote_id: "Sent".into(),
+                    name: "Sent".into(),
+                    role: FolderRole::Sent,
+                },
+            ],
+        )
+        .unwrap();
+    let (inbox, sent) = (folders[0].id, folders[1].id);
+    store.save_messages(inbox, &[message(1, 100)]).unwrap();
+    let parent = list(&store, ListScope::Folder(inbox), 10, None)[0].id;
+    let reply = Draft {
+        reply_to: Some(parent),
+        ..draft(a)
+    };
+    let in_sent = || list(&store, ListScope::Folder(sent), 10, None);
+
+    let id = store
+        .queue_send(&reply, None, "2@example.com", 200, 205)
+        .unwrap();
+    let shown = in_sent();
+    assert_eq!(shown.len(), 1);
+    assert_eq!((shown[0].subject.as_str(), shown[0].date), ("Hi", 200));
+    assert!(shown[0].sending);
+    assert_eq!(store.body(shown[0].id).unwrap().unwrap().text, "Hello");
+    let thread: Vec<_> = store.thread(parent).unwrap().iter().map(|m| m.id).collect();
+    assert_eq!(thread, [parent, shown[0].id]);
+    // Nothing can be done to it until it has gone.
+    assert_eq!(
+        store.queue(shown[0].id, Action::Seen(false), 0),
+        Err(StoreError::NotFound)
+    );
+    // Not looked for on the server while it waits.
+    assert!(store.unclaimed(a).unwrap().is_empty());
+
+    // Taken back, refused: gone from Sent.
+    store.undo_send(id, 204).unwrap();
+    assert!(in_sent().is_empty());
+    let id = store
+        .queue_send(&reply, None, "3@example.com", 200, 200)
+        .unwrap();
+    store.refused(id, "550 no").unwrap();
+    assert!(in_sent().is_empty());
+
+    // Sent: the server's copy takes the stand-in's place.
+    let id = store
+        .queue_send(&reply, None, "4@example.com", 200, 200)
+        .unwrap();
+    let stand_in = in_sent()[0].id;
+    store.sent(id).unwrap();
+    // The next one gets its own stand-in, whatever outbox id it gets.
+    let next = store
+        .queue_send(&draft(a), None, "5@example.com", 300, 300)
+        .unwrap();
+    store.undo_send(next, 0).unwrap();
+    assert_eq!(store.unclaimed(a).unwrap()[0].id, sent);
+    let server = NewMessage {
+        message_id: Some("4@example.com".into()),
+        ..message(7, 200)
+    };
+    store.save_messages(sent, &[server]).unwrap();
+    let shown = in_sent();
+    assert_eq!(shown.len(), 1);
+    assert_eq!(shown[0].id, stand_in);
+    assert!(!shown[0].sending);
+    assert!(store.unclaimed(a).unwrap().is_empty());
+}
+
+#[test]
 fn a_forward_keeps_its_message_through_the_outbox() {
     let store = store();
     let a = account(&store, "a@example.com");

@@ -102,6 +102,8 @@ pub struct MessageRow {
     pub role: crate::FolderRole,
     /// The names of its attachments, once its body is saved.
     pub attachments: Vec<String>,
+    /// It waits in the outbox: the user sent it, the server does not have it yet.
+    pub sending: bool,
 }
 
 /// Someone who wrote in a conversation.
