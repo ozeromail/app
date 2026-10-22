@@ -33,7 +33,7 @@ if [ -z "$ready" ]; then
 fi
 
 doveadm() { docker exec -i ozero-dovecot doveadm "$@"; }
-doveadm mailbox create -u "$user" Sent Отчёты Empty Archive Moves Changes Gone Waits Deletes
+doveadm mailbox create -u "$user" Sent Отчёты Empty Archive Moves Changes Gone Waits Deletes Filed Trash
 for i in 1 2 3; do
   printf 'From: =?UTF-8?B?0JDQvdC90LA=?= <anna@example.com>\r\nTo: %s\r\nSubject: Message %s\r\nDate: Wed, 14 Oct 2026 10:0%s:00 +0300\r\nMessage-ID: <%s@example.com>\r\n\r\nHello %s\r\n' \
     "$user" "$i" "$i" "$i" "$i" | doveadm save -u "$user"
@@ -45,4 +45,6 @@ done
 for i in 1 2 3 4; do
   printf 'From: anna@example.com\r\nSubject: Delete %s\r\n\r\nHello\r\n' "$i" | doveadm save -u "$user" -m Deletes
 done
+# The API test trashes this one, out of the way of the folders the IMAP tests count.
+printf 'From: anna@example.com\r\nSubject: Filed\r\nMessage-ID: <filed@example.com>\r\n\r\nHello\r\n' | doveadm save -u "$user" -m Filed
 printf 'From: anna@example.com\r\nSubject: Move me\r\nList-Unsubscribe: <mailto:u@example.com>\r\n\r\nHello\r\n' | doveadm save -u "$user" -m Moves
