@@ -1059,6 +1059,8 @@ private fun InboxList(
     // gathers a drop over it, and a pull on a list moves the rows down to uncover the same water.
     val lake = messages.isEmpty() && (!syncing || listLoaded) && error == null
     val drops = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
+    // After a sync the gap stays open until its water has calmed, so the calm is seen.
+    var waterCalm by remember { mutableStateOf(true) }
     val sink = if (lake) Modifier else Modifier.graphicsLayer { translationY = pullGap(pull.distanceFraction) }
     // Where the title ends on screen, or null once it has scrolled away.
     val underTitle = {
@@ -1097,7 +1099,7 @@ private fun InboxList(
     Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
         PullToRefreshBox(
             // The empty list keeps its own water and does not hold the gap open.
-            isRefreshing = refreshing && !lake,
+            isRefreshing = (refreshing || !waterCalm) && !lake,
             onRefresh = {
                 drops.tryEmit(Unit)
                 onSync()
@@ -1112,6 +1114,7 @@ private fun InboxList(
                         refreshing = refreshing,
                         top = underTitle,
                         drops = drops,
+                        onCalm = { waterCalm = it },
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
@@ -1168,6 +1171,7 @@ private fun InboxList(
                                     refreshing = refreshing,
                                     pulled = { pull.distanceFraction },
                                     drops = drops,
+                                    glide = { glide.value },
                                     wordsModifier = if (allEmpty) Modifier else slide,
                                 )
                             }
