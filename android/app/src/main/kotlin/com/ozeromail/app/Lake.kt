@@ -314,7 +314,7 @@ private class Still(private var falling: Boolean) {
     /** Whether something on the water is moving, so every frame counts. */
     val busy
         get() = beat || released || drops.isNotEmpty() || jets.isNotEmpty() || waves.isNotEmpty() || rising ||
-            abs(wobble) > 0.002f || abs(wobbleV) > 0.02f || (falling && if (opened < 0) now - begun < OPEN_WAIT_MS else now - opened < WORDS_MS) ||
+            abs(wobble) > 0.002f || abs(wobbleV) > 0.02f || (falling && now - wordsFrom < WORDS_MS) ||
             !flat || abs(jolt) > 1f || abs(glideV) > 0.01f
 
     /** The clock goes to sleep: the next frame starts afresh rather than a step late. */
@@ -333,10 +333,14 @@ private class Still(private var falling: Boolean) {
         now = 1
     }
 
+    /** When the words start to come in: as the drop lands, or once it is long overdue. */
+    private val wordsFrom get() = (begun + OPEN_WAIT_MS).let { overdue -> if (opened >= 0) minOf(opened, overdue) else overdue }
+
     /** How far the words have come in: once the drop is in the water when it falls, at once otherwise. */
     fun words(): Float {
         if (!falling) return 1f
-        return if (opened < 0) 0f else Calm.transform(((now - opened) / WORDS_MS.toFloat()).coerceIn(0f, 1f))
+        if (begun < 0) return 0f
+        return Calm.transform(((now - wordsFrom) / WORDS_MS.toFloat()).coerceIn(0f, 1f))
     }
 
     /** The gathered drop lets go, on the next step, as it hung at a pull of [fraction]; one a pull. */
@@ -822,7 +826,7 @@ private const val LEVEL_MS = 1900f
 /** How long the words take to come in, however they come. */
 private const val WORDS_MS = 400
 
-/** How long the clock waits for the drop that opens the water, should it never be drawn. */
+/** How long the clock waits for the drop that opens the water, should it never be drawn; the words come then. */
 private const val OPEN_WAIT_MS = 3000L
 
 private val Calm = CubicBezierEasing(0.2f, 0f, 0f, 1f)
