@@ -59,10 +59,12 @@ async fn lists_folders_with_roles_and_names() {
             ("Changes", "Changes", FolderRole::Custom),
             ("Deletes", "Deletes", FolderRole::Custom),
             ("Empty", "Empty", FolderRole::Custom),
+            ("Filed", "Filed", FolderRole::Custom),
             ("Gone", "Gone", FolderRole::Custom),
             ("INBOX", "INBOX", FolderRole::Inbox),
             ("Moves", "Moves", FolderRole::Custom),
             ("Sent", "Sent", FolderRole::Sent),
+            ("Trash", "Trash", FolderRole::Trash),
             ("Waits", "Waits", FolderRole::Custom),
         ]
     );

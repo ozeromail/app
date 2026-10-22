@@ -305,25 +305,28 @@ fn syncs_an_imap_inbox_into_the_list() {
         "{headers:?}"
     );
 
-    // Archived mail shows in the archive at once; after the push the server's copy takes its
-    // place under the same id.
-    let archive = Mailbox::Unified {
-        role: FolderRole::Archive,
+    // Trashed mail shows in the trash at once; after the push it is the server's message there,
+    // under the same id.
+    let filed = core.folders().unwrap();
+    let filed = Mailbox::Folder {
+        id: filed.iter().find(|f| f.name == "Filed").unwrap().id,
     };
-    let archived = || {
-        let rows = core.mailbox(archive, 50).unwrap();
-        rows.into_iter()
-            .find(|m| m.subject == "Message 3")
-            .map(|m| m.id)
+    runtime
+        .block_on(core.sync_mailbox(account, "pass".into(), filed))
+        .unwrap();
+    let trash = Mailbox::Unified {
+        role: FolderRole::Trash,
     };
-    core.archive(inbox[0].id).unwrap();
-    let copy = archived().unwrap();
+    let trashed = || core.mailbox(trash, 50).unwrap().first().map(|m| m.id);
+    core.trash(core.mailbox(filed, 50).unwrap()[0].id).unwrap();
+    assert!(core.mailbox(filed, 50).unwrap().is_empty());
+    let copy = trashed().unwrap();
     runtime
         .block_on(core.push_actions(account, "pass".into()))
         .unwrap();
-    assert_eq!(archived(), Some(copy));
+    assert_eq!(trashed(), Some(copy));
     let location = core.store.location(MessageId(copy)).unwrap();
-    assert_eq!(location.folder_remote_id, "Archive");
+    assert_eq!(location.folder_remote_id, "Trash");
     assert!(location.remote_id.parse::<u32>().is_ok(), "{location:?}");
 }
 
