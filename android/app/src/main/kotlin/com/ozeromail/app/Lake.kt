@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -95,9 +96,9 @@ fun StillNote(
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         // Grey water still takes a drop of the accent's color: a drop is a drop.
-        val water = if (grey) colors.outline else colors.accent
+        val tint = colors.water(grey)
         Canvas(Modifier.fillMaxWidth().height(LAKE_HEIGHT).graphicsLayer { alpha = water() }.touches(still)) {
-            still.draw(this, water, colors.accent, HORIZON, size.height, pulled(), FALL, glide())
+            still.draw(this, tint, colors.accent, HORIZON, size.height, pulled(), FALL, glide())
         }
         Box(wordsModifier, contentAlignment = Alignment.TopCenter) {
             Column(
@@ -134,7 +135,7 @@ fun StillNote(
  * the water stays where it is and the list uncovers it. [top] is where the gap begins, or null
  * while the title is off screen. As in the empty list, a drop gathers with [fraction] and falls on
  * each of [drops]; the water swells through the sync. [onCalm] hears whether the water has calmed
- * since, so the list can wait for it before it covers the water.
+ * since, so the list can wait for it before it covers the water. [grey] as in [StillNote].
  */
 @Composable
 fun PullWater(
@@ -145,8 +146,10 @@ fun PullWater(
     drops: Flow<Float>,
     onCalm: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    grey: Boolean = false,
 ) {
-    val water = MaterialTheme.colorScheme.accent
+    val colors = MaterialTheme.colorScheme
+    val water = colors.water(grey)
     val still = rememberStill(fall = false)
     LaunchedEffect(refreshing) { still.beat = refreshing }
     LaunchedEffect(drops) { drops.collect { still.release(it) } }
@@ -161,11 +164,14 @@ fun PullWater(
         // Drawn even when closed, so the water hears that the pull is over.
         translate(top = y) {
             clipRect(top = 0f, bottom = depth) {
-                still.draw(this, water, water, LAKE_TOP + HORIZON, maxOf(depth, PULL_GAP.toPx()), fraction(), PULL_FALL)
+                still.draw(this, water, colors.accent, LAKE_TOP + HORIZON, maxOf(depth, PULL_GAP.toPx()), fraction(), PULL_FALL)
             }
         }
     }
 }
+
+/** The water's color: the accent, or the outline's grey for plain folders. */
+private fun ColorScheme.water(grey: Boolean): Color = if (grey) outline else accent
 
 /** How far a pull of [fraction] moves the list: with the finger up to the threshold, then less and less. */
 fun Density.pullGap(fraction: Float): Float {
