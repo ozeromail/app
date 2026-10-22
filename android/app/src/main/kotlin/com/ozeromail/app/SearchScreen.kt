@@ -91,8 +91,10 @@ fun SearchScreen(
             if (shownFor == query && query.isNotBlank() && messages.isEmpty() && !asking) {
                 item { EmptyNote(R.drawable.ic_search, stringResource(R.string.inbox_empty)) }
             }
+            // No motion in this list: when the servers' answer joins it, rows sliding to their
+            // new places or the note fading out would pass over the rows that appear at once.
             itemsIndexed(messages, key = { _, it -> it.id }) { index, message ->
-                Column(rowMove()) {
+                Column {
                     if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.screen), color = colors.outlineVariant)
                     MessageRow(message, onClick = { onOpen(message) })
                 }
@@ -104,7 +106,7 @@ fun SearchScreen(
                         color = colors.onSurfaceVariant,
                         style = Type.Caption,
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp).animateItem(),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
                     )
                 }
             }
