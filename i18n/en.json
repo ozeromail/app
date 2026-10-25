@@ -170,5 +170,9 @@
   "attachment_not_saved": "Can’t save the file. Check the free space.",
   "attachment_no_app": "No app on this phone opens this file.",
   "attachment_cant_show": "Can’t show this file here. Open it in another app.",
-  "attachment_position": "%1$d of %2$d"
+  "attachment_position": "%1$d of %2$d",
+  "action_select": "Select",
+  "attachment_save_files": "Save to Files",
+  "attachment_saved_files": "Saved to Files",
+  "crash_text_ios": "Send the report to the author? The letter opens first, so you can read it. It holds where the app failed, the app and iOS versions and the phone model. No mail."
 }

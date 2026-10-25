@@ -20,15 +20,45 @@ struct Vault: Sendable {
 
     /// Keyed by email, which is unique per account and known before the account is saved.
     func password(email: String) throws -> String {
-        guard let data = try read("password.\(email.lowercased())") else {
+        guard let data = try read(passwordKey(email)) else {
             throw Failure(status: errSecItemNotFound)
         }
         return String(decoding: data, as: UTF8.self)
     }
 
-    func setPassword(_ password: String, email: String) throws {
-        try write("password.\(email.lowercased())", Data(password.utf8))
+    /// The password, or nil when there is none or the keychain cannot be read.
+    func passwordIfAny(email: String) -> String? {
+        try? password(email: email)
     }
+
+    func setPassword(_ password: String, email: String) throws {
+        try write(passwordKey(email), Data(password.utf8))
+    }
+
+    func forgetPassword(email: String) {
+        SecItemDelete(item(passwordKey(email)) as CFDictionary)
+    }
+
+    private func passwordKey(_ email: String) -> String {
+        "password.\(email.lowercased())"
+    }
+
+    /// The Google sign-in waiting for the browser, kept in case iOS closes the app meanwhile.
+    func googleSignIn() -> GoogleSignIn? {
+        guard let data = try? read(Self.google) else { return nil }
+        let parts = String(decoding: data, as: UTF8.self).components(separatedBy: "\n")
+        return parts.count == 3 ? GoogleSignIn(url: parts[0], verifier: parts[1], state: parts[2]) : nil
+    }
+
+    func setGoogleSignIn(_ signIn: GoogleSignIn?) throws {
+        guard let signIn else {
+            SecItemDelete(item(Self.google) as CFDictionary)
+            return
+        }
+        try write(Self.google, Data([signIn.url, signIn.verifier, signIn.state].joined(separator: "\n").utf8))
+    }
+
+    private static let google = "google.signin"
 
     private func item(_ name: String) -> [CFString: Any] {
         [kSecClass: kSecClassGenericPassword, kSecAttrService: "com.ozeromail.app", kSecAttrAccount: name]

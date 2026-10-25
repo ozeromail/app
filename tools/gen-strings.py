@@ -5,6 +5,7 @@ Android: gen-strings.py <res dir> writes values*/strings.xml.
 Apple:   gen-strings.py --apple <dir> writes <locale>.lproj/Localizable.strings.
 """
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -38,9 +39,14 @@ def android(strings, locale):
     return [(Path(values_dir(locale)) / "strings.xml", "\n".join(lines))]
 
 
+def apple_value(text):
+    """Android's %1$s and %1$d are %1$@ and %1$ld for Foundation's String(format:)."""
+    return re.sub(r"%(\d+\$)?([sd])", lambda m: "%" + (m.group(1) or "") + ("@" if m.group(2) == "s" else "ld"), text)
+
+
 def apple(strings, locale):
     # A JSON string literal is also a valid .strings value.
-    lines = [f'"{k}" = {json.dumps(v, ensure_ascii=False)};' for k, v in strings.items()]
+    lines = [f'"{k}" = {json.dumps(apple_value(v), ensure_ascii=False)};' for k, v in strings.items()]
     name = f'"CFBundleDisplayName" = {json.dumps(strings["app_name"], ensure_ascii=False)};\n'
     folder = Path(f"{locale}.lproj")
     return [(folder / "Localizable.strings", "\n".join(lines) + "\n"), (folder / "InfoPlist.strings", name)]
