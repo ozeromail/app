@@ -46,11 +46,21 @@ const MAIL_WAIT: Duration = Duration::from_secs(5 * 60);
 const NEWS_AGE: i64 = DAY;
 /// Milliseconds an archived or sent message waits before the server hears of it.
 const HOLD: i64 = 5_000;
-/// The app's Google OAuth client (Android type, so it has no secret).
+/// The app's Google OAuth client, one per platform; neither has a secret. An account's tokens
+/// stay with the client that signed it in, and accounts never leave the device they were added on.
+#[cfg(not(target_os = "ios"))]
 const GOOGLE_CLIENT_ID: &str =
     "212695996222-1jq9p8or7u441h6spset2o15ghblbt1l.apps.googleusercontent.com";
-/// Where Google sends the browser back: the app's package name as a URI scheme.
+#[cfg(target_os = "ios")]
+const GOOGLE_CLIENT_ID: &str =
+    "212695996222-nhjb5g2i394kese5s7tppk3q38tl89n4.apps.googleusercontent.com";
+/// Where Google sends the browser back: on Android the package name as a URI scheme, on iOS
+/// the client id reversed, the scheme Google gives an iOS client.
+#[cfg(not(target_os = "ios"))]
 const GOOGLE_REDIRECT: &str = "com.ozeromail.app:/oauth2redirect";
+#[cfg(target_os = "ios")]
+const GOOGLE_REDIRECT: &str =
+    "com.googleusercontent.apps.212695996222-nhjb5g2i394kese5s7tppk3q38tl89n4:/oauth2redirect";
 /// An access token is renewed this long before Google says it expires.
 const TOKEN_MARGIN: Duration = Duration::from_secs(60);
 

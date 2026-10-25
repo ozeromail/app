@@ -1,345 +1,661 @@
+import Network
 import SwiftUI
 import UserNotifications
 
-/// The unified inbox: shows what is saved at once, then syncs; pull down to sync again.
+/// The unified inbox, or another mailbox picked in the accounts sheet: shows what is saved at
+/// once, then syncs; pull down to sync again. Everything the thumb needs sits along the bottom.
 struct InboxView: View {
-    let mail: Mail
+    @State private var model: InboxModel
+    @Environment(\.scenePhase) private var scenePhase
 
-    /// Nil until the saved mail has been read once.
-    @State private var messages: [MessageItem]?
-    @State private var syncing = false
-    /// A sync asked for while one runs, say for a new account, runs right after it.
-    @State private var syncAgain = false
-    @State private var error: LocalizedStringKey?
-    /// The last archive or send, while its toast can still take it back.
-    @State private var undoable: Undoable?
-    @State private var composing: Composing?
-    @State private var tab = Category.people
-    @State private var tabs: [InboxTab] = []
-    @State private var unsent: [UnsentItem] = []
-    @State private var path: [MessageItem] = []
-    @State private var query = ""
-    @State private var addingAccount = false
-    /// With the query they answer, so "No messages" never shows for a query still waiting.
-    @State private var found: (query: String, messages: [MessageItem])?
-    @State private var searchError: LocalizedStringKey?
-
-    /// Search results while there is a query, otherwise nil: the inbox shows.
-    private var results: [MessageItem]? {
-        query.trimmingCharacters(in: .whitespaces).isEmpty ? nil : found?.messages ?? []
+    init(mail: Mail, onNoAccounts: @escaping () -> Void) {
+        _model = State(initialValue: InboxModel(mail: mail, onNoAccounts: onNoAccounts))
     }
 
     var body: some View {
-        NavigationStack(path: $path) {
-            List {
-                if let results {
-                    if found?.query == query && results.isEmpty {
-                        EmptyRow()
-                    }
-                    ForEach(results, id: \.id) { message in
-                        NavigationLink(value: message) { MessageRow(message: message) }
-                            .listRowBackground(AccountStrip(account: message.account))
-                    }
-                } else {
-                    ForEach(unsent, id: \.id) { failed in
-                        Button { fix(failed) } label: {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("inbox_not_sent").fontWeight(.semibold).foregroundStyle(.red)
-                                (failed.subject.isEmpty ? Text("inbox_no_subject") : Text(verbatim: failed.subject))
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                        }
-                    }
-                    if messages?.isEmpty == true && !syncing && error == nil {
-                        EmptyRow()
-                    }
-                    ForEach(messages ?? [], id: \.id) { message in
-                        NavigationLink(value: message) { MessageRow(message: message) }
-                            .listRowBackground(AccountStrip(account: message.account))
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                Button("action_done") { archive(message) }
-                                    .tint(.accentColor)
-                            }
+        @Bindable var model = model
+        NavigationStack(path: $model.path) {
+            InboxList(model: model)
+                .navigationDestination(for: Route.self) { route in
+                    switch route {
+                    case .message(let message):
+                        MessageView(model: model, message: message)
+                    case .search:
+                        SearchView(model: model)
+                    case .drafts:
+                        DraftsView(model: model)
                     }
                 }
-            }
-            .listStyle(.plain)
-            .navigationTitle("inbox_title")
-            .searchable(text: $query, prompt: Text("search_prompt"))
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("inbox_add_account") { addingAccount = true }
-                }
-            }
-            .sheet(isPresented: $addingAccount) {
-                SignInView(mail: mail, onCancel: { addingAccount = false }) {
-                    addingAccount = false
-                    Task { await sync() }
-                }
-            }
-            .task(id: query) {
-                searchError = nil
-                guard results != nil else { return }
-                do {
-                    // A pause in typing starts a search, so each key does not.
-                    try await Task.sleep(for: .milliseconds(150))
-                    found = (query, try await mail.search(query))
-                } catch is CancellationError {
-                    // The query changed meanwhile.
-                } catch {
-                    searchError = error.text()
-                }
-            }
-            .navigationDestination(for: MessageItem.self) { message in
-                MessageView(mail: mail, message: message) { composing = try? mail.reply(to: $0) }
-            }
-            .refreshable { await sync() }
-            .safeAreaInset(edge: .bottom) {
-                VStack {
-                    if let undoable {
-                        UndoToast(text: undoable.text) { undo(undoable) }
-                            .task(id: undoable) {
-                                // Closes before the core sends, so a tap is never too late.
-                                try? await Task.sleep(for: .seconds(Int(undoSeconds())))
-                                if self.undoable == undoable { self.undoable = nil }
-                            }
-                    }
-                    if let shown = results == nil ? error : searchError {
-                        Text(shown).font(.footnote).foregroundStyle(.secondary).padding()
-                    }
-                    HStack {
-                        Picker("inbox_title", selection: $tab) {
-                            ForEach(Category.all, id: \.self) { category in
-                                let unread = tabs.first { $0.category == category }?.unread ?? 0
-                                (Text(category.label) + Text(unread > 0 ? " \(unread)" : ""))
-                                    .tag(category)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        Button("compose_new") {
-                            composing = .new
-                        }
-                    }
-                    .padding(.horizontal)
-                    .padding(.bottom, 8)
-                }
-                .background(.bar)
-            }
-            // Also runs on the way back from a message, which now has a snippet.
-            .task(id: tab) { await load() }
         }
-        .task { await sync() }
+        .sheet(isPresented: $model.accountsOpen) {
+            AccountsSheet(
+                accounts: model.accounts, folders: model.folders, mailbox: model.mailbox, drafts: model.drafts.count,
+                swipes: $model.swipes, groups: $model.groups, actions: accountsActions)
+            .task { await model.loadFolders() }
+        }
+        .fullScreenCover(isPresented: $model.addingAccount) {
+            SignInView(mail: model.mail, onCancel: { model.addingAccount = false }) {
+                model.addingAccount = false
+                model.signedIn()
+            }
+        }
+        .fullScreenCover(item: $model.signingIn) { account in
+            SignInView(mail: model.mail, again: account, onCancel: { model.signingIn = nil }) {
+                model.signingIn = nil
+                model.signedIn()
+            }
+        }
+        .fullScreenCover(item: $model.composing) { composing in
+            ComposeView(
+                mail: model.mail, composing: composing,
+                onClose: { model.composing = nil }, onSent: model.sent, onKept: model.kept,
+                onDiscard: { model.discarded($0, original: composing.original) })
+        }
         .task {
+            await model.loadAccounts()
+            await model.load()
+            await model.sync()
+        }
+        .task {
+            for await _ in model.mail.changes() {
+                await model.changed()
+            }
+        }
+        .task {
+            // Asked once the inbox shows, so it is clear what the notifications are for.
+            _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
             // Only once there is an account: without one a check has nothing to do.
             BackgroundCheck.schedule()
-            // Asked once the inbox shows, so it is clear what the notifications are for.
-            _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
         }
-        .fullScreenCover(item: $composing) { composing in
-            ComposeView(mail: mail, composing: composing) { id, sent in
-                self.composing = nil
-                // Back to the list, where the toast is.
-                path = []
-                undoable = .send(id, sent)
+        .task(id: WatchKey(active: scenePhase == .active, accounts: model.accounts)) {
+            // While the app is on screen, new mail shows as it arrives. An account signed in to
+            // again starts waiting, with its new secret.
+            guard scenePhase == .active else { return }
+            let inbox = self.model
+            await inbox.mail.watch(inbox.accounts) { await inbox.sync(quiet: true) }
+        }
+        .task(id: scenePhase == .active) {
+            guard scenePhase == .active else { return }
+            for await _ in backOnline() {
+                await model.backOnline()
             }
         }
-    }
-
-    /// Done: the message leaves the list at once; the toast can take it back for a moment.
-    private func archive(_ message: MessageItem) {
-        do {
-            undoable = .archive(try mail.archive(message))
-            messages?.removeAll { $0.id == message.id }
-            Task { await counts() }
-        } catch {
-            self.error = error.text()
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await model.returned() } }
+        }
+        .onChange(of: model.mailbox) {
+            Task {
+                await model.switched()
+                // Another mailbox brings in what changed in it; the inbox keeps itself up to date.
+                if !model.isInbox { await model.sync(model.mailbox) }
+            }
+        }
+        .onChange(of: model.tab) {
+            Task { await model.switched() }
         }
     }
 
-    private func undo(_ action: Undoable) {
-        undoable = nil
-        Task {
-            do {
-                switch action {
-                case .archive(let ids):
-                    if try mail.undo(ids) { await load() }
-                case .send(let id, let sent):
-                    if let draft = try await mail.undoSend(id) {
-                        var again = sent
-                        again.draft = draft
-                        composing = again
+    private var accountsActions: AccountsActions {
+        AccountsActions(
+            onMailbox: { box in
+                model.accountsOpen = false
+                model.mailbox = box
+            },
+            onDrafts: {
+                model.accountsOpen = false
+                model.path.append(.drafts)
+            },
+            onAdd: {
+                model.accountsOpen = false
+                model.addingAccount = true
+            },
+            onColor: { account, color in model.changeAccount { try await model.mail.setAccountColor(account, color: color) } },
+            onLabel: { account, label in model.changeAccount { try await model.mail.setAccountLabel(account, label: label) } },
+            onSignIn: { account in
+                model.accountsOpen = false
+                model.signingIn = account
+            },
+            onKeepDays: { account, days in model.changeAccount { try await model.mail.setKeepDays(account, days: days) } },
+            onRemove: { account in Task { await model.remove(account) } },
+            onWrite: {
+                model.accountsOpen = false
+                model.composing = Composing(draft: authorDraft())
+            })
+    }
+}
+
+/// Where a list's content top is, from the top of its frame: `offset` above it while scrolled,
+/// below zero while pulled; `inset` is the bars over it.
+struct ListTop: Equatable {
+    var offset: CGFloat = 0
+    var inset: CGFloat = 0
+}
+
+/// What the watch for new mail depends on: the app on screen, and which accounts are signed in.
+private struct WatchKey: Equatable {
+    let active: Bool
+    let accounts: [Int64: Bool]
+
+    init(active: Bool, accounts: [AccountItem]) {
+        self.active = active
+        self.accounts = Dictionary(accounts.map { ($0.id, $0.needsSignIn) }, uniquingKeysWith: { a, _ in a })
+    }
+}
+
+extension AccountItem: Identifiable {}
+
+/// The list under its large title, with the dock, the toast and errors along the bottom.
+private struct InboxList: View {
+    @Bindable var model: InboxModel
+    @State private var more = false
+    /// How the list is pulled down, as the water reads it.
+    @State private var pull = PullState()
+    /// Where the list's content top is: above the top while scrolled, below it while pulled.
+    @State private var top = ListTop()
+    @State private var dragging = false
+    /// Only a pull shows the water's sync; syncs on their own stay quiet over the saved mail.
+    @State private var refreshing = false
+    /// After a sync the gap stays open until its water has calmed, so the calm is seen; and after a
+    /// tug, until its drop is in.
+    @State private var waterCalm = true
+    /// How much of the gap is held open, from 0 to 1.
+    @State private var held: CGFloat = 0
+
+    private var picked: [MessageItem] {
+        // Only what the list still shows: a sync may take a chosen message away.
+        model.messages.filter { model.chosen.contains($0.id) }
+    }
+
+    private var choosing: Bool { !picked.isEmpty }
+
+    var body: some View {
+        let lake = model.messages.isEmpty && (!model.syncing || model.listLoaded) && model.error == nil
+        List(selection: $model.chosen) {
+            // The gap a pull leaves open while its water calms; the water shows through it.
+            Color.clear
+                .frame(height: held * Lake.pullGap)
+                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+                .selectionDisabled()
+            if let owner = model.owner {
+                Text(verbatim: choosing ? tr("select_hint") : owner)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .listRowSeparator(.hidden)
+                    .selectionDisabled()
+            }
+            ForEach(model.signedOut, id: \.id) { account in
+                NoticeRow(title: tr("inbox_signed_out", account.name), text: tr("inbox_signed_out_text"), tint: .ozeroAccent,
+                          background: Color.ozeroCard) { model.signingIn = account }
+            }
+            if model.isInbox {
+                ForEach(model.unsent, id: \.id) { failed in
+                    NoticeRow(title: tr("inbox_not_sent"), text: failed.subject.isEmpty ? tr("inbox_no_subject") : failed.subject,
+                              tint: .ozeroError, background: Color.ozeroError.opacity(0.1)) { model.fix(failed) }
+                }
+            }
+            if model.swipeTip && !model.messages.isEmpty {
+                SwipeTip(swipes: model.swipes, onDismiss: model.closeSwipeTip)
+            }
+            if lake {
+                let words = model.emptyWords
+                // The first mail of an empty list is on its way: the water waits, without words.
+                let waiting = model.syncing && model.listLoaded && !model.syncedBoxes.contains(model.mailbox)
+                LakeNote(title: words.title, text: words.text, drawIn: model.hadMail, grey: !model.isInbox,
+                         waiting: waiting, refreshing: refreshing, pull: pull)
+                    .id(model.mailbox)
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                    .selectionDisabled()
+            }
+            ForEach(Array(model.messages.enumerated()), id: \.element.id) { index, message in
+                NavigationLink(value: Route.message(message)) {
+                    MessageRow(message: message)
+                }
+                .tag(message.id)
+                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    swipe(model.swipes.left, message)
+                }
+                .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                    swipe(model.swipes.right, message)
+                }
+                .contextMenu {
+                    // A long press starts choosing, as on Android; the rest of the menu acts at once.
+                    Button("action_select", systemImage: "checkmark.circle") { model.chosen.insert(message.id) }
+                    ForEach(model.swipes.actions) { action in
+                        swipe(action, message)
                     }
                 }
-            } catch {
-                self.error = error.text()
-            }
-        }
-    }
-
-    /// A refused message, taken back to fix it.
-    private func fix(_ failed: UnsentItem) {
-        Task {
-            do {
-                if let draft = try await mail.undoSend(failed.id) {
-                    composing = Composing(draft: draft)
+                .onAppear {
+                    // Near the end of the list, the next rows come before the finger gets there.
+                    if index >= model.messages.count - InboxModel.ahead { Task { await model.loadMore() } }
                 }
-            } catch {
-                self.error = error.text()
             }
-            await counts()
+            if model.loadingOlder {
+                ProgressView().frame(maxWidth: .infinity).listRowSeparator(.hidden)
+            }
+        }
+        .listStyle(.plain)
+        .environment(\.defaultMinListRowHeight, 0)
+        .onScrollGeometryChange(for: ListTop.self) { geometry in
+            ListTop(offset: geometry.contentOffset.y + geometry.contentInsets.top, inset: geometry.contentInsets.top)
+        } action: { _, now in
+            top = now
+            // How far the finger pulls the list, in pulls; a held gap counts from where it is held.
+            let fraction = dragging ? max(0, -now.offset) / Lake.pullGap : 0
+            pull.fraction = fraction
+            pull.gap = max(0, held * Lake.pullGap - now.offset)
+        }
+        .onScrollPhaseChange { old, new in
+            if new == .interacting { dragging = true }
+            if old == .interacting && new != .interacting { letGo(lake: lake) }
+        }
+        .sensoryFeedback(.impact(weight: .light), trigger: pull.fraction >= 1)
+        // There is one water, under the title, and it stays put: a pull over an empty list's lake
+        // gathers a drop over it, and a pull on a list moves the rows down to uncover the same water.
+        .overlay(alignment: .top) {
+            if !lake {
+                PullWater(grey: !model.isInbox, refreshing: refreshing, pull: pull) { waterCalm = $0 }
+                    .frame(height: pull.gap)
+                    .clipped()
+                    .padding(.top, top.inset)
+                    .allowsHitTesting(false)
+            }
+        }
+        .onChange(of: !lake && (refreshing || !waterCalm)) { _, hold in
+            withAnimation(.spring(duration: 0.35, bounce: 0)) { held = hold ? 1 : 0 }
+        }
+        .environment(\.editMode, .constant(choosing ? .active : .inactive))
+        .animation(.smooth, value: model.messages.map(\.id))
+        .navigationTitle(choosing ? tr("select_count", picked.count) : model.title)
+        .toolbar {
+            if !model.isInbox && !choosing {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        model.mailbox = Mail.inbox
+                    } label: {
+                        Image(systemName: "chevron.left")
+                    }
+                    .accessibilityLabel(Text("action_back"))
+                }
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 8) {
+                // Low on the screen, in reach of the thumb that swiped.
+                if let toast = model.toast {
+                    ToastView(toast: toast, onUndo: model.tapUndo, onGo: model.tapGo)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+                if let error = model.error {
+                    Text(LocalizedStringKey(error))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 20)
+                }
+                Dock(model: model, choosing: choosing, picked: picked, onMore: { more = true })
+            }
+            .animation(.smooth, value: model.toast)
+        }
+        .confirmationDialog("action_more", isPresented: $more) {
+            Button("action_select_all") { model.chosen.formUnion(model.messages.map(\.id)) }
+            // The sender of the message chosen last.
+            if let last = picked.last {
+                Button(tr("action_all_from", last.sender)) {
+                    model.chosen.formUnion(model.messages.filter { $0.fromEmail == last.fromEmail }.map(\.id))
+                }
+            }
         }
     }
 
-    private func loadList() async {
-        let shown = tab
-        do {
-            let found = try await mail.inbox(shown)
-            // A tab picked meanwhile loads its own list.
-            if tab == shown { messages = found }
-        } catch {
-            // Never leave the last tab's messages under the new one.
-            if tab == shown { messages = [] }
-            self.error = error.text()
+    /// The finger lets the list go: past a third of a pull a drop falls, sized by how far it went,
+    /// and a whole pull syncs, unless a sync runs.
+    private func letGo(lake: Bool) {
+        let fraction = pull.fraction
+        dragging = false
+        pull.fraction = 0
+        guard fraction >= Lake.tug else { return }
+        pull.lastDrop = fraction
+        pull.drops += 1
+        if !lake { waterCalm = false }
+        guard fraction >= 1, !refreshing else { return }
+        refreshing = true
+        Task {
+            let started = ContinuousClock.now
+            await model.sync(model.mailbox)
+            // The pulled drop lands before the gap closes, however quick the sync.
+            try? await Task.sleep(until: started + .milliseconds(1100))
+            refreshing = false
         }
     }
 
-    private func counts() async {
-        do {
-            tabs = try await mail.tabs()
-            unsent = try await mail.unsent()
-        } catch {
-            self.error = error.text()
-        }
-    }
-
-    private func load() async {
-        await loadList()
-        await counts()
-    }
-
-    private func sync() async {
-        guard !syncing else {
-            syncAgain = true
-            return
-        }
-        syncing = true
-        error = nil
-        defer { syncing = false }
-        do {
-            try await mail.refresh()
-        } catch {
-            self.error = error.text()
-        }
-        // Whatever synced is on screen now, also when one account failed: no notification later.
-        do {
-            try await mail.forgetNewMail()
-        } catch {
-            self.error = error.text()
-        }
-        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
-        await load()
-        if syncAgain {
-            syncAgain = false
-            Task { await sync() }
+    @ViewBuilder
+    private func swipe(_ action: SwipeAction, _ message: MessageItem) -> some View {
+        if action.applies(to: message) {
+            let unread = message.threadUnread > 0
+            Button(role: action == .delete ? .destructive : nil) {
+                model.swiped(message, action)
+            } label: {
+                if action == .read {
+                    Label(unread ? tr("action_read") : tr("action_unread"), systemImage: unread ? "envelope.open" : "envelope.badge")
+                } else {
+                    Label(action == .delete && !message.canTrash ? tr("action_delete_forever") : action.label, systemImage: action.icon)
+                }
+            }
+            .tint(action == .done ? Color.ozeroFill : action == .delete ? Color.ozeroError : Color.gray)
         }
     }
 }
 
-/// An action the toast can still take back.
-private enum Undoable: Equatable {
-    case archive([Int64])
-    case send(Int64, Composing)
+/// Everything the thumb needs, along the bottom: the inbox's tabs (none elsewhere), then the
+/// accounts button, search and a new message; while choosing, what to do with the chosen.
+private struct Dock: View {
+    @Bindable var model: InboxModel
+    let choosing: Bool
+    let picked: [MessageItem]
+    let onMore: () -> Void
 
-    var text: LocalizedStringKey {
-        switch self {
-        case .archive: "inbox_archived"
-        case .send: "inbox_sending"
+    var body: some View {
+        VStack(spacing: 8) {
+            if model.isInbox {
+                Picker("inbox_title", selection: $model.tab) {
+                    ForEach(Category.all, id: \.self) { category in
+                        let unread = model.tabs.first { $0.category == category }?.unread ?? 0
+                        (Text(category.label) + Text(verbatim: unread > 0 ? " \(unread)" : "")).tag(category)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+            if let label = model.emptyLabel, !model.messages.isEmpty, !choosing {
+                Button(role: .destructive) {
+                    Task { await model.empty() }
+                } label: {
+                    Text(label).frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+            }
+            Group {
+                if choosing {
+                    ChoiceBar(model: model, picked: picked, onMore: onMore)
+                } else {
+                    HStack(spacing: 8) {
+                        AccountsButton(accounts: model.accounts) { model.accountsOpen = true }
+                        Button {
+                            model.path.append(.search)
+                        } label: {
+                            Label("search_prompt", systemImage: "magnifyingglass")
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                                .padding(.horizontal, 16)
+                                .background(Color.ozeroCard, in: .capsule)
+                        }
+                        .buttonStyle(.plain)
+                        Button {
+                            model.composing = Composing(draft: newDraft)
+                        } label: {
+                            Image(systemName: "square.and.pencil")
+                                .font(.title3.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 48, height: 48)
+                                .background(Color.ozeroFill, in: .rect(cornerRadius: 16))
+                        }
+                        .accessibilityLabel(Text("compose_new"))
+                    }
+                }
+            }
+            .frame(height: 52)
+            .animation(.smooth, value: choosing)
         }
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 4)
+        .background(.bar)
     }
 }
 
-private struct UndoToast: View {
-    let text: LocalizedStringKey
-    let undo: () -> Void
+/// What to do with the chosen messages: they leave the list with one toast for all.
+private struct ChoiceBar: View {
+    let model: InboxModel
+    let picked: [MessageItem]
+    let onMore: () -> Void
+
+    var body: some View {
+        let done = picked.filter(\.canArchive).count
+        let unread = picked.contains { $0.threadUnread > 0 }
+        let forever = !picked.contains(where: \.canTrash)
+        HStack(spacing: 8) {
+            Button("action_cancel") { model.chosen = [] }
+            Spacer()
+            Button {
+                model.choice { await model.setRead($0, read: unread) }
+            } label: {
+                Image(systemName: unread ? "envelope.open" : "envelope.badge")
+            }
+            .accessibilityLabel(Text(unread ? "action_read" : "action_unread"))
+            Button(role: .destructive) {
+                model.choice { await model.delete($0) }
+            } label: {
+                Image(systemName: "trash")
+            }
+            .accessibilityLabel(Text(forever ? "action_delete_forever" : "action_delete"))
+            Button(action: onMore) {
+                Image(systemName: "ellipsis.circle")
+            }
+            .accessibilityLabel(Text("action_more"))
+            if done > 0 {
+                Button(tr("action_done_count", done)) {
+                    model.choice { rows in await model.archive(rows.filter(\.canArchive)) }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color.ozeroFill)
+            }
+        }
+        .font(.title3)
+        .padding(.horizontal, 4)
+    }
+}
+
+/// The accounts' colours; opens the accounts.
+private struct AccountsButton: View {
+    let accounts: [AccountItem]
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Group {
+                if let one = accounts.first, accounts.count == 1 {
+                    AccountInitial(name: one.name, color: one.tint)
+                } else {
+                    Grid(horizontalSpacing: 4, verticalSpacing: 4) {
+                        ForEach(Array(stride(from: 0, to: min(accounts.count, 4), by: 2)), id: \.self) { start in
+                            GridRow {
+                                ForEach(accounts[start..<min(start + 2, accounts.count)], id: \.id) { AccountDot(color: $0.tint) }
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(width: 48, height: 48)
+            .background(Color.ozeroCard, in: .rect(cornerRadius: 16))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text("accounts_title"))
+    }
+}
+
+/// The first letter of an account's name on its colour.
+struct AccountInitial: View {
+    let name: String
+    let color: Color
+    var size: CGFloat = 24
+
+    var body: some View {
+        Text(verbatim: String(name.first.map(Character.init) ?? "?").uppercased())
+            .font(.system(size: size * 0.5, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: size, height: size)
+            .background(color, in: .circle)
+    }
+}
+
+/// A card over the list that asks for a tap: a title in `tint` over a line or two of text.
+private struct NoticeRow: View {
+    let title: String
+    let text: String
+    let tint: Color
+    let background: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: title).font(.subheadline.weight(.semibold)).foregroundStyle(tint)
+                Text(verbatim: text).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(background, in: .rect(cornerRadius: 16))
+        }
+        .buttonStyle(.plain)
+        .listRowSeparator(.hidden)
+        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+        .selectionDisabled()
+    }
+}
+
+/// Says what each swipe does, until the person has read it.
+private struct SwipeTip: View {
+    let swipes: Swipes
+    let onDismiss: () -> Void
 
     var body: some View {
         HStack {
-            Text(text)
+            Text(verbatim: tr("swipes_tip", swipes.left.label, swipes.right.label)).font(.subheadline)
             Spacer()
-            Button("action_undo", action: undo).fontWeight(.semibold)
+            Button("action_got_it", action: onDismiss).font(.subheadline.weight(.semibold))
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(.regularMaterial, in: .rect(cornerRadius: 12))
-        .padding(.horizontal)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Color.ozeroAccent.opacity(0.1), in: .rect(cornerRadius: 16))
+        .listRowSeparator(.hidden)
+        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+        .selectionDisabled()
     }
 }
 
-/// A strip of the account's colour along the row's leading edge, when there is one.
-private struct AccountStrip: View {
-    let account: AccountMark?
+/// The undo toast: dark, rounded, low on the screen. A move also offers to show the folder.
+private struct ToastView: View {
+    let toast: Toast
+    let onUndo: () -> Void
+    let onGo: (Mailbox) -> Void
 
     var body: some View {
-        Rectangle()
-            .fill(account?.tint ?? .clear)
-            .frame(width: 3)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(spacing: 16) {
+            Text(verbatim: toast.text).foregroundStyle(.white)
+            Spacer()
+            if let go = toast.go {
+                Button("action_show") { onGo(go) }.foregroundStyle(Color(rgb: 0x8CC2FF))
+            }
+            if toast.undo {
+                Button("action_undo", action: onUndo).fontWeight(.semibold).foregroundStyle(Color(rgb: 0x8CC2FF))
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(Color(rgb: 0x1B2639), in: .rect(cornerRadius: 14))
+        .padding(.horizontal, 12)
     }
 }
 
-/// A row of the list; with several accounts, the account's name in its colour marks it.
-private struct MessageRow: View {
+/// A row of a list. Unread shows as a blue dot and bold text; with several accounts, the
+/// account's name by the time, after a small dot of its colour, marks it.
+struct MessageRow: View {
     let message: MessageItem
 
     var body: some View {
         let unread = message.threadUnread > 0
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
+        HStack(alignment: .top, spacing: 8) {
             Circle()
-                .fill(unread ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear))
-                .frame(width: 8, height: 8)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(message.sender)
-                        .fontWeight(unread ? .semibold : .regular)
+                .fill(unread ? Color.ozeroFill : .clear)
+                .frame(width: 7, height: 7)
+                .padding(.top, 7)
+                .animation(.easeOut(duration: 0.15), value: unread)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(verbatim: message.participants)
+                        .font(.body.weight(unread ? .semibold : .medium))
                         .lineLimit(1)
                     if message.threadCount > 1 {
                         Text(verbatim: "\(message.threadCount)")
-                            .font(.footnote)
+                            .font(.caption2.weight(.semibold).monospacedDigit())
                             .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(.quaternary, in: .capsule)
                     }
-                    Spacer()
-                    Text(shortDate(message.date))
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 4)
+                    if let account = message.account {
+                        AccountDot(color: account.tint, size: 6)
+                        Text(verbatim: account.name)
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .frame(maxWidth: 70, alignment: .leading)
+                    }
+                    // Not out yet: once the server has it, its date shows.
+                    Text(verbatim: message.sending ? tr("inbox_sending") : shortDate(message.date))
+                        .font(.footnote.monospacedDigit())
+                        .foregroundStyle(unread ? .primary : .secondary)
                 }
                 message.subjectText
-                    .foregroundStyle(.secondary)
+                    .font(.subheadline.weight(unread ? .medium : .regular))
                     .lineLimit(1)
-                if !message.snippet.isEmpty {
-                    Text(message.snippet)
-                        .font(.footnote)
+                if !message.snippet.isBlank {
+                    Text(verbatim: message.snippet)
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
-                if let account = message.account {
-                    Text(verbatim: account.name)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                if !message.attachments.isEmpty {
+                    AttachmentChips(names: message.attachments)
                 }
             }
         }
+        .padding(.vertical, 6)
     }
 }
 
-extension AccountMark {
-    /// The account's colour, from the core.
-    var tint: Color {
-        Color(
-            red: Double((color >> 16) & 0xFF) / 255,
-            green: Double((color >> 8) & 0xFF) / 255,
-            blue: Double(color & 0xFF) / 255)
+/// Up to two attachments by name, and how many more there are.
+struct AttachmentChips: View {
+    let names: [String]
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(Array(names.prefix(2).enumerated()), id: \.offset) { _, name in
+                Label {
+                    Text(verbatim: name.isEmpty ? tr("attachment_untitled") : name).lineLimit(1).truncationMode(.middle)
+                } icon: {
+                    Image(systemName: "paperclip")
+                }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
+                .frame(maxWidth: 168, alignment: .leading)
+            }
+            if names.count > 2 {
+                Text(verbatim: "+\(names.count - 2)")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
+            }
+        }
     }
 }
 
@@ -350,12 +666,28 @@ extension MessageItem {
         return name.isEmpty ? fromEmail : name
     }
 
+    /// Who wrote in a conversation, "Anna, me, Boris"; for one person, their whole name.
+    var participants: String {
+        guard senders.count > 1 else { return sender }
+        let me = tr("message_me")
+        return senders.map { $0.me ? me : firstName($0.name) }.joined(separator: ", ")
+    }
+
     var subjectText: Text {
-        subject.trimmingCharacters(in: .whitespaces).isEmpty ? Text("inbox_no_subject") : Text(subject)
+        subject.isBlank ? Text("inbox_no_subject") : Text(verbatim: subject)
     }
 }
 
-/// Time for today, day and month for this year, the full date before that.
+/// "Anna" of "Anna Lee", "Lee, Anna" or "anna@x.com".
+private func firstName(_ name: String) -> String {
+    var given = String(name.split(separator: "@", maxSplits: 1).first ?? "")
+    if let comma = given.range(of: ", ") { given = String(given[comma.upperBound...]) }
+    given = given.trimmingCharacters(in: .whitespaces)
+    let first = given.split(separator: " ").first.map(String.init) ?? ""
+    return first.isEmpty ? name : first
+}
+
+/// Time for today, otherwise the day and month; the year only when it is not this year.
 func shortDate(_ seconds: Int64) -> String {
     let date = Date(timeIntervalSince1970: TimeInterval(seconds))
     let calendar = Calendar.current
@@ -365,15 +697,30 @@ func shortDate(_ seconds: Int64) -> String {
     if calendar.isDate(date, equalTo: .now, toGranularity: .year) {
         return date.formatted(.dateTime.day().month(.abbreviated))
     }
-    return date.formatted(date: .numeric, time: .omitted)
+    return date.formatted(.dateTime.day().month(.abbreviated).year())
 }
 
-/// "No messages", as a row of a list.
-private struct EmptyRow: View {
-    var body: some View {
-        Text("inbox_empty")
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity)
-            .listRowSeparator(.hidden)
+/// The date and time, as a message header shows them.
+func longDate(_ seconds: Int64) -> String {
+    let date = Date(timeIntervalSince1970: TimeInterval(seconds))
+    let sameYear = Calendar.current.isDate(date, equalTo: .now, toGranularity: .year)
+    let day = sameYear ? Date.FormatStyle.dateTime.day().month(.abbreviated) : .dateTime.day().month(.abbreviated).year()
+    return date.formatted(day.hour().minute())
+}
+
+/// Each time the phone's network reaches the internet again; not for how it is now.
+private func backOnline() -> AsyncStream<Void> {
+    AsyncStream { continuation in
+        let monitor = NWPathMonitor()
+        var was: NWPath.Status?
+        monitor.pathUpdateHandler = { path in
+            if path.status == .satisfied, was != nil, was != .satisfied { continuation.yield() }
+            was = path.status
+        }
+        monitor.start(queue: DispatchQueue(label: "com.ozeromail.app.network"))
+        continuation.onTermination = { _ in monitor.cancel() }
     }
 }
+
+/// A blank message; account 0 is none, so compose starts from the first account.
+let newDraft = DraftItem(id: 0, accountId: 0, to: "", subject: "", text: "", replyTo: nil, quote: "", saved: 0, forward: nil)

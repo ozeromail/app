@@ -23,7 +23,7 @@ enum BackgroundCheck {
         do {
             let mail = try await Mail.shared()
             // Other accounts may still have synced; the next run tries again.
-            try? await mail.refresh()
+            _ = try? await mail.refresh()
             let new = try await mail.newMail()
             await notify(new)
         } catch {

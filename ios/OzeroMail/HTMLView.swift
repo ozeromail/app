@@ -1,29 +1,72 @@
 import SwiftUI
 import WebKit
 
-/// Shows a message's HTML with no scripts, no storage and no network.
+/// Shows a message's HTML with no scripts, no storage and no network. With `fits` it is as tall
+/// as its page; otherwise it takes the space it is given and scrolls itself.
 /// The page from the core also carries its own policy; a tapped link opens outside the app.
-struct HTMLView: UIViewRepresentable {
+/// The page asks for its loaded `images` by address; they go in as inline data, so the page
+/// needs nothing from outside.
+struct HTMLView: View {
     let html: String
+    var images: [RemoteImage?] = []
+    var message: Int64 = 0
+    var fits = false
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    @State private var height: CGFloat = 96
+
+    var body: some View {
+        Page(html: html, images: images, message: message, fits: fits, height: $height)
+            .frame(height: fits ? height : nil)
+    }
+}
+
+private struct Page: UIViewRepresentable {
+    let html: String
+    let images: [RemoteImage?]
+    let message: Int64
+    let fits: Bool
+    @Binding var height: CGFloat
+
+    /// The page with its image addresses, `https://images.ozero.invalid/<message>/<n>`, made
+    /// inline data, and the reading font left to the system's serif.
+    private func inline(_ html: String) -> String {
+        guard !images.isEmpty,
+              let address = try? Regex("https://images\\.ozero\\.invalid/\(message)/([0-9]+)")
+        else { return html }
+        // The whole number each time, so image 1 never takes part of image 12's address.
+        return html.replacing(address) { match in
+            guard let n = Int(match.output[1].substring ?? ""), n < images.count, let image = images[n] else {
+                return String(match.output[0].substring ?? "")
+            }
+            return "data:\(image.mime);base64,\(image.data.base64EncodedString())"
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(height: $height) }
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = Self.store
         config.defaultWebpagePreferences.allowsContentJavaScript = false
+        config.dataDetectorTypes = [.link, .phoneNumber]
         let view = WKWebView(frame: .zero, configuration: config)
         view.navigationDelegate = context.coordinator
         // A plain page is clear and takes the screen's colour; a newsletter paints its own.
         view.isOpaque = false
         view.backgroundColor = .clear
         view.scrollView.backgroundColor = .clear
+        // As tall as its page, it scrolls with the conversation instead.
+        view.scrollView.isScrollEnabled = !fits
+        if fits {
+            context.coordinator.watch(view.scrollView)
+        }
         Task {
             // Without the rule list the page's own policy still blocks the network.
             if let rules = await Self.rules.value {
                 view.configuration.userContentController.add(rules)
             }
-            view.loadHTMLString(html, baseURL: nil)
+            // Once per web view: it loads its page only once.
+            view.loadHTMLString(inline(html), baseURL: nil)
         }
         return view
     }
@@ -53,6 +96,23 @@ struct HTMLView: UIViewRepresentable {
     }
 
     @MainActor final class Coordinator: NSObject, WKNavigationDelegate {
+        private let height: Binding<CGFloat>
+        private var watching: NSKeyValueObservation?
+
+        init(height: Binding<CGFloat>) {
+            self.height = height
+        }
+
+        /// Follows the page's height as it lays out.
+        func watch(_ scroll: UIScrollView) {
+            watching = scroll.observe(\.contentSize, options: [.new]) { [height] _, change in
+                guard let size = change.newValue, size.height > 0 else { return }
+                Task { @MainActor in
+                    if abs(height.wrappedValue - size.height) > 1 { height.wrappedValue = size.height }
+                }
+            }
+        }
+
         func webView(
             _ webView: WKWebView, decidePolicyFor action: WKNavigationAction
         ) async -> WKNavigationActionPolicy {
@@ -61,7 +121,7 @@ struct HTMLView: UIViewRepresentable {
                 // A link to a part of the same page.
                 return .allow
             case .linkActivated:
-                if let url = action.request.url, ["http", "https", "mailto"].contains(url.scheme?.lowercased()) {
+                if let url = action.request.url, ["http", "https", "mailto", "tel"].contains(url.scheme?.lowercased()) {
                     await UIApplication.shared.open(url)
                 }
                 return .cancel
