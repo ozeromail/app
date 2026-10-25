@@ -9,6 +9,10 @@ work = "2.10.1"
 leakcanary = "2.14"
 benchmark = "1.4.0"
 test-junit = "1.2.1"
+test-runner = "1.6.2"
+test-rules = "1.6.1"
+test-services = "1.5.0"
+test-orchestrator = "1.5.1"
 
 [libraries]
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
@@ -24,6 +28,15 @@ leakcanary = { module = "com.squareup.leakcanary:leakcanary-android", version.re
 # The baseline profile generator: starts the app on an emulator and records what runs.
 benchmark-macro = { module = "androidx.benchmark:benchmark-macro-junit4", version.ref = "benchmark" }
 test-junit = { module = "androidx.test.ext:junit", version.ref = "test-junit" }
+test-runner = { module = "androidx.test:runner", version.ref = "test-runner" }
+test-rules = { module = "androidx.test:rules", version.ref = "test-rules" }
+# Keeps what a UI test films; Gradle copies it off the emulator.
+test-storage = { module = "androidx.test.services:storage", version.ref = "test-services" }
+test-services = { module = "androidx.test.services:test-services", version.ref = "test-services" }
+test-orchestrator = { module = "androidx.test:orchestrator", version.ref = "test-orchestrator" }
+# The UI tests: they drive gestures on an emulator and step the animation clock frame by frame.
+compose-ui-test = { module = "androidx.compose.ui:ui-test-junit4" }
+compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
