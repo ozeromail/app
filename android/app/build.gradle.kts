@@ -23,6 +23,10 @@ android {
             ?: error("Version $version is not X.Y.Z with each part below 100")
         versionName = version
         versionCode = parts.toList().fold(0) { code, part -> code * 100 + part.toInt() }
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunnerArguments["useTestStorageService"] = "true"
+        // Each UI test starts from a fresh app: signed out, nothing saved.
+        testInstrumentationRunnerArguments["clearPackageData"] = "true"
     }
 
     compileOptions {
@@ -33,6 +37,9 @@ android {
     buildFeatures {
         compose = true
     }
+
+    // Every test in a process of its own, so one crash cannot take the rest with it.
+    testOptions.execution = "ANDROIDX_TEST_ORCHESTRATOR"
 
     // CI's shared debug key, set explicitly so each build installs over the last; locally the
     // usual one in ~/.android.
@@ -102,12 +109,15 @@ tasks.withType<RunTool>().configureEach {
 val repoDir = rootDir.parentFile
 val coreDir = layout.projectDirectory.dir("../../core")
 
+// `-Pozero.abis=x86_64` builds the core for the emulator alone, as the UI tests need.
+val abis = providers.gradleProperty("ozero.abis").orElse("arm64-v8a,armeabi-v7a,x86_64").get().split(",")
+
 val buildCore by tasks.registering(RunTool::class) {
     sources.from(fileTree(coreDir) { exclude("target") })
     workDir = coreDir
+    command.addAll("cargo", "ndk")
+    abis.forEach { command.addAll("-t", it) }
     command.addAll(
-        "cargo", "ndk",
-        "-t", "arm64-v8a", "-t", "armeabi-v7a", "-t", "x86_64",
         "--platform", android.defaultConfig.minSdk.toString(),
         "-o", "{out}",
         "build", "--release", "-p", "ozero-api",
@@ -115,7 +125,7 @@ val buildCore by tasks.registering(RunTool::class) {
 }
 
 val generateBindings by tasks.registering(RunTool::class) {
-    val library = buildCore.flatMap { it.outputDir.file("arm64-v8a/libozero_api.so") }
+    val library = buildCore.flatMap { it.outputDir.file("${abis.first()}/libozero_api.so") }
     sources.from(library)
     workDir = coreDir
     command.addAll("cargo", "run", "-p", "ozero-bindgen", "--", "generate", "--language", "kotlin", "--no-format")

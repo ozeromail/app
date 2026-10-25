@@ -766,8 +766,8 @@ private const val AIM = 64f
 /** A reflection streak, in dp under the horizon. */
 private class Streak(val dy: Float, val half: Float, val alpha: Float)
 
-private val LAKE_HEIGHT = 124.dp
-private val HORIZON = 40.dp
+internal val LAKE_HEIGHT = 124.dp
+internal val HORIZON = 40.dp
 private val STREAKS = listOf(
     Streak(9f, 104f, 0.1f),
     Streak(20f, 84f, 0.075f),
@@ -775,7 +775,7 @@ private val STREAKS = listOf(
     Streak(55f, 40f, 0.035f),
 )
 private val PULL_GAP = 88.dp
-private val FALL = 40.dp
+internal val FALL = 40.dp
 
 /** The lake's water under a title; the pull's lies at the same height, so the two are one. */
 private val LAKE_TOP = 8.dp

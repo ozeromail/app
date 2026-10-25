@@ -97,7 +97,7 @@ private val Dark = darkColorScheme(
     scrim = Color(0x8C000000),
 )
 
-private val Accent = Color(0xFF2F8CFF)
+internal val Accent = Color(0xFF2F8CFF)
 
 /** The bright blue of buttons, Done, marks and water, the same in both themes. */
 val ColorScheme.accent: Color
