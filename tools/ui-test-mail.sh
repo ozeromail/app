@@ -11,7 +11,7 @@ save() { docker exec -i ozero-dovecot doveadm save -u "$user"; }
 # $1 from, $2 subject, $3 hours ago, $4 extra headers, $5 body.
 letter() {
   printf 'From: %s\r\nTo: %s\r\nSubject: %s\r\nDate: %s\r\nMessage-ID: <ui-%s@example.com>\r\nContent-Type: text/plain; charset=utf-8\r\n%b\r\n%s\r\n' \
-    "$1" "$user" "$2" "$(date -R -d "-$3 hours")" "$RANDOM$RANDOM" "$4" "$5" | save
+    "$1" "$user" "$2" "$(date -R -d "-$3 hours" 2>/dev/null || LC_ALL=C date -v "-$3H" "+%a, %d %b %Y %T %z")" "$RANDOM$RANDOM" "$4" "$5" | save
 }
 
 people=("Anna Petrova <anna@example.com>" "Boris Ivanov <boris@example.com>" "Clara Mendes <clara@example.org>"
