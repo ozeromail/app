@@ -27,7 +27,7 @@ jobs:
         working-directory: core
         run: |
           rustup toolchain install
-          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: core

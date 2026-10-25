@@ -5,11 +5,10 @@ set -euo pipefail
 cd "$(dirname "$0")/../core"
 out="target/ios"
 rm -rf "$out"
-mkdir -p "$out/headers"
+mkdir -p "$out/headers" "$out/sim"
 
-for target in aarch64-apple-ios aarch64-apple-ios-sim; do
-    cargo build --release -p ozero-api --target "$target"
-done
+cargo build --release -p ozero-api \
+    --target aarch64-apple-ios --target aarch64-apple-ios-sim --target x86_64-apple-ios
 
 cargo run -p ozero-bindgen -- generate --language swift \
     --library target/aarch64-apple-ios/release/libozero_api.a --out-dir "$out/swift"
@@ -17,7 +16,11 @@ cargo run -p ozero-bindgen -- generate --language swift \
 cp "$out/swift/ozero_apiFFI.h" "$out/headers/"
 cp "$out/swift/ozero_apiFFI.modulemap" "$out/headers/module.modulemap"
 
+# One simulator slice for both Apple silicon and Intel Macs.
+lipo -create target/aarch64-apple-ios-sim/release/libozero_api.a target/x86_64-apple-ios/release/libozero_api.a \
+    -output "$out/sim/libozero_api.a"
+
 xcodebuild -create-xcframework \
     -library target/aarch64-apple-ios/release/libozero_api.a -headers "$out/headers" \
-    -library target/aarch64-apple-ios-sim/release/libozero_api.a -headers "$out/headers" \
+    -library "$out/sim/libozero_api.a" -headers "$out/headers" \
     -output "$out/OzeroCore.xcframework"
