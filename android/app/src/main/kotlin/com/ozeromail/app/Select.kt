@@ -1,6 +1,5 @@
 package com.ozeromail.app
 
-import android.os.SystemClock
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -92,11 +91,12 @@ fun Modifier.chooseRows(
             var stroke: Stroke? = null
             var fingers: Set<PointerId> = emptySet()
             while (stroke == null) {
-                val left = HOLD_MS - (SystemClock.uptimeMillis() - down.uptimeMillis)
-                val event = if (twoFrom == null && left > 0) {
-                    withTimeoutOrNull(left) { awaitPointerEvent(PointerEventPass.Initial) }
-                } else {
-                    awaitPointerEvent(PointerEventPass.Initial)
+                // Timed by the touch events themselves, so a late frame cannot lose the hold.
+                val left = HOLD_MS - (currentEvent.changes.first().uptimeMillis - down.uptimeMillis)
+                val event = when {
+                    twoFrom != null -> awaitPointerEvent(PointerEventPass.Initial)
+                    left <= 0 -> null
+                    else -> withTimeoutOrNull(left) { awaitPointerEvent(PointerEventPass.Initial) }
                 }
                 if (event == null) {
                     // Held still on one row: it is chosen, and the same finger can go on.
