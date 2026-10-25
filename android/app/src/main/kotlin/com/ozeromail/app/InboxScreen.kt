@@ -446,7 +446,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         chosen = emptySet()
         listSize = PAGE
         loadList()
-        listState.scrollToItem(0)
+        // On the list's next layout: a scroll now would lay it out at once, maybe in the middle of a layout.
+        listState.requestScrollToItem(0)
     }
     // Near the end of the list, the next rows come before the finger gets there.
     // Also for a list the core cuts short to nothing.
