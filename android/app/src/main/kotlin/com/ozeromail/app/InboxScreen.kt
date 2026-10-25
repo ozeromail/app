@@ -77,9 +77,16 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.unit.Velocity
+import androidx.compose.animation.core.animate
+import androidx.compose.runtime.mutableFloatStateOf
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -1119,7 +1126,9 @@ private fun InboxList(
     // Half way through the title, under the back arrow's 4 + 44 + 2 dp.
     val titleGone = with(density) { 62.dp.roundToPx() }
     val scrolled by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > titleGone } }
-    val pull = rememberPullToRefreshState()
+    val glideScope = rememberCoroutineScope()
+    val pull = remember(density) { ListPull(with(density) { PULL_THRESHOLD.toPx() }, glideScope) }
+    pull.onPull = { if (!refreshing) onSync() }
     // There is one water, under the title, and it stays put: a pull over an empty list's lake
     // gathers a drop over it, and a pull on a list moves the rows down to uncover the same water.
     val lake = messages.isEmpty() && (!syncing || listLoaded) && error == null
@@ -1136,12 +1145,12 @@ private fun InboxList(
     var pressing by remember { mutableStateOf(false) }
     // A pull the list never heard end, as when the screen changed under the finger, would leave
     // its drop hanging: once the finger is up, and in another folder, the pull goes back.
-    suspend fun settlePull() {
-        if (!pressing && pull.distanceFraction > 0f) pull.animateToHidden()
+    fun settlePull() {
+        if (!pressing) pull.settle()
     }
     LaunchedEffect(mailbox) { settlePull() }
     // How far the list is down, in pulls: with the finger, or held, and a finger pulls on from where it is held.
-    val opened = { maxOf(pull.distanceFraction, held.value + if (pressing) pull.distanceFraction * 0.6f else 0f) }
+    val opened = { maxOf(pull.fraction, held.value + if (pressing) pull.fraction * 0.6f else 0f) }
     val sink = if (lake) Modifier else Modifier.graphicsLayer { translationY = pullGap(opened()) }
     // Where the title ends on screen, or null once it has scrolled away.
     val underTitle = {
@@ -1153,7 +1162,6 @@ private fun InboxList(
     val page = Category.entries.indexOf(tab)
     // The page just left, which keeps going from where it was let go: from the row at the top.
     var leaving by remember { mutableStateOf<Leaving?>(null) }
-    val glideScope = rememberCoroutineScope()
     // The tab the thumb counts from. It changes in the same moment as the glide, so the thumb
     // never sees one without the other, while the tab itself changes at once.
     var thumbTab by remember { mutableIntStateOf(page) }
@@ -1177,6 +1185,9 @@ private fun InboxList(
     }
     // The row a finger holds, which draws its neighbours along, and where the last swiped row was.
     val rowPull = remember { Pull() }
+    // Where each message's row is in the glide, shared by the pages and the list.
+    val afloats = remember { Afloats() }
+    LaunchedEffect(Unit) { snapshotFlow { glide.isRunning }.collect { if (!it) afloats.forget() } }
     var closedAt by remember(tab, mailbox) { mutableIntStateOf(Int.MAX_VALUE) }
     // Once the rows have closed up, later moves are not held back by it.
     LaunchedEffect(closedAt) {
@@ -1199,6 +1210,7 @@ private fun InboxList(
                 key(category) {
                     Page(
                         at = at,
+                        afloats = afloats,
                         rows = from?.rows ?: others[category].orEmpty(),
                         words = emptyWords(inbox = true, allEmpty = false, category),
                         water = !lake,
@@ -1209,18 +1221,18 @@ private fun InboxList(
                 }
             }
         }
-        PullToRefreshBox(
-            // The list is never held by the pull itself, so a finger can pull again at any time:
-            // every pull drops a drop, and one that goes all the way syncs, unless one runs.
-            isRefreshing = false,
-            onRefresh = { if (!refreshing) onSync() },
-            modifier = Modifier.fillMaxSize().whilePressed { down ->
+        // The list is never held by the pull itself, so a finger can pull again at any time:
+        // every pull drops a drop, and one that goes all the way syncs, unless one runs.
+        Box(
+            Modifier.fillMaxSize().whilePressed { down ->
                 if (down) {
                     pressing = true
+                    pull.touched()
                     return@whilePressed
                 }
-                val f = pull.distanceFraction
-                if (f >= TUG) drops.tryEmit(f)
+                // Only a finger that pulled: a tap or a scroll up while the list goes back up drops nothing.
+                val f = pull.fraction
+                if (pull.drawn && f >= TUG) drops.tryEmit(f)
                 // After the list has had its own say on this release.
                 glideScope.launch {
                     withFrameNanos {}
@@ -1235,23 +1247,7 @@ private fun InboxList(
                         held.animateTo(holdNow, Motion.settle())
                     }
                 }
-            },
-            state = pull,
-            // The rows move down with the finger and still water shows in the gap they leave.
-            indicator = {
-                if (!lake) {
-                    PullWater(
-                        grey = !inbox,
-                        fraction = { pull.distanceFraction },
-                        depth = { with(density) { pullGap(opened()) } },
-                        refreshing = refreshing,
-                        top = underTitle,
-                        drops = drops,
-                        onCalm = { waterCalm = it },
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
-            },
+            }.nestedScroll(pull),
         ) {
             LazyColumn(
                 Modifier
@@ -1298,7 +1294,7 @@ private fun InboxList(
                                     grey = !inbox,
                                     waiting = waiting,
                                     refreshing = refreshing,
-                                    pulled = { pull.distanceFraction },
+                                    pulled = { pull.fraction },
                                     drops = drops,
                                     glide = thumb,
                                     wordsModifier = if (allEmpty) Modifier else slide,
@@ -1313,6 +1309,8 @@ private fun InboxList(
                     Afloat(
                         thumb,
                         page,
+                        afloats = afloats,
+                        id = message.id,
                         depth = { (index - firstRow).coerceIn(0, 8) },
                         modifier = rowMove(Motion.behind(behind.coerceAtMost(6), Motion.CLOSE, IntOffset.VisibilityThreshold)).then(sink),
                         pull = rowPull,
@@ -1345,6 +1343,19 @@ private fun InboxList(
                         }
                     }
                 }
+            }
+            // The rows move down with the finger and still water shows in the gap they leave.
+            if (!lake) {
+                PullWater(
+                    grey = !inbox,
+                    fraction = { pull.fraction },
+                    depth = { with(density) { pullGap(opened()) } },
+                    refreshing = refreshing,
+                    top = underTitle,
+                    drops = drops,
+                    onCalm = { waterCalm = it },
+                    modifier = Modifier.fillMaxSize(),
+                )
             }
         }
         // The compact title, over the list once it scrolls.
@@ -1971,7 +1982,8 @@ private const val CLOSING_MS = 2000L
 /**
  * A row afloat on the tab [page]. It follows the tabs' [thumb] on a spring of its own, softer the
  * further [depth] it is down the screen, so a tab's list pours in from the top; and, given a
- * [pull], it is drawn a little way after the row a finger holds.
+ * [pull], it is drawn a little way after the row a finger holds. A message's row, by its [id],
+ * comes in where [afloats] last drew a row of it.
  */
 @Composable
 private fun Afloat(
@@ -1979,17 +1991,19 @@ private fun Afloat(
     page: Int,
     depth: () -> Int,
     modifier: Modifier,
+    afloats: Afloats? = null,
+    id: Long = 0,
     pull: Pull? = null,
     index: Int = 0,
     content: @Composable () -> Unit,
 ) {
-    val along = remember { Animatable(thumb()) }
+    val along = remember { Animatable(thumb().let { afloats?.from(id, it) ?: it }) }
     val drawn = remember { Animatable(0f) }
     val depthNow by rememberUpdatedState(depth)
     val thumbNow by rememberUpdatedState(thumb)
     LaunchedEffect(Unit) { along.follow({ Motion.behind(depthNow(), Motion.POUR) }) { thumbNow() } }
     if (pull != null) LaunchedEffect(pull, index) { drawn.follow({ DRIFT }, rest = 0.5f) { pull.near(index) } }
-    Column(modifier.glided { along.value - page }.graphicsLayer { translationX = drawn.value }) { content() }
+    Column(modifier.glided { along.value.also { afloats?.drawn(id, it) } - page }.graphicsLayer { translationX = drawn.value }) { content() }
 }
 
 /**
@@ -1997,7 +2011,7 @@ private fun Afloat(
  * [words] once it is empty, over still [water] where the list has none of its own to share.
  */
 @Composable
-private fun Page(at: Int, rows: List<MessageItem>, words: Pair<Int, Int>, water: Boolean, thumb: () -> Float, top: () -> Float, onGone: () -> Unit) {
+private fun Page(at: Int, afloats: Afloats, rows: List<MessageItem>, words: Pair<Int, Int>, water: Boolean, thumb: () -> Float, top: () -> Float, onGone: () -> Unit) {
     val thumbNow by rememberUpdatedState(thumb)
     var near by remember { mutableStateOf(false) }
     // Rows further down follow later, so the page stays a little after the thumb has gone.
@@ -2026,12 +2040,111 @@ private fun Page(at: Int, rows: List<MessageItem>, words: Pair<Int, Int>, water:
         } else {
             val colors = MaterialTheme.colorScheme
             rows.forEachIndexed { index, message ->
-                Afloat(thumb, at, depth = { index.coerceAtMost(8) }, modifier = Modifier) {
-                    if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.row), color = colors.outlineVariant)
-                    MessageRow(message, onClick = {})
+                key(message.id) {
+                    Afloat(thumb, at, depth = { index.coerceAtMost(8) }, modifier = Modifier, afloats = afloats, id = message.id) {
+                        if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.row), color = colors.outlineVariant)
+                        MessageRow(message, onClick = {})
+                    }
                 }
             }
         }
+    }
+}
+
+/**
+ * Where each message's row was last drawn in the tabs' glide. A row that passes from a tab's
+ * page into the list as its tab is picked, or from the list to the page left, is a new row on
+ * screen: it goes on from where the old one was rather than starting at the thumb. Forgotten
+ * once the tabs are still, when every row is in its place.
+ */
+@Stable
+private class Afloats {
+    private val drawn = mutableMapOf<Long, Float>()
+
+    fun from(id: Long, thumb: Float): Float = drawn[id] ?: thumb
+
+    fun drawn(id: Long, at: Float) {
+        drawn[id] = at
+    }
+
+    fun forget() = drawn.clear()
+}
+
+/**
+ * A pull down on the list at its top, in pulls: one is enough to sync. Unlike Material's pull to
+ * refresh it keeps nothing from one touch to the next, so a scroll either way never brings back
+ * an old pull and its drop, and a finger that comes back while it goes up takes it from there.
+ */
+@Stable
+private class ListPull(private val threshold: Float, private val scope: CoroutineScope) : NestedScrollConnection {
+    var fraction by mutableFloatStateOf(0f)
+        private set
+
+    /** Whether the finger on the list now has pulled it down. */
+    var drawn = false
+        private set
+
+    var onPull: () -> Unit = {}
+
+    // How far the finger has drawn it, in px: the list follows at half of that.
+    private var distance = 0f
+    private var going: Job? = null
+
+    /** A finger is down: whatever it does, it has not pulled yet. */
+    fun touched() {
+        drawn = false
+    }
+
+    override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset =
+        if (source == NestedScrollSource.UserInput && available.y < 0f && fraction > 0f) Offset(0f, by(available.y)) else Offset.Zero
+
+    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset =
+        if (source == NestedScrollSource.UserInput && available.y > 0f) Offset(0f, by(available.y)) else Offset.Zero
+
+    override suspend fun onPreFling(available: Velocity): Velocity {
+        if (fraction == 0f) return Velocity.Zero
+        if (fraction > 1f) onPull()
+        settle()
+        return if (available.y > 0f) available else Velocity.Zero
+    }
+
+    /** Back up, unless a finger holds it; also for a pull whose end the list never heard. */
+    fun settle() {
+        distance = 0f
+        if (fraction == 0f || going?.isActive == true) return
+        going = scope.launch { animate(fraction, 0f, animationSpec = Motion.settle()) { value, _ -> fraction = value } }
+    }
+
+    private fun by(dy: Float): Float {
+        if (going?.isActive == true) {
+            going?.cancel()
+            distance = distanceFor(fraction)
+        }
+        if (dy > 0f) drawn = true
+        // Past the most it shows, the finger draws nothing more, so coming back moves it at once.
+        val next = (distance + dy).coerceIn(0f, distanceFor(MOST))
+        val used = next - distance
+        distance = next
+        fraction = fractionFor(distance)
+        return used
+    }
+
+    // As Material has it: with the finger up to one pull, then against a growing tension up to one more.
+    private fun fractionFor(distance: Float): Float {
+        val p = distance * DRAG / threshold
+        if (p <= 1f) return p
+        val t = (p - 1f).coerceIn(0f, 2f)
+        return 1f + t - t * t / 4f
+    }
+
+    private fun distanceFor(fraction: Float): Float {
+        val p = if (fraction <= 1f) fraction else 1f + 2f - 2f * sqrt((2f - fraction).coerceAtLeast(0f))
+        return p * threshold / DRAG
+    }
+
+    companion object {
+        private const val DRAG = 0.5f
+        private const val MOST = 2f
     }
 }
 
@@ -2050,6 +2163,9 @@ private const val PAGE_LINGER_MS = 1200L
 
 /** How a row's neighbours drift after it, as through water. */
 private val DRIFT = Motion.drift<Float>()
+
+/** How far a finger pulls the list for one pull, as Material's pull to refresh has it. */
+private val PULL_THRESHOLD = 80.dp
 
 /** How far a pull must go, in pulls, to drop a drop when let go. */
 private const val TUG = 1f / 3f
