@@ -124,6 +124,13 @@ struct InboxView: View {
     }
 }
 
+/// Where a list's content top is, from the top of its frame: `offset` above it while scrolled,
+/// below zero while pulled; `inset` is the bars over it.
+struct ListTop: Equatable {
+    var offset: CGFloat = 0
+    var inset: CGFloat = 0
+}
+
 /// What the watch for new mail depends on: the app on screen, and which accounts are signed in.
 private struct WatchKey: Equatable {
     let active: Bool
@@ -141,6 +148,18 @@ extension AccountItem: Identifiable {}
 private struct InboxList: View {
     @Bindable var model: InboxModel
     @State private var more = false
+    /// How the list is pulled down, as the water reads it.
+    @State private var pull = PullState()
+    /// Where the list's content top is: above the top while scrolled, below it while pulled.
+    @State private var top = ListTop()
+    @State private var dragging = false
+    /// Only a pull shows the water's sync; syncs on their own stay quiet over the saved mail.
+    @State private var refreshing = false
+    /// After a sync the gap stays open until its water has calmed, so the calm is seen; and after a
+    /// tug, until its drop is in.
+    @State private var waterCalm = true
+    /// How much of the gap is held open, from 0 to 1.
+    @State private var held: CGFloat = 0
 
     private var picked: [MessageItem] {
         // Only what the list still shows: a sync may take a chosen message away.
@@ -152,6 +171,13 @@ private struct InboxList: View {
     var body: some View {
         let lake = model.messages.isEmpty && (!model.syncing || model.listLoaded) && model.error == nil
         List(selection: $model.chosen) {
+            // The gap a pull leaves open while its water calms; the water shows through it.
+            Color.clear
+                .frame(height: held * Lake.pullGap)
+                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+                .selectionDisabled()
             if let owner = model.owner {
                 Text(verbatim: choosing ? tr("select_hint") : owner)
                     .font(.footnote)
@@ -176,7 +202,9 @@ private struct InboxList: View {
                 let words = model.emptyWords
                 // The first mail of an empty list is on its way: the water waits, without words.
                 let waiting = model.syncing && model.listLoaded && !model.syncedBoxes.contains(model.mailbox)
-                LakeNote(title: words.title, text: words.text, grey: !model.isInbox, waiting: waiting)
+                LakeNote(title: words.title, text: words.text, drawIn: model.hadMail, grey: !model.isInbox,
+                         waiting: waiting, refreshing: refreshing, pull: pull)
+                    .id(model.mailbox)
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
                     .selectionDisabled()
@@ -209,6 +237,35 @@ private struct InboxList: View {
             }
         }
         .listStyle(.plain)
+        .environment(\.defaultMinListRowHeight, 0)
+        .onScrollGeometryChange(for: ListTop.self) { geometry in
+            ListTop(offset: geometry.contentOffset.y + geometry.contentInsets.top, inset: geometry.contentInsets.top)
+        } action: { _, now in
+            top = now
+            // How far the finger pulls the list, in pulls; a held gap counts from where it is held.
+            let fraction = dragging ? max(0, -now.offset) / Lake.pullGap : 0
+            pull.fraction = fraction
+            pull.gap = max(0, held * Lake.pullGap - now.offset)
+        }
+        .onScrollPhaseChange { old, new in
+            if new == .interacting { dragging = true }
+            if old == .interacting && new != .interacting { letGo(lake: lake) }
+        }
+        .sensoryFeedback(.impact(weight: .light), trigger: pull.fraction >= 1)
+        // There is one water, under the title, and it stays put: a pull over an empty list's lake
+        // gathers a drop over it, and a pull on a list moves the rows down to uncover the same water.
+        .overlay(alignment: .top) {
+            if !lake {
+                PullWater(grey: !model.isInbox, refreshing: refreshing, pull: pull) { waterCalm = $0 }
+                    .frame(height: pull.gap)
+                    .clipped()
+                    .padding(.top, top.inset)
+                    .allowsHitTesting(false)
+            }
+        }
+        .onChange(of: !lake && (refreshing || !waterCalm)) { _, hold in
+            withAnimation(.spring(duration: 0.35, bounce: 0)) { held = hold ? 1 : 0 }
+        }
         .environment(\.editMode, .constant(choosing ? .active : .inactive))
         .animation(.smooth, value: model.messages.map(\.id))
         .navigationTitle(choosing ? tr("select_count", picked.count) : model.title)
@@ -224,7 +281,6 @@ private struct InboxList: View {
                 }
             }
         }
-        .refreshable { await model.sync(model.mailbox) }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 8) {
                 // Low on the screen, in reach of the thumb that swiped.
@@ -251,6 +307,27 @@ private struct InboxList: View {
                     model.chosen.formUnion(model.messages.filter { $0.fromEmail == last.fromEmail }.map(\.id))
                 }
             }
+        }
+    }
+
+    /// The finger lets the list go: past a third of a pull a drop falls, sized by how far it went,
+    /// and a whole pull syncs, unless a sync runs.
+    private func letGo(lake: Bool) {
+        let fraction = pull.fraction
+        dragging = false
+        pull.fraction = 0
+        guard fraction >= Lake.tug else { return }
+        pull.lastDrop = fraction
+        pull.drops += 1
+        if !lake { waterCalm = false }
+        guard fraction >= 1, !refreshing else { return }
+        refreshing = true
+        Task {
+            let started = ContinuousClock.now
+            await model.sync(model.mailbox)
+            // The pulled drop lands before the gap closes, however quick the sync.
+            try? await Task.sleep(until: started + .milliseconds(1100))
+            refreshing = false
         }
     }
 
