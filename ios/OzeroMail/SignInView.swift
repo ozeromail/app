@@ -140,8 +140,11 @@ struct SignInView: View {
             defer { busy = false }
             do {
                 let url = try await mail.startGoogle(again: again)
+                // The scheme the core asked Google to come back to.
+                let back = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+                    .first { $0.name == "redirect_uri" }?.value.flatMap { URL(string: $0)?.scheme } ?? ""
                 let answer = try await webAuthentication.authenticate(
-                    using: url, callback: .customScheme("com.ozeromail.app"), additionalHeaderFields: [:])
+                    using: url, callback: .customScheme(back), additionalHeaderFields: [:])
                 // Back to the list, where Google is, from whatever step the person was on.
                 go(nil)
                 try await mail.finishGoogle(redirect: answer, again: again)
