@@ -141,16 +141,33 @@ fun SwipeRow(
     // by Undo would come back swiped and do its action again.
     val density = LocalDensity.current
     val threshold = SwipeToDismissBoxDefaults.positionalThreshold
-    val state = remember { SwipeToDismissBoxState(SwipeToDismissBoxValue.Settled, density, positionalThreshold = threshold) }
     val swiped by rememberUpdatedState(onSwipe)
     val pulled by rememberUpdatedState(onPull)
     val current by rememberUpdatedState(swipes)
+    fun SwipeToDismissBoxValue.action() = when (this) {
+        SwipeToDismissBoxValue.EndToStart -> current.left
+        SwipeToDismissBoxValue.StartToEnd -> current.right
+        SwipeToDismissBoxValue.Settled -> null
+    }
+    val state = remember {
+        SwipeToDismissBoxState(
+            SwipeToDismissBoxValue.Settled,
+            density,
+            // Read keeps the row in the list: it goes back from where the finger let go as the
+            // mark changes, rather than out off the screen and in again.
+            confirmValueChange = { value ->
+                if (value.action() == SwipeAction.READ) {
+                    swiped(SwipeAction.READ) {}
+                    false
+                } else {
+                    true
+                }
+            },
+            positionalThreshold = threshold,
+        )
+    }
     LaunchedEffect(state.currentValue) {
-        val action = when (state.currentValue) {
-            SwipeToDismissBoxValue.EndToStart -> current.left
-            SwipeToDismissBoxValue.StartToEnd -> current.right
-            SwipeToDismissBoxValue.Settled -> return@LaunchedEffect
-        }
+        val action = state.currentValue.action() ?: return@LaunchedEffect
         swiped(action) { scope.launch { state.reset() } }
     }
     // Only while a finger holds the row: once let go, its neighbours settle back.
