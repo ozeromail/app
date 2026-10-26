@@ -172,7 +172,8 @@ final class Mail: Sendable {
     /// Like `signIn`, for Exchange: the core finds the server from the email unless `server`
     /// is given, and signs in as the email unless `login` is.
     func signInExchange(
-        email: String, password: String, server: String?, login: String?, certificate: String?
+        email: String, password: String, server: String?, login: String?, certificate: String?,
+        trusted: String? = nil
     ) async throws {
         if try core.accounts().contains(where: { $0.email.lowercased() == email.lowercased() }) {
             throw CoreError.AccountExists
@@ -181,7 +182,7 @@ final class Mail: Sendable {
         // No name: the core asks the server for the owner's.
         _ = try await core.addExchangeAccount(
             email: email, displayName: "", server: server, login: login, certificate: certificate,
-            password: password)
+            trusted: trusted, password: password)
     }
 
     /// Starts Google sign-in and returns the page to open in the browser; `again` signs in to
@@ -619,6 +620,7 @@ extension Error {
         case .NotFound?: return "error_server_not_found"
         case .NoEws?: return "error_no_ews"
         case .CertificateNeeded?: return "error_certificate_needed"
+        case .UntrustedCertificate?: return "error_untrusted_certificate"
         case .DeviceBlocked?: return "error_device_blocked"
         case .TooLarge?: return "compose_files_too_large"
         default: return "error_storage"
@@ -629,6 +631,9 @@ extension Error {
     var detail: String? {
         switch self as? CoreError {
         case .Network(let detail)?, .Tls(let detail)?, .Server(let detail)?: return detail
+        // Who refused it and why, and what to compare with the IT team's.
+        case .UntrustedCertificate(let host, let fingerprint, let reason)?:
+            return "\(host): \(reason)\nSHA-256 \(fingerprint)"
         default: return nil
         }
     }

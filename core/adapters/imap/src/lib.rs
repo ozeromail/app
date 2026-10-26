@@ -1,7 +1,6 @@
 //! `MailProvider` over IMAP4rev1. Parsing is imap-codec's; the session flow is ours.
 
 mod utf7;
-#[cfg(any(target_os = "android", test))]
 mod verify;
 
 use std::collections::HashSet;
@@ -84,11 +83,17 @@ impl std::fmt::Debug for ImapSession {
 
 pub use tokio_rustls::rustls;
 
+pub use verify::{Refused, RefusedCertificates, fingerprint};
+
 /// TLS settings that trust the same root certificates as the OS.
 /// On Android the verifier must be initialized from Kotlin first. `client` offers a client
-/// certificate to a server that asks for one.
+/// certificate to a server that asks for one. `trusted` is the SHA-256 of a server
+/// certificate the person chose to trust although the checks refuse it; the refused ones
+/// go to `refused`.
 pub fn platform_tls(
     client: Option<Arc<dyn rustls::client::ResolvesClientCert>>,
+    trusted: Option<[u8; 32]>,
+    refused: Arc<RefusedCertificates>,
 ) -> Result<Arc<ClientConfig>, ProviderError> {
     use tokio_rustls::rustls::client::danger::ServerCertVerifier;
 
@@ -99,6 +104,11 @@ pub fn platform_tls(
     );
     #[cfg(target_os = "android")]
     let os = Arc::new(verify::RecheckRevoked(os));
+    let os = Arc::new(verify::Trusting {
+        checks: os,
+        trusted,
+        refused,
+    });
     let builder = builder.dangerous().with_custom_certificate_verifier(os);
     let config = match client {
         Some(client) => builder.with_client_cert_resolver(client),

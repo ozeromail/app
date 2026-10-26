@@ -605,6 +605,7 @@ fn saves_an_exchange_account_that_sends_without_smtp() {
             Some(server.into()),
             None,
             None,
+            None,
             "pw".into(),
         ))
     };
@@ -705,4 +706,14 @@ fn starts_google_sign_in_at_google() {
     assert!(start.url.starts_with("https://accounts.google.com/"));
     assert!(start.url.contains(&start.state));
     assert!(!start.url.contains(&start.verifier));
+}
+
+#[test]
+fn reads_back_a_fingerprint_it_shows() {
+    let fingerprint: [u8; 32] = std::array::from_fn(|i| i as u8 * 8);
+    let shown = hex(&fingerprint);
+    assert!(shown.starts_with("00:08:10:18:"));
+    assert_eq!(unhex(&shown), Some(fingerprint));
+    assert_eq!(unhex("00:08"), None);
+    assert_eq!(unhex(&shown.replace(':', "")), None);
 }

@@ -177,11 +177,19 @@ class Mail(private val context: Context) {
      * Like [signIn], for Exchange: the core finds the server from the email unless [server]
      * is given, and signs in as the email unless [login] is.
      */
-    suspend fun signInExchange(email: String, password: String, server: String?, login: String?, certificate: String?) = io {
+    /** [trusted] is the fingerprint of a server certificate the person chose to trust. */
+    suspend fun signInExchange(
+        email: String,
+        password: String,
+        server: String?,
+        login: String?,
+        certificate: String?,
+        trusted: String? = null,
+    ) = io {
         if (core.accounts().any { it.email.equals(email, ignoreCase = true) }) throw CoreException.AccountExists()
         vault.setPassword(email, password)
         // No name: the core asks the server for the owner's.
-        core.addExchangeAccount(email, "", server, login, certificate, password)
+        core.addExchangeAccount(email, "", server, login, certificate, trusted, password)
     }
 
     /** Addresses the browser came back to from Google, for the sign-in screen to finish. */
@@ -506,6 +514,8 @@ fun CoreException.detail(): String? = when (this) {
     is CoreException.Network -> this.detail
     is CoreException.Tls -> this.detail
     is CoreException.Server -> this.detail
+    // Who refused it and why, and what to compare with the IT team's.
+    is CoreException.UntrustedCertificate -> "${this.host}: ${this.reason}\nSHA-256 ${this.fingerprint}"
     else -> null
 }
 
@@ -529,6 +539,7 @@ fun CoreException.text(): Int {
         is CoreException.NotFound -> R.string.error_server_not_found
         is CoreException.NoEws -> R.string.error_no_ews
         is CoreException.CertificateNeeded -> R.string.error_certificate_needed
+        is CoreException.UntrustedCertificate -> R.string.error_untrusted_certificate
         is CoreException.DeviceBlocked -> R.string.error_device_blocked
         is CoreException.TooLarge -> R.string.compose_files_too_large
         else -> R.string.error_storage

@@ -168,6 +168,8 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
     var error by remember { mutableStateOf<Int?>(null) }
     // What the server or the connection said, for the person's IT team.
     var detail by remember { mutableStateOf<String?>(null) }
+    // A server certificate the checks refused, and the sign-in to run again trusting it.
+    var untrusted by remember { mutableStateOf<Pair<CoreException.UntrustedCertificate, suspend (String) -> Unit>?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     // A password typed for one way in is not sent to another.
@@ -176,6 +178,7 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
         step = to
         error = null
         detail = null
+        untrusted = null
     }
     fun back() = go(
         when (val at = step) {
@@ -187,17 +190,22 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
     // Not while signing in: leaving would cut it off halfway.
     BackHandler(enabled = busy || step != null) { if (!busy) back() }
 
-    /** Runs a sign-in, busy meanwhile; on success leaves the screen. */
-    suspend fun attempt(signIn: suspend () -> Unit) {
+    /**
+     * Runs a sign-in, busy meanwhile; on success leaves the screen. With [trusting], the
+     * person may trust a server certificate the checks refused and run it again with it.
+     */
+    suspend fun attempt(trusting: (suspend (String) -> Unit)? = null, signIn: suspend () -> Unit) {
         busy = true
         error = null
         detail = null
+        untrusted = null
         try {
             signIn()
             onSignedIn()
         } catch (e: CoreException) {
             error = e.text()
             detail = e.detail()
+            if (e is CoreException.UntrustedCertificate && trusting != null) untrusted = e to trusting
         } finally {
             busy = false
         }
@@ -302,11 +310,17 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
                         onKind = onKind,
                         busy = busy,
                         // The server was not found: the fields to type it come out.
-                        manual = lost || error == R.string.error_no_server || error == R.string.error_certificate_needed,
+                        manual = lost || error in setOf(
+                            R.string.error_no_server,
+                            R.string.error_certificate_needed,
+                            R.string.error_untrusted_certificate,
+                        ),
                         onBack = ::back,
                         onSubmit = { server, login, certificate ->
                             busy = true
-                            scope.launch { attempt { mail.signInExchange(email.trim(), password, server, login, certificate) } }
+                            suspend fun signIn(trusted: String?) =
+                                mail.signInExchange(email.trim(), password, server, login, certificate, trusted)
+                            scope.launch { attempt({ trusted -> attempt { signIn(trusted) } }) { signIn(null) } }
                         },
                     )
                     else -> Credentials(
@@ -354,6 +368,16 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 4.dp),
                     )
+                }
+                untrusted?.let { (refused, trust) ->
+                    TextButton(
+                        onClick = {
+                            busy = true
+                            scope.launch { trust(refused.fingerprint) }
+                        },
+                        enabled = !busy,
+                        contentPadding = PaddingValues(0.dp),
+                    ) { Text(stringResource(R.string.signin_trust_certificate)) }
                 }
             }
         }
