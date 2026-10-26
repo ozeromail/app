@@ -616,15 +616,8 @@ private class Still(private var falling: Boolean) {
         if (color == tint) return
         tint = color
         line = Brush.horizontalGradient(listOf(Color.Transparent, color, Color.Transparent), -1f, 1f)
-        // Eased, so the glow has no rim where it ends.
-        glow = Brush.radialGradient(
-            0f to color,
-            0.35f to color.copy(alpha = color.alpha * 0.6f),
-            0.7f to color.copy(alpha = color.alpha * 0.2f),
-            1f to Color.Transparent,
-            center = Offset.Zero,
-            radius = 1f,
-        )
+        // Two stops only: more, on a gradient this small and stretched this far, took the test emulator down.
+        glow = Brush.radialGradient(listOf(color, Color.Transparent), Offset.Zero, 1f)
     }
 
     /**
