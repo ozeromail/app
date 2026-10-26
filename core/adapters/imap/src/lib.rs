@@ -82,39 +82,47 @@ impl std::fmt::Debug for ImapSession {
 }
 
 pub use tokio_rustls::rustls;
+use tokio_rustls::rustls::client::danger::ServerCertVerifier;
 
 pub use verify::{Refused, RefusedCertificates, fingerprint};
 
-/// TLS settings that trust the same root certificates as the OS.
-/// On Android the verifier must be initialized from Kotlin first. `client` offers a client
-/// certificate to a server that asks for one. `trusted` is the SHA-256 of a server
-/// certificate the person chose to trust although the checks refuse it; refused ones go to
-/// `refused`, for a sign-in.
+/// TLS settings that check servers with `platform_checks`. `client` offers a client
+/// certificate to a server that asks for one.
 pub fn platform_tls(
     client: Option<Arc<dyn rustls::client::ResolvesClientCert>>,
     trusted: Option<[u8; 32]>,
     refused: Option<Arc<RefusedCertificates>>,
 ) -> Result<Arc<ClientConfig>, ProviderError> {
-    use tokio_rustls::rustls::client::danger::ServerCertVerifier;
-
-    let builder = ClientConfig::builder();
-    let os: Arc<dyn ServerCertVerifier> = Arc::new(
-        rustls_platform_verifier::Verifier::new(builder.crypto_provider().clone())
-            .map_err(|e| ProviderError::Network(e.to_string()))?,
-    );
-    #[cfg(target_os = "android")]
-    let os = Arc::new(verify::RecheckRevoked(os));
-    let os = Arc::new(verify::Trusting {
-        checks: os,
-        trusted,
-        refused,
-    });
-    let builder = builder.dangerous().with_custom_certificate_verifier(os);
+    let builder = ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(platform_checks(trusted, refused)?);
     let config = match client {
         Some(client) => builder.with_client_cert_resolver(client),
         None => builder.with_no_client_auth(),
     };
     Ok(Arc::new(config))
+}
+
+/// Checks a server certificate as the OS does, with the same root certificates.
+/// On Android the verifier must be initialized from Kotlin first. `trusted` is the SHA-256 of
+/// a server certificate the person chose to trust although the checks refuse it; refused ones
+/// go to `refused`, for a sign-in.
+pub fn platform_checks(
+    trusted: Option<[u8; 32]>,
+    refused: Option<Arc<RefusedCertificates>>,
+) -> Result<Arc<dyn ServerCertVerifier>, ProviderError> {
+    let provider = ClientConfig::builder().crypto_provider().clone();
+    let os: Arc<dyn ServerCertVerifier> = Arc::new(
+        rustls_platform_verifier::Verifier::new(provider)
+            .map_err(|e| ProviderError::Network(e.to_string()))?,
+    );
+    #[cfg(target_os = "android")]
+    let os = Arc::new(verify::RecheckRevoked(os));
+    Ok(Arc::new(verify::Trusting {
+        checks: os,
+        trusted,
+        refused,
+    }))
 }
 
 /// The tagged end of a command and the untagged responses before it.

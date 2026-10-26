@@ -55,6 +55,7 @@ class Mail(private val context: Context) {
     private val core by lazy {
         Core.open(File(context.noBackupFilesDir, "mail.db").path, vault.databaseKey()).also {
             it.useCertificates(KeyChainCertificates(context))
+            it.usePlatformTls(AndroidTls(context))
         }
     }
 
