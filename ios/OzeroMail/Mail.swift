@@ -373,10 +373,7 @@ final class Mail: Sendable {
     /// Empties a trash or spam `mailbox` for good, mail not loaded included, held like `archive`.
     func emptyMailbox(_ mailbox: Mailbox) async throws -> [Int64] {
         let actions = try core.emptyMailbox(mailbox: mailbox)
-        // An account with nothing to send does not connect.
-        for account in try core.accounts() {
-            push(account: account.id)
-        }
+        try pushAll()
         return actions
     }
 
@@ -440,6 +437,12 @@ final class Mail: Sendable {
         try core.saveDraft(draft: draft)
     }
 
+    /// Saves the drafts into each account's drafts folder too. On failure the next sync
+    /// takes them.
+    func pushDrafts() {
+        try? pushAll()
+    }
+
     /// The drafts on the phone, last saved first.
     func drafts() async throws -> [DraftItem] {
         try core.drafts()
@@ -488,8 +491,16 @@ final class Mail: Sendable {
         try core.undoSend(id: id)
     }
 
+    /// `push` for every account; one with nothing to send does not connect.
+    private func pushAll() throws {
+        for account in try core.accounts() {
+            push(account: account.id)
+        }
+    }
+
     /// Sends the account's queued actions and mail, waiting for held ones, in a task no screen
     /// owns; iOS gives it time to finish if the app goes to the background meanwhile.
+
     private func push(account: Int64) {
         Task.detached {
             let finish = await Background.begin("push")

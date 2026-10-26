@@ -338,8 +338,7 @@ class Mail(private val context: Context) {
     /** Empties a trash or spam [mailbox] for good, mail not loaded included, held like [archive]. */
     suspend fun emptyMailbox(mailbox: Mailbox): List<Long> {
         val actions = io { core.emptyMailbox(mailbox) }
-        // An account with nothing to send does not connect.
-        io { core.accounts() }.forEach { push(it.id) }
+        pushAll()
         return actions
     }
 
@@ -389,6 +388,9 @@ class Mail(private val context: Context) {
     /** Keeps [draft] on the phone; a new one if its id is 0. Returns its id. */
     suspend fun saveDraft(draft: DraftItem): Long = io { core.saveDraft(draft) }
 
+    /** Saves the drafts into each account's drafts folder too, once there is a network. */
+    suspend fun pushDrafts() = pushAll()
+
     /** Reads [drafts] again; on failure they stay as they were. */
     private suspend fun loadDrafts() {
         try {
@@ -434,6 +436,9 @@ class Mail(private val context: Context) {
      * ones, also if the app is closed meanwhile.
      */
     private fun push(accountId: Long) = PushWorker.enqueue(context, accountId)
+
+    /** [push] for every account; one with nothing to send does not connect. */
+    private suspend fun pushAll() = io { core.accounts() }.forEach { push(it.id) }
 
     /** Sends the account's queued actions and mail now, waiting for held ones; see [push]. */
     suspend fun pushNow(accountId: Long) {

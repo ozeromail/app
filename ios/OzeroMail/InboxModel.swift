@@ -682,6 +682,7 @@ final class InboxModel {
     /// Closed with something written: the toast says where it went.
     func kept() {
         composing = nil
+        mail.pushDrafts()
         note(tr("draft_saved"))
     }
 
