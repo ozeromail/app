@@ -77,6 +77,7 @@ struct SignInView: View {
     @State private var error: LocalizedStringKey?
     @Environment(\.webAuthenticationSession) private var webAuthentication
     @Environment(\.openURL) private var openURL
+    @Environment(\.sideways) private var sideways
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -104,6 +105,7 @@ struct SignInView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 24)
+        .middle(sideways ? Room.list : .infinity)
         .animation(.smooth(duration: 0.42), value: step)
         // Not while signing in: leaving would cut it off halfway.
         .interactiveDismissDisabled(busy)
