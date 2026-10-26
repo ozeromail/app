@@ -47,13 +47,20 @@ pub trait PlatformSocket: Send + Sync {
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Error)]
 pub enum PlatformTlsError {
-    Failed { detail: String },
+    Failed {
+        detail: String,
+    },
+    /// The connection broke off, as the server may drop a kept-alive one: a request safe to
+    /// send twice goes again on a new one.
+    Dropped {
+        detail: String,
+    },
 }
 
 impl fmt::Display for PlatformTlsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Failed { detail } => f.write_str(detail),
+            Self::Failed { detail } | Self::Dropped { detail } => f.write_str(detail),
         }
     }
 }
@@ -189,7 +196,12 @@ fn pump(socket: Arc<dyn PlatformSocket>) -> Pumped {
         loop {
             let read = reader.read(CHUNK as u32);
             let end = !matches!(&read, Ok(data) if !data.is_empty());
-            let read = read.map_err(|e| io::Error::other(e.to_string()));
+            let read = read.map_err(|e| match e {
+                PlatformTlsError::Dropped { detail } => {
+                    io::Error::new(io::ErrorKind::ConnectionReset, detail)
+                }
+                e => io::Error::other(e.to_string()),
+            });
             if incoming.blocking_send(read).is_err() || end {
                 break;
             }
@@ -440,5 +452,30 @@ mod tests {
         let mut chunk = [0; 4];
         let e = stream.read(&mut chunk).await.unwrap_err();
         assert_eq!(e.to_string(), "handshake_failure");
+        assert_eq!(e.kind(), io::ErrorKind::Other);
+    }
+
+    /// Its connection is reset at the first read.
+    struct Reset;
+
+    impl PlatformSocket for Reset {
+        fn read(&self, _: u32) -> Result<Vec<u8>, PlatformTlsError> {
+            Err(PlatformTlsError::Dropped {
+                detail: "Connection reset".into(),
+            })
+        }
+
+        fn write(&self, _: Vec<u8>) -> Result<(), PlatformTlsError> {
+            Ok(())
+        }
+
+        fn end(&self) {}
+    }
+
+    #[tokio::test]
+    async fn tells_a_dropped_connection_from_a_failed_one() {
+        let mut stream = pump(Arc::new(Reset));
+        let e = stream.read(&mut [0; 4]).await.unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::ConnectionReset);
     }
 }
