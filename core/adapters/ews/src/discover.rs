@@ -12,7 +12,7 @@ use crate::xml::{self, escape};
 use crate::{EwsSession, PATH};
 
 const AUTODISCOVER: &str = "/autodiscover/autodiscover.xml";
-const ACTIVE_SYNC: &str = "/Microsoft-Server-ActiveSync";
+pub(crate) const ACTIVE_SYNC: &str = "/Microsoft-Server-ActiveSync";
 /// Hosts that often serve EWS, tried after Autodiscover, each before the domain.
 const GUESSES: [&str; 3] = ["mail", "owa", "exchange"];
 

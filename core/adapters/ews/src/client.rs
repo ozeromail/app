@@ -71,6 +71,26 @@ impl Client {
         body: &[u8],
         repeatable: bool,
     ) -> Result<Response, ProviderError> {
+        let path = self.path.clone();
+        self.post_to(
+            &path,
+            &[("Accept", "text/xml")],
+            content_type,
+            body,
+            repeatable,
+        )
+        .await
+    }
+
+    /// Like `post`, to `path` on the same server, with these `headers` too.
+    pub async fn post_to(
+        &mut self,
+        path: &str,
+        headers: &[(&str, &str)],
+        content_type: &str,
+        body: &[u8],
+        repeatable: bool,
+    ) -> Result<Response, ProviderError> {
         // A known server gets Basic first: one without it refuses it unread, and says what it
         // takes instead.
         let mut scheme = self.scheme.or((!self.probe).then_some(Scheme::Basic));
@@ -78,7 +98,9 @@ impl Client {
         for _ in 0..3 {
             let fresh = !(self.bound && self.http.is_open());
             let auth = match scheme {
-                Some(Scheme::Ntlm(name)) if fresh => Some(self.ntlm(name, content_type).await?),
+                Some(Scheme::Ntlm(name)) if fresh => {
+                    Some(self.ntlm(name, path, headers, content_type).await?)
+                }
                 None | Some(Scheme::Ntlm(_)) => None,
                 Some(Scheme::Basic) => Some(format!(
                     "Basic {}",
@@ -91,6 +113,8 @@ impl Client {
             let response = match self
                 .send(
                     auth.as_deref(),
+                    path,
+                    headers,
                     content_type,
                     body,
                     repeatable && !handshake,
@@ -129,10 +153,18 @@ impl Client {
 
     /// Runs NTLM up to its last message on the open connection, and returns the header that
     /// carries that message with the real request.
-    async fn ntlm(&mut self, name: &str, content_type: &str) -> Result<String, ProviderError> {
+    async fn ntlm(
+        &mut self,
+        name: &str,
+        path: &str,
+        headers: &[(&str, &str)],
+        content_type: &str,
+    ) -> Result<String, ProviderError> {
         let hello = format!("{name} {}", base64(&ntlm::negotiate()));
         // Empty, so the body goes only once.
-        let response = self.send(Some(&hello), content_type, &[], true).await?;
+        let response = self
+            .send(Some(&hello), path, headers, content_type, &[], true)
+            .await?;
         let token = response
             .authenticate
             .iter()
@@ -152,10 +184,7 @@ impl Client {
             ));
         }
         let binding = self.http.certificate().map(|c| ntlm::channel_binding(&c));
-        let mut client = [0; 8];
-        SystemRandom::new()
-            .fill(&mut client)
-            .map_err(|_| ProviderError::Protocol("no random numbers".into()))?;
+        let client = random::<8>()?;
         let answer = ntlm::authenticate(
             &challenge,
             &self.login,
@@ -170,6 +199,8 @@ impl Client {
     async fn send(
         &mut self,
         auth: Option<&str>,
+        path: &str,
+        headers: &[(&str, &str)],
         content_type: &str,
         data: &[u8],
         repeatable: bool,
@@ -177,15 +208,15 @@ impl Client {
         let headers: Vec<(&str, &str)> = auth
             .map(|a| ("Authorization", a))
             .into_iter()
-            .chain([("Accept", "text/xml")])
+            .chain(headers.iter().copied())
             .collect();
         let body = Some(Body { content_type, data });
         if repeatable {
             self.http
-                .send_repeatable("POST", &self.path, &headers, body)
+                .send_repeatable("POST", path, &headers, body)
                 .await
         } else {
-            self.http.send("POST", &self.path, &headers, body).await
+            self.http.send("POST", path, &headers, body).await
         }
     }
 }
@@ -211,6 +242,15 @@ fn offered(response: &Response) -> Result<Scheme, ProviderError> {
             response.authenticate.join("; ")
         )))
     }
+}
+
+/// `N` random bytes.
+pub(crate) fn random<const N: usize>() -> Result<[u8; N], ProviderError> {
+    let mut bytes = [0; N];
+    SystemRandom::new()
+        .fill(&mut bytes)
+        .map_err(|_| ProviderError::Protocol("no random numbers".into()))?;
+    Ok(bytes)
 }
 
 /// Now as a Windows FILETIME: 100 ns steps since 1601.

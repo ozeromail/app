@@ -183,6 +183,13 @@ pub trait MailProvider: Send {
     ) -> impl Future<Output = Result<bool, ProviderError>> + Send;
 }
 
+/// What a provider keeps between sessions for one account, such as ActiveSync's sync keys.
+pub trait ProviderState: Send + Sync {
+    fn get(&self, key: &str) -> Option<String>;
+    /// Keeps `value` under `key`; None forgets it.
+    fn set(&self, key: &str, value: Option<&str>);
+}
+
 /// Hands mail over for delivery: SMTP, or a provider's own send call.
 pub trait MailSender: Send {
     /// Sends the whole message to `to`, from the account's address `from`.
@@ -212,6 +219,8 @@ pub trait MessageParser: Send + Sync {
 pub enum ProviderError {
     /// The server refused the login or token.
     Auth,
+    /// The company's server has not let this device in, or has blocked it.
+    Blocked,
     /// Connection failed, broke or timed out.
     Network(String),
     /// The server answered something we cannot use.
@@ -226,6 +235,7 @@ impl fmt::Display for ProviderError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Auth => write!(f, "the server refused the login"),
+            Self::Blocked => write!(f, "the server has not let this device in"),
             Self::Network(e) => write!(f, "network error: {e}"),
             Self::Protocol(e) => write!(f, "protocol error: {e}"),
             Self::Rejected(e) => write!(f, "refused: {e}"),

@@ -296,6 +296,39 @@ impl Store for SqliteStore {
         found(changed)
     }
 
+    fn provider_state(&self, account: AccountId, key: &str) -> Result<Option<String>, StoreError> {
+        self.conn()
+            .query_row(
+                "SELECT value FROM provider_state WHERE account_id = ?1 AND key = ?2",
+                params![account.0, key],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(storage)
+    }
+
+    fn set_provider_state(
+        &self,
+        account: AccountId,
+        key: &str,
+        value: Option<&str>,
+    ) -> Result<(), StoreError> {
+        let conn = self.conn();
+        match value {
+            Some(value) => conn.execute(
+                "INSERT INTO provider_state (account_id, key, value) VALUES (?1, ?2, ?3)
+                 ON CONFLICT (account_id, key) DO UPDATE SET value = excluded.value",
+                params![account.0, key, value],
+            ),
+            None => conn.execute(
+                "DELETE FROM provider_state WHERE account_id = ?1 AND key = ?2",
+                params![account.0, key],
+            ),
+        }
+        .map_err(storage)?;
+        Ok(())
+    }
+
     fn save_folders(
         &self,
         account: AccountId,

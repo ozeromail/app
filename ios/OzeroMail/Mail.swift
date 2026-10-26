@@ -579,7 +579,7 @@ extension Error {
         case .NoSmtp?: return "error_no_smtp"
         case .NoServer?: return "error_no_server"
         case .NoEws?: return "error_no_ews"
-        case .OnlyActiveSync?: return "error_only_active_sync"
+        case .DeviceBlocked?: return "error_device_blocked"
         default: return "error_storage"
         }
     }
