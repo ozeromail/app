@@ -1,0 +1,28 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuite name="com.ozeromail.app.ListTest" tests="14" failures="1" errors="0" skipped="0" time="340.506" timestamp="2026-10-26T10:50:26" hostname="localhost">
+  <properties>
+    <property name="device" value="emulator-5554 - 14" />
+    <property name="flavor" value="" />
+    <property name="project" value=":app" />
+  </properties>
+  <testcase name="tabTapSwitchesTabAndBack" classname="com.ozeromail.app.ListTest" time="50.071" />
+  <testcase name="openALetterAndComeBack" classname="com.ozeromail.app.ListTest" time="21.81" />
+  <testcase name="onlyAPullDropsADrop" classname="com.ozeromail.app.ListTest" time="31.173">
+    <failure>java.lang.IllegalStateException: Timed out; on screen: Inbox&#64;260, Unread&#64;532, Anna Petrova&#64;398, 10:41 AM&#64;398, People 24: plans for the weekend&#64;398, Hi! This is letter 24. Shall we meet on Saturday by the lake?&#64;398, Unread&#64;856, Farid Aliyev&#64;722, 10:41 AM&#64;722, People 23: plans for the weekend&#64;722, Hi! This is letter 23. Shall we meet on Saturday by the lake?&#64;722, Unread&#64;1180, Eva Novak&#64;1046, 10:41 AM&#64;1046, People 22: plans for the weekend&#64;1046, Hi! This is letter 22. Shall we meet on Saturday by the lake?&#64;1046, Unread&#64;1504, Dmitri Sokolov&#64;1370, 10:41 AM&#64;1370, People 21: plans for the weekend&#64;1370, Hi! This is letter 21. Shall we meet on Saturday by the lake?&#64;1370, Unread&#64;1770, Clara Mendes&#64;1694, 10:41 AM&#64;1694, People 20: plans for the weekend&#64;1694, Read&#64;1977, Boris Ivanov&#64;1901, 10:41 AM&#64;1901, People 19: plans for the weekend&#64;1901, Read&#64;2184, Anna Petrova&#64;2108, 10:41 AM&#64;2108, People 18: plans for the weekend&#64;2108, Read&#64;2391, Farid Aliyev&#64;2315, 10:41 AM&#64;2315, People 17: plans for the weekend&#64;2315, People&#64;2050, 21&#64;2050, Notifications&#64;2050, 8&#64;2050, Newsletters&#64;2050, 8&#64;2050, T&#64;2174, Search mail&#64;2174
+at com.ozeromail.app.TestMail.waitFor(TestMail.kt:65)
+at com.ozeromail.app.TestMail.waitFor$default(TestMail.kt:62)
+at com.ozeromail.app.ListTest.onlyAPullDropsADrop(ListTest.kt:50)
+</failure>
+  </testcase>
+  <testcase name="tabDragSwitchesTab" classname="com.ozeromail.app.ListTest" time="23.047" />
+  <testcase name="holdAndDrawChoosesRows" classname="com.ozeromail.app.ListTest" time="29.943" />
+  <testcase name="pullDropsTheRowsAndTheyComeBack" classname="com.ozeromail.app.ListTest" time="27.052" />
+  <testcase name="neighboursFollowAHeldRow" classname="com.ozeromail.app.SwipeTest" time="19.887" />
+  <testcase name="dragPastTheEdgeAndBackDoesNothing" classname="com.ozeromail.app.SwipeTest" time="16.161" />
+  <testcase name="quickFlickTakesTheRow" classname="com.ozeromail.app.SwipeTest" time="16.571" />
+  <testcase name="doneSwipeTakesTheRowAndRowsBelowCloseUp" classname="com.ozeromail.app.SwipeTest" time="17.466" />
+  <testcase name="shortSwipeSpringsBack" classname="com.ozeromail.app.SwipeTest" time="14.043" />
+  <testcase name="scrollingIsNotASwipe" classname="com.ozeromail.app.SwipeTest" time="13.029" />
+  <testcase name="readSwipeLeavesTheRowInPlace" classname="com.ozeromail.app.SwipeTest" time="11.465" />
+  <testcase name="undoBringsTheRowBack" classname="com.ozeromail.app.SwipeTest" time="14.414" />
+</testsuite>
