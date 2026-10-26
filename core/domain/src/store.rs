@@ -19,6 +19,11 @@ pub trait Store: Send + Sync {
     fn set_account_name(&self, account: AccountId, name: &str) -> Result<(), StoreError>;
     /// Sets the user's name for the account; empty clears it.
     fn set_account_label(&self, account: AccountId, label: &str) -> Result<(), StoreError>;
+    /// Sets the account's own signature; empty uses the default one.
+    fn set_account_signature(&self, account: AccountId, signature: &str) -> Result<(), StoreError>;
+    /// The signature of accounts without one of their own; empty for none.
+    fn signature(&self) -> Result<String, StoreError>;
+    fn set_signature(&self, signature: &str) -> Result<(), StoreError>;
     /// Sets how many days back the account's mail is kept; 0 keeps all of it.
     fn set_account_keep(&self, account: AccountId, days: u32) -> Result<(), StoreError>;
     /// Sets when the phone looks for the account's new mail with the app closed.

@@ -1124,6 +1124,7 @@ fn draft(account: AccountId) -> Draft {
         reply_to: None,
         quote: String::new(),
         forward: None,
+        signature: String::new(),
     }
 }
 
@@ -1135,6 +1136,7 @@ fn saved(draft: &Draft, now: i64) -> SavedDraft {
         to: draft.to.join(", "),
         subject: draft.subject.clone(),
         text: draft.text.clone(),
+        signature: draft.signature.clone(),
         reply_to: draft.reply_to,
         quote: draft.quote.clone(),
         forward: draft.forward,
@@ -2003,6 +2005,7 @@ fn a_draft_is_kept_until_it_is_sent_or_thrown_away() {
         forward: None,
         saved: 100,
         files: vec![],
+        signature: String::new(),
     };
     let id = store.save_draft(&draft).unwrap();
     draft.id = Some(id);
@@ -2054,6 +2057,7 @@ fn a_draft_outlives_its_answered_message_but_not_its_account() {
         forward: Some(MessageId(999)),
         saved: 100,
         files: vec![],
+        signature: String::new(),
     };
     store.save_draft(&draft).unwrap();
     assert_eq!(store.drafts().unwrap()[0].reply_to, None);
