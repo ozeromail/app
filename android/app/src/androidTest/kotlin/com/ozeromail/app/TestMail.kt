@@ -62,7 +62,14 @@ abstract class TestMail {
     fun waitFor(timeoutMs: Long = 20_000, done: () -> Boolean) {
         val until = System.currentTimeMillis() + timeoutMs
         while (!done()) {
-            check(System.currentTimeMillis() < until) { "Timed out" }
+            check(System.currentTimeMillis() < until) {
+                val texts = rule.onAllNodes(androidx.compose.ui.test.isRoot()).fetchSemanticsNodes().joinToString(" | ") { root ->
+                    fun walk(n: androidx.compose.ui.semantics.SemanticsNode): List<String> =
+                        (n.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.Text)?.map { it.text + "@" + n.boundsInRoot.top.toInt() } ?: emptyList()) + n.children.flatMap { walk(it) }
+                    walk(root).joinToString(", ")
+                }
+                "Timed out; on screen: $texts"
+            }
             rule.mainClock.advanceTimeByFrame()
             Thread.sleep(Film.FRAME_MS.toLong())
         }
