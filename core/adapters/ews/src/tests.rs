@@ -8,6 +8,7 @@ use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::pki_types::pem::PemObject;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use tokio_rustls::rustls::server::WebPkiClientVerifier;
 use tokio_rustls::rustls::{RootCertStore, ServerConfig};
 
 use super::*;
@@ -106,26 +107,80 @@ pub(crate) async fn serving_raw(handler: RawHandler) -> (HttpsClient, Arc<Mutex<
             });
         }
     });
+    (HttpsClient::new("localhost", port, client_tls()), seen)
+}
+
+fn roots() -> RootCertStore {
     let mut roots = RootCertStore::empty();
     roots
         .add(CertificateDer::from_pem_slice(CA).unwrap())
         .unwrap();
+    roots
+}
+
+fn client_tls() -> Arc<ClientConfig> {
     let tls = ClientConfig::builder()
-        .with_root_certificates(roots)
+        .with_root_certificates(roots())
         .with_no_client_auth();
-    (HttpsClient::new("localhost", port, Arc::new(tls)), seen)
+    Arc::new(tls)
 }
 
 fn acceptor() -> TlsAcceptor {
+    acceptor_asking(false)
+}
+
+/// A server that asks for a client certificate if `asks`, and takes none.
+fn acceptor_asking(asks: bool) -> TlsAcceptor {
     let certs = CertificateDer::pem_slice_iter(CERT)
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     let key = PrivateKeyDer::from_pem_slice(KEY).unwrap();
-    let config = ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(certs, key)
-        .unwrap();
-    TlsAcceptor::from(Arc::new(config))
+    let builder = ServerConfig::builder();
+    let builder = if asks {
+        let verifier = WebPkiClientVerifier::builder(Arc::new(roots()))
+            .allow_unauthenticated()
+            .build()
+            .unwrap();
+        builder.with_client_cert_verifier(verifier)
+    } else {
+        builder.with_no_client_auth()
+    };
+    TlsAcceptor::from(Arc::new(builder.with_single_cert(certs, key).unwrap()))
+}
+
+#[tokio::test]
+async fn tells_a_server_that_wants_a_certificate() {
+    // Asks for one; answers without it; wants it.
+    for (asks, answers, wants) in [
+        (true, false, true),
+        (true, true, false),
+        (false, false, false),
+    ] {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let acceptor = acceptor_asking(asks);
+        tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let Ok(mut tls) = acceptor.accept(tcp).await else {
+                return;
+            };
+            if answers {
+                let mut request = [0; 4096];
+                let _ = tls.read(&mut request).await;
+                let _ = tls
+                    .write_all(b"HTTP/1.1 401 X\r\nContent-Length: 0\r\n\r\n")
+                    .await;
+            }
+        });
+        let endpoint = discover::Endpoint {
+            host: "localhost".into(),
+            port,
+        };
+        assert_eq!(
+            discover::asks_for_certificate(client_tls(), &endpoint).await,
+            wants
+        );
+    }
 }
 
 const BASIC: &str = "Basic YW5uYTpwdw==";
