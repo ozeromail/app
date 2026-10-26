@@ -254,6 +254,13 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     // Counts the loads that found more older mail, so the list looks at its end again after each.
     var olderLoads by remember { mutableIntStateOf(0) }
     var error by remember { mutableStateOf<Int?>(null) }
+    // The accounts [error] is about, when a check failed for some and not others.
+    var failing by remember { mutableStateOf(emptyList<String>()) }
+
+    fun fail(e: CoreException, accounts: List<String> = emptyList()) {
+        error = e.text()
+        failing = accounts
+    }
     // When the inbox last synced, on the clock, to say how fresh it is.
     var checkedAt by remember { mutableStateOf<Long?>(null) }
     // A check the user waits on: how long it has gone (0, slow, given up), and whether it just went through.
@@ -337,7 +344,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         } catch (e: CoreException) {
             // Never leave the last list's messages under the new one.
             if (tab to mailbox == shown) messages = emptyList()
-            error = e.text()
+            fail(e)
         }
         listLoaded = true
     }
@@ -348,7 +355,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             unsent = mail.unsent()
             inboxEmpty = mail.inboxEmpty()
         } catch (e: CoreException) {
-            error = e.text()
+            fail(e)
         }
     }
 
@@ -356,7 +363,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         try {
             accounts = mail.accounts()
         } catch (e: CoreException) {
-            error = e.text()
+            fail(e)
         }
     }
 
@@ -384,7 +391,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             val found = mail.folders()
             if (found != folders) folders = found
         } catch (e: CoreException) {
-            error = e.text()
+            fail(e)
         }
     }
 
@@ -405,7 +412,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             // Once the servers have nothing older, the core answers without asking them.
             if (mail.older(box)) olderLoads++
         } catch (e: CoreException) {
-            error = e.text()
+            fail(e)
         } finally {
             loadingOlder = false
         }
@@ -418,7 +425,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             try {
                 change()
             } catch (e: CoreException) {
-                error = e.text()
+                fail(e)
             }
         }
     }
@@ -462,7 +469,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 if (quiet && since != null && started - since < BLIP_MS) {
                     Log.w("Ozero", "sync failed", e)
                 } else {
-                    error = e.text()
+                    fail(e, mail.failing)
                 }
                 false
             }
@@ -471,7 +478,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 try {
                     mail.forgetNewMail()
                 } catch (e: CoreException) {
-                    error = e.text()
+                    fail(e)
                 }
                 MailWorker.clearNotifications(context)
                 mail.prefetch()
@@ -633,7 +640,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 // After the toast on screen, which may still offer Undo.
                 if (mail.takeReverted()) scope.launch { snackbar.showSnackbar(reverted) }
             } catch (e: CoreException) {
-                error = e.text()
+                fail(e)
             }
         }
     }
@@ -651,7 +658,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 val draft = make()
                 if (open?.id == reading) composing = Composing(draft, original)
             } catch (e: CoreException) {
-                error = e.text()
+                fail(e)
             } finally {
                 writing = false
             }
@@ -683,7 +690,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             try {
                 composing = Composing(mail.restoreDraft(draft), original)
             } catch (e: CoreException) {
-                error = e.text()
+                fail(e)
             }
         }
     }
@@ -713,7 +720,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             val actions = try {
                 move(gone)
             } catch (e: CoreException) {
-                error = e.text()
+                fail(e)
                 reset()
                 return@launch
             }
@@ -740,7 +747,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             val actions = try {
                 mail.emptyMailbox(from)
             } catch (e: CoreException) {
-                error = e.text()
+                fail(e)
                 return@launch
             }
             if (mailbox == from) {
@@ -767,7 +774,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             try {
                 mail.markRead(rows, seen = read)
             } catch (e: CoreException) {
-                error = e.text()
+                fail(e)
                 reset()
                 return@launch
             }
@@ -887,7 +894,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                     try {
                         mail.markRead(listOf(message), seen = false)
                     } catch (e: CoreException) {
-                        error = e.text()
+                        fail(e)
                     }
                 }
             },
@@ -1006,10 +1013,13 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                 },
                                 checkedAt = checkedAt.takeIf { mailbox == Mail.INBOX },
                                 status = when (val shown = error) {
-                                    R.string.error_network -> Status(R.string.status_offline, retry = true)
                                     null -> null
+                                    // Like Apple Mail, says which account it is when the others got through.
+                                    R.string.error_network -> failing.takeIf { it.isNotEmpty() }
+                                        ?.let { Status(R.string.status_offline_account, retry = true, account = it.joinToString()) }
+                                        ?: Status(R.string.status_offline, retry = true)
                                     // A sync's own failures; another error is not one a new check mends.
-                                    else -> Status(shown, retry = shown == R.string.error_server || shown == R.string.error_tls)
+                                    else -> Status(shown, retry = shown == R.string.error_server || shown == R.string.error_tls, account = failing.joinToString().ifEmpty { null })
                                 } ?: when {
                                     syncing && slow == 2 && !waiting -> Status(R.string.status_background)
                                     // An empty list's words say it themselves.
@@ -1046,7 +1056,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                         try {
                                             mail.undoSend(failed.id)?.let { composing = Composing(it) }
                                         } catch (e: CoreException) {
-                                            error = e.text()
+                                            fail(e)
                                         }
                                         counts()
                                     }
@@ -1139,7 +1149,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                     try {
                         mail.removeAccount(account)
                     } catch (e: CoreException) {
-                        error = e.text()
+                        fail(e)
                         return@launch
                     }
                     MailWorker.clearNotifications(context)
@@ -1626,7 +1636,12 @@ private fun InboxList(
                         .heightIn(min = 34.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(stringResource(it.text), color = colors.onSurfaceVariant, style = Type.Caption, modifier = Modifier.weight(1f).padding(vertical = 8.dp))
+                    val text = when {
+                        it.text == R.string.status_offline_account -> stringResource(it.text, it.account.orEmpty())
+                        it.account != null -> stringResource(R.string.status_account_failed, it.account, stringResource(it.text))
+                        else -> stringResource(it.text)
+                    }
+                    Text(text, color = colors.onSurfaceVariant, style = Type.Caption, modifier = Modifier.weight(1f).padding(vertical = 8.dp))
                     if (it.retry) TextButton(onClick = onSync) { Text(stringResource(R.string.status_try_again)) }
                 }
             }
@@ -2463,7 +2478,8 @@ private class ListPull(private val threshold: Float, private val scope: Coroutin
 }
 
 /** A line over the dock: what the app is doing, or what went wrong, and whether a new check may help. */
-private data class Status(val text: Int, val retry: Boolean = false)
+/** A line over the dock; with [account], about that account alone. */
+private data class Status(val text: Int, val retry: Boolean = false, val account: String? = null)
 
 /** A page as it was left: its [tab], the rows from the top one on screen, and where that one was. */
 private class Leaving(val tab: Category, val rows: List<MessageItem>, val top: Float)

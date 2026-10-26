@@ -190,6 +190,8 @@
   "status_background": "This is taking long. The check goes on in the background.",
   "status_up_to_date": "Checked just now. Mail is up to date.",
   "status_offline": "No connection. Showing mail saved on this phone. It checks again once you are online.",
+  "status_offline_account": "No connection to %1$s. The other mailboxes are up to date.",
+  "status_account_failed": "%1$s: %2$s",
   "status_try_again": "Try again",
   "signin_exchange": "Exchange",
   "signin_exchange_text": "Work mail on the Exchange server your company runs. The server is found from your address; if it is not, enter it yourself.",

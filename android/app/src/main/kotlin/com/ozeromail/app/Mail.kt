@@ -7,6 +7,8 @@ import android.util.Log
 import androidx.annotation.StringRes
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -430,9 +432,29 @@ class Mail(private val context: Context) {
      * signing in again.
      */
     suspend fun refresh(mailbox: Mailbox = INBOX): Boolean {
-        eachAccount(mailbox) { account, password -> core.syncMailbox(account.id, password, mailbox) }
+        val failed = ConcurrentLinkedQueue<String>()
+        val asked = AtomicInteger()
+        try {
+            eachAccount(mailbox) { account, password ->
+                asked.incrementAndGet()
+                try {
+                    core.syncMailbox(account.id, password, mailbox)
+                } catch (e: CoreException) {
+                    if (e !is CoreException.Auth) failed += account.name
+                    throw e
+                }
+            }
+        } finally {
+            // Named only while another account got through: else the whole phone is offline.
+            failing = failed.toList().takeIf { it.size < asked.get() }.orEmpty()
+        }
         return io { core.accounts().any { it.needsSignIn } }
     }
+
+    /** The accounts whose last [refresh] failed while others got through, by name. */
+    @Volatile
+    var failing: List<String> = emptyList()
+        private set
 
     /**
      * Runs [call] at once for every account with mail in [mailbox], but those that need signing
