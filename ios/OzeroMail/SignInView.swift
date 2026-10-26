@@ -1,5 +1,6 @@
 import AuthenticationServices
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// A mail service with known servers, a page where its app passwords are made, and `hint` on
 /// what making one takes.
@@ -90,9 +91,11 @@ struct SignInView: View {
                 } else if step == .exchange {
                     // The server was not found: the fields to type it come out.
                     Exchange(busy: busy, manual: error == "error_no_server", onBack: { go(nil) }) {
-                        email, password, server, login in
+                        email, password, server, login, certificate in
                         attempt {
-                            try await mail.signInExchange(email: email, password: password, server: server, login: login)
+                            try await mail.signInExchange(
+                                email: email, password: password, server: server, login: login,
+                                certificate: certificate)
                         }
                     }
                     .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)).combined(with: .opacity))
@@ -342,17 +345,24 @@ private struct Credentials: View {
 }
 
 /// Exchange: an email and a password, the server found from the email. The server and a login
-/// other than the email can be typed too, and come out on their own when no server is found.
+/// other than the email can be typed too, and come out on their own when no server is found;
+/// so can a certificate from a .p12 file, for a server that asks for one.
 private struct Exchange: View {
     let busy: Bool
     let manual: Bool
     let onBack: () -> Void
-    let onSubmit: (String, String, String?, String?) -> Void
+    let onSubmit: (String, String, String?, String?, String?) -> Void
 
     @State private var email = ""
     @State private var password = ""
     @State private var server = ""
     @State private var login = ""
+    @State private var certificate: String?
+    @State private var picking = false
+    /// A .p12 file picked, until its password opens it.
+    @State private var p12: Data?
+    @State private var p12Password = ""
+    @State private var unreadable = false
     @State private var typing = false
     /// Once no server was found, it has to be typed, also after the error is gone.
     @State private var needed = false
@@ -386,6 +396,12 @@ private struct Exchange: View {
                         .keyboardType(.URL)
                     TextField("signin_exchange_login", text: $login)
                         .textContentType(.username)
+                    Button(certificate.map { tr("signin_exchange_certificate", $0) }
+                        ?? tr("signin_exchange_certificate_choose")) { picking = true }
+                        .disabled(busy)
+                    if unreadable {
+                        Text("error_certificate_unreadable").foregroundStyle(.red)
+                    }
                 }
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -399,6 +415,33 @@ private struct Exchange: View {
         .onChange(of: manual) { _, manual in
             if manual { needed = true }
         }
+        .fileImporter(isPresented: $picking, allowedContentTypes: [.pkcs12]) { result in
+            guard let url = try? result.get() else { return }
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            p12 = try? Data(contentsOf: url)
+            unreadable = p12 == nil
+        }
+        .alert(
+            "signin_exchange_certificate_password",
+            isPresented: Binding(get: { p12 != nil }, set: { if !$0 { p12 = nil } }),
+            presenting: p12
+        ) { file in
+            SecureField("signin_password", text: $p12Password)
+            Button("action_done") { addCertificate(file) }
+            Button("action_cancel", role: .cancel) { p12Password = "" }
+        }
+    }
+
+    private func addCertificate(_ file: Data) {
+        let password = p12Password
+        p12Password = ""
+        Task {
+            // Opening a .p12 derives its key slowly: off the main thread.
+            let name = await Task.detached { try? KeychainCertificates.add(p12: file, password: password) }.value
+            if let name { certificate = name }
+            unreadable = name == nil
+        }
     }
 
     private func submit() {
@@ -407,7 +450,9 @@ private struct Exchange: View {
             let text = text.trimmingCharacters(in: .whitespaces)
             return shown && !text.isEmpty ? text : nil
         }
-        onSubmit(email.trimmingCharacters(in: .whitespaces), password, typed(server), typed(login))
+        onSubmit(
+            email.trimmingCharacters(in: .whitespaces), password, typed(server), typed(login),
+            shown ? certificate : nil)
     }
 }
 

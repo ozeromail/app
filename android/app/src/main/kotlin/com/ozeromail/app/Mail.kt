@@ -51,7 +51,9 @@ class Mail(private val context: Context) {
     private val vault = Vault(context)
 
     private val core by lazy {
-        Core.open(File(context.noBackupFilesDir, "mail.db").path, vault.databaseKey())
+        Core.open(File(context.noBackupFilesDir, "mail.db").path, vault.databaseKey()).also {
+            it.useCertificates(KeyChainCertificates(context))
+        }
     }
 
     /** Lives as long as the app, so an action still reaches the server after its screen closes. */
@@ -163,11 +165,11 @@ class Mail(private val context: Context) {
      * Like [signIn], for Exchange: the core finds the server from the email unless [server]
      * is given, and signs in as the email unless [login] is.
      */
-    suspend fun signInExchange(email: String, password: String, server: String?, login: String?) = io {
+    suspend fun signInExchange(email: String, password: String, server: String?, login: String?, certificate: String?) = io {
         if (core.accounts().any { it.email.equals(email, ignoreCase = true) }) throw CoreException.AccountExists()
         vault.setPassword(email, password)
         // No name: the core asks the server for the owner's.
-        core.addExchangeAccount(email, "", server, login, password)
+        core.addExchangeAccount(email, "", server, login, certificate, password)
     }
 
     /** Addresses the browser came back to from Google, for the sign-in screen to finish. */

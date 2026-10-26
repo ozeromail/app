@@ -181,5 +181,9 @@
   "signin_exchange_manual": "Enter the server yourself",
   "signin_exchange_server": "Server, such as mail.company.com",
   "signin_exchange_login": "Login, if not your email",
+  "signin_exchange_certificate": "Certificate: %1$s",
+  "signin_exchange_certificate_choose": "Add a certificate",
+  "signin_exchange_certificate_password": "Password of the certificate file",
+  "error_certificate_unreadable": "Could not open the certificate. Check the file and its password.",
   "error_no_server": "No Exchange server found for this address. Enter it below: it is in your work mail settings, or your IT team knows it."
 }
