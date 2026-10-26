@@ -49,15 +49,15 @@ class MailWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             emptyList()
         }
         if (!app.inForeground) notifyMail(applicationContext, woken)
-        val synced = try {
-            app.mail.accounts().filter(due)
+        val ids = try {
+            app.mail.accounts().filter(due).map { it.id }.toSet()
         } catch (e: CoreException) {
             Log.w("Ozero", "accounts not read", e)
             return Result.success()
         }
-        if (synced.isEmpty()) return Result.success()
-        checkMail(app) { account -> synced.any { it.id == account.id } }
-        checked.edit().apply { synced.forEach { putLong(it.id.toString(), now) } }.apply()
+        if (ids.isEmpty()) return Result.success()
+        checkMail(app) { it.id in ids }
+        checked.edit().apply { ids.forEach { putLong(it.toString(), now) } }.apply()
         return Result.success()
     }
 
@@ -70,17 +70,13 @@ class MailWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         /** Removes the notifications: the inbox on screen shows that mail now. */
         fun clearNotifications(context: Context) = NotificationManagerCompat.from(context).cancelAll()
 
-        /**
-         * Every 15 minutes, the shortest Android allows, with a network and enough battery; and
-         * the watch for the accounts set to Instantly.
-         */
-        fun schedule(context: Context, accounts: List<AccountItem>) {
+        /** Every 15 minutes, the shortest Android allows, with a network and enough battery. */
+        fun schedule(context: Context) {
             val request = PeriodicWorkRequestBuilder<MailWorker>(15, TimeUnit.MINUTES)
                 .setConstraints(Constraints(requiredNetworkType = NetworkType.CONNECTED, requiresBatteryNotLow = true))
                 .build()
             WorkManager.getInstance(context)
                 .enqueueUniquePeriodicWork(NAME, ExistingPeriodicWorkPolicy.KEEP, request)
-            WatchService.update(context, accounts)
         }
     }
 }

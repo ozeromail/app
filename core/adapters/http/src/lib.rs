@@ -101,8 +101,6 @@ pub struct HttpsClient {
     limit: usize,
     /// Refuses hosts that resolve to a private or local address.
     public_only: bool,
-    /// How much longer than `TIMEOUT` the server may take to start answering.
-    wait: Duration,
 }
 
 impl fmt::Debug for HttpsClient {
@@ -124,7 +122,6 @@ impl HttpsClient {
             conn: None,
             limit: MAX_BODY,
             public_only: false,
-            wait: Duration::ZERO,
         }
     }
 
@@ -148,7 +145,7 @@ impl HttpsClient {
         headers: &[(&str, &str)],
         body: Option<Body<'_>>,
     ) -> Result<Response, ProviderError> {
-        self.exchange(method, path, headers, body, method == "GET")
+        self.exchange(method, path, headers, body, method == "GET", Duration::ZERO)
             .await
     }
 
@@ -161,13 +158,23 @@ impl HttpsClient {
         headers: &[(&str, &str)],
         body: Option<Body<'_>>,
     ) -> Result<Response, ProviderError> {
-        self.exchange(method, path, headers, body, true).await
+        self.exchange(method, path, headers, body, true, Duration::ZERO)
+            .await
     }
 
-    /// Lets the server hold the next requests up to `wait` before it answers, as a long poll
-    /// does; zero again for ordinary ones.
-    pub fn set_wait(&mut self, wait: Duration) {
-        self.wait = wait;
+    /// Like `send`, sent twice if `repeatable`, for a long poll: the server may hold its answer
+    /// up to `wait`.
+    pub async fn send_waiting(
+        &mut self,
+        method: &str,
+        path: &str,
+        headers: &[(&str, &str)],
+        body: Option<Body<'_>>,
+        repeatable: bool,
+        wait: Duration,
+    ) -> Result<Response, ProviderError> {
+        self.exchange(method, path, headers, body, repeatable, wait)
+            .await
     }
 
     /// Whether the next request goes over the connection the last one used: a login bound to
@@ -188,20 +195,21 @@ impl HttpsClient {
         headers: &[(&str, &str)],
         body: Option<Body<'_>>,
         repeatable: bool,
+        wait: Duration,
     ) -> Result<Response, ProviderError> {
         let request = request(method, &self.host, path, headers, body)?;
         let (conn, certificate) = match self.conn.take() {
             Some((conn, used, certificate)) if used.elapsed() < IDLE => (conn, certificate),
             _ => self.connect().await?,
         };
-        let (response, conn, certificate) = match exchange(conn, &request, self.wait).await {
+        let (response, conn, certificate) = match exchange(conn, &request, wait).await {
             Ok((response, conn)) => (response, conn, certificate),
             // The server closed the connection before answering: a kept-alive one it dropped
             // as idle, or a new one it dropped at once. A new one asks again, but only what is
             // safe to ask twice: a POST may have gone through.
             Err(Failure::Closed) if repeatable => {
                 let (conn, certificate) = self.connect().await?;
-                let (response, conn) = exchange(conn, &request, self.wait).await?;
+                let (response, conn) = exchange(conn, &request, wait).await?;
                 (response, conn, certificate)
             }
             Err(Failure::Closed) => return Err(closed()),

@@ -174,6 +174,9 @@ pub struct Core {
     /// Gmail access tokens and until when they work, by the wall clock: a monotonic one stops
     /// while the phone sleeps, and the token would look fresh for too long.
     tokens: Mutex<HashMap<AccountId, (String, SystemTime)>>,
+    /// Gmail accounts whose IMAP refused the token, as an old sign-in without its scope: they
+    /// wait by asking the API.
+    no_idle: Mutex<HashSet<AccountId>>,
     /// The last pages read with all their images, newest last, so opening one again is
     /// instant; up to `PAGES_KEPT` times `IMAGES_SIZE` in memory.
     pages: Mutex<VecDeque<KeptPage>>,
@@ -236,6 +239,7 @@ impl Core {
             waiting: Mutex::default(),
             named: Mutex::default(),
             tokens: Mutex::default(),
+            no_idle: Mutex::default(),
             pages: Mutex::default(),
             changes,
         }))
@@ -270,14 +274,7 @@ impl Core {
                     AccountKind::Exchange => self.speaks_active_sync(a.id)?,
                     AccountKind::Graph => false,
                 };
-                let mut item = AccountItem::from(a);
-                item.can_push = can_push;
-                if !can_push && item.new_mail == NewMail::Push {
-                    item.new_mail = NewMail::Every {
-                        minutes: SOONEST_CHECK,
-                    };
-                }
-                Ok(item)
+                Ok(AccountItem::new(a, can_push))
             })
             .collect()
     }
@@ -1168,19 +1165,34 @@ impl Core {
     pub async fn wait_for_mail(&self, account: i64, secret: String) -> Result<bool, CoreError> {
         let account = self.account(AccountId(account))?;
         let mut slot = None;
-        let remote = self.remote(&mut slot, &account, &secret).await?;
-        if account.kind == AccountKind::Gmail {
+        let idles = !self
+            .no_idle
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains(&account.id);
+        if account.kind == AccountKind::Gmail && idles {
             // Mail since the last sync first: the IMAP wait cannot tell it.
+            let remote = self.remote(&mut slot, &account, &secret).await?;
             let waited = wait_for_mail(&*self.store, remote, account.id, Duration::ZERO).await;
+            if let Some(remote) = slot.take() {
+                remote.close().await;
+            }
             if self.refused(&account, waited)? {
                 return Ok(true);
             }
             match self.gmail_idle(&account, &secret).await {
                 Ok(changed) => return Ok(changed),
-                // An old sign-in without IMAP's scope, say: the API is asked now and then.
-                Err(e) => log::info!("Gmail IDLE not open: {e}"),
+                Err(CoreError::Auth) => {
+                    log::info!("Gmail IMAP refused the token; the API is asked instead");
+                    self.no_idle
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .insert(account.id);
+                }
+                Err(e) => return Err(e),
             }
         }
+        let remote = self.remote(&mut slot, &account, &secret).await?;
         let waited = wait_for_mail(&*self.store, remote, account.id, MAIL_WAIT).await;
         if let Some(remote) = slot {
             remote.close().await;
@@ -1774,7 +1786,6 @@ impl Core {
         Ok(trusted.as_deref().and_then(unhex))
     }
 
-    /// Whether a saved Exchange account speaks ActiveSync rather than EWS.
     /// Waits in IDLE on a Gmail inbox, signed in to Gmail's IMAP with the account's API token:
     /// the API has no push without a server of ours. Its failures leave the account signed in.
     async fn gmail_idle(&self, account: &Account, secret: &str) -> Result<bool, CoreError> {
@@ -1787,6 +1798,7 @@ impl Core {
         Ok(changed?)
     }
 
+    /// Whether a saved Exchange account speaks ActiveSync rather than EWS.
     fn speaks_active_sync(&self, account: AccountId) -> Result<bool, CoreError> {
         let protocol = self.store.provider_state(account, PROTOCOL)?;
         Ok(protocol.as_deref() == Some(ACTIVE_SYNC))
@@ -2596,8 +2608,15 @@ pub struct AccountItem {
     pub needs_sign_in: bool,
 }
 
-impl From<Account> for AccountItem {
-    fn from(a: Account) -> Self {
+impl AccountItem {
+    /// `can_push` if its server says when mail comes; one that cannot is never `Push`.
+    fn new(a: Account, can_push: bool) -> Self {
+        let new_mail = match a.new_mail {
+            NewMail::Push if !can_push => NewMail::Every {
+                minutes: SOONEST_CHECK,
+            },
+            when => when,
+        };
         Self {
             id: a.id.0,
             color: rgb(a.color),
@@ -2607,8 +2626,8 @@ impl From<Account> for AccountItem {
             display_name: a.display_name,
             label: a.label,
             keep_days: a.keep_days,
-            new_mail: a.new_mail,
-            can_push: false,
+            new_mail,
+            can_push,
             kind: a.kind,
             needs_sign_in: a.needs_sign_in,
         }

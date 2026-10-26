@@ -161,8 +161,20 @@ impl EasSession {
         request: &Node,
         repeatable: bool,
     ) -> Result<Node, ProviderError> {
+        self.command_waiting(cmd, request, repeatable, Duration::ZERO)
+            .await
+    }
+
+    /// Like `command`, for a long poll: the server may hold its answer up to `wait`.
+    async fn command_waiting(
+        &mut self,
+        cmd: &str,
+        request: &Node,
+        repeatable: bool,
+        wait: Duration,
+    ) -> Result<Node, ProviderError> {
         for provisioned in [false, true] {
-            let answer = self.request(cmd, request, repeatable).await?;
+            let answer = self.request(cmd, request, repeatable, wait).await?;
             let asks = answer
                 .as_ref()
                 .is_none_or(|a| matches!(status(a), 142..=144));
@@ -186,6 +198,7 @@ impl EasSession {
         cmd: &str,
         request: &Node,
         repeatable: bool,
+        wait: Duration,
     ) -> Result<Option<Node>, ProviderError> {
         let path = format!("{ACTIVE_SYNC}?Cmd={cmd}{}", self.query);
         let headers = [
@@ -194,7 +207,14 @@ impl EasSession {
         ];
         let response = self
             .client
-            .post_to(&path, &headers, CONTENT_TYPE, &encode(request), repeatable)
+            .post_to(
+                &path,
+                &headers,
+                CONTENT_TYPE,
+                &encode(request),
+                repeatable,
+                wait,
+            )
             .await?;
         match response.status {
             449 => Ok(None),
@@ -257,7 +277,7 @@ impl EasSession {
 
     async fn provisioning(&mut self, request: &Node) -> Result<Node, ProviderError> {
         let answer = self
-            .request("Provision", request, true)
+            .request("Provision", request, true, Duration::ZERO)
             .await?
             .ok_or_else(|| protocol("asked for the policy while taking it"))?;
         // A server that wants the phone wiped gets no answer to that.
@@ -926,10 +946,9 @@ impl MailProvider for EasSession {
                     ),
                 ],
             );
-            self.client.set_wait(Duration::from_secs(heartbeat));
-            let answer = self.command("Ping", &request, true).await;
-            self.client.set_wait(Duration::ZERO);
-            let answer = answer?;
+            let answer = self
+                .command_waiting("Ping", &request, true, Duration::from_secs(heartbeat))
+                .await?;
             match status(&answer) {
                 1 => return Ok(false),
                 // The folder changed, or the folder list did: a sync finds out what.

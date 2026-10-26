@@ -130,11 +130,11 @@ pub fn default_label(email: &str) -> String {
         return known.to_owned();
     }
     let domain = email_domain(email).unwrap_or_default();
-    let mut parts = domain.split('.').filter(|p| !p.is_empty());
-    let name = match (parts.next(), parts.next()) {
+    let parts: Vec<&str> = domain.split('.').filter(|p| !p.is_empty()).collect();
+    let name = match parts[..] {
         // A host such as mail.company.com is named by the company.
-        (Some("mail" | "email" | "corp"), Some(next)) => next,
-        (Some(first), Some(_)) => first,
+        ["mail" | "email", company, _, ..] => company,
+        [first, _, ..] => first,
         _ => "",
     };
     let mut chars = name.chars();
@@ -195,6 +195,8 @@ mod tests {
         assert_eq!(default_label("k@tbank.ru"), "Tbank");
         assert_eq!(default_label("a@gmail.com"), "Gmail");
         assert_eq!(default_label("a@mail.example.co.uk"), "Example");
+        assert_eq!(default_label("a@mail.ru"), "Mail.ru");
+        assert_eq!(default_label("a@corp.ru"), "Corp");
         assert_eq!(default_label("a@yandex.ru"), "Yandex");
         assert_eq!(default_label("a@localhost"), "");
         assert_eq!(default_label("nobody"), "");
