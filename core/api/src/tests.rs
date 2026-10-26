@@ -581,6 +581,17 @@ fn saves_a_gmail_account_that_can_send() {
 }
 
 #[test]
+fn finds_no_server_for_an_address_without_a_domain() {
+    let db = TempDb::new("found");
+    let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    let found = runtime.block_on(core.add_found_account("anna".into(), "pw".into()));
+    assert_eq!(found, Err(CoreError::NotFound));
+}
+
+#[test]
 fn saves_an_exchange_account_that_sends_without_smtp() {
     let db = TempDb::new("exchange");
     let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
