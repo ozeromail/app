@@ -15,7 +15,8 @@ permissions:
   contents: write
 
 concurrency:
-  group: android-ui-${{ github.ref }}
+  # A newer push to a pull request replaces its run; every run on main finishes.
+  group: android-ui-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
