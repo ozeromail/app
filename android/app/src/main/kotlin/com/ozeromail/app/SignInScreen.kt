@@ -4,6 +4,7 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -220,9 +221,9 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
                         // The server was not found: the fields to type it come out.
                         manual = error == R.string.error_no_server,
                         onBack = { go(null) },
-                        onSubmit = { email, password, server, login ->
+                        onSubmit = { email, password, server, login, certificate ->
                             busy = true
-                            scope.launch { attempt { mail.signInExchange(email, password, server, login) } }
+                            scope.launch { attempt { mail.signInExchange(email, password, server, login, certificate) } }
                         },
                     )
                 } else {
@@ -410,20 +411,23 @@ private fun Credentials(
 
 /**
  * Exchange: an email and a password, the server found from the email. The server and a login
- * other than the email can be typed too, and come out on their own when no server is found.
+ * other than the email can be typed too, and come out on their own when no server is found;
+ * so can a certificate from the phone, for a server that asks for one.
  */
 @Composable
 private fun Exchange(
     busy: Boolean,
     manual: Boolean,
     onBack: () -> Unit,
-    onSubmit: (email: String, password: String, server: String?, login: String?) -> Unit,
+    onSubmit: (email: String, password: String, server: String?, login: String?, certificate: String?) -> Unit,
 ) {
+    val activity = LocalActivity.current
     var email by rememberSaveable { mutableStateOf("") }
     // Not saveable, as in [Credentials].
     var password by remember { mutableStateOf("") }
     var server by rememberSaveable { mutableStateOf("") }
     var login by rememberSaveable { mutableStateOf("") }
+    var certificate by rememberSaveable { mutableStateOf<String?>(null) }
     var typing by rememberSaveable { mutableStateOf(false) }
     // Once no server was found, it has to be typed, also after the error is gone.
     var needed by rememberSaveable { mutableStateOf(false) }
@@ -436,7 +440,7 @@ private fun Exchange(
     fun submit() {
         if (!ready) return
         val typed = { text: String -> text.trim().takeIf { shown && it.isNotEmpty() } }
-        onSubmit(email.trim(), password, typed(server), typed(login))
+        onSubmit(email.trim(), password, typed(server), typed(login), certificate.takeIf { shown })
     }
 
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -455,6 +459,16 @@ private fun Exchange(
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Field(server, { server = it }, R.string.signin_exchange_server, KeyboardType.Uri)
                 Field(login, { login = it }, R.string.signin_exchange_login, KeyboardType.Email, onDone = ::submit)
+                TextButton(
+                    onClick = { activity?.let { chooseCertificate(it, certificate) { picked -> certificate = picked } } },
+                    enabled = !busy && activity != null,
+                    contentPadding = PaddingValues(0.dp),
+                ) {
+                    Text(
+                        certificate?.let { stringResource(R.string.signin_exchange_certificate, it) }
+                            ?: stringResource(R.string.signin_exchange_certificate_choose),
+                    )
+                }
             }
         }
         SubmitButton(R.string.signin_action, busy, ready, ::submit)

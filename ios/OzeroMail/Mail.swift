@@ -43,7 +43,9 @@ final class Mail: Sendable {
         var excluded = dir
         try excluded.setResourceValues(values)
         let path = dir.appending(path: "mail.db").path(percentEncoded: false)
-        let mail = Mail(core: try Core.open(path: path, key: Vault().databaseKey()))
+        let core = try Core.open(path: path, key: Vault().databaseKey())
+        core.useCertificates(certificates: KeychainCertificates())
+        let mail = Mail(core: core)
         mail.forgetOldDownloads()
         return mail
     }
@@ -159,14 +161,17 @@ final class Mail: Sendable {
 
     /// Like `signIn`, for Exchange: the core finds the server from the email unless `server`
     /// is given, and signs in as the email unless `login` is.
-    func signInExchange(email: String, password: String, server: String?, login: String?) async throws {
+    func signInExchange(
+        email: String, password: String, server: String?, login: String?, certificate: String?
+    ) async throws {
         if try core.accounts().contains(where: { $0.email.lowercased() == email.lowercased() }) {
             throw CoreError.AccountExists
         }
         try vault.setPassword(password, email: email)
         // No name: the core asks the server for the owner's.
         _ = try await core.addExchangeAccount(
-            email: email, displayName: "", server: server, login: login, password: password)
+            email: email, displayName: "", server: server, login: login, certificate: certificate,
+            password: password)
     }
 
     /// Starts Google sign-in and returns the page to open in the browser; `again` signs in to
