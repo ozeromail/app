@@ -36,9 +36,10 @@ enum BackgroundCheck {
                 }
             }.map(\.id)
             guard !due.isEmpty else { return }
-            // Other accounts may still have synced; the next run tries again.
-            _ = try? await mail.refresh(which: { due.contains($0.id) })
-            for id in due { Settings.checked[String(id)] = now.timeIntervalSince1970 }
+            // A failed sync leaves its accounts due, so the next run tries them again.
+            if (try? await mail.refresh(which: { due.contains($0.id) })) != nil {
+                for id in due { Settings.checked[String(id)] = now.timeIntervalSince1970 }
+            }
             let new = try await mail.newMail()
             await notify(new)
         } catch {
