@@ -8,9 +8,9 @@ enum Room {
     static let letter: CGFloat = 720
     /// The fields of a message being written.
     static let compose: CGFloat = 680
-    /// The left rail with the inbox tabs, and a rail with buttons only.
-    static let tabsRail: CGFloat = 172
-    static let rail: CGFloat = 84
+    /// The mailboxes beside the list, and the list beside an open message.
+    static let mailboxes: CGFloat = 240
+    static let listPane: CGFloat = 320
 }
 
 extension View {
@@ -20,26 +20,7 @@ extension View {
     }
 }
 
-/// A column of controls along an edge, held low where the thumb rests: on its side the phone's
-/// height is short, so the bottom bars move here.
-struct Rail<Content: View>: View {
-    var width: CGFloat = Room.rail
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        VStack(spacing: 8) {
-            Spacer(minLength: 0)
-            content
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 12)
-        .frame(width: width)
-        .frame(maxHeight: .infinity)
-        .background(.bar)
-    }
-}
-
 extension EnvironmentValues {
-    /// On its side: the phone's height is short, and the controls go to the rails.
+    /// On its side: the phone's height is short, the mailboxes and the message go beside the list.
     var sideways: Bool { verticalSizeClass == .compact }
 }

@@ -18,7 +18,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -94,9 +93,8 @@ fun MessageScreen(
     onUnread: () -> Unit,
     onMoveToInbox: (() -> Unit)?,
     onDone: (() -> Unit)?,
-    /** Null beside the list, where the message has no screen to go back from. */
-    onBack: (() -> Unit)?,
-    /** Beside the list, with every action on the right rail. */
+    onBack: () -> Unit,
+    /** Beside the list: the actions fit one row, and the list keeps the start edge clear. */
     pane: Boolean = false,
 ) {
     var more by remember(message.id) { mutableStateOf(false) }
@@ -132,108 +130,60 @@ fun MessageScreen(
     // The newest message not from the user.
     val answer = thread.lastOrNull { !it.sent } ?: message
 
-    val sideways = LocalRoom.current.rails || pane
-    // The conversation, or the message on its own. On its side the whole page scrolls, title
-    // and all, as the height is short; upright a message alone takes the screen below its title.
-    val letters: @Composable ColumnScope.() -> Unit = {
-        if (thread.size > 1 || message.threadCount > 1u) {
-            Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
-                Title(message)
-                // A long run of closed messages in the middle folds into one line.
-                val middle = 1 until thread.size - 2
-                val folded = !showAll && middle.count() >= 2 && middle.none { isOpen(thread[it]) }
-                thread.forEachIndexed { i, m ->
-                    if (i == 1) {
-                        Reveal(middle.count().takeIf { folded }) { count -> More(count, onClick = { showAll = true }) }
-                    }
-                    key(m.id) {
-                        val letter = @Composable { Letter(mail, files, m, bodies, isOpen(m), onToggle = { opened[m.id] = !isOpen(m) }) }
-                        if (i in middle) {
-                            AnimatedVisibility(!folded, enter = opening, exit = closing) { letter() }
-                        } else {
-                            letter()
-                        }
-                    }
-                }
-                Reveal(error) { Text(stringResource(it), color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(Gap.screen)) }
-                Spacer(Modifier.height(12.dp))
-            }
-        } else {
-            val filesAt = remember { BringIntoViewRequester() }
-            Column(Modifier.weight(1f).fillMaxWidth().then(if (sideways) Modifier.verticalScroll(rememberScrollState()) else Modifier)) {
-                Title(message)
-                From(message, open = true, fileCount(message, bodies), filesAt)
-                HorizontalDivider(Modifier.padding(top = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
-                LetterBody(mail, files, filesAt, message, bodies, if (sideways) Modifier.fillMaxWidth() else Modifier.weight(1f), fill = !sideways)
-            }
-        }
-    }
-    val colors = MaterialTheme.colorScheme
-    val delete = if (message.canTrash) R.string.action_delete else R.string.action_delete_forever
-
     Box(Modifier.fillMaxSize()) {
-        if (sideways) {
-            // The actions move to the edges, under the thumbs: the rarer ones left, the answers and Done right.
-            // Beside the list all of them go right, as the list has the left.
-            // Beside the list, the list keeps the start edge clear.
-            val edges = if (pane) WindowInsetsSides.End else WindowInsetsSides.Horizontal
-            Row(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(edges))) {
-                val rarer: @Composable ColumnScope.() -> Unit = {
-                    BarAction(R.drawable.ic_delete, stringResource(delete), colors.onSurface, onClick = onDelete)
-                    BarAction(R.drawable.ic_more, stringResource(R.string.action_more), colors.onSurface, onClick = { more = true })
-                }
-                if (!pane) Rail(start = true) { rarer() }
-                Middle(LETTER_MAX, Modifier.weight(1f)) {
-                    Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))) {
-                        if (onBack != null) BackArrow(onBack, Modifier.padding(top = 4.dp)) else Spacer(Modifier.height(12.dp))
-                        letters()
+        val edges = if (pane) WindowInsetsSides.Top else WindowInsetsSides.Top + WindowInsetsSides.Horizontal
+        // On its side the height is short, so a message alone scrolls title and all.
+        val sideways = LocalRoom.current.sideways
+        Middle(LETTER_MAX, Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(edges))) {
+                BackArrow(onBack, Modifier.padding(top = 4.dp))
+                if (thread.size > 1 || message.threadCount > 1u) {
+                    Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
+                        Title(message)
+                        // A long run of closed messages in the middle folds into one line.
+                        val middle = 1 until thread.size - 2
+                        val folded = !showAll && middle.count() >= 2 && middle.none { isOpen(thread[it]) }
+                        thread.forEachIndexed { i, m ->
+                            if (i == 1) {
+                                Reveal(middle.count().takeIf { folded }) { count -> More(count, onClick = { showAll = true }) }
+                            }
+                            key(m.id) {
+                                val letter = @Composable { Letter(mail, files, m, bodies, isOpen(m), onToggle = { opened[m.id] = !isOpen(m) }) }
+                                if (i in middle) {
+                                    AnimatedVisibility(!folded, enter = opening, exit = closing) { letter() }
+                                } else {
+                                    letter()
+                                }
+                            }
+                        }
+                        Reveal(error) { Text(stringResource(it), color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(Gap.screen)) }
+                        Spacer(Modifier.height(12.dp))
+                    }
+                } else {
+                    val filesAt = remember { BringIntoViewRequester() }
+                    Column(Modifier.weight(1f).fillMaxWidth().then(if (sideways) Modifier.verticalScroll(rememberScrollState()) else Modifier)) {
+                        Title(message)
+                        From(message, open = true, fileCount(message, bodies), filesAt)
+                        HorizontalDivider(Modifier.padding(top = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                        LetterBody(mail, files, filesAt, message, bodies, if (sideways) Modifier.fillMaxWidth() else Modifier.weight(1f), fill = !sideways)
                     }
                 }
-                Rail(start = false) {
-                    if (pane) rarer()
-                    BarAction(R.drawable.ic_reply, stringResource(R.string.message_reply), colors.onSurface, onClick = { onReply(answer, false) })
-                    BarAction(R.drawable.ic_reply_all, stringResource(R.string.message_reply_all), colors.onSurface, onClick = { onReply(answer, true) })
-                    // The newest message, the user's own too.
-                    BarAction(R.drawable.ic_forward, stringResource(R.string.message_forward), colors.onSurface, onClick = { onForward(thread.lastOrNull() ?: message) })
-                    onDone?.let { BarAction(R.drawable.ic_done, stringResource(R.string.action_done), colors.onAccent, colors.accent, it) }
-                }
-            }
-        } else {
-            Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
-                onBack?.let { BackArrow(it, Modifier.padding(top = 4.dp)) }
-                letters()
-                Column(
-                    Modifier.fillMaxWidth().navigationBarsPadding().padding(top = Gap.barTop, bottom = Gap.barBottom),
-                    verticalArrangement = Arrangement.spacedBy(Gap.inBar),
-                ) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = Gap.bar),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
+                // The newest message is forwarded, the user's own too.
+                val answers = @Composable { row: RowScope -> row.Answers({ onReply(answer, it) }, { onForward(thread.lastOrNull() ?: message) }) }
+                if (pane) {
+                    PaneActions(answers, onDelete = onDelete, forever = !message.canTrash, onMore = { more = true }, onDone = onDone)
+                } else {
+                    Column(
+                        Modifier.fillMaxWidth().navigationBarsPadding().padding(top = Gap.barTop, bottom = Gap.barBottom),
+                        verticalArrangement = Arrangement.spacedBy(Gap.inBar),
                     ) {
-                        Pill(
-                            stringResource(R.string.message_reply_prompt),
-                            onClick = { onReply(answer, false) },
-                            modifier = Modifier.weight(1f),
-                            height = 46.dp,
-                        )
-                        IconTile(
-                            R.drawable.ic_reply_all,
-                            stringResource(R.string.message_reply_all),
-                            { onReply(answer, true) },
-                            shape = CircleShape,
-                            size = 46.dp,
-                        )
-                        // The newest message, the user's own too.
-                        IconTile(
-                            R.drawable.ic_forward,
-                            stringResource(R.string.message_forward),
-                            { onForward(thread.lastOrNull() ?: message) },
-                            shape = CircleShape,
-                            size = 46.dp,
-                        )
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = Gap.bar),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
+                        ) { answers(this) }
+                        Actions(onDelete = onDelete, forever = !message.canTrash, onMore = { more = true }, onDone = onDone)
                     }
-                    Actions(onDelete = onDelete, forever = !message.canTrash, onMore = { more = true }, onDone = onDone)
                 }
             }
         }
@@ -255,7 +205,7 @@ fun MessageScreen(
         Toast(
             snackbar,
             onGo = {},
-            modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = if (sideways) 16.dp else TOAST_ABOVE_BARS),
+            modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = if (pane) TOAST_ABOVE_ROW else TOAST_ABOVE_BARS),
         )
     }
 }
@@ -499,18 +449,10 @@ private fun Actions(onDelete: () -> Unit, forever: Boolean, onMore: () -> Unit, 
 
 /** One of the big buttons along the bottom of a screen: an icon over its name. */
 @Composable
-fun RowScope.BarAction(@DrawableRes icon: Int, label: String, tint: Color, background: Color = Color.Transparent, onClick: () -> Unit) =
-    BigAction(icon, label, tint, background, Modifier.weight(1f), onClick)
-
-/** The same button on a rail, the bars' place on a screen on its side. */
-@Composable
-fun ColumnScope.BarAction(@DrawableRes icon: Int, label: String, tint: Color, background: Color = Color.Transparent, onClick: () -> Unit) =
-    BigAction(icon, label, tint, background, Modifier.fillMaxWidth(), onClick)
-
-@Composable
-private fun BigAction(@DrawableRes icon: Int, label: String, tint: Color, background: Color, modifier: Modifier, onClick: () -> Unit) {
+fun RowScope.BarAction(@DrawableRes icon: Int, label: String, tint: Color, background: Color = Color.Transparent, onClick: () -> Unit) {
     Column(
-        modifier
+        Modifier
+            .weight(1f)
             .height(52.dp)
             .clip(RoundedCornerShape(Radius.medium))
             .background(background)
@@ -651,6 +593,52 @@ private val PINNED_FILES = 220.dp
 
 /** Where a toast sits: over the reply and the actions. */
 private val TOAST_ABOVE_BARS = 128.dp
+
+/** Over the one row of them beside the list. */
+private val TOAST_ABOVE_ROW = 72.dp
+
+/** Reply, Reply all and Forward. */
+@Composable
+private fun RowScope.Answers(onReply: (all: Boolean) -> Unit, onForward: () -> Unit) {
+    Pill(stringResource(R.string.message_reply_prompt), onClick = { onReply(false) }, modifier = Modifier.weight(1f), height = 46.dp)
+    IconTile(R.drawable.ic_reply_all, stringResource(R.string.message_reply_all), { onReply(true) }, shape = CircleShape, size = 46.dp)
+    IconTile(R.drawable.ic_forward, stringResource(R.string.message_forward), onForward, shape = CircleShape, size = 46.dp)
+}
+
+/** Beside the list, where the height is short: the answers and the actions in one row. */
+@Composable
+private fun PaneActions(
+    answers: @Composable (RowScope) -> Unit,
+    onDelete: () -> Unit,
+    forever: Boolean,
+    onMore: () -> Unit,
+    onDone: (() -> Unit)?,
+) {
+    val colors = MaterialTheme.colorScheme
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(colors.bar)
+            .hairline(colors.outlineVariant, top = true)
+            .navigationBarsPadding()
+            .padding(horizontal = Gap.bar, vertical = Gap.barTop),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
+    ) {
+        answers(this)
+        IconTile(
+            R.drawable.ic_delete,
+            stringResource(if (forever) R.string.action_delete_forever else R.string.action_delete),
+            onDelete,
+            shape = CircleShape,
+            size = 46.dp,
+        )
+        IconTile(R.drawable.ic_more, stringResource(R.string.action_more), onMore, shape = CircleShape, size = 46.dp)
+        onDone?.let {
+            IconTile(R.drawable.ic_done, stringResource(R.string.action_done), it, background = colors.accent, tint = colors.onAccent, shape = CircleShape, size = 46.dp)
+        }
+    }
+}
 
 /** How long a page waits for its images before it shows without them. */
 private const val IMAGES_WAIT_MS = 2_000L
