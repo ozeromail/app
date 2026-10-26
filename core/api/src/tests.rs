@@ -288,6 +288,7 @@ fn syncs_an_imap_inbox_into_the_list() {
             quote: "Anna wrote:\n> Hi".into(),
             saved: 0,
             forward: None,
+            files: vec![],
         })
         .unwrap()
     };
@@ -296,6 +297,14 @@ fn syncs_an_imap_inbox_into_the_list() {
     assert_eq!(draft.reply_to, Some(first));
     assert_eq!(draft.quote, "Anna wrote:\n> Hi");
     assert_eq!(core.drafts().unwrap(), std::slice::from_ref(&draft));
+    // A file added to the draft goes with it.
+    core.attach_file(
+        draft.id,
+        "notes.txt".into(),
+        "text/plain".into(),
+        b"hi".to_vec(),
+    )
+    .unwrap();
     core.send(draft).unwrap();
     assert!(core.drafts().unwrap().is_empty());
     // A forward reads the message's files from the server as it goes.
@@ -310,6 +319,7 @@ fn syncs_an_imap_inbox_into_the_list() {
     let received = mailpit_messages();
     assert!(received.contains("bob@example.org"), "{received}");
     assert!(received.contains("Ответ из Ozero"), "{received}");
+    assert!(received.contains("\"Attachments\":1"), "{received}");
     assert!(received.contains("Fwd: Message 2"), "{received}");
     let sent = runtime.block_on(async {
         let account = core.account(AccountId(account))?;
@@ -490,6 +500,57 @@ fn rows_are_marked_only_with_several_accounts() {
 }
 
 #[test]
+fn keeps_files_with_a_draft_up_to_the_limit() {
+    let db = TempDb::new("files");
+    let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
+    let draft = DraftItem {
+        id: 0,
+        account_id: 0,
+        to: "you@example.com".into(),
+        subject: "Hi".into(),
+        text: String::new(),
+        reply_to: None,
+        quote: String::new(),
+        saved: 0,
+        forward: None,
+        files: vec![],
+    };
+    let id = core.save_draft(draft.clone()).unwrap();
+    let attach = |name: &str, size: u64| {
+        let data = vec![0; usize::try_from(size).unwrap()];
+        core.attach_file(id, name.into(), "image/jpeg".into(), data)
+    };
+    let photo = attach("photo.jpg", FILE_LIMIT - 1).unwrap();
+    assert_eq!(attach("more.jpg", 2), Err(CoreError::TooLarge));
+    let small = attach("small.jpg", 1).unwrap();
+    assert_eq!(core.drafts().unwrap()[0].files, [photo, small.clone()]);
+    core.detach_file(small.id).unwrap();
+    assert_eq!(core.drafts().unwrap()[0].files.len(), 1);
+
+    // Thrown away, it comes back with its files and the text as it is now.
+    core.delete_draft(id).unwrap();
+    assert!(core.drafts().unwrap().is_empty());
+    assert_eq!(attach("late.jpg", 1), Err(CoreError::Gone));
+    let thrown = DraftItem {
+        id,
+        text: "Hello".into(),
+        ..draft.clone()
+    };
+    let back = core.restore_draft(thrown).unwrap();
+    assert_eq!((back.id, back.text.as_str()), (id, "Hello"));
+    assert_eq!(core.drafts().unwrap()[0].files.len(), 1);
+    // One never saved, or gone for good, comes back new, without files.
+    let fresh = core
+        .restore_draft(DraftItem {
+            files: vec![],
+            ..draft
+        })
+        .unwrap();
+    assert_ne!(fresh.id, 0);
+    assert_eq!(core.drafts().unwrap().len(), 2);
+}
+
+#[test]
 fn saves_a_gmail_account_that_can_send() {
     let db = TempDb::new("gmail");
     let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
@@ -514,6 +575,7 @@ fn saves_a_gmail_account_that_can_send() {
         quote: String::new(),
         saved: 0,
         forward: None,
+        files: vec![],
     })
     .unwrap();
 }
@@ -563,6 +625,7 @@ fn saves_an_exchange_account_that_sends_without_smtp() {
         quote: String::new(),
         saved: 0,
         forward: None,
+        files: vec![],
     })
     .unwrap();
 }

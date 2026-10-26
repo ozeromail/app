@@ -15,10 +15,10 @@ use ozero_app::sync::{
 };
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Attachment, Body, Category, Changes,
-    Checkpoint, Draft, DraftId, Folder, FolderId, FolderRole, ListQuery, ListScope, MailProvider,
-    MailSender, MessageId, MessageRow, Moved, NewAccount, NewFolder, Older, OpId, OutboxId,
-    Outgoing, ProviderError, ProviderState, RawMessage, SavedDraft, Sender, Server, Store,
-    StoreError, html, parse_recipients, saves_sent_itself,
+    Checkpoint, Draft, DraftFile, DraftId, FileId, Folder, FolderId, FolderRole, ListQuery,
+    ListScope, MailProvider, MailSender, MessageId, MessageRow, Moved, NewAccount, NewFolder,
+    Older, OpId, OutboxId, Outgoing, OutgoingFile, ProviderError, ProviderState, RawMessage,
+    SavedDraft, Sender, Server, Store, StoreError, html, parse_recipients, saves_sent_itself,
 };
 use ozero_ews::{EasSession, EwsSession, discover};
 use ozero_gmail::{GmailSession, oauth};
@@ -71,6 +71,16 @@ const TOKEN_MARGIN: Duration = Duration::from_secs(60);
 #[uniffi::export]
 pub fn undo_seconds() -> u32 {
     u32::try_from(HOLD / 1_000 - 1).unwrap_or(0)
+}
+
+/// The most bytes the files a person adds to one message may take together: what Gmail takes.
+const FILE_LIMIT: u64 = 25 * 1024 * 1024;
+
+/// The most bytes the files added to one message may take together, for the apps to check
+/// before they read a file.
+#[uniffi::export]
+pub fn file_limit() -> u64 {
+    FILE_LIMIT
 }
 
 /// Version of the core, shown in About and in manual crash reports.
@@ -421,6 +431,7 @@ impl Core {
             quote: String::new(),
             saved: 0,
             forward: None,
+            files: vec![],
         })
     }
 
@@ -445,7 +456,8 @@ impl Core {
     /// Puts a message in the outbox, held for `HOLD` so `undo_send` can take it back;
     /// `push_actions` sends it. `to` is addresses split by commas or spaces; `reply_to` the
     /// message it answers, and `quote` what goes under the text. The saved draft it was
-    /// written in, if any, goes. Returns the id for `undo_send`.
+    /// written in, if any, goes, and its files go with the message. Returns the id for
+    /// `undo_send`.
     pub fn send(&self, draft: DraftItem) -> Result<i64, CoreError> {
         let DraftItem {
             id: saved,
@@ -520,6 +532,7 @@ impl Core {
             quote: draft.quote,
             forward: draft.forward.map(MessageId),
             saved: now(),
+            files: vec![],
         };
         match self.store.save_draft(&saved) {
             Ok(id) => Ok(id.0),
@@ -538,9 +551,61 @@ impl Core {
             .collect())
     }
 
-    /// Throws a draft away.
+    /// Throws a draft away, its files too, held like `archive` so `restore_draft` can bring it
+    /// back.
     pub fn delete_draft(&self, id: i64) -> Result<(), CoreError> {
-        Ok(self.store.delete_draft(DraftId(id))?)
+        let now = now();
+        Ok(self.store.delete_draft(DraftId(id), now, now + HOLD)?)
+    }
+
+    /// Brings back `draft`, which `delete_draft` threw away, as it is now, and returns it
+    /// saved: with its files while the hold lasts, else as a new draft without them.
+    pub fn restore_draft(&self, draft: DraftItem) -> Result<DraftItem, CoreError> {
+        let id = draft_id(draft.id);
+        if let Some(id) = id {
+            self.store.restore_draft(id, now())?;
+        }
+        // Back, or never thrown away: its files are the ones it holds, whatever the app saw.
+        let kept = self
+            .store
+            .drafts()?
+            .into_iter()
+            .find(|d| d.id.is_some() && d.id == id);
+        let files = kept.map(|d| d.files);
+        let id = self.save_draft(DraftItem {
+            id: if files.is_some() { draft.id } else { 0 },
+            ..draft.clone()
+        })?;
+        let files = files.unwrap_or_default();
+        Ok(DraftItem {
+            id,
+            files: files.into_iter().map(DraftFileItem::from).collect(),
+            ..draft
+        })
+    }
+
+    /// Adds a file to the saved draft `draft`; it goes with the message when it is sent.
+    /// Fails with `TooLarge` when the draft's files, a forwarded message's among them, would
+    /// take more than `file_limit`, and with `Gone` once the draft was sent or thrown away.
+    pub fn attach_file(
+        &self,
+        draft: i64,
+        name: String,
+        mime: String,
+        data: Vec<u8>,
+    ) -> Result<DraftFileItem, CoreError> {
+        let file = OutgoingFile { name, mime, data };
+        match self.store.attach(DraftId(draft), &file, FILE_LIMIT) {
+            Ok(Some(file)) => Ok(file.into()),
+            Ok(None) => Err(CoreError::TooLarge),
+            Err(StoreError::NotFound) => Err(CoreError::Gone),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Takes a file off its draft.
+    pub fn detach_file(&self, file: i64) -> Result<(), CoreError> {
+        Ok(self.store.detach(FileId(file))?)
     }
 }
 
@@ -1007,6 +1072,7 @@ impl Core {
             quote: ozero_domain::forward_quote(&labels.title, &fields, &text),
             saved: 0,
             forward: Some(message.id),
+            files: vec![],
         })
     }
 
@@ -1616,7 +1682,8 @@ impl Core {
         Ok(())
     }
 
-    /// The message with the files of the message it forwards, read from the server.
+    /// The message with the files added to it, then those of the message it forwards, read
+    /// from the server.
     async fn with_files(
         &self,
         account: &Account,
@@ -1624,10 +1691,11 @@ impl Core {
         slot: &mut Option<Remote>,
         mut message: Outgoing,
     ) -> Result<Outgoing, CoreError> {
+        message.files = self.store.outbox_files(message.id)?;
         if let Some(original) = message.forward {
             let remote = self.remote(slot, account, secret).await?;
             let files = forwarded_files(&*self.store, remote, &self.parser, account.id, original);
-            message.files = files.await?;
+            message.files.extend(files.await?);
         }
         Ok(message)
     }
@@ -2273,6 +2341,33 @@ pub struct DraftItem {
     /// The forwarded message, whose files go with it.
     #[uniffi(default = None)]
     pub forward: Option<i64>,
+    /// The files added to it, which `Core::attach_file` and `Core::detach_file` change; saving
+    /// or sending the draft leaves them be.
+    #[uniffi(default = [])]
+    pub files: Vec<DraftFileItem>,
+}
+
+/// A file added to a message being written.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct DraftFileItem {
+    /// What `Core::detach_file` asks for.
+    pub id: i64,
+    pub name: String,
+    /// The content type, such as `application/pdf`.
+    pub mime: String,
+    /// Bytes.
+    pub size: u64,
+}
+
+impl From<DraftFile> for DraftFileItem {
+    fn from(f: DraftFile) -> Self {
+        Self {
+            id: f.id.0,
+            name: f.name,
+            mime: f.mime,
+            size: f.size,
+        }
+    }
 }
 
 /// The header words of a forwarded message, in the app's language.
@@ -2297,6 +2392,7 @@ impl From<SavedDraft> for DraftItem {
             quote: d.quote,
             saved: d.saved / 1_000,
             forward: d.forward.map(|m| m.0),
+            files: d.files.into_iter().map(DraftFileItem::from).collect(),
         }
     }
 }
@@ -2562,6 +2658,8 @@ pub enum CoreError {
     NoEws,
     /// The company's Exchange server has not let this device in over ActiveSync, or blocked it.
     DeviceBlocked,
+    /// The files added to a message would take more than `file_limit`.
+    TooLarge,
     Storage {
         detail: String,
     },
@@ -2586,6 +2684,7 @@ impl fmt::Display for CoreError {
             Self::NoServer => write!(f, "no Exchange server found"),
             Self::NoEws => write!(f, "the server does not answer as EWS"),
             Self::DeviceBlocked => write!(f, "the server has not let this device in"),
+            Self::TooLarge => write!(f, "the files are too large for one message"),
             Self::Storage { detail } => write!(f, "storage error: {detail}"),
         }
     }

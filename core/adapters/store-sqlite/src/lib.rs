@@ -8,10 +8,10 @@ use std::sync::{Mutex, MutexGuard};
 
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Attachment, Body, Category, Changes,
-    Checkpoint, Correspondents, Draft, DraftId, Flags, Folder, FolderId, FolderRole, ListQuery,
-    ListScope, MessageId, MessageLocation, MessageRow, Moved, NewAccount, NewFolder, NewMessage,
-    Op, OpId, OutboxId, Outgoing, SavedDraft, Sender, Server, Store, StoreError, Unsent,
-    with_quote,
+    Checkpoint, Correspondents, Draft, DraftFile, DraftId, FileId, Flags, Folder, FolderId,
+    FolderRole, ListQuery, ListScope, MessageId, MessageLocation, MessageRow, Moved, NewAccount,
+    NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile, SavedDraft, Sender, Server,
+    Store, StoreError, Unsent, with_quote,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{
@@ -55,6 +55,9 @@ impl SqliteStore {
         )
         .map_err(storage)?;
         migrate(&conn)?;
+        // Drafts thrown away in an earlier run are past undo, and their files go with them.
+        conn.execute("DELETE FROM draft WHERE gone IS NOT NULL", [])
+            .map_err(storage)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -943,6 +946,11 @@ impl Store for SqliteStore {
             )
             .map_err(storage)?;
         if let Some(saved) = saved {
+            tx.execute(
+                "UPDATE draft_file SET draft = NULL, outbox = ?2 WHERE draft = ?1",
+                params![saved.0, id],
+            )
+            .map_err(storage)?;
             tx.execute("DELETE FROM draft WHERE id = ?1", [saved.0])
                 .map_err(storage)?;
         }
@@ -963,8 +971,8 @@ impl Store for SqliteStore {
         let tx = conn.transaction().map_err(storage)?;
         let taken = tx
             .query_row(
-                "DELETE FROM outbox WHERE id = ?1 AND (not_before > ?2 OR failed IS NOT NULL)
-                 RETURNING account_id, recipients, subject, text, reply_to, quote, forward, copy",
+                "SELECT account_id, recipients, subject, text, reply_to, quote, forward, copy
+                 FROM outbox WHERE id = ?1 AND (not_before > ?2 OR failed IS NOT NULL)",
                 params![id.0, now],
                 |r| {
                     let draft = SavedDraft {
@@ -977,6 +985,7 @@ impl Store for SqliteStore {
                         quote: r.get(5)?,
                         forward: r.get::<_, Option<i64>>(6)?.map(MessageId),
                         saved: now,
+                        files: vec![],
                     };
                     Ok((draft, r.get::<_, Option<i64>>(7)?))
                 },
@@ -989,7 +998,17 @@ impl Store for SqliteStore {
         if let Some(copy) = copy {
             drop_message(&tx, copy)?;
         }
-        draft.id = Some(insert_draft(&tx, &draft)?);
+        let saved = insert_draft(&tx, &draft)?;
+        // The files move over before the message goes, which would take them with it.
+        tx.execute(
+            "UPDATE draft_file SET outbox = NULL, draft = ?2 WHERE outbox = ?1",
+            params![id.0, saved.0],
+        )
+        .map_err(storage)?;
+        tx.execute("DELETE FROM outbox WHERE id = ?1", [id.0])
+            .map_err(storage)?;
+        draft.files = files_of(&tx, saved)?;
+        draft.id = Some(saved);
         tx.commit().map_err(storage)?;
         Ok(Some(draft))
     }
@@ -1008,7 +1027,7 @@ impl Store for SqliteStore {
                      reply_to = (SELECT id FROM message WHERE id = ?5),
                      quote = ?6, saved = ?7,
                      forward = (SELECT id FROM message WHERE id = ?9)
-                 WHERE id = ?8",
+                 WHERE id = ?8 AND gone IS NULL",
                 params![
                     draft.account_id.map(|a| a.0),
                     draft.to,
@@ -1028,10 +1047,10 @@ impl Store for SqliteStore {
 
     fn drafts(&self) -> Result<Vec<SavedDraft>, StoreError> {
         let conn = self.conn();
-        let rows = conn
+        let rows: Result<Vec<SavedDraft>, _> = conn
             .prepare_cached(
                 "SELECT id, account_id, recipients, subject, text, reply_to, quote, saved, forward
-                 FROM draft ORDER BY saved DESC, id DESC",
+                 FROM draft WHERE gone IS NULL ORDER BY saved DESC, id DESC",
             )
             .and_then(|mut s| {
                 s.query_map([], |r| {
@@ -1045,18 +1064,135 @@ impl Store for SqliteStore {
                         quote: r.get(6)?,
                         forward: r.get::<_, Option<i64>>(8)?.map(MessageId),
                         saved: r.get(7)?,
+                        files: vec![],
+                    })
+                })?
+                .collect()
+            });
+        let mut drafts = rows.map_err(storage)?;
+        let files: Result<Vec<(i64, DraftFile)>, _> = conn
+            .prepare_cached(
+                "SELECT f.draft, f.id, f.name, f.mime, f.size
+                 FROM draft_file f JOIN draft d ON d.id = f.draft
+                 WHERE d.gone IS NULL ORDER BY f.id",
+            )
+            .and_then(|mut s| {
+                s.query_map([], |r| Ok((r.get(0)?, draft_file(r, 1)?)))?
+                    .collect()
+            });
+        let mut by_draft: HashMap<i64, Vec<DraftFile>> = HashMap::new();
+        for (id, file) in files.map_err(storage)? {
+            by_draft.entry(id).or_default().push(file);
+        }
+        for draft in &mut drafts {
+            if let Some(DraftId(id)) = draft.id {
+                draft.files = by_draft.remove(&id).unwrap_or_default();
+            }
+        }
+        Ok(drafts)
+    }
+
+    fn delete_draft(&self, id: DraftId, now: i64, until: i64) -> Result<(), StoreError> {
+        let conn = self.conn();
+        conn.execute("DELETE FROM draft WHERE gone <= ?1", [now])
+            .map_err(storage)?;
+        conn.execute(
+            "UPDATE draft SET gone = ?2 WHERE id = ?1 AND gone IS NULL",
+            params![id.0, until],
+        )
+        .map(|_| ())
+        .map_err(storage)
+    }
+
+    fn restore_draft(&self, id: DraftId, now: i64) -> Result<bool, StoreError> {
+        self.conn()
+            .execute(
+                "UPDATE draft SET gone = NULL WHERE id = ?1 AND gone > ?2",
+                params![id.0, now],
+            )
+            .map(|changed| changed > 0)
+            .map_err(storage)
+    }
+
+    fn attach(
+        &self,
+        draft: DraftId,
+        file: &OutgoingFile,
+        limit: u64,
+    ) -> Result<Option<DraftFile>, StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        // What goes already: the files added, and those of the message it forwards.
+        let taken: Option<i64> = tx
+            .query_row(
+                "SELECT (SELECT coalesce(sum(size), 0) FROM draft_file WHERE draft = d.id)
+                      + (SELECT coalesce(sum(size), 0) FROM attachment WHERE message_id = d.forward)
+                 FROM draft d WHERE d.id = ?1 AND d.gone IS NULL",
+                [draft.0],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(storage)?;
+        let taken = u64::try_from(taken.ok_or(StoreError::NotFound)?).unwrap_or(0);
+        let size = file.data.len() as u64;
+        if taken + size > limit {
+            return Ok(None);
+        }
+        let id: i64 = tx
+            .query_row(
+                "INSERT INTO draft_file (draft, name, mime, size) VALUES (?1, ?2, ?3, ?4)
+                 RETURNING id",
+                params![
+                    draft.0,
+                    file.name,
+                    file.mime,
+                    i64::try_from(size).unwrap_or(i64::MAX)
+                ],
+                |r| r.get(0),
+            )
+            .map_err(storage)?;
+        tx.execute(
+            "INSERT INTO file_data (file, data) VALUES (?1, ?2)",
+            params![id, file.data],
+        )
+        .map_err(storage)?;
+        tx.commit().map_err(storage)?;
+        Ok(Some(DraftFile {
+            id: FileId(id),
+            name: file.name.clone(),
+            mime: file.mime.clone(),
+            size,
+        }))
+    }
+
+    fn detach(&self, file: FileId) -> Result<(), StoreError> {
+        self.conn()
+            .execute(
+                "DELETE FROM draft_file WHERE id = ?1 AND draft IS NOT NULL",
+                [file.0],
+            )
+            .map(|_| ())
+            .map_err(storage)
+    }
+
+    fn outbox_files(&self, id: OutboxId) -> Result<Vec<OutgoingFile>, StoreError> {
+        let conn = self.conn();
+        let rows = conn
+            .prepare_cached(
+                "SELECT f.name, f.mime, d.data FROM draft_file f JOIN file_data d ON d.file = f.id
+                 WHERE f.outbox = ?1 ORDER BY f.id",
+            )
+            .and_then(|mut s| {
+                s.query_map([id.0], |r| {
+                    Ok(OutgoingFile {
+                        name: r.get(0)?,
+                        mime: r.get(1)?,
+                        data: r.get(2)?,
                     })
                 })?
                 .collect()
             });
         rows.map_err(storage)
-    }
-
-    fn delete_draft(&self, id: DraftId) -> Result<(), StoreError> {
-        self.conn()
-            .execute("DELETE FROM draft WHERE id = ?1", [id.0])
-            .map(|_| ())
-            .map_err(storage)
     }
 
     fn unsent(&self) -> Result<Vec<Unsent>, StoreError> {
@@ -2063,6 +2199,29 @@ fn found(changed: usize) -> Result<(), StoreError> {
         return Err(StoreError::NotFound);
     }
     Ok(())
+}
+
+/// What `draft_file` reads into a `DraftFile`.
+const FILE_FIELDS: &str = "id, name, mime, size";
+
+/// A `DraftFile` from `FILE_FIELDS`, read from column `at` on.
+fn draft_file(r: &Row<'_>, at: usize) -> rusqlite::Result<DraftFile> {
+    Ok(DraftFile {
+        id: FileId(r.get(at)?),
+        name: r.get(at + 1)?,
+        mime: r.get(at + 2)?,
+        size: u64::try_from(r.get::<_, i64>(at + 3)?).unwrap_or(0),
+    })
+}
+
+/// The files of a draft, in the order they were added, without their data.
+fn files_of(conn: &Connection, draft: DraftId) -> Result<Vec<DraftFile>, StoreError> {
+    let rows = conn
+        .prepare_cached(&format!(
+            "SELECT {FILE_FIELDS} FROM draft_file WHERE draft = ?1 ORDER BY id"
+        ))
+        .and_then(|mut s| s.query_map([draft.0], |r| draft_file(r, 0))?.collect());
+    rows.map_err(storage)
 }
 
 /// Saves a new draft; an account or answered message that is gone is left out.

@@ -18,6 +18,8 @@ use tokio_rustls::rustls::pki_types::ServerName;
 
 /// Any single read or write that takes longer means the connection is dead.
 const TIMEOUT: Duration = Duration::from_secs(30);
+/// Bytes written in one go, each within `TIMEOUT`.
+const WRITE_CHUNK: usize = 64 * 1024;
 /// A connection idle this long may have been closed by the server; a new one is opened.
 const IDLE: Duration = Duration::from_secs(20);
 /// Largest response head we accept.
@@ -266,8 +268,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
         }
     }
 
+    /// Writes `data` a chunk at a time, each in `TIMEOUT`: a message with large files goes on a
+    /// slow link as long as it moves.
     async fn write(&mut self, data: &[u8]) -> Result<(), ProviderError> {
-        timed(self.stream.write_all(data)).await?;
+        for chunk in data.chunks(WRITE_CHUNK) {
+            timed(self.stream.write_all(chunk)).await?;
+        }
         timed(self.stream.flush()).await
     }
 

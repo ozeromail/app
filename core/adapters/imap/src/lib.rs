@@ -37,6 +37,8 @@ use tokio_rustls::rustls::pki_types::ServerName;
 
 /// Any single read or write that takes longer means the connection is dead.
 const TIMEOUT: Duration = Duration::from_secs(30);
+/// Bytes written in one go, each within `TIMEOUT`.
+const WRITE_CHUNK: usize = 64 * 1024;
 /// Upper bound for one server response, literals included: a whole message with 25 MB of
 /// files, as the big providers allow, in base64.
 const MAX_RESPONSE: u32 = 40 * 1024 * 1024;
@@ -386,8 +388,13 @@ impl ImapSession {
         }
     }
 
+    /// Writes `data` a chunk at a time, each in `TIMEOUT`: a sent copy with large files goes on
+    /// a slow link as long as it moves.
     async fn write(&mut self, data: &[u8]) -> Result<(), ProviderError> {
-        timed(self.stream.write_all(data)).await
+        for chunk in data.chunks(WRITE_CHUNK) {
+            timed(self.stream.write_all(chunk)).await?;
+        }
+        Ok(())
     }
 
     /// Opens a folder, read-only unless `write`.
