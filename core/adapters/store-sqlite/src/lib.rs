@@ -10,8 +10,8 @@ use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Attachment, Body, Category, Changes,
     Checkpoint, Correspondents, Draft, DraftFile, DraftId, FileId, Flags, Folder, FolderId,
     FolderRole, ListQuery, ListScope, MessageId, MessageLocation, MessageRow, Moved, NewAccount,
-    NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile, SavedDraft, Sender, Server,
-    Store, StoreError, Unsent, with_quote,
+    NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile, RecentFile, SavedDraft,
+    Sender, Server, Store, StoreError, Unsent, with_quote,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{
@@ -1165,6 +1165,28 @@ impl Store for SqliteStore {
         }))
     }
 
+    fn recent_files(&self, limit: usize) -> Result<Vec<RecentFile>, StoreError> {
+        let conn = self.conn();
+        let mut statement = conn.prepare_cached(RECENT_FILES).map_err(storage)?;
+        let rows = statement
+            .query_map([i64::try_from(limit).unwrap_or(i64::MAX)], |r| {
+                Ok(RecentFile {
+                    message: MessageId(r.get(0)?),
+                    account_id: AccountId(r.get(1)?),
+                    from_name: r.get(2)?,
+                    from_email: r.get(3)?,
+                    file: Attachment {
+                        part: r.get(4)?,
+                        name: r.get(5)?,
+                        mime: r.get(6)?,
+                        size: u64::try_from(r.get::<_, i64>(7)?).unwrap_or(0),
+                    },
+                })
+            })
+            .map_err(storage)?;
+        rows.collect::<Result<_, _>>().map_err(storage)
+    }
+
     fn detach(&self, file: FileId) -> Result<(), StoreError> {
         self.conn()
             .execute(
@@ -2038,6 +2060,19 @@ const THREAD: &str = concat!(
     " AND ",
     not_moving!(),
     " ORDER BY m.date, m.id"
+);
+
+/// The newest `?1` files of saved mail. A file sent on in a conversation comes again with
+/// each reply: one row per name and size, from its newest message (SQLite takes the bare
+/// columns from the MAX row). CROSS JOIN reads the few attachments first, not every message.
+const RECENT_FILES: &str = concat!(
+    "SELECT a.message_id, f.account_id, m.from_name, m.from_email,
+            a.part, a.name, a.mime, a.size, MAX(m.date) AS newest
+     FROM attachment a CROSS JOIN message m ON m.id = a.message_id
+     JOIN folder f ON f.id = m.folder_id
+     WHERE f.role NOT IN ('trash', 'junk') AND m.stand_in = 0 AND a.name != '' AND ",
+    not_moving!(),
+    " GROUP BY a.name, a.size ORDER BY newest DESC, a.part LIMIT ?1"
 );
 
 /// What an action on message `?1` covers: its conversation in its folder and inbox tab.

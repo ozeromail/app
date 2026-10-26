@@ -4,7 +4,7 @@ use crate::{
     Account, AccountId, Action, Body, Category, Changes, Checkpoint, Correspondents, Draft,
     DraftFile, DraftId, FileId, Folder, FolderId, ListQuery, MessageId, MessageLocation,
     MessageRow, Moved, NewAccount, NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing,
-    OutgoingFile, SavedDraft, Unsent,
+    OutgoingFile, RecentFile, SavedDraft, Unsent,
 };
 
 /// Local database port. The UI reads only from here; sync writes here.
@@ -193,6 +193,9 @@ pub trait Store: Send + Sync {
         file: &OutgoingFile,
         limit: u64,
     ) -> Result<Option<DraftFile>, StoreError>;
+    /// The files of saved mail, newest first and each name and size once, at most `limit`;
+    /// none from trash or spam.
+    fn recent_files(&self, limit: usize) -> Result<Vec<RecentFile>, StoreError>;
     /// Takes a file off its draft; one already gone, or sent with its message, is left be.
     fn detach(&self, file: FileId) -> Result<(), StoreError>;
     /// The files added to a queued message, whole, in the order they were added.
