@@ -52,12 +52,15 @@ class MailWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         val ids = try {
             app.mail.accounts().filter(due).map { it.id }.toSet()
         } catch (e: CoreException) {
+            // Mail still comes: every account is checked.
             Log.w("Ozero", "accounts not read", e)
-            return Result.success()
+            null
         }
-        if (ids.isEmpty()) return Result.success()
-        checkMail(app) { it.id in ids }
-        checked.edit().apply { ids.forEach { putLong(it.toString(), now) } }.apply()
+        if (ids?.isEmpty() == true) return Result.success()
+        // A failed sync leaves its accounts due, so the next run tries them again.
+        if (checkMail(app) { ids == null || it.id in ids } && ids != null) {
+            checked.edit().apply { ids.forEach { putLong(it.toString(), now) } }.apply()
+        }
         return Result.success()
     }
 

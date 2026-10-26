@@ -5,7 +5,7 @@ use std::fmt;
 use std::hash::{BuildHasher, RandomState};
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ozero_app::ops::push_ops;
 use ozero_app::send::{SentCopy, forwarded_files, push_sends};
@@ -27,7 +27,7 @@ use ozero_http::Tls;
 use ozero_imap::rustls::ClientConfig;
 use ozero_imap::rustls::client::ResolvesClientCert;
 use ozero_imap::rustls::client::danger::ServerCertVerifier;
-use ozero_imap::{ImapSession, RefusedCertificates};
+use ozero_imap::{ImapSession, RefusedCertificates, Watch};
 use ozero_mime::{MimeBuilder, MimeParser};
 use ozero_smtp::SmtpSession;
 use ozero_store_sqlite::SqliteStore;
@@ -49,6 +49,8 @@ const PREFETCH: u32 = 20;
 const MAIL_WAIT: Duration = Duration::from_secs(5 * 60);
 /// The shortest time, in minutes, between checks with the app closed that phones allow.
 const SOONEST_CHECK: u32 = 15;
+/// How long a Gmail account whose IMAP refused its token waits by asking the API.
+const IDLE_RETRY: Duration = Duration::from_secs(60 * 60);
 /// Mail older than this many seconds is not announced: a day.
 const NEWS_AGE: i64 = DAY;
 /// Milliseconds an archived or sent message waits before the server hears of it.
@@ -176,7 +178,7 @@ pub struct Core {
     tokens: Mutex<HashMap<AccountId, (String, SystemTime)>>,
     /// Gmail accounts whose IMAP refused the token, as an old sign-in without its scope: they
     /// wait by asking the API.
-    no_idle: Mutex<HashSet<AccountId>>,
+    no_idle: Mutex<HashMap<AccountId, Instant>>,
     /// The last pages read with all their images, newest last, so opening one again is
     /// instant; up to `PAGES_KEPT` times `IMAGES_SIZE` in memory.
     pages: Mutex<VecDeque<KeptPage>>,
@@ -265,18 +267,20 @@ impl Core {
 
     /// The accounts in the order they were added.
     pub fn accounts(&self) -> Result<Vec<AccountItem>, CoreError> {
-        self.store
+        Ok(self
+            .store
             .accounts()?
             .into_iter()
             .map(|a| {
                 let can_push = match a.kind {
                     AccountKind::Imap | AccountKind::Gmail => true,
-                    AccountKind::Exchange => self.speaks_active_sync(a.id)?,
+                    // Unreadable, it is not offered Instantly, rather than losing the list.
+                    AccountKind::Exchange => self.speaks_active_sync(a.id).unwrap_or(false),
                     AccountKind::Graph => false,
                 };
-                Ok(AccountItem::new(a, can_push))
+                AccountItem::new(a, can_push)
             })
-            .collect()
+            .collect())
     }
 
     /// Sets when the phone looks for the account's new mail with the app closed.
@@ -1165,29 +1169,42 @@ impl Core {
     pub async fn wait_for_mail(&self, account: i64, secret: String) -> Result<bool, CoreError> {
         let account = self.account(AccountId(account))?;
         let mut slot = None;
-        let idles = !self
+        let idles = self
             .no_idle
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .contains(&account.id);
+            .get(&account.id)
+            .is_none_or(|refused| refused.elapsed() > IDLE_RETRY);
         if account.kind == AccountKind::Gmail && idles {
-            // Mail since the last sync first: the IMAP wait cannot tell it.
-            let remote = self.remote(&mut slot, &account, &secret).await?;
-            let waited = wait_for_mail(&*self.store, remote, account.id, Duration::ZERO).await;
-            if let Some(remote) = slot.take() {
-                remote.close().await;
-            }
-            if self.refused(&account, waited)? {
-                return Ok(true);
-            }
-            match self.gmail_idle(&account, &secret).await {
-                Ok(changed) => return Ok(changed),
+            let token = self.refused(&account, self.access_token(account.id, &secret).await)?;
+            match self.gmail_watch(&account, &token).await {
+                Ok((mut imap, watch)) => {
+                    // Mail since the last sync, asked once IDLE would hear of what comes after.
+                    let remote = self.remote(&mut slot, &account, &secret).await?;
+                    let waited =
+                        wait_for_mail(&*self.store, remote, account.id, Duration::ZERO).await;
+                    if let Some(remote) = slot.take() {
+                        remote.close().await;
+                    }
+                    let changed = match self.refused(&account, waited) {
+                        Ok(false) => imap.watch(watch, MAIL_WAIT).await.map_err(Into::into),
+                        done => done,
+                    };
+                    let _ = imap.logout().await;
+                    return changed;
+                }
+                // An old sign-in without IMAP's scope, or a token Google took back: the API
+                // gets a new one, and is asked now and then.
                 Err(CoreError::Auth) => {
                     log::info!("Gmail IMAP refused the token; the API is asked instead");
+                    self.tokens
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .remove(&account.id);
                     self.no_idle
                         .lock()
                         .unwrap_or_else(|p| p.into_inner())
-                        .insert(account.id);
+                        .insert(account.id, Instant::now());
                 }
                 Err(e) => return Err(e),
             }
@@ -1786,16 +1803,19 @@ impl Core {
         Ok(trusted.as_deref().and_then(unhex))
     }
 
-    /// Waits in IDLE on a Gmail inbox, signed in to Gmail's IMAP with the account's API token:
-    /// the API has no push without a server of ours. Its failures leave the account signed in.
-    async fn gmail_idle(&self, account: &Account, secret: &str) -> Result<bool, CoreError> {
-        let token = self.access_token(account.id, secret).await?;
+    /// A Gmail inbox opened to wait in IDLE, signed in to Gmail's IMAP with the account's API
+    /// `token`: the API has no push without a server of ours. Its failures leave the account
+    /// signed in.
+    async fn gmail_watch(
+        &self,
+        account: &Account,
+        token: &str,
+    ) -> Result<(ImapSession, Watch), CoreError> {
         let mut imap =
-            ImapSession::connect_oauth(GMAIL_IMAP, IMAPS_PORT, self.tls()?, &account.email, &token)
+            ImapSession::connect_oauth(GMAIL_IMAP, IMAPS_PORT, self.tls()?, &account.email, token)
                 .await?;
-        let changed = imap.watch("INBOX", MAIL_WAIT).await;
-        let _ = imap.logout().await;
-        Ok(changed?)
+        let watch = imap.begin_watch("INBOX").await?;
+        Ok((imap, watch))
     }
 
     /// Whether a saved Exchange account speaks ActiveSync rather than EWS.

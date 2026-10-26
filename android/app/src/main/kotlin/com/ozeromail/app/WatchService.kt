@@ -129,7 +129,10 @@ class WatchService : Service() {
                 delay(AWAY_MS)
                 app.mail.watch(accounts) { account ->
                     // The CPU stays on for the sync even with the screen off.
-                    awake { checkMail(app) { it.id == account.id } }
+                    val synced = awake { checkMail(app) { it.id == account.id } }
+                    // One the server signed out stops being watched.
+                    renew(force = false)
+                    synced
                 }
             }
         }

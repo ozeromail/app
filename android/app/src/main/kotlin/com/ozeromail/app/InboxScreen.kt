@@ -289,6 +289,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var accountsOpen by rememberSaveable { mutableStateOf(false) }
     // An account just added, whose settings the sheet opens on: its name, when its mail comes.
     var added by rememberSaveable { mutableStateOf<Long?>(null) }
+    LaunchedEffect(accountsOpen) { if (!accountsOpen) added = null }
     var accounts by remember { mutableStateOf(emptyList<AccountItem>()) }
     var folders by remember { mutableStateOf(emptyList<FolderItem>()) }
     val context = LocalContext.current
@@ -1190,10 +1191,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 accountsOpen = false
                 composing = Composing(authorDraft(context))
             },
-            onClose = {
-                accountsOpen = false
-                added = null
-            },
+            onClose = { accountsOpen = false },
         )
         SnoozeSheet(
             visible = snoozing != null,

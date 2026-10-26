@@ -614,6 +614,7 @@ impl ImapSession {
 }
 
 /// What EXAMINE or SELECT says about a folder.
+#[derive(Debug)]
 struct Opened {
     validity: u32,
     /// UIDNEXT, or 0 if the server left it out.
@@ -1016,13 +1017,29 @@ impl MailProvider for ImapSession {
     }
 }
 
+/// A folder opened to be watched; changes from then on are heard of.
+#[derive(Debug)]
+pub struct Watch {
+    folder: String,
+    idles: bool,
+    opened: Opened,
+}
+
 impl ImapSession {
-    /// Waits until `folder` changes, at most `wait`: true if it did. For a mailbox synced by
-    /// other means, such as Gmail's API, whose checkpoints are not IMAP's.
-    pub async fn watch(&mut self, folder: &str, wait: Duration) -> Result<bool, ProviderError> {
-        let idles = self.can_idle().await?;
-        let opened = self.open(folder, false).await?;
-        self.watch_opened(folder, idles, opened, wait).await
+    /// Opens `folder` to watch it, for a mailbox synced by other means, such as Gmail's API,
+    /// whose checkpoints are not IMAP's: what came before is for the caller to ask about.
+    pub async fn begin_watch(&mut self, folder: &str) -> Result<Watch, ProviderError> {
+        Ok(Watch {
+            idles: self.can_idle().await?,
+            opened: self.open(folder, false).await?,
+            folder: folder.to_owned(),
+        })
+    }
+
+    /// Waits until the folder changes since `begin_watch`, at most `wait`: true if it did.
+    pub async fn watch(&mut self, watch: Watch, wait: Duration) -> Result<bool, ProviderError> {
+        self.watch_opened(&watch.folder, watch.idles, watch.opened, wait)
+            .await
     }
 
     async fn watch_opened(
