@@ -507,6 +507,20 @@ async fn sends_with_a_copy_in_sent() {
 }
 
 #[tokio::test]
+async fn saves_a_draft_and_tells_its_id() {
+    let made = "<m:Items><t:Message><t:ItemId Id=\"d1\" ChangeKey=\"c\"/></t:Message></m:Items>";
+    let (mut ews, seen) = session(move |_| response("CreateItem", &[ok("CreateItem", made)])).await;
+    let saved = ews
+        .save_draft("drafts", b"Subject: x\r\n\r\nhi", "x@corp.ru")
+        .await;
+    assert_eq!(saved, Ok(Some((0, "d1".into()))));
+    let body = seen.lock().unwrap().last().unwrap().body.clone();
+    assert!(body.contains("MessageDisposition=\"SaveOnly\""));
+    assert!(body.contains("<t:DistinguishedFolderId Id=\"drafts\"/>"));
+    assert!(body.contains("<t:Value>9</t:Value>"));
+}
+
+#[tokio::test]
 async fn marks_read_without_receipts() {
     let (mut ews, seen) = session(|_| {
         response(

@@ -532,6 +532,22 @@ async fn sends_and_reads_raw_messages() {
 }
 
 #[tokio::test]
+async fn saves_a_draft_as_its_message() {
+    let raw = b"Subject: Draft\r\n\r\nHi";
+    let (mut gmail, seen) = session(vec![(
+        "/drafts",
+        200,
+        json!({"id": "r1", "message": {"id": "m1", "labelIds": ["DRAFT"]}}),
+    )])
+    .await;
+    let saved = gmail.save_draft("DRAFT", raw, "d@example.com").await;
+    assert_eq!(saved, Ok(Some((0, "m1".into()))));
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen[0].1, "/drafts?uploadType=media");
+    assert_eq!(seen[0].2, String::from_utf8_lossy(raw));
+}
+
+#[tokio::test]
 async fn reads_the_name_mail_goes_out_under() {
     let (mut gmail, _) = session(vec![(
         "/settings/sendAs",

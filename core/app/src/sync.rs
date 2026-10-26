@@ -8,11 +8,14 @@ use ozero_domain::{
     MessageParser, ProviderError, SNOOZED, Store, StoreError,
 };
 
+use crate::drafts::{DRAFT_IMPORTS, import_drafts};
+
 /// Forgets the account's mail received before `since` (seconds), then saves its folders and
-/// what changed in its inbox, sent and snoozed folders since the last sync: up to `limit` new
-/// messages in the inbox and fewer in the others, new flags and removed messages.
-/// The sent folder puts the user's own replies into conversations; the snoozed folder, made
-/// on the server when it has none, holds the mail to bring back.
+/// what changed in its inbox, sent, drafts and snoozed folders since the last sync: up to
+/// `limit` new messages in the inbox and fewer in the others, new flags and removed messages.
+/// The sent folder puts the user's own replies into conversations; the drafts folder holds
+/// drafts written elsewhere; the snoozed folder, made on the server when it has none, holds
+/// the mail to bring back.
 pub async fn sync_mail(
     store: &dyn Store,
     provider: &mut impl MailProvider,
@@ -40,16 +43,26 @@ pub async fn sync_mail(
             }
         }
     }
-    // Neither stops the inbox: sent is context for conversations, and snoozed mail comes
-    // back from what is saved of it.
+    // None stops the inbox: sent is context for conversations, drafts wait for the next
+    // sync, and snoozed mail comes back from what is saved of it.
     // The snoozed folder only while something waits there.
     let snoozed = store.next_wake()?.is_some();
-    for role in [FolderRole::Sent, FolderRole::Snoozed] {
+    for role in [FolderRole::Sent, FolderRole::Drafts, FolderRole::Snoozed] {
         if role == FolderRole::Snoozed && !snoozed {
             continue;
         }
         if let Some(folder) = folders.iter().find(|f| f.role == role) {
-            let _ = sync_folder(store, provider, parser, folder, limit / SIDE_SHARE, since).await;
+            let synced = sync_folder(store, provider, parser, folder, limit / SIDE_SHARE, since);
+            if synced.await.is_ok() && role == FolderRole::Drafts {
+                let _ = Box::pin(import_drafts(
+                    store,
+                    provider,
+                    parser,
+                    account,
+                    DRAFT_IMPORTS,
+                ))
+                .await;
+            }
         }
     }
     Ok(())

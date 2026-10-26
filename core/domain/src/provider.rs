@@ -180,6 +180,20 @@ pub trait MailProvider: Send {
         message: &[u8],
     ) -> impl Future<Output = Result<(), ProviderError>> + Send;
 
+    /// Saves a message being written into the drafts folder `folder`, marked as a draft and
+    /// read, and returns its validity and id there, if the server tells. `message_id` is its
+    /// `Message-ID`, to find it by. Fails with `Rejected` where the server keeps no drafts
+    /// for the app.
+    fn save_draft(
+        &mut self,
+        folder: &str,
+        message: &[u8],
+        message_id: &str,
+    ) -> impl Future<Output = Result<Option<(u32, String)>, ProviderError>> + Send {
+        let _ = (folder, message, message_id);
+        async { Err(ProviderError::Rejected("drafts stay on the device".into())) }
+    }
+
     /// Waits until a folder may have changed since `since`, at most `wait`: true if it may
     /// have, so a sync is worth it.
     fn wait(

@@ -2,9 +2,9 @@ use std::fmt;
 
 use crate::{
     Account, AccountId, Action, Body, Category, Changes, Checkpoint, Correspondents, Draft,
-    DraftFile, DraftId, FileId, Folder, FolderId, ListQuery, MessageId, MessageLocation,
-    MessageRow, Moved, NewAccount, NewFolder, NewMail, NewMessage, Op, OpId, OutboxId, Outgoing,
-    OutgoingFile, RecentFile, SavedDraft, Unsent,
+    DraftCopy, DraftFile, DraftId, DraftToPush, FileId, Folder, FolderId, ListQuery, MessageId,
+    MessageLocation, MessageRow, Moved, NewAccount, NewFolder, NewMail, NewMessage, Op, OpId,
+    OutboxId, Outgoing, OutgoingFile, RecentFile, SavedDraft, ServerDraft, Unsent,
 };
 
 /// Local database port. The UI reads only from here; sync writes here.
@@ -206,6 +206,43 @@ pub trait Store: Send + Sync {
     /// it back, and it is gone everywhere else. Drafts whose time came by `now` go for good.
     /// One already gone is fine.
     fn delete_draft(&self, id: DraftId, now: i64, until: i64) -> Result<(), StoreError>;
+    /// The account's drafts whose newest text its server does not have, without their files:
+    /// `draft_files` reads those one draft at a time.
+    fn drafts_to_push(&self, account: AccountId) -> Result<Vec<DraftToPush>, StoreError>;
+    /// The files added to a draft, with their contents.
+    fn draft_files(&self, id: DraftId) -> Result<Vec<OutgoingFile>, StoreError>;
+    /// Records that the server of `account` has the draft as saved at `saved`, under
+    /// `message_id`, as `copy` if the server told where; the copy it had before is to go. A
+    /// draft sent or thrown away meanwhile leaves its new copy to go too.
+    fn pushed_draft(
+        &self,
+        account: AccountId,
+        id: DraftId,
+        saved: i64,
+        message_id: &str,
+        copy: Option<&DraftCopy>,
+    ) -> Result<(), StoreError>;
+    /// Copies on the account's server of drafts sent, thrown away or written again since: to
+    /// delete, by a local id each. Drafts thrown away whose time came by `now` go first.
+    fn stale_drafts(
+        &self,
+        account: AccountId,
+        now: i64,
+    ) -> Result<Vec<(i64, DraftCopy)>, StoreError>;
+    /// Forgets copies `stale_drafts` returned, deleted from the server.
+    fn forget_stale_drafts(&self, ids: &[i64]) -> Result<(), StoreError>;
+    /// The messages of the account's drafts folder that are no draft's copy: written
+    /// elsewhere. A copy pushed without the server telling where is found first, by its
+    /// `Message-ID`; another copy with the same one is to go.
+    fn server_drafts(&self, account: AccountId) -> Result<Vec<ServerDraft>, StoreError>;
+    /// Keeps a draft written elsewhere, with its `files`, as the server has it in `copy`.
+    fn import_draft(
+        &self,
+        draft: &SavedDraft,
+        message_id: Option<&str>,
+        copy: &DraftCopy,
+        files: &[OutgoingFile],
+    ) -> Result<DraftId, StoreError>;
     /// Brings back a draft thrown away whose time has not come at `now`. False if it is gone.
     fn restore_draft(&self, id: DraftId, now: i64) -> Result<bool, StoreError>;
     /// Adds a file to a saved draft, unless its files, the forwarded message's among them, would

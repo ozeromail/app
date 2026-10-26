@@ -409,6 +409,76 @@ fn sync_an_imap_inbox_into_the_list() {
     );
     assert!(back.date >= woke[0].date);
     assert!(core.mailbox(snoozed, 50).unwrap().is_empty());
+
+    // A draft is kept in Drafts on the server too; written again, only its new copy stays.
+    let on_server = || {
+        runtime.block_on(async {
+            let account = core.account(AccountId(account)).unwrap();
+            let mut imap = core.connect(&account, "pass").await.unwrap();
+            let found = imap
+                .changes("Drafts", Checkpoint::default(), &[], i64::MAX, 50)
+                .await
+                .unwrap()
+                .new;
+            (imap, found)
+        })
+    };
+    let mut draft = DraftItem {
+        id: 0,
+        account_id: account,
+        to: "dan@example.com".into(),
+        subject: "Plan".into(),
+        text: "First".into(),
+        reply_to: None,
+        quote: String::new(),
+        saved: 0,
+        forward: None,
+        files: vec![],
+        signature: "Test".into(),
+    };
+    for text in ["First", "Second"] {
+        draft.text = text.into();
+        draft.id = core.save_draft(draft.clone()).unwrap();
+        runtime
+            .block_on(core.push_actions(account, "pass".into()))
+            .unwrap();
+        let (_, found) = on_server();
+        assert_eq!(found.len(), 1);
+        let header = String::from_utf8_lossy(&found[0].header).into_owned();
+        assert!(header.contains("Subject: Plan"), "{header}");
+    }
+    // One written elsewhere comes to the device with the next sync.
+    let (mut imap, _) = on_server();
+    runtime
+        .block_on(imap.append(
+            "Drafts",
+            b"Subject: From the laptop\r\nTo: eve@example.com\r\nMessage-ID: <laptop@example.com>\r\n\r\nHi there\r\n",
+        ))
+        .unwrap();
+    sync().unwrap();
+    sync().unwrap();
+    let drafts = core.drafts().unwrap();
+    let subjects: Vec<_> = drafts.iter().map(|d| d.subject.as_str()).collect();
+    assert_eq!(subjects.len(), 2, "{subjects:?}");
+    let laptop = drafts
+        .iter()
+        .find(|d| d.subject == "From the laptop")
+        .unwrap();
+    assert_eq!(laptop.text.trim_end(), "Hi there");
+    assert_eq!(laptop.to, "eve@example.com");
+    assert_eq!(laptop.account_id, account);
+    // Sent, a draft leaves the server's Drafts.
+    core.send(draft).unwrap();
+    runtime
+        .block_on(core.push_actions(account, "pass".into()))
+        .unwrap();
+    let (_, found) = on_server();
+    let headers: Vec<_> = found
+        .iter()
+        .map(|m| String::from_utf8_lossy(&m.header).into_owned())
+        .collect();
+    assert_eq!(headers.len(), 1, "{headers:?}");
+    assert!(headers[0].contains("From the laptop"));
 }
 
 /// The message list of the Mailpit test server, as JSON.

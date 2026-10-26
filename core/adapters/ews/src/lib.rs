@@ -262,22 +262,25 @@ impl EwsSession {
         Ok(out)
     }
 
-    /// Saves MIME `message` into a folder, read, or sends it with a copy in Sent.
+    /// Saves MIME `message` into a folder, or sends it with a copy in Sent; the id of the
+    /// saved item, when the server tells it.
     async fn create(
         &mut self,
         message: &[u8],
         into: &str,
-        send: bool,
-    ) -> Result<(), ProviderError> {
-        let (disposition, flags) = if send {
-            ("SendAndSaveCopy", "")
-        } else {
-            // Read, and not a draft (MSGFLAG_READ alone in PR_MESSAGE_FLAGS).
-            (
-                "SaveOnly",
+        how: Create,
+    ) -> Result<Option<String>, ProviderError> {
+        // PR_MESSAGE_FLAGS: MSGFLAG_READ, with MSGFLAG_UNSENT for a draft.
+        let flags = |value: u32| {
+            format!(
                 "<t:ExtendedProperty><t:ExtendedFieldURI PropertyTag=\"0x0e07\" PropertyType=\"Integer\"/>\
-<t:Value>1</t:Value></t:ExtendedProperty>",
+<t:Value>{value}</t:Value></t:ExtendedProperty>"
             )
+        };
+        let (disposition, flags) = match how {
+            Create::Send => ("SendAndSaveCopy", String::new()),
+            Create::Read => ("SaveOnly", flags(1)),
+            Create::Draft => ("SaveOnly", flags(9)),
         };
         let answer = self
             .call(
@@ -290,8 +293,19 @@ impl EwsSession {
                 false,
             )
             .await?;
-        first(&answer, "CreateItem").map(drop)
+        let made = first(&answer, "CreateItem")?;
+        Ok(items(made).next().and_then(item_id).map(str::to_owned))
     }
+}
+
+/// What `create` does with a message.
+#[derive(Clone, Copy)]
+enum Create {
+    Send,
+    /// Saved read.
+    Read,
+    /// Saved read, as a draft.
+    Draft,
 }
 
 impl MailProvider for EwsSession {
@@ -627,7 +641,17 @@ SuppressReadReceipts=\"true\"><m:ItemChanges>{changes}</m:ItemChanges></m:Update
     }
 
     async fn append(&mut self, folder: &str, message: &[u8]) -> Result<(), ProviderError> {
-        self.create(message, folder, false).await
+        self.create(message, folder, Create::Read).await.map(drop)
+    }
+
+    async fn save_draft(
+        &mut self,
+        folder: &str,
+        message: &[u8],
+        _message_id: &str,
+    ) -> Result<Option<(u32, String)>, ProviderError> {
+        let id = self.create(message, folder, Create::Draft).await?;
+        Ok(id.map(|id| (0, id)))
     }
 
     async fn wait(
@@ -659,7 +683,9 @@ impl MailSender for EwsSession {
         message: &[u8],
     ) -> Result<(), ProviderError> {
         // Exchange reads the recipients from the message and keeps a copy in Sent.
-        self.create(message, "sentitems", true).await
+        self.create(message, "sentitems", Create::Send)
+            .await
+            .map(drop)
     }
 }
 

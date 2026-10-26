@@ -60,6 +60,7 @@ async fn lists_folders_with_roles_and_names() {
             ("Archive", "Archive", FolderRole::Archive),
             ("Changes", "Changes", FolderRole::Custom),
             ("Deletes", "Deletes", FolderRole::Custom),
+            ("Drafts", "Drafts", FolderRole::Drafts),
             ("Empty", "Empty", FolderRole::Custom),
             ("Filed", "Filed", FolderRole::Custom),
             ("Gone", "Gone", FolderRole::Custom),
@@ -354,6 +355,32 @@ async fn appends_a_sent_copy_marked_read() {
         .find(|m| String::from_utf8_lossy(&m.header).contains("Subject: Sent copy"))
         .unwrap();
     assert!(copy.flags.seen);
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "needs tools/dovecot-test.sh"]
+async fn saves_a_draft_where_it_can_be_found_again() {
+    let mut imap = session().await;
+    let draft = b"Subject: Draft\r\nMessage-ID: <draft@example.com>\r\n\r\nHi\r\n";
+    let first = imap
+        .save_draft("Drafts", draft, "draft@example.com")
+        .await
+        .unwrap()
+        .unwrap();
+    let second = imap
+        .save_draft("Drafts", draft, "draft@example.com")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.0, second.0);
+    assert_ne!(first.1, second.1);
+    imap.delete("Drafts", first.0, &[first.1]).await.unwrap();
+
+    let drafts = recent(&mut imap, "Drafts", 10).await.new;
+    assert_eq!(drafts.len(), 1);
+    assert_eq!(drafts[0].remote_id, second.1);
+    assert!(drafts[0].flags.seen);
+    imap.logout().await.unwrap();
 }
 
 #[tokio::test(flavor = "current_thread")]

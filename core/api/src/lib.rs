@@ -7,6 +7,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use ozero_app::drafts::{DraftsFolder, push_drafts};
 use ozero_app::ops::push_ops;
 use ozero_app::send::{SentCopy, forwarded_files, push_sends};
 use ozero_app::sync::{
@@ -644,11 +645,16 @@ impl Core {
     }
 
     /// Keeps a message being written on the device, as it is now: a new draft if its `id` is
-    /// 0. Returns its id. Fails with `Gone` once it was sent or thrown away.
+    /// 0, from the first account if its `account_id` is 0. Returns its id. Fails with `Gone`
+    /// once it was sent or thrown away. `push_actions` saves it on the server too.
     pub fn save_draft(&self, draft: DraftItem) -> Result<i64, CoreError> {
+        let account_id = match draft.account_id {
+            0 => self.store.accounts()?.first().map(|a| a.id),
+            id => Some(AccountId(id)),
+        };
         let saved = SavedDraft {
             id: draft_id(draft.id),
-            account_id: (draft.account_id != 0).then_some(AccountId(draft.account_id)),
+            account_id,
             to: draft.to,
             subject: draft.subject,
             text: draft.text,
@@ -1929,6 +1935,8 @@ impl Core {
         let mailed = self.push_mail(account, secret, slot).await;
         // Boxed, as below: connecting inline overflows a debug build's stack.
         Box::pin(self.send_ops(account, secret, slot)).await?;
+        // After the mail, so the copies of drafts just sent go too.
+        let drafted = Box::pin(self.push_drafts(account, secret, slot)).await;
         // Moved mail shows in its new folder as a copy; a sync there brings the server's own,
         // so what the person did to the copy meanwhile can go too.
         let unclaimed = self.store.unclaimed(account.id)?;
@@ -1941,7 +1949,36 @@ impl Core {
                 Box::pin(self.send_ops(account, secret, slot)).await?;
             }
         }
-        mailed
+        mailed.and(drafted)
+    }
+
+    /// Saves the account's drafts into its drafts folder and deletes their stale copies;
+    /// connects only when there is any to save or delete.
+    async fn push_drafts(
+        &self,
+        account: &Account,
+        secret: &str,
+        slot: &mut Option<Remote>,
+    ) -> Result<(), CoreError> {
+        let folders = self.store.folders(account.id)?;
+        // Kept on the device until a sync finds the folder.
+        let Some(folder) = folders.iter().find(|f| f.role == FolderRole::Drafts) else {
+            return Ok(());
+        };
+        let drafts = self.store.drafts_to_push(account.id)?;
+        if drafts.is_empty() && self.store.stale_drafts(account.id, now())?.is_empty() {
+            return Ok(());
+        }
+        let remote = self.remote(slot, account, secret).await?;
+        let from = sender(account);
+        let to = DraftsFolder {
+            account: account.id,
+            from: &from,
+            folder: &folder.remote_id,
+            message_id: &|| message_id(&account.email, now()),
+        };
+        push_drafts(&*self.store, remote, &MimeBuilder, to, drafts, now()).await?;
+        Ok(())
     }
 
     /// Sends the account's due actions; connects only when there are any.
@@ -2004,10 +2041,7 @@ impl Core {
         if mail.is_empty() {
             return Ok(());
         }
-        let mut from = Address {
-            name: Some(account.display_name.clone()).filter(|n| *n != account.email),
-            email: account.email.clone(),
-        };
+        let mut from = sender(account);
         if matches!(account.kind, AccountKind::Gmail | AccountKind::Exchange) {
             if account.kind == AccountKind::Gmail && from.name.is_none() {
                 from.name = Box::pin(self.gmail_name(account, secret, slot)).await;
@@ -2443,6 +2477,20 @@ impl MailProvider for Remote {
         }
     }
 
+    async fn save_draft(
+        &mut self,
+        folder: &str,
+        message: &[u8],
+        message_id: &str,
+    ) -> Result<Option<(u32, String)>, ProviderError> {
+        match self {
+            Self::Imap(p) => p.save_draft(folder, message, message_id).await,
+            Self::Gmail(p) => p.save_draft(folder, message, message_id).await,
+            Self::Ews(p) => p.save_draft(folder, message, message_id).await,
+            Self::Eas(p) => p.save_draft(folder, message, message_id).await,
+        }
+    }
+
     async fn wait(
         &mut self,
         folder: &str,
@@ -2455,6 +2503,14 @@ impl MailProvider for Remote {
             Self::Ews(p) => p.wait(folder, since, wait).await,
             Self::Eas(p) => p.wait(folder, since, wait).await,
         }
+    }
+}
+
+/// Who the account's mail is from: its sender name, unless that is only the address.
+fn sender(account: &Account) -> Address {
+    Address {
+        name: Some(account.display_name.clone()).filter(|n| *n != account.email),
+        email: account.email.clone(),
     }
 }
 

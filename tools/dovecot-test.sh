@@ -34,7 +34,7 @@ if [ -z "$ready" ]; then
 fi
 
 doveadm() { docker exec -i ozero-dovecot doveadm "$@"; }
-doveadm mailbox create -u "$user" Sent Отчёты Empty Archive Moves Changes Gone Waits Deletes Filed Trash
+doveadm mailbox create -u "$user" Sent Drafts Отчёты Empty Archive Moves Changes Gone Waits Deletes Filed Trash
 for i in 1 2 3; do
   printf 'From: =?UTF-8?B?0JDQvdC90LA=?= <anna@example.com>\r\nTo: %s\r\nSubject: Message %s\r\nDate: Wed, 14 Oct 2026 10:0%s:00 +0300\r\nMessage-ID: <%s@example.com>\r\n\r\nHello %s\r\n' \
     "$user" "$i" "$i" "$i" "$i" | doveadm save -u "$user"

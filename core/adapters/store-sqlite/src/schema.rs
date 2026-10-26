@@ -327,4 +327,41 @@ pub const MIGRATIONS: &[&str] = &[
     ALTER TABLE outbox ADD COLUMN signature TEXT NOT NULL DEFAULT '';
     CREATE TABLE setting (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;
     ",
+    // 34: drafts on the server. A draft's copy is in its account's drafts folder under the
+    // draft's own `message_id`; `pushed` is the `saved` time the copy has. `draft_gone` holds
+    // copies to delete: of drafts sent, thrown away or moved to another account.
+    "
+    ALTER TABLE draft ADD COLUMN message_id TEXT;
+    ALTER TABLE draft ADD COLUMN pushed INTEGER;
+    ALTER TABLE draft ADD COLUMN remote_account INTEGER;
+    ALTER TABLE draft ADD COLUMN remote_folder TEXT;
+    ALTER TABLE draft ADD COLUMN remote_validity INTEGER;
+    ALTER TABLE draft ADD COLUMN remote_id TEXT;
+    CREATE TABLE draft_gone (
+        id         INTEGER PRIMARY KEY,
+        account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+        folder     TEXT NOT NULL,
+        validity   INTEGER NOT NULL,
+        remote_id  TEXT NOT NULL,
+        message_id TEXT
+    );
+    CREATE TRIGGER draft_copy_gone AFTER DELETE ON draft
+    WHEN OLD.remote_id IS NOT NULL AND EXISTS (SELECT 1 FROM account WHERE id = OLD.remote_account)
+    BEGIN
+        INSERT INTO draft_gone (account_id, folder, validity, remote_id, message_id)
+        VALUES (OLD.remote_account, OLD.remote_folder, OLD.remote_validity, OLD.remote_id,
+                OLD.message_id);
+    END;
+    CREATE TRIGGER draft_copy_moved AFTER UPDATE OF account_id ON draft
+    WHEN OLD.remote_id IS NOT NULL AND NEW.account_id IS NOT OLD.remote_account
+    BEGIN
+        INSERT INTO draft_gone (account_id, folder, validity, remote_id, message_id)
+        SELECT OLD.remote_account, OLD.remote_folder, OLD.remote_validity, OLD.remote_id,
+               OLD.message_id
+        WHERE EXISTS (SELECT 1 FROM account WHERE id = OLD.remote_account);
+        UPDATE draft SET remote_account = NULL, remote_folder = NULL, remote_validity = NULL,
+                         remote_id = NULL, pushed = NULL
+        WHERE id = NEW.id;
+    END;
+    ",
 ];

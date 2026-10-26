@@ -2345,3 +2345,174 @@ fn snoozed_mail_still_on_its_way_comes_back_too() {
     let rows = list(&store, ListScope::Folder(inbox), 10, None);
     assert_eq!(ids(&rows), [woke[0].id]);
 }
+
+fn drafts_folder(store: &SqliteStore, account: AccountId) -> FolderId {
+    let folders = store
+        .save_folders(
+            account,
+            &[NewFolder {
+                remote_id: "Drafts".into(),
+                name: "Drafts".into(),
+                role: FolderRole::Drafts,
+            }],
+        )
+        .unwrap();
+    folders[0].id
+}
+
+fn copy(uid: u32) -> DraftCopy {
+    DraftCopy {
+        folder: "Drafts".into(),
+        validity: 7,
+        remote_id: uid.to_string(),
+    }
+}
+
+fn stale(store: &SqliteStore, account: AccountId) -> Vec<String> {
+    let stale = store.stale_drafts(account, 0).unwrap();
+    let ids: Vec<i64> = stale.iter().map(|(id, _)| *id).collect();
+    store.forget_stale_drafts(&ids).unwrap();
+    stale.into_iter().map(|(_, c)| c.remote_id).collect()
+}
+
+/// A copy of our own draft, or one written elsewhere, as a sync of the drafts folder brings it.
+fn server_copy(uid: u32, message_id: &str) -> NewMessage {
+    NewMessage {
+        message_id: Some(message_id.into()),
+        ..message(uid, 100)
+    }
+}
+
+#[test]
+fn a_draft_keeps_one_copy_on_its_server() {
+    let store = store();
+    let a = account(&store, "a@example.com");
+    let folder = drafts_folder(&store, a);
+    store.set_validity(folder, 7).unwrap();
+    let mut draft = SavedDraft {
+        id: None,
+        account_id: Some(a),
+        to: "bob@example.org, cat".into(),
+        subject: "Hi".into(),
+        text: "Hello".into(),
+        signature: "--\nAnna".into(),
+        reply_to: None,
+        quote: String::new(),
+        forward: None,
+        saved: 100,
+        files: vec![],
+    };
+    let id = store.save_draft(&draft).unwrap();
+    draft.id = Some(id);
+    let push = store.drafts_to_push(a).unwrap();
+    assert_eq!(push.len(), 1);
+    assert_eq!(push[0].message.to, ["bob@example.org"]);
+    assert_eq!(push[0].message.text, "Hello\n\n--\nAnna");
+    assert_eq!(push[0].message.message_id, "");
+    store
+        .pushed_draft(a, id, 100, "m1@x", Some(&copy(1)))
+        .unwrap();
+    assert!(store.drafts_to_push(a).unwrap().is_empty());
+
+    // Written again: the new copy takes the old one's place.
+    draft.saved = 200;
+    store.save_draft(&draft).unwrap();
+    let push = store.drafts_to_push(a).unwrap();
+    assert_eq!(
+        (push[0].saved, push[0].message.message_id.as_str()),
+        (200, "m1@x")
+    );
+    store
+        .pushed_draft(a, id, 200, "m1@x", Some(&copy(2)))
+        .unwrap();
+    assert_eq!(stale(&store, a), ["1"]);
+    assert!(stale(&store, a).is_empty());
+
+    // The sync finds its copy and one written elsewhere; only that one is new here.
+    store
+        .save_messages(folder, &[server_copy(2, "m1@x"), server_copy(3, "other@x")])
+        .unwrap();
+    let found = store.server_drafts(a).unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].copy, copy(3));
+    let file = OutgoingFile {
+        name: "a.txt".into(),
+        mime: "text/plain".into(),
+        data: b"hi".to_vec(),
+    };
+    let imported = SavedDraft {
+        id: None,
+        text: "From the laptop".into(),
+        signature: String::new(),
+        ..draft.clone()
+    };
+    let other = store
+        .import_draft(
+            &imported,
+            Some("other@x"),
+            &copy(3),
+            std::slice::from_ref(&file),
+        )
+        .unwrap();
+    assert!(store.server_drafts(a).unwrap().is_empty());
+    assert!(store.drafts_to_push(a).unwrap().is_empty());
+    assert_eq!(store.draft_files(other).unwrap(), [file]);
+
+    // Another copy with the draft's Message-ID: an older one, left by a push that broke off,
+    // goes; a newer one, another app's edit, stays and is not brought in twice.
+    store
+        .save_messages(folder, &[server_copy(1, "m1@x"), server_copy(4, "m1@x")])
+        .unwrap();
+    assert!(store.server_drafts(a).unwrap().is_empty());
+    assert_eq!(stale(&store, a), ["1"]);
+
+    // Sent from the laptop: gone there, gone here; nothing to delete.
+    let mut gone = changes(store.checkpoint(folder).unwrap().0, vec![]);
+    gone.gone = vec!["3".into()];
+    store.save_changes(folder, &gone).unwrap();
+    assert_eq!(store.drafts().unwrap().len(), 1);
+    assert!(stale(&store, a).is_empty());
+
+    // Sent here: its copy goes.
+    store
+        .queue_send(&self::draft(a), Some(id), "2@x", 0, 100)
+        .unwrap();
+    assert_eq!(stale(&store, a), ["2"]);
+}
+
+#[test]
+fn a_draft_moved_to_another_account_leaves_its_copy_behind() {
+    let store = store();
+    let a = account(&store, "a@example.com");
+    let b = account(&store, "b@example.com");
+    let mut draft = SavedDraft {
+        id: None,
+        account_id: Some(a),
+        to: String::new(),
+        subject: "Hi".into(),
+        text: "Hello".into(),
+        signature: String::new(),
+        reply_to: None,
+        quote: String::new(),
+        forward: None,
+        saved: 100,
+        files: vec![],
+    };
+    let id = store.save_draft(&draft).unwrap();
+    draft.id = Some(id);
+    store
+        .pushed_draft(a, id, 100, "m1@x", Some(&copy(1)))
+        .unwrap();
+    draft.account_id = Some(b);
+    store.save_draft(&draft).unwrap();
+    assert_eq!(stale(&store, a), ["1"]);
+    assert_eq!(store.drafts_to_push(b).unwrap().len(), 1);
+
+    // Thrown away while its copy was made: the copy goes as well.
+    store.delete_draft(id, 0, 0).unwrap();
+    store.stale_drafts(b, 1).unwrap();
+    store
+        .pushed_draft(b, id, 100, "m1@x", Some(&copy(5)))
+        .unwrap();
+    assert_eq!(stale(&store, b), ["5"]);
+}
