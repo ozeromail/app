@@ -13,7 +13,7 @@ async fn served(reply: &[u8]) -> Conn<DuplexStream> {
 async fn read(reply: &[u8]) -> Result<(Response, bool), ProviderError> {
     served(reply)
         .await
-        .response()
+        .response(Duration::ZERO)
         .await
         .map_err(ProviderError::from)
 }
@@ -102,9 +102,31 @@ async fn refuses_broken_responses() {
 #[tokio::test]
 async fn tells_a_closed_connection_from_a_broken_response() {
     let mut conn = served(b"").await;
-    assert!(matches!(conn.response().await, Err(Failure::Closed)));
+    assert!(matches!(
+        conn.response(Duration::ZERO).await,
+        Err(Failure::Closed)
+    ));
     let mut conn = served(b"HTTP/1.1 200").await;
-    assert!(matches!(conn.response().await, Err(Failure::Error(_))));
+    assert!(matches!(
+        conn.response(Duration::ZERO).await,
+        Err(Failure::Error(_))
+    ));
+}
+
+/// A long poll's answer may start late, an ordinary one's may not.
+#[tokio::test(start_paused = true)]
+async fn waits_longer_only_for_a_long_poll() {
+    for (wait, answers) in [(Duration::ZERO, false), (Duration::from_secs(60), true)] {
+        let (client, mut server) = duplex(1 << 10);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(45)).await;
+            let _ = server
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                .await;
+        });
+        let mut conn = Conn::new(client, MAX_BODY);
+        assert_eq!(conn.response(wait).await.is_ok(), answers);
+    }
 }
 
 #[test]
@@ -142,10 +164,10 @@ async fn keeps_the_connection_for_the_next_request() {
     server.write_all(replies).await.unwrap();
     let conn = Conn::new(client, MAX_BODY);
     let get = request("GET", "h", "/", &[], None).unwrap();
-    let Ok((first, Some(conn))) = exchange(conn, &get).await else {
+    let Ok((first, Some(conn))) = exchange(conn, &get, Duration::ZERO).await else {
         panic!("first")
     };
-    let Ok((second, _)) = exchange(conn, &get).await else {
+    let Ok((second, _)) = exchange(conn, &get, Duration::ZERO).await else {
         panic!("second")
     };
     assert_eq!((first.body, second.body), (b"a".to_vec(), b"b".to_vec()));
@@ -207,7 +229,12 @@ impl AsyncWrite for Dropped {
 
 #[tokio::test]
 async fn takes_a_connection_dropped_before_answering_as_closed() {
-    let answer = exchange(Conn::new(Dropped, MAX_BODY), b"GET / HTTP/1.1\r\n\r\n").await;
+    let answer = exchange(
+        Conn::new(Dropped, MAX_BODY),
+        b"GET / HTTP/1.1\r\n\r\n",
+        Duration::ZERO,
+    )
+    .await;
     assert!(matches!(answer, Err(Failure::Closed)));
 }
 

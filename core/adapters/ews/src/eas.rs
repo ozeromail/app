@@ -37,6 +37,9 @@ const MAX_WINDOW: u32 = 512;
 const MAX_IDS: usize = 100;
 /// Mail from the last month (FilterType 5): older mail is not synced.
 const FILTER: &str = "5";
+/// The shortest and longest a Ping may wait, in seconds, as Exchange allows by default.
+const MIN_HEARTBEAT: u64 = 60;
+const MAX_HEARTBEAT: u64 = 3540;
 /// What Outlook calls the junk folder, which ActiveSync does not mark.
 const JUNK_NAMES: [&str; 3] = ["junk e-mail", "junk email", "нежелательная почта"];
 
@@ -899,11 +902,48 @@ impl MailProvider for EasSession {
 
     async fn wait(
         &mut self,
-        _folder: &str,
+        folder: &str,
         _since: Checkpoint,
         wait: Duration,
     ) -> Result<bool, ProviderError> {
-        // A sync with nothing new costs one small request.
+        // Ping answers once the folder has changed since its last sync, or when the heartbeat
+        // is over: mail comes the moment the server has it.
+        let mut heartbeat = wait.as_secs().clamp(MIN_HEARTBEAT, MAX_HEARTBEAT);
+        for _ in 0..2 {
+            let request = Node::new(
+                "Ping:Ping",
+                vec![
+                    Node::text("Ping:HeartbeatInterval", heartbeat.to_string()),
+                    Node::new(
+                        "Ping:Folders",
+                        vec![Node::new(
+                            "Ping:Folder",
+                            vec![
+                                Node::text("Ping:Id", folder),
+                                Node::text("Ping:Class", "Email"),
+                            ],
+                        )],
+                    ),
+                ],
+            );
+            self.client.set_wait(Duration::from_secs(heartbeat));
+            let answer = self.command("Ping", &request, true).await;
+            self.client.set_wait(Duration::ZERO);
+            let answer = answer?;
+            match status(&answer) {
+                1 => return Ok(false),
+                // The folder changed, or the folder list did: a sync finds out what.
+                2 | 7 => return Ok(true),
+                // Out of the server's range: it says the nearest it takes.
+                5 => match answer.text_at(&["Ping:HeartbeatInterval"]).trim().parse() {
+                    Ok(taken) if taken != heartbeat => heartbeat = taken,
+                    _ => break,
+                },
+                _ => break,
+            }
+        }
+        // A server that does not ping is looked at now and then; a sync with nothing new costs
+        // one small request.
         tokio::time::sleep(wait.min(POLL)).await;
         Ok(wait >= POLL)
     }

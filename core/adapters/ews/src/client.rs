@@ -1,7 +1,7 @@
 //! One HTTPS endpoint of an Exchange server, with the login it asks for: Basic, or NTLM bound
 //! to the connection and, for Extended Protection, to the server's certificate.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ozero_domain::{ProviderError, base64, decode_base64};
 use ozero_http::{Body, HttpsClient, Response, Tls};
@@ -59,6 +59,12 @@ impl Client {
     pub fn probing(mut self) -> Self {
         self.probe = true;
         self
+    }
+
+    /// Lets the server hold the next requests up to `wait` before it answers, as a long poll
+    /// does; zero again for ordinary ones.
+    pub fn set_wait(&mut self, wait: Duration) {
+        self.http.set_wait(wait);
     }
 
     /// POSTs `body` signed in. `repeatable` if it is safe to send twice. `Auth` if the server
