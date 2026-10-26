@@ -3,8 +3,10 @@ package com.ozeromail.app
 import android.app.Activity
 import android.content.Context
 import android.security.KeyChain
+import android.security.KeyChainAliasCallback
 import android.util.Log
 import java.security.Signature
+import java.util.concurrent.atomic.AtomicReference
 import uniffi.ozero_api.ClientCertificates
 import uniffi.ozero_api.Signing
 
@@ -49,5 +51,18 @@ private val Signing.algorithm
 
 /** Lets the person pick a certificate in the system's own dialog; [onPicked] gets its name, or null. */
 fun chooseCertificate(activity: Activity, current: String?, onPicked: (String?) -> Unit) {
-    KeyChain.choosePrivateKeyAlias(activity, { name -> activity.runOnUiThread { onPicked(name) } }, null, null, null, current)
+    KeyChain.choosePrivateKeyAlias(activity, Picked(activity, onPicked), null, null, null, current)
+}
+
+/**
+ * Answers once, then lets go of the activity and the screen: KeyChain's binder keeps the callback
+ * long after it is called, and with it everything it holds.
+ */
+private class Picked(activity: Activity, onPicked: (String?) -> Unit) : KeyChainAliasCallback {
+    private val pending = AtomicReference(activity to onPicked)
+
+    override fun alias(name: String?) {
+        val (activity, onPicked) = pending.getAndSet(null) ?: return
+        activity.runOnUiThread { onPicked(name) }
+    }
 }
