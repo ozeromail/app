@@ -116,6 +116,8 @@
   "account_name_hint": "Shown in the list and on your mail; only on this phone.",
   "account_sender": "%1$s Your mail goes out as %2$s.",
   "account_keep": "Keep on this phone",
+  "account_keep_days": "3 days",
+  "account_keep_week": "Week",
   "account_keep_month": "Month",
   "account_keep_quarter": "3 months",
   "account_keep_year": "Year",

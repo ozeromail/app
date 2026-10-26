@@ -35,8 +35,9 @@ const HEADER_SIZE: &str = "16384";
 const MAX_WINDOW: u32 = 512;
 /// Most items one request names.
 const MAX_IDS: usize = 100;
-/// Mail from the last month (FilterType 5): older mail is not synced.
-const FILTER: &str = "5";
+/// Mail from the last month (FilterType 5), the longest span ActiveSync has for mail: older
+/// mail is not synced.
+const MONTH: &str = "5";
 /// What Outlook calls the junk folder, which ActiveSync does not mark.
 const JUNK_NAMES: [&str; 3] = ["junk e-mail", "junk email", "нежелательная почта"];
 
@@ -49,6 +50,8 @@ pub struct EasSession {
     query: String,
     /// What the server gave the device once it took its policy; "0" before.
     policy: String,
+    /// The FilterType: how far back mail is synced.
+    filter: &'static str,
     state: Arc<dyn ProviderState>,
 }
 
@@ -116,8 +119,21 @@ impl EasSession {
             ),
             device,
             policy: state.get("policy").unwrap_or_else(|| "0".into()),
+            filter: MONTH,
             state,
         })
+    }
+
+    /// Syncs only mail of the last `days` days, 0 for all; ActiveSync goes back a month at most.
+    pub fn keeping(mut self, days: u32) -> Self {
+        self.filter = match days {
+            1 => "1",
+            2..=3 => "2",
+            4..=7 => "3",
+            8..=14 => "4",
+            _ => MONTH,
+        };
+        self
     }
 
     /// Gives a new account's device its id, before the first session.
@@ -315,7 +331,13 @@ impl EasSession {
         Err(protocol("FolderSync keeps refusing its key"))
     }
 
+    /// Where the folder's sync stopped; None when it went back another span than it does now,
+    /// so it starts over.
     fn synced(&self, folder: &str) -> Option<Synced> {
+        let filter = self.state.get(&format!("filter.{folder}"));
+        if filter.as_deref().unwrap_or(MONTH) != self.filter {
+            return None;
+        }
         let saved = self.state.get(&format!("sync.{folder}"))?;
         let mut parts = saved.splitn(3, '\t');
         Some(Synced {
@@ -328,6 +350,10 @@ impl EasSession {
     fn keep_synced(&self, folder: &str, synced: Option<&Synced>) {
         let value = synced.map(|s| format!("{}\t{}\t{}", s.n, s.key, s.prev));
         self.state.set(&format!("sync.{folder}"), value.as_deref());
+        self.state.set(
+            &format!("filter.{folder}"),
+            synced.is_some().then_some(self.filter),
+        );
     }
 
     /// The folder's validity: one more each time its sync starts over.
@@ -635,7 +661,7 @@ impl MailProvider for EasSession {
                 Node::new(
                     "AirSync:Options",
                     vec![
-                        Node::text("AirSync:FilterType", FILTER),
+                        Node::text("AirSync:FilterType", self.filter),
                         Node::text("AirSync:MIMESupport", "2"),
                         Node::new(
                             "AirSyncBase:BodyPreference",

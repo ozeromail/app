@@ -116,6 +116,8 @@
   "account_name_hint": "Видно в списке и у писем, только на этом телефоне.",
   "account_sender": "%1$s Письма уходят от имени %2$s.",
   "account_keep": "Хранить на телефоне",
+  "account_keep_days": "3 дня",
+  "account_keep_week": "Неделя",
   "account_keep_month": "Месяц",
   "account_keep_quarter": "3 месяца",
   "account_keep_year": "Год",

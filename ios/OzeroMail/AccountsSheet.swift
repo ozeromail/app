@@ -290,9 +290,8 @@ private struct AccountSettings: View {
                 Picker("account_keep", selection: Binding(get: { Int(account.keepDays) }, set: { actions.onKeepDays(account, $0) })) {
                     ForEach(keepDays, id: \.days) { Text($0.label).tag($0.days) }
                 }
-                .pickerStyle(.segmented)
-            } header: {
-                Text("account_keep")
+                // Six spans are too many for segments on a phone.
+                .pickerStyle(.menu)
             } footer: {
                 Text("account_keep_hint")
             }
@@ -322,7 +321,7 @@ private struct AccountSettings: View {
 
 /// How many days back an account's mail stays on the phone, 0 for all of it, and what to call it.
 private let keepDays: [(days: Int, label: LocalizedStringKey)] = [
-    (30, "account_keep_month"), (90, "account_keep_quarter"), (365, "account_keep_year"), (0, "account_keep_all"),
+    (3, "account_keep_days"), (7, "account_keep_week"), (30, "account_keep_month"), (90, "account_keep_quarter"), (365, "account_keep_year"), (0, "account_keep_all"),
 ]
 
 /// The account colours in rows; the current one has a ring.
