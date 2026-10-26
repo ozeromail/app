@@ -16,6 +16,8 @@ bounded-static = { version = "0.8", default-features = false }
 nom = { version = "7", default-features = false, features = ["alloc"] }
 # Already in the tree; the Android certificate recheck logs through it.
 log = "0.4"
+# Already in the tree through rustls; hashes a trusted server certificate.
+ring = { version = "0.17", default-features = false }
 rustls-platform-verifier.workspace = true
 tokio = { version = "1.53", default-features = false, features = ["net", "io-util", "time"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
