@@ -160,6 +160,7 @@ private struct InboxList: View {
     @State private var waterCalm = true
     /// How much of the gap is held open, from 0 to 1.
     @State private var held: CGFloat = 0
+    @Environment(\.sideways) private var sideways
 
     private var picked: [MessageItem] {
         // Only what the list still shows: a sync may take a chosen message away.
@@ -268,6 +269,7 @@ private struct InboxList: View {
         }
         .environment(\.editMode, .constant(choosing ? .active : .inactive))
         .animation(.smooth, value: model.messages.map(\.id))
+        .middle(sideways ? Room.list : .infinity)
         .navigationTitle(choosing ? tr("select_count", picked.count) : model.title)
         .toolbar {
             if !model.isInbox && !choosing {
@@ -295,9 +297,37 @@ private struct InboxList: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 20)
                 }
-                Dock(model: model, choosing: choosing, picked: picked, onMore: { more = true })
+                if !sideways {
+                    Dock(model: model, choosing: choosing, picked: picked, onMore: { more = true })
+                } else if choosing {
+                    // The rails stay; what to do with the chosen messages rises under the list.
+                    ChoiceBar(model: model, picked: picked, onMore: { more = true })
+                        .frame(height: 52)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 10)
+                        .padding(.bottom, 4)
+                        .background(.bar)
+                }
             }
             .animation(.smooth, value: model.toast)
+        }
+        // On its side the dock's controls move to the edges, under the thumbs.
+        .safeAreaInset(edge: .leading, spacing: 0) {
+            if sideways {
+                Rail(width: model.isInbox ? Room.tabsRail : Room.rail) {
+                    if model.isInbox { RailTabs(model: model) }
+                    if !choosing { EmptyFolderButton(model: model) }
+                    AccountsButton(accounts: model.accounts) { model.accountsOpen = true }
+                }
+            }
+        }
+        .safeAreaInset(edge: .trailing, spacing: 0) {
+            if sideways {
+                Rail {
+                    SearchButton(model: model)
+                    ComposeButton(model: model)
+                }
+            }
         }
         .confirmationDialog("action_more", isPresented: $more) {
             Button("action_select_all") { model.chosen.formUnion(model.messages.map(\.id)) }
@@ -368,14 +398,7 @@ private struct Dock: View {
                 }
                 .pickerStyle(.segmented)
             }
-            if let label = model.emptyLabel, !model.messages.isEmpty, !choosing {
-                Button(role: .destructive) {
-                    Task { await model.empty() }
-                } label: {
-                    Text(label).frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-            }
+            if !choosing { EmptyFolderButton(model: model) }
             Group {
                 if choosing {
                     ChoiceBar(model: model, picked: picked, onMore: onMore)
@@ -392,16 +415,7 @@ private struct Dock: View {
                                 .background(Color.ozeroCard, in: .capsule)
                         }
                         .buttonStyle(.plain)
-                        Button {
-                            model.composing = Composing(draft: newDraft)
-                        } label: {
-                            Image(systemName: "square.and.pencil")
-                                .font(.title3.weight(.semibold))
-                                .foregroundStyle(.white)
-                                .frame(width: 48, height: 48)
-                                .background(Color.ozeroFill, in: .rect(cornerRadius: 16))
-                        }
-                        .accessibilityLabel(Text("compose_new"))
+                        ComposeButton(model: model)
                     }
                 }
             }
@@ -412,6 +426,106 @@ private struct Dock: View {
         .padding(.top, 10)
         .padding(.bottom, 4)
         .background(.bar)
+    }
+}
+
+/// Empties the open trash or spam for good; only there, and only with something in it.
+private struct EmptyFolderButton: View {
+    let model: InboxModel
+
+    var body: some View {
+        if let label = model.emptyLabel, !model.messages.isEmpty {
+            Button(role: .destructive) {
+                Task { await model.empty() }
+            } label: {
+                Text(label).frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+        }
+    }
+}
+
+/// A new message, in the accent.
+private struct ComposeButton: View {
+    let model: InboxModel
+
+    var body: some View {
+        Button {
+            model.composing = Composing(draft: newDraft)
+        } label: {
+            Image(systemName: "square.and.pencil")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 48, height: 48)
+                .background(Color.ozeroFill, in: .rect(cornerRadius: 16))
+        }
+        .accessibilityLabel(Text("compose_new"))
+    }
+}
+
+/// Search as a button of its own, on a rail.
+private struct SearchButton: View {
+    let model: InboxModel
+
+    var body: some View {
+        Button {
+            model.path.append(.search)
+        } label: {
+            Image(systemName: "magnifyingglass")
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .frame(width: 48, height: 48)
+                .background(Color.ozeroCard, in: .rect(cornerRadius: 16))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text("search_prompt"))
+    }
+}
+
+/// The inbox tabs down a rail, a row each with its unread count; the thumb glides between them.
+private struct RailTabs: View {
+    @Bindable var model: InboxModel
+    @Namespace private var thumb
+
+    var body: some View {
+        VStack(spacing: 2) {
+            ForEach(Category.all, id: \.self) { category in
+                let on = model.tab == category
+                let unread = model.tabs.first { $0.category == category }?.unread ?? 0
+                Button {
+                    withAnimation(.spring(duration: 0.4, bounce: 0)) { model.tab = category }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(category.label)
+                            .fontWeight(on ? .semibold : .medium)
+                            .foregroundStyle(on ? .primary : .secondary)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        if unread > 0 {
+                            Text(verbatim: "\(unread)")
+                                .font(.footnote.weight(.bold).monospacedDigit())
+                                .foregroundStyle(Color.ozeroAccent)
+                        }
+                    }
+                    .font(.subheadline)
+                    .padding(.horizontal, 10)
+                    .frame(height: 38)
+                    .background {
+                        if on {
+                            RoundedRectangle(cornerRadius: 11)
+                                .fill(Color(.systemBackground))
+                                .shadow(color: .black.opacity(0.12), radius: 1.5, y: 1)
+                                .matchedGeometryEffect(id: "thumb", in: thumb)
+                        }
+                    }
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+        .padding(3)
+        .background(Color.ozeroCard, in: .rect(cornerRadius: 14))
     }
 }
 

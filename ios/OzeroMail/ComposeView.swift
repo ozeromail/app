@@ -42,6 +42,9 @@ struct ComposeView: View {
     @State private var firstSeen: DraftItem?
     @FocusState private var focus: Field?
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.sideways) private var sideways
+    /// To and Subject shown again while the text is typed on its side.
+    @State private var unfolded = false
 
     private enum Field { case to, subject, text }
 
@@ -61,89 +64,72 @@ struct ComposeView: View {
     private var hasDraft: Bool { changed || start.id != 0 }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if let original = composing.original {
-                Original(mail: mail, message: original)
-                    .frame(maxHeight: focus == nil ? .infinity : 112)
-            } else {
-                Spacer(minLength: 0)
-            }
-            VStack(alignment: .leading, spacing: 12) {
-                TextField("compose_to", text: $to)
-                    .keyboardType(.emailAddress)
-                    .textContentType(.emailAddress)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .focused($focus, equals: .to)
-                    .submitLabel(.next)
-                    .onSubmit { focus = .subject }
-                Divider()
-                TextField("compose_subject", text: $subject)
-                    .font(.title2.bold())
-                    .focused($focus, equals: .subject)
-                    .submitLabel(.next)
-                    .onSubmit { focus = .text }
-                TextField("compose_text", text: $text, axis: .vertical)
-                    .lineLimit(focus == nil ? 7...14 : 3...7)
-                    .focused($focus, equals: .text)
-                // A forward is its quote, so it stays.
-                let forwarding = start.forward != nil
-                let files = forwarded.flatMap { $0.accountId == from?.id ? $0.attachments : nil } ?? []
-                if !files.isEmpty { AttachmentChips(names: files) }
-                if !quote.isEmpty {
-                    QuoteLine(text: composing.original == nil ? quote : nil, forwarding: forwarding,
-                              onRemove: forwarding ? nil : { quote = "" })
-                } else if let original = composing.original, quotable {
-                    Button("compose_add_quote") { addQuote(original) }
-                        .font(.subheadline)
-                        .buttonStyle(.bordered)
-                        .buttonBorderShape(.capsule)
-                }
-            }
-            .padding(.horizontal, 20)
-            if let error {
-                Text(error).foregroundStyle(Color.ozeroError).padding(.horizontal, 20).padding(.vertical, 8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            Divider().padding(.top, 10)
-            HStack(spacing: 8) {
-                RoundButton(icon: "xmark", label: "action_close", size: 44, action: close)
-                if hasDraft {
-                    RoundButton(icon: "trash", label: "action_delete_draft", size: 44, action: discard)
-                }
-                if let from {
-                    Menu {
-                        ForEach(accounts, id: \.id) { account in
-                            Button {
-                                accountId = account.id
-                            } label: {
-                                if account.id == from.id { Label(account.email, systemImage: "checkmark") } else { Text(account.email) }
+        Group {
+            if sideways {
+                // Close and the sender at the top left, Send at the right edge by the keyboard.
+                HStack(alignment: .bottom, spacing: 0) {
+                    VStack(spacing: 0) {
+                        HStack(spacing: 8) {
+                            RoundButton(icon: "xmark", label: "action_close", size: 44, action: close)
+                            if folded {
+                                Button {
+                                    unfolded = true
+                                } label: {
+                                    Text(verbatim: [to.isBlank ? tr("compose_to") : to, subject.isBlank ? tr("compose_subject") : subject]
+                                        .joined(separator: " · "))
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                        .contentShape(.rect)
+                                }
+                                .buttonStyle(.plain)
+                            } else {
+                                if hasDraft { deleteButton }
+                                sender
+                                Spacer(minLength: 0)
                             }
                         }
-                    } label: {
-                        HStack(spacing: 8) {
-                            AccountInitial(name: from.name, color: from.tint, size: 22)
-                            Text(verbatim: from.email).font(.subheadline).lineLimit(1).foregroundStyle(.primary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        // With the keyboard down there is room for the message being answered.
+                        if let original = composing.original, focus == nil {
+                            Original(mail: mail, message: original)
                         }
-                        .padding(.leading, 8)
-                        .padding(.trailing, 12)
-                        .frame(height: 44)
-                        .background(Color.ozeroCard, in: .capsule)
+                        ScrollView {
+                            fields.padding(.vertical, 8)
+                        }
+                        .scrollDismissesKeyboard(.never)
+                        errorLine
                     }
-                    .disabled(accounts.count < 2)
+                    .middle(Room.compose)
+                    sendButton.padding(12)
                 }
-                Spacer(minLength: 0)
-                Button(action: send) {
-                    Image(systemName: "paperplane.fill")
-                        .foregroundStyle(.white)
-                        .frame(width: 56, height: 44)
-                        .background(Color.ozeroFill, in: .capsule)
+            } else {
+                VStack(spacing: 0) {
+                    if let original = composing.original {
+                        Original(mail: mail, message: original)
+                            .frame(maxHeight: focus == nil ? .infinity : 112)
+                    } else {
+                        Spacer(minLength: 0)
+                    }
+                    fields
+                    errorLine
+                    Divider().padding(.top, 10)
+                    HStack(spacing: 8) {
+                        RoundButton(icon: "xmark", label: "action_close", size: 44, action: close)
+                        if hasDraft { deleteButton }
+                        sender
+                        Spacer(minLength: 0)
+                        sendButton
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
                 }
-                .disabled(busy || from == nil)
-                .accessibilityLabel(Text("compose_send"))
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+        }
+        .onChange(of: focus) { _, now in
+            if now == nil { unfolded = false }
         }
         .animation(.smooth, value: focus)
         .onAppear(perform: begin)
@@ -167,6 +153,97 @@ struct ComposeView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { keep() }
         }
+    }
+
+    /// On its side, while the text is typed, To and Subject fold into one line, so the text has
+    /// the little height the keyboard leaves; a tap on the line brings them back.
+    private var folded: Bool { sideways && focus == .text && !unfolded }
+
+    private var fields: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if !folded {
+                TextField("compose_to", text: $to)
+                    .keyboardType(.emailAddress)
+                    .textContentType(.emailAddress)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .focused($focus, equals: .to)
+                    .submitLabel(.next)
+                    .onSubmit { focus = .subject }
+                Divider()
+                TextField("compose_subject", text: $subject)
+                    .font(.title2.bold())
+                    .focused($focus, equals: .subject)
+                    .submitLabel(.next)
+                    .onSubmit { focus = .text }
+            }
+            TextField("compose_text", text: $text, axis: .vertical)
+                .lineLimit(focus == nil ? 7...14 : 3...7)
+                .focused($focus, equals: .text)
+            // A forward is its quote, so it stays.
+            let forwarding = start.forward != nil
+            let files = forwarded.flatMap { $0.accountId == from?.id ? $0.attachments : nil } ?? []
+            if !files.isEmpty { AttachmentChips(names: files) }
+            if !quote.isEmpty {
+                QuoteLine(text: composing.original == nil ? quote : nil, forwarding: forwarding,
+                          onRemove: forwarding ? nil : { quote = "" })
+            } else if let original = composing.original, quotable {
+                Button("compose_add_quote") { addQuote(original) }
+                    .font(.subheadline)
+                    .buttonStyle(.bordered)
+                    .buttonBorderShape(.capsule)
+            }
+        }
+        .padding(.horizontal, 20)
+    }
+
+    @ViewBuilder
+    private var errorLine: some View {
+        if let error {
+            Text(error).foregroundStyle(Color.ozeroError).padding(.horizontal, 20).padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var deleteButton: some View {
+        RoundButton(icon: "trash", label: "action_delete_draft", size: 44, action: discard)
+    }
+
+    /// The account the message goes from; a tap lists the others.
+    @ViewBuilder
+    private var sender: some View {
+        if let from {
+            Menu {
+                ForEach(accounts, id: \.id) { account in
+                    Button {
+                        accountId = account.id
+                    } label: {
+                        if account.id == from.id { Label(account.email, systemImage: "checkmark") } else { Text(account.email) }
+                    }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    AccountInitial(name: from.name, color: from.tint, size: 22)
+                    Text(verbatim: from.email).font(.subheadline).lineLimit(1).foregroundStyle(.primary)
+                }
+                .padding(.leading, 8)
+                .padding(.trailing, 12)
+                .frame(height: 44)
+                .background(Color.ozeroCard, in: .capsule)
+            }
+            .disabled(accounts.count < 2)
+        }
+    }
+
+    private var sendButton: some View {
+        Button(action: send) {
+            Image(systemName: "paperplane.fill")
+                .foregroundStyle(.white)
+                .frame(width: 56, height: 44)
+                .background(Color.ozeroFill, in: .capsule)
+        }
+        .disabled(busy || from == nil)
+        .accessibilityLabel(Text("compose_send"))
     }
 
     private func begin() {
@@ -397,6 +474,7 @@ final class DraftKeeper: Sendable {
 /// The drafts on the phone, last saved first; a tap opens one to go on writing.
 struct DraftsView: View {
     let model: InboxModel
+    @Environment(\.sideways) private var sideways
 
     var body: some View {
         List {
@@ -410,6 +488,7 @@ struct DraftsView: View {
             }
         }
         .listStyle(.plain)
+        .middle(sideways ? Room.list : .infinity)
         .navigationTitle("folder_drafts")
         .task { await model.counts() }
     }
