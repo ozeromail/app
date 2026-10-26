@@ -210,13 +210,7 @@ impl Store for SqliteStore {
                 label: r.get(13)?,
                 keep_days: r.get(14)?,
                 needs_sign_in: r.get(15)?,
-                new_mail: match r.get::<_, i64>(16)? {
-                    0 => NewMail::Push,
-                    m if m > 0 => NewMail::Every {
-                        minutes: u32::try_from(m).unwrap_or(u32::MAX),
-                    },
-                    _ => NewMail::Manually,
-                },
+                new_mail: r.get::<_, StoredNewMail>(16)?.0,
             })
         });
         rows.and_then(|rows| rows.collect()).map_err(storage)
@@ -264,16 +258,11 @@ impl Store for SqliteStore {
     }
 
     fn set_account_new_mail(&self, account: AccountId, when: NewMail) -> Result<(), StoreError> {
-        let value = match when {
-            NewMail::Push => 0,
-            NewMail::Every { minutes } => i64::from(minutes.max(1)),
-            NewMail::Manually => -1,
-        };
         let changed = self
             .conn()
             .execute(
                 "UPDATE account SET new_mail = ?2 WHERE id = ?1",
-                params![account.0, value],
+                params![account.0, new_mail_value(when)],
             )
             .map_err(storage)?;
         found(changed)
@@ -2527,8 +2516,19 @@ fn kind_str(kind: AccountKind) -> &'static str {
     }
 }
 
+/// The new_mail column of `account`: 0 as soon as it comes, -1 only with the app open, else
+/// every so many minutes.
+fn new_mail_value(when: NewMail) -> i64 {
+    match when {
+        NewMail::Push => 0,
+        NewMail::Every { minutes } => i64::from(minutes.max(1)),
+        NewMail::Manually => -1,
+    }
+}
+
 /// Stored strings are read strictly: an unknown value is an error, never a silent default.
 struct Kind(AccountKind);
+struct StoredNewMail(NewMail);
 struct Role(FolderRole);
 
 /// The kind column of `op`; the value column completes it.
@@ -2593,6 +2593,18 @@ impl FromSql for Kind {
             "graph" => Ok(Self(AccountKind::Graph)),
             "exchange" => Ok(Self(AccountKind::Exchange)),
             _ => Err(FromSqlError::InvalidType),
+        }
+    }
+}
+
+impl FromSql for StoredNewMail {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        match value.as_i64()? {
+            0 => Ok(Self(NewMail::Push)),
+            -1 => Ok(Self(NewMail::Manually)),
+            m => u32::try_from(m)
+                .map(|minutes| Self(NewMail::Every { minutes }))
+                .map_err(|_| FromSqlError::OutOfRange(m)),
         }
     }
 }

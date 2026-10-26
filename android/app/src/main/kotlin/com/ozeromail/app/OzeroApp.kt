@@ -11,12 +11,11 @@ class OzeroApp : Application() {
     val mail by lazy { Mail(this) }
 
     /** Started activities; above zero the person sees the app, so new mail needs no notification. */
-    @Volatile
     private var started = 0
-    val inForeground: Boolean get() = started > 0
     private val shown = MutableStateFlow(false)
     /** Whether the person sees the app, as it changes. */
     val visible: StateFlow<Boolean> = shown
+    val inForeground: Boolean get() = shown.value
 
     override fun onCreate() {
         super.onCreate()
@@ -29,12 +28,10 @@ class OzeroApp : Application() {
         }
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityStarted(activity: Activity) {
-                started++
-                shown.value = true
+                shown.value = ++started > 0
             }
             override fun onActivityStopped(activity: Activity) {
-                started--
-                shown.value = inForeground
+                shown.value = --started > 0
             }
             override fun onActivityCreated(activity: Activity, state: Bundle?) = Unit
             override fun onActivityResumed(activity: Activity) = Unit

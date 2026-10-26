@@ -61,12 +61,6 @@ impl Client {
         self
     }
 
-    /// Lets the server hold the next requests up to `wait` before it answers, as a long poll
-    /// does; zero again for ordinary ones.
-    pub fn set_wait(&mut self, wait: Duration) {
-        self.http.set_wait(wait);
-    }
-
     /// POSTs `body` signed in. `repeatable` if it is safe to send twice. `Auth` if the server
     /// refuses the login.
     pub async fn post(
@@ -82,11 +76,13 @@ impl Client {
             content_type,
             body,
             repeatable,
+            Duration::ZERO,
         )
         .await
     }
 
-    /// Like `post`, to `path` on the same server, with these `headers` too.
+    /// Like `post`, to `path` on the same server, with these `headers` too. The server may
+    /// hold its answer up to `wait`, as for a long poll.
     pub async fn post_to(
         &mut self,
         path: &str,
@@ -94,6 +90,7 @@ impl Client {
         content_type: &str,
         body: &[u8],
         repeatable: bool,
+        wait: Duration,
     ) -> Result<Response, ProviderError> {
         // A known server gets Basic first: one without it refuses it unread, and says what it
         // takes instead.
@@ -119,9 +116,12 @@ impl Client {
                     auth.as_deref(),
                     path,
                     headers,
-                    content_type,
-                    body,
+                    Body {
+                        content_type,
+                        data: body,
+                    },
                     repeatable && !handshake,
+                    wait,
                 )
                 .await
             {
@@ -167,7 +167,17 @@ impl Client {
         let hello = format!("{name} {}", base64(&ntlm::negotiate()));
         // Empty, so the body goes only once.
         let response = self
-            .send(Some(&hello), path, headers, content_type, &[], true)
+            .send(
+                Some(&hello),
+                path,
+                headers,
+                Body {
+                    content_type,
+                    data: &[],
+                },
+                true,
+                Duration::ZERO,
+            )
             .await?;
         let token = response
             .authenticate
@@ -205,23 +215,18 @@ impl Client {
         auth: Option<&str>,
         path: &str,
         headers: &[(&str, &str)],
-        content_type: &str,
-        data: &[u8],
+        body: Body<'_>,
         repeatable: bool,
+        wait: Duration,
     ) -> Result<Response, ProviderError> {
         let headers: Vec<(&str, &str)> = auth
             .map(|a| ("Authorization", a))
             .into_iter()
             .chain(headers.iter().copied())
             .collect();
-        let body = Some(Body { content_type, data });
-        if repeatable {
-            self.http
-                .send_repeatable("POST", path, &headers, body)
-                .await
-        } else {
-            self.http.send("POST", path, &headers, body).await
-        }
+        self.http
+            .send_waiting("POST", path, &headers, Some(body), repeatable, wait)
+            .await
     }
 }
 

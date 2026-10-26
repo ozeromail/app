@@ -27,7 +27,7 @@ enum BackgroundCheck {
             _ = try? await mail.wake()
             let now = Date.now
             let due = try await mail.accounts().filter { account in
-                let last = Date(timeIntervalSince1970: checked[String(account.id)] ?? 0)
+                let last = Date(timeIntervalSince1970: Settings.checked[String(account.id)] ?? 0)
                 switch account.newMail {
                 case .push: return true
                 case .manually: return false
@@ -38,20 +38,12 @@ enum BackgroundCheck {
             guard !due.isEmpty else { return }
             // Other accounts may still have synced; the next run tries again.
             _ = try? await mail.refresh(which: { due.contains($0.id) })
-            var times = checked
-            for id in due { times[String(id)] = now.timeIntervalSince1970 }
-            checked = times
+            for id in due { Settings.checked[String(id)] = now.timeIntervalSince1970 }
             let new = try await mail.newMail()
             await notify(new)
         } catch {
             log.error("background check failed: \(String(describing: error), privacy: .public)")
         }
-    }
-
-    /// When each account was last checked here, by its id, in seconds.
-    private static var checked: [String: Double] {
-        get { UserDefaults.standard.dictionary(forKey: "checked") as? [String: Double] ?? [:] }
-        set { UserDefaults.standard.set(newValue, forKey: "checked") }
     }
 
     private static let slack: Double = 3 * 60

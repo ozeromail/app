@@ -24,24 +24,11 @@ struct AccountsSheet: View {
     @Binding var swipes: Swipes
     @Binding var groups: Groups
     let actions: AccountsActions
+    /// The account whose page it opens on, as after adding it.
+    var startOn: Int64?
 
     @Environment(\.dismiss) private var dismiss
-    @State private var path: [Page]
-
-    /// `startOn` is the account whose page it opens on, as after adding it.
-    init(
-        accounts: [AccountItem], folders: [FolderItem], mailbox: Mailbox, drafts: Int, swipes: Binding<Swipes>,
-        groups: Binding<Groups>, actions: AccountsActions, startOn: Int64? = nil
-    ) {
-        self.accounts = accounts
-        self.folders = folders
-        self.mailbox = mailbox
-        self.drafts = drafts
-        _swipes = swipes
-        _groups = groups
-        self.actions = actions
-        _path = State(initialValue: startOn.map { [.account($0)] } ?? [])
-    }
+    @State private var path: [Page] = []
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -84,6 +71,7 @@ struct AccountsSheet: View {
                 }
             }
         }
+        .onAppear { if let startOn { path = [.account(startOn)] } }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
     }

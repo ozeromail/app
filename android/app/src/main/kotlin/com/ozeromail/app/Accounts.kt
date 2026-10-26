@@ -442,7 +442,7 @@ private fun AccountSettings(
     val checks = NEW_MAIL.keys.filter { account.canPush || it != NewMail.Push }
     Choices(R.string.account_new_mail, checks, account.newMail, onNewMail) { option, on ->
         Text(
-            stringResource(NEW_MAIL[option] ?: R.string.account_new_mail_manually),
+            stringResource(NEW_MAIL.getValue(option)),
             color = if (on) colors.primary else colors.onSurface,
             style = Type.Text,
             fontWeight = Weight.Medium,

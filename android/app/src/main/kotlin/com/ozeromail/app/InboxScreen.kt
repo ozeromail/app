@@ -576,7 +576,9 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     // Only once there is an account: without one a check has nothing to do. Again when one is
     // added or set to look for its mail otherwise.
     LaunchedEffect(accounts.map { Triple(it.id, it.newMail, it.needsSignIn) }) {
-        if (accounts.isNotEmpty()) MailWorker.schedule(context, accounts)
+        if (accounts.isEmpty()) return@LaunchedEffect
+        MailWorker.schedule(context)
+        WatchService.update(context, accounts)
     }
     // On opening and on every return to the app: mail that came meanwhile shows without a pull.
     // Not again right after one, as when back from the file picker or a link.
@@ -952,11 +954,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                 keepSynced(everSynced.filterTo(mutableSetOf()) { it >= 0 })
                                 scope.launch { sync() }
                                 scope.launch {
-                                    added = try {
-                                        mail.accounts().maxOfOrNull { it.id }
-                                    } catch (e: CoreException) {
-                                        null
-                                    }
+                                    loadAccounts()
+                                    added = accounts.maxOfOrNull { it.id }
                                     accountsOpen = added != null
                                 }
                             },

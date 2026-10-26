@@ -1366,7 +1366,8 @@ fn accounts_keep_their_client_certificates() {
     let account = &store.accounts().unwrap()[0];
     assert_eq!(account.server, Some(server("mail.corp.ru", Some("T-Bank"))));
     assert_eq!(account.smtp, Some(server("smtp.corp.ru", Some("Other"))));
-    assert_eq!((account.color, account.label.as_str()), (0, ""));
+    // Named by its domain at first.
+    assert_eq!((account.color, account.label.as_str()), (0, "Corp"));
 }
 
 #[test]

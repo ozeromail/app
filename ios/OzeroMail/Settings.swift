@@ -106,6 +106,12 @@ enum Settings {
         }
     }
 
+    /// When each account was last checked in the background, by its id, in seconds.
+    static var checked: [String: Double] {
+        get { defaults.dictionary(forKey: "checked") as? [String: Double] ?? [:] }
+        set { defaults.set(newValue, forKey: "checked") }
+    }
+
     /// The tip about swipes was read, so it does not show again.
     static var swipeTipSeen: Bool {
         get { defaults.bool(forKey: "swipe_tip_seen") }
