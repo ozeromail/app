@@ -24,6 +24,7 @@ use ozero_ews::{EwsSession, discover};
 use ozero_gmail::{GmailSession, oauth};
 use ozero_imap::ImapSession;
 use ozero_imap::rustls::ClientConfig;
+use ozero_imap::rustls::client::ResolvesClientCert;
 use ozero_mime::{MimeBuilder, MimeParser};
 use ozero_smtp::SmtpSession;
 use ozero_store_sqlite::SqliteStore;
@@ -113,6 +114,10 @@ pub struct Core {
     store: SqliteStore,
     parser: MimeParser,
     tls: OnceLock<Arc<ClientConfig>>,
+    /// The platform's client certificates, once the app has given them.
+    certificates: OnceLock<Arc<dyn ClientCertificates>>,
+    /// TLS settings offering each client certificate, by its name, built on first use.
+    certificate_tls: Mutex<HashMap<String, Arc<ClientConfig>>>,
     /// One push or sync per account at a time, so a sync never saves flags from before a push.
     busy: Mutex<HashMap<AccountId, Arc<tokio::sync::Mutex<()>>>>,
     /// Accounts with a push waiting for held actions to come due.
@@ -178,6 +183,8 @@ impl Core {
             store,
             parser: MimeParser::default(),
             tls: OnceLock::new(),
+            certificates: OnceLock::new(),
+            certificate_tls: Mutex::default(),
             busy: Mutex::default(),
             waiting: Mutex::default(),
             named: Mutex::default(),
@@ -185,6 +192,12 @@ impl Core {
             pages: Mutex::default(),
             changes,
         }))
+    }
+
+    /// Lets accounts use client certificates the platform keeps; the app calls it once, at
+    /// start.
+    pub fn use_certificates(&self, certificates: Arc<dyn ClientCertificates>) {
+        let _ = self.certificates.set(certificates);
     }
 
     /// Whether actions the server refused were undone on the device since this was last
@@ -575,14 +588,16 @@ impl Core {
 
     /// Saves an Exchange account once its server has taken the login. Without `server` the
     /// server is found from the address; with it, it is a host or a URL the person typed.
-    /// `login` is the address unless given, such as `DOMAIN\user`. Fails with `NoServer`
-    /// when no server is found, so the app asks for one.
+    /// `login` is the address unless given, such as `DOMAIN\user`. `certificate` names a
+    /// client certificate the platform keeps, for a server that asks for one. Fails with
+    /// `NoServer` when no server is found, so the app asks for one.
     pub async fn add_exchange_account(
         &self,
         email: String,
         display_name: String,
         server: Option<String>,
         login: Option<String>,
+        certificate: Option<String>,
         password: String,
     ) -> Result<i64, CoreError> {
         if self.exists(&email)? {
@@ -592,13 +607,15 @@ impl Core {
             .map(|l| l.trim().to_owned())
             .filter(|l| !l.is_empty())
             .unwrap_or_else(|| email.clone());
+        let certificate = certificate.filter(|c| !c.is_empty());
+        let tls = self.tls_for(certificate.as_deref())?;
         let (endpoint, mut ews) = match server.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             Some(typed) => {
                 let endpoint = discover::endpoint(typed).ok_or(CoreError::NoServer)?;
-                let ews = discover::check(self.tls()?, &endpoint, &login, &password).await?;
+                let ews = discover::check(tls, &endpoint, &login, &password).await?;
                 (endpoint, ews)
             }
-            None => match discover::discover(self.tls()?, &email, &login, &password).await {
+            None => match discover::discover(tls, &email, &login, &password).await {
                 Err(ProviderError::Gone) => return Err(CoreError::NoServer),
                 found => found?,
             },
@@ -617,6 +634,7 @@ impl Core {
             host: endpoint.host,
             port: endpoint.port,
             user: login,
+            certificate,
         };
         let account = NewAccount {
             kind: AccountKind::Exchange,
@@ -1340,7 +1358,8 @@ impl Core {
         let server = account.server.as_ref().ok_or_else(|| CoreError::Storage {
             detail: "no Exchange server".into(),
         })?;
-        let mut ews = EwsSession::new(self.tls()?, server, password);
+        let tls = self.tls_for(server.certificate.as_deref())?;
+        let mut ews = EwsSession::new(tls, server, password);
         ews.check().await?;
         Ok(ews)
     }
@@ -1523,7 +1542,7 @@ impl Core {
         Ok(SmtpSession::connect(
             &server.host,
             server.port,
-            self.tls()?,
+            self.tls_for(server.certificate.as_deref())?,
             &server.user,
             password,
         )
@@ -1534,7 +1553,7 @@ impl Core {
         Ok(ImapSession::connect(
             &server.host,
             server.port,
-            self.tls()?,
+            self.tls_for(server.certificate.as_deref())?,
             &server.user,
             password,
         )
@@ -1546,8 +1565,29 @@ impl Core {
         if let Some(tls) = self.tls.get() {
             return Ok(tls.clone());
         }
-        let tls = tls_config()?;
+        let tls = tls_config(None)?;
         Ok(self.tls.get_or_init(|| tls).clone())
+    }
+
+    /// TLS settings that offer the platform's client certificate `certificate`, if any.
+    fn tls_for(&self, certificate: Option<&str>) -> Result<Arc<ClientConfig>, CoreError> {
+        let Some(name) = certificate else {
+            return self.tls();
+        };
+        let mut built = self
+            .certificate_tls
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if let Some(tls) = built.get(name) {
+            return Ok(tls.clone());
+        }
+        let certificates = self.certificates.get().ok_or_else(|| CoreError::Tls {
+            detail: "the app gave no client certificates".into(),
+        })?;
+        let resolver = certificate::Resolver::new(certificates.clone(), name);
+        let tls = tls_config(Some(Arc::new(resolver)))?;
+        built.insert(name.to_owned(), tls.clone());
+        Ok(tls)
     }
 }
 
@@ -1764,7 +1804,7 @@ fn now() -> i64 {
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
-fn tls_config() -> Result<Arc<ClientConfig>, CoreError> {
+fn tls_config(client: Option<Arc<dyn ResolvesClientCert>>) -> Result<Arc<ClientConfig>, CoreError> {
     // Without the JNI setup the Android verifier panics on first use; refuse cleanly instead.
     #[cfg(target_os = "android")]
     if !android::READY.load(std::sync::atomic::Ordering::Acquire) {
@@ -1772,7 +1812,7 @@ fn tls_config() -> Result<Arc<ClientConfig>, CoreError> {
             detail: "CoreNative.init was not called".into(),
         });
     }
-    ozero_imap::platform_tls().map_err(|e| CoreError::Tls {
+    ozero_imap::platform_tls(client).map_err(|e| CoreError::Tls {
         detail: e.to_string(),
     })
 }
@@ -2039,6 +2079,7 @@ impl Endpoint {
             host: self.host,
             port: self.port,
             user: user.to_owned(),
+            certificate: None,
         }
     }
 }
@@ -2423,6 +2464,10 @@ impl From<SyncError> for CoreError {
         }
     }
 }
+
+mod certificate;
+
+pub use certificate::{ClientCertificates, Signing};
 
 #[cfg(test)]
 mod tests;

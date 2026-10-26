@@ -531,6 +531,7 @@ fn saves_an_exchange_account_that_sends_without_smtp() {
             String::new(),
             Some(server.into()),
             None,
+            None,
             "pw".into(),
         ))
     };
@@ -544,6 +545,7 @@ fn saves_an_exchange_account_that_sends_without_smtp() {
             host: "mail.corp.ru".into(),
             port: 443,
             user: "CORP\\anna".into(),
+            certificate: None,
         }),
         smtp: None,
     };

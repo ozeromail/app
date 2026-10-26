@@ -83,8 +83,11 @@ impl std::fmt::Debug for ImapSession {
 pub use tokio_rustls::rustls;
 
 /// TLS settings that trust the same root certificates as the OS.
-/// On Android the verifier must be initialized from Kotlin first.
-pub fn platform_tls() -> Result<Arc<ClientConfig>, ProviderError> {
+/// On Android the verifier must be initialized from Kotlin first. `client` offers a client
+/// certificate to a server that asks for one.
+pub fn platform_tls(
+    client: Option<Arc<dyn rustls::client::ResolvesClientCert>>,
+) -> Result<Arc<ClientConfig>, ProviderError> {
     use tokio_rustls::rustls::client::danger::ServerCertVerifier;
 
     let builder = ClientConfig::builder();
@@ -94,10 +97,11 @@ pub fn platform_tls() -> Result<Arc<ClientConfig>, ProviderError> {
     );
     #[cfg(target_os = "android")]
     let os = Arc::new(verify::RecheckRevoked(os));
-    let config = builder
-        .dangerous()
-        .with_custom_certificate_verifier(os)
-        .with_no_client_auth();
+    let builder = builder.dangerous().with_custom_certificate_verifier(os);
+    let config = match client {
+        Some(client) => builder.with_client_cert_resolver(client),
+        None => builder.with_no_client_auth(),
+    };
     Ok(Arc::new(config))
 }
 

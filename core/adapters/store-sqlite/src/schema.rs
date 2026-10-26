@@ -268,4 +268,9 @@ pub const MIGRATIONS: &[&str] = &[
     ALTER TABLE outbox ADD COLUMN copy INTEGER REFERENCES message(id) ON DELETE SET NULL;
     CREATE INDEX outbox_copy ON outbox(copy) WHERE copy IS NOT NULL;
     ",
+    // 28: the client certificate a server asks for, by the platform's name for it.
+    "
+    ALTER TABLE account ADD COLUMN server_certificate TEXT;
+    ALTER TABLE account ADD COLUMN smtp_certificate TEXT;
+    ",
 ];
