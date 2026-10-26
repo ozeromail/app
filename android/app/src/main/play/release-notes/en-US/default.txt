@@ -1,0 +1,4 @@
+• Exchange: sign in to work mail with your address and password, with a client certificate if your company needs one.
+• On a tablet or a phone on its side, mailboxes, list and letter sit side by side.
+• The inbox says what it's doing while it checks for mail, and every wait ends with a clear word and Try again.
+• Smoother swipes, pull and choosing by touch.

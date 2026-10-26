@@ -1,0 +1,33 @@
+All your email. One calm inbox.
+
+I'm making the mail app I couldn't find for myself. Ozero Mail brings Gmail, iCloud, Yandex, Exchange and any IMAP mailbox into one list and keeps it quiet.
+
+ONE INBOX FOR EVERY ACCOUNT
+• Inbox, Sent, Archive and Flagged are shared across accounts, like in Apple Mail.
+• Each account gets a color dot and a name you choose. Fold the folders you don't need.
+• Any folder of any account is a tap away.
+
+PEOPLE FIRST
+• Letters from people come first. Notifications and newsletters wait in their own tabs, sorted by simple rules right on your phone.
+
+INSTANT
+• Archive, move, delete and mark happen at once; the server catches up in the background. Undo is always there.
+• Set what swipes do. Choose many letters with two fingers or a long press.
+• Done means archived. Reach Inbox Zero and see a still lake.
+
+MADE FOR READING
+• A conversation on one page, with quotes folded.
+• Inter for the interface, Literata for letters. Wide newsletters fit the screen.
+• On a tablet or a phone on its side, mailboxes, list and letter sit side by side.
+
+WRITING
+• A full-screen editor. Drafts are saved as you type, and a send can be undone for 5 seconds.
+• Reply, reply all, forward with attachments.
+• Search finds mail on your phone and on the server.
+
+PRIVATE
+• No AI, no ads, no tracking.
+• Mail goes from your provider straight to your phone; my servers never see it.
+• Mail, passwords and settings stay on your phone, in an encrypted database.
+
+This is a beta. I answer every letter myself: write to me right from the app.
