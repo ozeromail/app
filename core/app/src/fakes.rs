@@ -8,11 +8,11 @@ use std::time::Duration;
 
 use ozero_domain::{
     Account, AccountId, Action, Address, Body, Category, Changes, Checkpoint, Correspondents,
-    Draft, DraftFile, DraftId, FileId, Flags, Folder, FolderId, FolderRole, ListQuery,
-    MailProvider, MailSender, MessageBuilder, MessageId, MessageLocation, MessageParser,
+    Draft, DraftCopy, DraftFile, DraftId, DraftToPush, FileId, Flags, Folder, FolderId, FolderRole,
+    ListQuery, MailProvider, MailSender, MessageBuilder, MessageId, MessageLocation, MessageParser,
     MessageRow, Moved, NewAccount, NewFolder, NewMail, NewMessage, Older, Op, OpId, OutboxId,
-    Outgoing, OutgoingFile, ProviderError, RawMessage, RecentFile, SavedDraft, Store, StoreError,
-    Unsent,
+    Outgoing, OutgoingFile, ProviderError, RawMessage, RecentFile, SavedDraft, ServerDraft, Store,
+    StoreError, Unsent,
 };
 
 /// Fakes answer at once, so one poll finishes the future.
@@ -43,6 +43,9 @@ pub struct Server {
     pub paged: Vec<(String, u32, Vec<String>, i64, u32)>,
     /// Each `search` call: the folder, validity, text and limit. Folders named "Gone" and "Refused" fail.
     pub searched: Vec<(String, u32, String, u32)>,
+    /// Each `save_draft`: the folder, message and Message-ID; the nth is kept as "dn",
+    /// or fails with the first of `refuse`.
+    pub drafts: Vec<(String, Vec<u8>, String)>,
 }
 
 /// A message as `Server` returns it.
@@ -204,6 +207,21 @@ impl MailProvider for Server {
         ready(Ok(()))
     }
 
+    fn save_draft(
+        &mut self,
+        folder: &str,
+        message: &[u8],
+        message_id: &str,
+    ) -> impl Future<Output = Result<Option<(u32, String)>, ProviderError>> + Send {
+        self.drafts
+            .push((folder.into(), message.to_vec(), message_id.into()));
+        ready(if self.refuse.is_empty() {
+            Ok(Some((7, format!("d{}", self.drafts.len()))))
+        } else {
+            Err(self.refuse.remove(0))
+        })
+    }
+
     fn wait(
         &mut self,
         folder: &str,
@@ -306,6 +324,9 @@ impl MessageParser for Parser {
 /// One `save_found`: the account, the words and what each folder found.
 pub type Found = (AccountId, String, Vec<(FolderId, Vec<NewMessage>)>);
 
+/// One `pushed_draft`: the draft, when it was saved, its Message-ID and copy.
+pub type Pushed = (DraftId, i64, String, Option<DraftCopy>);
+
 #[derive(Default)]
 pub struct Memory {
     /// What `folders` returns.
@@ -337,6 +358,14 @@ pub struct Memory {
     pub told: Mutex<usize>,
     pub sent: Mutex<Vec<OutboxId>>,
     pub refused: Mutex<Vec<(OutboxId, String)>>,
+    /// Each `pushed_draft`.
+    pub pushed: Mutex<Vec<Pushed>>,
+    /// What `stale_drafts` returns, and each `forget_stale_drafts`.
+    pub stale: Vec<(i64, DraftCopy)>,
+    pub forgotten: Mutex<Vec<i64>>,
+    /// What `server_drafts` returns, and each `import_draft`.
+    pub server_drafts: Vec<ServerDraft>,
+    pub imported: Mutex<Vec<(SavedDraft, Option<String>, DraftCopy)>>,
 }
 
 impl Store for Memory {
@@ -603,6 +632,59 @@ impl Store for Memory {
 
     fn delete_draft(&self, _: DraftId, _: i64, _: i64) -> Result<(), StoreError> {
         Ok(())
+    }
+
+    fn drafts_to_push(&self, _: AccountId) -> Result<Vec<DraftToPush>, StoreError> {
+        Ok(vec![])
+    }
+
+    /// One file, named after the draft.
+    fn draft_files(&self, id: DraftId) -> Result<Vec<OutgoingFile>, StoreError> {
+        Ok(vec![OutgoingFile {
+            name: format!("{}.txt", id.0),
+            mime: "text/plain".into(),
+            data: vec![],
+        }])
+    }
+
+    fn pushed_draft(
+        &self,
+        _: AccountId,
+        id: DraftId,
+        saved: i64,
+        message_id: &str,
+        copy: Option<&DraftCopy>,
+    ) -> Result<(), StoreError> {
+        self.pushed
+            .lock()
+            .unwrap()
+            .push((id, saved, message_id.into(), copy.cloned()));
+        Ok(())
+    }
+
+    fn stale_drafts(&self, _: AccountId, _: i64) -> Result<Vec<(i64, DraftCopy)>, StoreError> {
+        Ok(self.stale.clone())
+    }
+
+    fn forget_stale_drafts(&self, ids: &[i64]) -> Result<(), StoreError> {
+        self.forgotten.lock().unwrap().extend(ids);
+        Ok(())
+    }
+
+    fn server_drafts(&self, _: AccountId) -> Result<Vec<ServerDraft>, StoreError> {
+        Ok(self.server_drafts.clone())
+    }
+
+    fn import_draft(
+        &self,
+        draft: &SavedDraft,
+        message_id: Option<&str>,
+        copy: &DraftCopy,
+        _: &[OutgoingFile],
+    ) -> Result<DraftId, StoreError> {
+        let mut imported = self.imported.lock().unwrap();
+        imported.push((draft.clone(), message_id.map(Into::into), copy.clone()));
+        Ok(DraftId(imported.len() as i64))
     }
 
     fn restore_draft(&self, _: DraftId, _: i64) -> Result<bool, StoreError> {

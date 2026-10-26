@@ -8,10 +8,11 @@ use std::sync::{Mutex, MutexGuard};
 
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Attachment, Body, Category, Changes,
-    Checkpoint, Correspondents, Draft, DraftFile, DraftId, FileId, Flags, Folder, FolderId,
-    FolderRole, ListQuery, ListScope, MessageId, MessageLocation, MessageRow, Moved, NewAccount,
-    NewFolder, NewMail, NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile, RecentFile,
-    SavedDraft, Sender, Server, Store, StoreError, Unsent, default_label, full_text,
+    Checkpoint, Correspondents, Draft, DraftCopy, DraftFile, DraftId, DraftToPush, FileId, Flags,
+    Folder, FolderId, FolderRole, ListQuery, ListScope, MessageId, MessageLocation, MessageRow,
+    Moved, NewAccount, NewFolder, NewMail, NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile,
+    RecentFile, SavedDraft, Sender, Server, ServerDraft, Store, StoreError, Unsent, default_label,
+    full_text, typed_addresses,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{
@@ -527,6 +528,9 @@ impl Store for SqliteStore {
                 gone.execute(params![folder.0, remote_id])
                     .map_err(storage)?;
             }
+        }
+        if !changes.gone.is_empty() {
+            copies_gone(&tx, folder, &changes.gone)?;
         }
         upsert_messages(&tx, folder, &changes.new)?;
         // A copy of moved mail the server's own did not take the place of: the server has it
@@ -1232,6 +1236,259 @@ impl Store for SqliteStore {
         .map_err(storage)
     }
 
+    fn drafts_to_push(&self, account: AccountId) -> Result<Vec<DraftToPush>, StoreError> {
+        let conn = self.conn();
+        let rows = conn
+            .prepare_cached(
+                "SELECT d.id, d.saved, d.recipients, d.subject, d.text, d.signature, d.quote,
+                        d.message_id, m.message_id
+                 FROM draft d LEFT JOIN message m ON m.id = d.reply_to
+                 WHERE d.account_id = ?1 AND d.gone IS NULL AND d.pushed IS NOT d.saved
+                 ORDER BY d.id",
+            )
+            .and_then(|mut s| {
+                s.query_map([account.0], |r| {
+                    let saved: i64 = r.get(1)?;
+                    let text: String = r.get(4)?;
+                    let signature: String = r.get(5)?;
+                    let quote: String = r.get(6)?;
+                    Ok(DraftToPush {
+                        id: DraftId(r.get(0)?),
+                        saved,
+                        message: Outgoing {
+                            id: OutboxId(0),
+                            to: typed_addresses(&r.get::<_, String>(2)?),
+                            subject: r.get(3)?,
+                            text: full_text(&text, &signature, &quote),
+                            message_id: r.get::<_, Option<String>>(7)?.unwrap_or_default(),
+                            in_reply_to: r.get(8)?,
+                            date: saved / 1_000,
+                            // A forwarded message's files are read when it is sent.
+                            forward: None,
+                            files: vec![],
+                        },
+                    })
+                })?
+                .collect()
+            });
+        rows.map_err(storage)
+    }
+
+    fn draft_files(&self, id: DraftId) -> Result<Vec<OutgoingFile>, StoreError> {
+        let conn = self.conn();
+        let rows = conn
+            .prepare_cached(
+                "SELECT f.name, f.mime, d.data FROM draft_file f JOIN file_data d ON d.file = f.id
+                 WHERE f.draft = ?1 ORDER BY f.id",
+            )
+            .and_then(|mut s| s.query_map([id.0], outgoing_file)?.collect());
+        rows.map_err(storage)
+    }
+
+    fn pushed_draft(
+        &self,
+        account: AccountId,
+        id: DraftId,
+        saved: i64,
+        message_id: &str,
+        copy: Option<&DraftCopy>,
+    ) -> Result<(), StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        let before: Option<Option<(i64, DraftCopy)>> = tx
+            .query_row(
+                "SELECT remote_account, remote_folder, remote_validity, remote_id
+                 FROM draft WHERE id = ?1",
+                [id.0],
+                |r| {
+                    Ok(match (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?) {
+                        (Some(account), Some(folder), Some(validity), Some(remote_id)) => Some((
+                            account,
+                            DraftCopy {
+                                folder,
+                                validity,
+                                remote_id,
+                            },
+                        )),
+                        _ => None,
+                    })
+                },
+            )
+            .optional()
+            .map_err(storage)?;
+        let gone = |account: i64, copy: &DraftCopy| {
+            tx.execute(
+                "INSERT INTO draft_gone (account_id, folder, validity, remote_id, message_id)
+                 SELECT ?1, ?2, ?3, ?4, NULL WHERE EXISTS (SELECT 1 FROM account WHERE id = ?1)",
+                params![account, copy.folder, copy.validity, copy.remote_id],
+            )
+            .map(drop)
+            .map_err(storage)
+        };
+        match before {
+            // Sent or thrown away while it went: the new copy goes too.
+            None => {
+                if let Some(copy) = copy {
+                    gone(account.0, copy)?;
+                }
+            }
+            Some(before) => {
+                if let Some((was, old)) = before.filter(|(_, old)| Some(old) != copy) {
+                    gone(was, &old)?;
+                }
+                tx.execute(
+                    "UPDATE draft SET pushed = ?2, message_id = ?3, remote_account = ?4,
+                                      remote_folder = ?5, remote_validity = ?6, remote_id = ?7
+                     WHERE id = ?1",
+                    params![
+                        id.0,
+                        saved,
+                        message_id,
+                        copy.map(|_| account.0),
+                        copy.map(|c| &c.folder),
+                        copy.map(|c| c.validity),
+                        copy.map(|c| &c.remote_id),
+                    ],
+                )
+                .map_err(storage)?;
+            }
+        }
+        tx.commit().map_err(storage)
+    }
+
+    fn stale_drafts(
+        &self,
+        account: AccountId,
+        now: i64,
+    ) -> Result<Vec<(i64, DraftCopy)>, StoreError> {
+        let conn = self.conn();
+        conn.execute("DELETE FROM draft WHERE gone <= ?1", [now])
+            .map_err(storage)?;
+        let rows = conn
+            .prepare_cached(
+                "SELECT id, folder, validity, remote_id FROM draft_gone
+                 WHERE account_id = ?1 ORDER BY id",
+            )
+            .and_then(|mut s| {
+                s.query_map([account.0], |r| {
+                    Ok((
+                        r.get(0)?,
+                        DraftCopy {
+                            folder: r.get(1)?,
+                            validity: r.get(2)?,
+                            remote_id: r.get(3)?,
+                        },
+                    ))
+                })?
+                .collect()
+            });
+        rows.map_err(storage)
+    }
+
+    fn forget_stale_drafts(&self, ids: &[i64]) -> Result<(), StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        {
+            let mut forget = tx
+                .prepare_cached("DELETE FROM draft_gone WHERE id = ?1")
+                .map_err(storage)?;
+            for id in ids {
+                forget.execute([id]).map_err(storage)?;
+            }
+        }
+        tx.commit().map_err(storage)
+    }
+
+    fn server_drafts(&self, account: AccountId) -> Result<Vec<ServerDraft>, StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        // A copy the server did not say the place of, found by the draft's Message-ID.
+        tx.execute(
+            "UPDATE draft SET remote_account = f.account_id, remote_folder = f.remote_id,
+                              remote_validity = f.validity, remote_id = m.remote_id
+             FROM message m JOIN folder f ON f.id = m.folder_id
+             WHERE draft.account_id = ?1 AND draft.remote_id IS NULL
+               AND draft.pushed IS NOT NULL AND draft.message_id IS NOT NULL
+               AND f.account_id = ?1 AND f.role = 'drafts' AND m.stand_in = 0
+               AND m.message_id = draft.message_id",
+            [account.0],
+        )
+        .map_err(storage)?;
+        // An older copy of a draft, left by a push that broke off: it goes. A newer one is
+        // another app's edit, left be. Only IMAP UIDs tell which is older.
+        tx.execute(
+            "INSERT INTO draft_gone (account_id, folder, validity, remote_id)
+             SELECT ?1, f.remote_id, f.validity, m.remote_id
+             FROM message m JOIN folder f ON f.id = m.folder_id
+             JOIN draft d ON d.message_id = m.message_id AND d.remote_account = ?1
+                 AND d.remote_folder = f.remote_id AND d.remote_validity = f.validity
+             JOIN message c ON c.folder_id = m.folder_id AND c.remote_id = d.remote_id
+             WHERE f.account_id = ?1 AND f.role = 'drafts' AND m.stand_in = 0
+               AND CAST(m.remote_id AS INTEGER) < CAST(c.remote_id AS INTEGER)
+               AND NOT EXISTS (SELECT 1 FROM draft_gone g WHERE g.account_id = ?1
+                               AND g.folder = f.remote_id AND g.remote_id = m.remote_id)",
+            [account.0],
+        )
+        .map_err(storage)?;
+        let found = tx
+            .prepare_cached(
+                "SELECT m.id, f.remote_id, f.validity, m.remote_id, m.message_id
+                 FROM message m JOIN folder f ON f.id = m.folder_id
+                 WHERE f.account_id = ?1 AND f.role = 'drafts' AND m.stand_in = 0
+                   AND NOT EXISTS (SELECT 1 FROM draft d
+                                   WHERE d.message_id = m.message_id
+                                      OR (d.remote_account = ?1 AND d.remote_folder = f.remote_id
+                                          AND d.remote_validity = f.validity
+                                          AND d.remote_id = m.remote_id))
+                   AND NOT EXISTS (SELECT 1 FROM draft_gone g
+                                   WHERE g.account_id = ?1
+                                     AND (g.message_id = m.message_id
+                                          OR (g.folder = f.remote_id AND g.remote_id = m.remote_id)))
+                 ORDER BY m.date DESC, m.id DESC",
+            )
+            .and_then(|mut s| {
+                s.query_map([account.0], |r| {
+                    Ok(ServerDraft {
+                        message: MessageId(r.get(0)?),
+                        copy: DraftCopy {
+                            folder: r.get(1)?,
+                            validity: r.get(2)?,
+                            remote_id: r.get(3)?,
+                        },
+                        message_id: r.get(4)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()
+            })
+            .map_err(storage)?;
+        tx.commit().map_err(storage)?;
+        Ok(found)
+    }
+
+    fn import_draft(
+        &self,
+        draft: &SavedDraft,
+        message_id: Option<&str>,
+        copy: &DraftCopy,
+        files: &[OutgoingFile],
+    ) -> Result<DraftId, StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        let id = insert_draft(&tx, draft)?;
+        tx.execute(
+            "UPDATE draft SET pushed = saved, message_id = ?2, remote_account = account_id,
+                              remote_folder = ?3, remote_validity = ?4, remote_id = ?5
+             WHERE id = ?1",
+            params![id.0, message_id, copy.folder, copy.validity, copy.remote_id],
+        )
+        .map_err(storage)?;
+        for file in files {
+            insert_file(&tx, id, file)?;
+        }
+        tx.commit().map_err(storage)?;
+        Ok(id)
+    }
+
     fn restore_draft(&self, id: DraftId, now: i64) -> Result<bool, StoreError> {
         self.conn()
             .execute(
@@ -1266,24 +1523,7 @@ impl Store for SqliteStore {
         if taken + size > limit {
             return Ok(None);
         }
-        let id: i64 = tx
-            .query_row(
-                "INSERT INTO draft_file (draft, name, mime, size) VALUES (?1, ?2, ?3, ?4)
-                 RETURNING id",
-                params![
-                    draft.0,
-                    file.name,
-                    file.mime,
-                    i64::try_from(size).unwrap_or(i64::MAX)
-                ],
-                |r| r.get(0),
-            )
-            .map_err(storage)?;
-        tx.execute(
-            "INSERT INTO file_data (file, data) VALUES (?1, ?2)",
-            params![id, file.data],
-        )
-        .map_err(storage)?;
+        let id = insert_file(&tx, draft, file)?;
         tx.commit().map_err(storage)?;
         Ok(Some(DraftFile {
             id: FileId(id),
@@ -1332,16 +1572,7 @@ impl Store for SqliteStore {
                 "SELECT f.name, f.mime, d.data FROM draft_file f JOIN file_data d ON d.file = f.id
                  WHERE f.outbox = ?1 ORDER BY f.id",
             )
-            .and_then(|mut s| {
-                s.query_map([id.0], |r| {
-                    Ok(OutgoingFile {
-                        name: r.get(0)?,
-                        mime: r.get(1)?,
-                        data: r.get(2)?,
-                    })
-                })?
-                .collect()
-            });
+            .and_then(|mut s| s.query_map([id.0], outgoing_file)?.collect());
         rows.map_err(storage)
     }
 
@@ -2111,6 +2342,14 @@ macro_rules! in_thread {
     };
 }
 
+/// Folder `$f` is one whose mail shows beyond its own list: not the trash or junk, nor the
+/// drafts folder, whose copies show as drafts.
+macro_rules! shown_role {
+    ($f:literal) => {
+        concat!($f, ".role NOT IN ('trash', 'junk', 'drafts')")
+    };
+}
+
 /// Message `$n`, in folder `$nf`, is in the conversation of `$of` as the reader shows it:
 /// in `$of`'s folder and inbox tab, or the user's reply from the sent folder.
 macro_rules! in_conversation {
@@ -2240,7 +2479,9 @@ const RECENT_FILES: &str = concat!(
             a.part, a.name, a.mime, a.size, MAX(m.date) AS newest
      FROM attachment a CROSS JOIN message m ON m.id = a.message_id
      JOIN folder f ON f.id = m.folder_id
-     WHERE f.role NOT IN ('trash', 'junk') AND m.stand_in = 0 AND a.name != '' AND ",
+     WHERE ",
+    shown_role!("f"),
+    " AND m.stand_in = 0 AND a.name != '' AND ",
     not_moving!(),
     " GROUP BY a.name, a.size ORDER BY newest DESC, a.part LIMIT ?1"
 );
@@ -2272,12 +2513,16 @@ const SEARCH: &str = concat!(
     message_from!(),
     " WHERE m.id IN (SELECT rowid FROM message_search WHERE message_search MATCH ?1
                      UNION SELECT message_id FROM search_hit WHERE words = ?3)
-       AND f.role NOT IN ('trash', 'junk') AND ",
+       AND ",
+    shown_role!("f"),
+    " AND ",
     not_moving!(),
     " AND NOT EXISTS (
          SELECT 1 FROM message d JOIN folder g ON g.id = d.folder_id
          WHERE d.message_id = m.message_id AND d.id > m.id AND g.account_id = f.account_id
-           AND g.role NOT IN ('trash', 'junk') AND ",
+           AND ",
+    shown_role!("g"),
+    " AND ",
     not_moving!("d"),
     ")
      ORDER BY m.date DESC, m.id DESC LIMIT ?2"
@@ -2463,6 +2708,83 @@ fn files_of(conn: &Connection, draft: DraftId) -> Result<Vec<DraftFile>, StoreEr
         ))
         .and_then(|mut s| s.query_map([draft.0], |r| draft_file(r, 0))?.collect());
     rows.map_err(storage)
+}
+
+/// Drafts whose copies in `folder` are gone from the server, sent or thrown away elsewhere: one
+/// not written since goes too, any other makes a new copy. One thrown away here is left be.
+fn copies_gone(tx: &Transaction<'_>, folder: FolderId, gone: &[String]) -> Result<(), StoreError> {
+    // Most folders hold no draft's copy: no lookup for each message gone from them.
+    let holds_copies: bool = tx
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM draft d JOIN folder f
+             ON f.account_id = d.remote_account AND f.remote_id = d.remote_folder
+                AND f.validity = d.remote_validity WHERE f.id = ?1)",
+            [folder.0],
+            |r| r.get(0),
+        )
+        .map_err(storage)?;
+    if !holds_copies {
+        return Ok(());
+    }
+    let mut drafts = tx
+        .prepare_cached(
+            "SELECT d.id, d.pushed IS d.saved AND d.gone IS NULL FROM draft d JOIN folder f
+             ON f.account_id = d.remote_account AND f.remote_id = d.remote_folder
+                AND f.validity = d.remote_validity
+             WHERE f.id = ?1 AND d.remote_id = ?2",
+        )
+        .map_err(storage)?;
+    let mut found: Vec<(i64, bool)> = vec![];
+    for remote_id in gone {
+        let rows = drafts
+            .query_map(params![folder.0, remote_id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .and_then(|rows| rows.collect::<Result<Vec<_>, _>>())
+            .map_err(storage)?;
+        found.extend(rows);
+    }
+    for (id, unchanged) in found {
+        // Without a copy first, so no deletion of it is queued.
+        tx.execute(
+            "UPDATE draft SET remote_account = NULL, remote_folder = NULL, remote_validity = NULL,
+                              remote_id = NULL, pushed = NULL
+             WHERE id = ?1",
+            [id],
+        )
+        .map_err(storage)?;
+        if unchanged {
+            tx.execute("DELETE FROM draft WHERE id = ?1", [id])
+                .map_err(storage)?;
+        }
+    }
+    Ok(())
+}
+
+/// A file to send, from its name, type and contents.
+fn outgoing_file(r: &Row<'_>) -> rusqlite::Result<OutgoingFile> {
+    Ok(OutgoingFile {
+        name: r.get(0)?,
+        mime: r.get(1)?,
+        data: r.get(2)?,
+    })
+}
+
+/// Adds `file` to a draft; returns its id.
+fn insert_file(conn: &Connection, draft: DraftId, file: &OutgoingFile) -> Result<i64, StoreError> {
+    let size = i64::try_from(file.data.len()).unwrap_or(i64::MAX);
+    let id = conn
+        .query_row(
+            "INSERT INTO draft_file (draft, name, mime, size) VALUES (?1, ?2, ?3, ?4)
+             RETURNING id",
+            params![draft.0, file.name, file.mime, size],
+            |r| r.get(0),
+        )
+        .map_err(storage)?;
+    conn.execute(
+        "INSERT INTO file_data (file, data) VALUES (?1, ?2)",
+        params![id, file.data],
+    )
+    .map_err(storage)?;
+    Ok(id)
 }
 
 /// Saves a new draft; an account or answered message that is gone is left out.

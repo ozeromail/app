@@ -23,8 +23,9 @@ pub use message::{
 };
 pub use op::{Action, Op, OpId};
 pub use outbox::{
-    Draft, DraftFile, DraftId, FileId, OutboxId, Outgoing, OutgoingFile, SavedDraft, Unsent,
-    forward_quote, forward_subject, full_text, is_address, parse_recipients, quote, reply_subject,
+    Draft, DraftCopy, DraftFile, DraftId, DraftToPush, FileId, OutboxId, Outgoing, OutgoingFile,
+    SavedDraft, ServerDraft, Unsent, forward_quote, forward_subject, full_text, is_address,
+    parse_recipients, quote, reply_subject, typed_addresses,
 };
 pub use provider::{
     Changes, Checkpoint, MailProvider, MailSender, MessageBuilder, MessageParser, Moved, Older,

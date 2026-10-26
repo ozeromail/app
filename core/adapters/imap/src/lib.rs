@@ -995,10 +995,25 @@ impl MailProvider for ImapSession {
     }
 
     async fn append(&mut self, folder: &str, message: &[u8]) -> Result<(), ProviderError> {
-        let mailbox = Mailbox::try_from(folder).map_err(|_| protocol("bad folder name"))?;
-        let append = CommandBody::append(mailbox, vec![Flag::Seen], None, message.to_vec())
-            .map_err(|_| protocol("bad APPEND"))?;
-        self.run(append).await.map(|_| ())
+        self.append_flagged(folder, vec![Flag::Seen], message)
+            .await
+            .map(drop)
+    }
+
+    async fn save_draft(
+        &mut self,
+        folder: &str,
+        message: &[u8],
+        message_id: &str,
+    ) -> Result<Option<(u32, String)>, ProviderError> {
+        let flags = vec![Flag::Seen, Flag::Draft];
+        let reply = self.append_flagged(folder, flags, message).await?;
+        // UIDPLUS (RFC 4315) names the copy; without it, it is found by its Message-ID.
+        if let Some(Code::AppendUid { uid_validity, uid }) = reply.code {
+            return Ok(Some((uid_validity.get(), uid.to_string())));
+        }
+        // Saved already: a failure here only leaves the copy for the next sync to find.
+        Ok(self.find_copy(folder, message_id).await.ok().flatten())
     }
 
     async fn wait(
@@ -1069,6 +1084,39 @@ impl ImapSession {
 }
 
 impl ImapSession {
+    /// Saves `message` into `folder` with `flags`.
+    async fn append_flagged(
+        &mut self,
+        folder: &str,
+        flags: Vec<Flag<'static>>,
+        message: &[u8],
+    ) -> Result<Reply, ProviderError> {
+        let mailbox = Mailbox::try_from(folder).map_err(|_| protocol("bad folder name"))?;
+        let append = CommandBody::append(mailbox, flags, None, message.to_vec())
+            .map_err(|_| protocol("bad APPEND"))?;
+        self.run(append).await
+    }
+
+    /// The folder's validity and the UID of its newest message with `message_id`.
+    async fn find_copy(
+        &mut self,
+        folder: &str,
+        message_id: &str,
+    ) -> Result<Option<(u32, String)>, ProviderError> {
+        let validity = self.open(folder, false).await?.validity;
+        let id =
+            AString::try_from(format!("<{message_id}>")).map_err(|_| protocol("bad Message-ID"))?;
+        let header = AString::try_from("Message-ID").map_err(|_| protocol("bad search"))?;
+        let found = self
+            .search_for(None, Vec1::from(SearchKey::Header(header, id)), true)
+            .await?;
+        // The newest, should an older copy still be there.
+        Ok(found
+            .into_iter()
+            .max()
+            .map(|uid| (validity, uid.to_string())))
+    }
+
     /// The raw message with `remote_id`, without marking it read: the `partial` bytes of it,
     /// or all of it up to `MAX_RESPONSE`.
     async fn fetch_message(

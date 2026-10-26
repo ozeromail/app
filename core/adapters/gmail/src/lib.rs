@@ -605,6 +605,26 @@ impl MailProvider for GmailSession {
         self.post("/messages", &body).await.map(|_| ())
     }
 
+    async fn save_draft(
+        &mut self,
+        _folder: &str,
+        message: &[u8],
+        _message_id: &str,
+    ) -> Result<Option<(u32, String)>, ProviderError> {
+        // A draft of its own, so Gmail shows it as one; its message is what the drafts label
+        // lists, and what deleting it takes away.
+        let body = Body {
+            content_type: "message/rfc822",
+            data: message,
+        };
+        let path = format!("/upload{BASE}/drafts?uploadType=media");
+        let draft = self.request("POST", &path, Some(body)).await?;
+        let id = draft["message"]["id"]
+            .as_str()
+            .ok_or_else(|| protocol("draft without a message"))?;
+        Ok(Some((0, id.to_owned())))
+    }
+
     async fn wait(
         &mut self,
         _folder: &str,

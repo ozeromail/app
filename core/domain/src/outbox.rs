@@ -28,8 +28,8 @@ pub struct Draft {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DraftId(pub i64);
 
-/// A message being written, kept on the device until it is sent or thrown away. Never on
-/// the server.
+/// A message being written, kept on the device until it is sent or thrown away, and as a
+/// copy in its account's drafts folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SavedDraft {
     /// None until it is first saved.
@@ -49,6 +49,36 @@ pub struct SavedDraft {
     /// The files added to it. Saving a draft leaves them as they are: `Store::attach` and
     /// `Store::detach` change them.
     pub files: Vec<DraftFile>,
+}
+
+/// Where the copy of a draft is on its server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DraftCopy {
+    /// The drafts folder's `remote_id`.
+    pub folder: String,
+    /// The folder's validity the id belongs to; 0 where ids are stable.
+    pub validity: u32,
+    pub remote_id: String,
+}
+
+/// A draft whose newest text its server does not have yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DraftToPush {
+    pub id: DraftId,
+    /// When the text being pushed was saved, so a later save is pushed again.
+    pub saved: i64,
+    /// The message as its copy has it, its files not read yet. Not in the outbox: its `id` is
+    /// 0. Its `message_id` is the same in every copy, empty until the first one is made.
+    pub message: Outgoing,
+}
+
+/// A message in an account's drafts folder that is no copy of a draft on the device: one
+/// written elsewhere.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerDraft {
+    pub message: MessageId,
+    pub copy: DraftCopy,
+    pub message_id: Option<String>,
 }
 
 /// Local id of a file added to a message being written.
@@ -107,12 +137,22 @@ pub struct OutgoingFile {
 /// The recipients typed into one field: addresses split by commas, semicolons or spaces.
 /// None if one of them is not an address, or there are none.
 pub fn parse_recipients(field: &str) -> Option<Vec<String>> {
-    let to: Vec<String> = field
+    let to: Vec<String> = typed(field).map(str::to_owned).collect();
+    (!to.is_empty() && to.iter().all(|a| is_address(a))).then_some(to)
+}
+
+/// The addresses typed into one field so far, leaving out what is not one yet: for a draft.
+pub fn typed_addresses(field: &str) -> Vec<String> {
+    typed(field)
+        .filter(|a| is_address(a))
+        .map(str::to_owned)
+        .collect()
+}
+
+fn typed(field: &str) -> impl Iterator<Item = &str> {
+    field
         .split(|c: char| c == ',' || c == ';' || c.is_whitespace())
         .filter(|a| !a.is_empty())
-        .map(str::to_owned)
-        .collect();
-    (!to.is_empty() && to.iter().all(|a| is_address(a))).then_some(to)
 }
 
 /// One `@` with something on both sides, and nothing that could break a header or command.
@@ -205,6 +245,15 @@ mod tests {
                 ][..]
             )
         );
+    }
+
+    #[test]
+    fn keeps_the_addresses_typed_so_far() {
+        assert_eq!(
+            typed_addresses("anna@example.com, bob@exa; <x> cat@example.net"),
+            ["anna@example.com", "bob@exa", "cat@example.net"]
+        );
+        assert!(typed_addresses(" anna ").is_empty());
     }
 
     #[test]
