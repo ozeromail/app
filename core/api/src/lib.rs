@@ -267,6 +267,7 @@ impl Core {
 
     /// The accounts in the order they were added.
     pub fn accounts(&self) -> Result<Vec<AccountItem>, CoreError> {
+        let signature = self.store.signature()?;
         Ok(self
             .store
             .accounts()?
@@ -278,7 +279,7 @@ impl Core {
                     AccountKind::Exchange => self.speaks_active_sync(a.id).unwrap_or(false),
                     AccountKind::Graph => false,
                 };
-                AccountItem::new(a, can_push)
+                AccountItem::new(a, can_push, &signature)
             })
             .collect())
     }
@@ -286,6 +287,23 @@ impl Core {
     /// Sets when the phone looks for the account's new mail with the app closed.
     pub fn set_account_new_mail(&self, account: i64, when: NewMail) -> Result<(), CoreError> {
         Ok(self.store.set_account_new_mail(AccountId(account), when)?)
+    }
+
+    /// The signature of accounts without one of their own; empty for none.
+    pub fn signature(&self) -> Result<String, CoreError> {
+        Ok(self.store.signature()?)
+    }
+
+    /// Sets the signature of accounts without one of their own; empty for none.
+    pub fn set_signature(&self, signature: String) -> Result<(), CoreError> {
+        Ok(self.store.set_signature(&signature)?)
+    }
+
+    /// Gives the account a signature of its own; empty goes back to the default one.
+    pub fn set_account_signature(&self, account: i64, signature: String) -> Result<(), CoreError> {
+        Ok(self
+            .store
+            .set_account_signature(AccountId(account), &signature)?)
     }
 
     /// Sets the account's colour to one of `account_colors`, by its place there.
@@ -497,6 +515,28 @@ impl Core {
         Ok(ids(ops))
     }
 
+    /// A blank message from the first account, signed as it signs. None picked: it goes
+    /// from the first account unless the person picks another.
+    pub fn new_draft(&self) -> Result<DraftItem, CoreError> {
+        let signature = match self.store.accounts()?.first() {
+            Some(first) => self.signs_with(first)?,
+            None => String::new(),
+        };
+        Ok(DraftItem {
+            id: 0,
+            account_id: 0,
+            to: String::new(),
+            subject: String::new(),
+            text: String::new(),
+            reply_to: None,
+            quote: String::new(),
+            saved: 0,
+            forward: None,
+            files: vec![],
+            signature,
+        })
+    }
+
     /// An answer to `message` from the account that got it, `Re: ` once: to its sender, or
     /// with `all` to everyone it went to as well.
     pub fn reply(&self, message: MessageItem, all: bool) -> Result<DraftItem, CoreError> {
@@ -513,6 +553,7 @@ impl Core {
             saved: 0,
             forward: None,
             files: vec![],
+            signature: self.signs_with(&account)?,
         })
     }
 
@@ -549,6 +590,7 @@ impl Core {
             reply_to,
             quote,
             forward,
+            signature,
             ..
         } = draft;
         let to = parse_recipients(&to).ok_or(CoreError::BadRecipients)?;
@@ -562,6 +604,7 @@ impl Core {
             to,
             subject,
             text,
+            signature,
             reply_to: reply_to.map(MessageId),
             quote,
             forward: forward.map(MessageId),
@@ -609,6 +652,7 @@ impl Core {
             to: draft.to,
             subject: draft.subject,
             text: draft.text,
+            signature: draft.signature,
             reply_to: draft.reply_to.map(MessageId),
             quote: draft.quote,
             forward: draft.forward.map(MessageId),
@@ -1264,6 +1308,11 @@ impl Core {
             saved: 0,
             forward: Some(message.id),
             files: vec![],
+            // Removed meanwhile: the send says so.
+            signature: self
+                .account(AccountId(message.account_id))
+                .and_then(|a| self.signs_with(&a))
+                .unwrap_or_default(),
         })
     }
 
@@ -1532,6 +1581,11 @@ impl Core {
                 }
             })
             .collect())
+    }
+
+    /// What goes under the mail of `account`.
+    fn signs_with(&self, account: &Account) -> Result<String, CoreError> {
+        Ok(account.signs_with(&self.store.signature()?).to_owned())
     }
 
     /// `result`, or nothing done if it failed because the account was removed meanwhile.
@@ -2626,11 +2680,16 @@ pub struct AccountItem {
     pub kind: AccountKind,
     /// The server refused the saved secret: mail stops until the person signs in again.
     pub needs_sign_in: bool,
+    /// Its own signature; empty when it uses the default one.
+    pub signature: String,
+    /// What goes under its mail: its own signature, else the default one.
+    pub signs_with: String,
 }
 
 impl AccountItem {
     /// `can_push` if its server says when mail comes; one that cannot is never `Push`.
-    fn new(a: Account, can_push: bool) -> Self {
+    /// `signature` is the default one, for accounts without their own.
+    fn new(a: Account, can_push: bool, signature: &str) -> Self {
         let new_mail = match a.new_mail {
             NewMail::Push if !can_push => NewMail::Every {
                 minutes: SOONEST_CHECK,
@@ -2638,6 +2697,7 @@ impl AccountItem {
             when => when,
         };
         Self {
+            signs_with: a.signs_with(signature).to_owned(),
             id: a.id.0,
             color: rgb(a.color),
             color_index: a.color % ACCOUNT_COLORS.len() as u32,
@@ -2650,6 +2710,7 @@ impl AccountItem {
             can_push,
             kind: a.kind,
             needs_sign_in: a.needs_sign_in,
+            signature: a.signature,
         }
     }
 }
@@ -2795,6 +2856,10 @@ pub struct DraftItem {
     /// or sending the draft leaves them be.
     #[uniffi(default = [])]
     pub files: Vec<DraftFileItem>,
+    /// Goes between the text and the quote; empty for none. A message started by the core
+    /// has its account's `signs_with`.
+    #[uniffi(default = "")]
+    pub signature: String,
 }
 
 /// A file of saved mail, offered to send on.
@@ -2880,6 +2945,7 @@ impl From<SavedDraft> for DraftItem {
             saved: d.saved / 1_000,
             forward: d.forward.map(|m| m.0),
             files: d.files.into_iter().map(DraftFileItem::from).collect(),
+            signature: d.signature,
         }
     }
 }

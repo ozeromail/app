@@ -300,6 +300,7 @@ fn sync_an_imap_inbox_into_the_list() {
             saved: 0,
             forward: None,
             files: vec![],
+            signature: String::new(),
         })
         .unwrap()
     };
@@ -559,6 +560,7 @@ fn keeps_files_with_a_draft_up_to_the_limit() {
         saved: 0,
         forward: None,
         files: vec![],
+        signature: String::new(),
     };
     let id = core.save_draft(draft.clone()).unwrap();
     let attach = |name: &str, size: u64| {
@@ -621,8 +623,67 @@ fn saves_a_gmail_account_that_can_send() {
         saved: 0,
         forward: None,
         files: vec![],
+        signature: String::new(),
     })
     .unwrap();
+}
+
+#[test]
+fn signs_with_the_accounts_signature_else_the_default_one() {
+    let db = TempDb::new("signature");
+    let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
+    let work = core
+        .add_gmail_account("work@gmail.com".into(), None)
+        .unwrap();
+    let home = core
+        .add_gmail_account("home@gmail.com".into(), None)
+        .unwrap();
+    let signs = |core: &Core| -> Vec<(String, String)> {
+        core.accounts()
+            .unwrap()
+            .into_iter()
+            .map(|a| (a.signature, a.signs_with))
+            .collect()
+    };
+    assert_eq!(signs(&core), vec![(String::new(), String::new()); 2]);
+
+    core.set_signature("--\nAnna\n".into()).unwrap();
+    core.set_account_signature(work, "--\nAnna, Work".into())
+        .unwrap();
+    assert_eq!(core.signature().unwrap(), "--\nAnna");
+    assert_eq!(
+        signs(&core),
+        [
+            ("--\nAnna, Work".into(), "--\nAnna, Work".into()),
+            (String::new(), "--\nAnna".into())
+        ]
+    );
+
+    // A new message goes from the first account, signed as it signs.
+    assert_eq!(core.new_draft().unwrap().signature, "--\nAnna, Work");
+
+    // The message keeps its own, edited or not, through undo; it goes under the text.
+    let draft = DraftItem {
+        id: 0,
+        account_id: home,
+        to: "you@example.com".into(),
+        subject: "Hi".into(),
+        text: "Text".into(),
+        reply_to: None,
+        quote: "You wrote:\n> Hi".into(),
+        saved: 0,
+        forward: None,
+        files: vec![],
+        signature: "--\nA.".into(),
+    };
+    let saved = core.save_draft(draft.clone()).unwrap();
+    assert_eq!(core.drafts().unwrap()[0].signature, "--\nA.");
+    let sent = core.send(DraftItem { id: saved, ..draft }).unwrap();
+    let back = core.undo_send(sent).unwrap().unwrap();
+    assert_eq!(back.signature, "--\nA.");
+    core.send(back).unwrap();
+    let due = core.store.due_sends(AccountId(home), i64::MAX).unwrap();
+    assert_eq!(due[0].text, "Text\n\n--\nA.\n\nYou wrote:\n> Hi");
 }
 
 #[test]
@@ -683,6 +744,7 @@ fn saves_an_exchange_account_that_sends_without_smtp() {
         saved: 0,
         forward: None,
         files: vec![],
+        signature: String::new(),
     })
     .unwrap();
 }

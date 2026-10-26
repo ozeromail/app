@@ -11,7 +11,7 @@ use ozero_domain::{
     Checkpoint, Correspondents, Draft, DraftFile, DraftId, FileId, Flags, Folder, FolderId,
     FolderRole, ListQuery, ListScope, MessageId, MessageLocation, MessageRow, Moved, NewAccount,
     NewFolder, NewMail, NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile, RecentFile,
-    SavedDraft, Sender, Server, Store, StoreError, Unsent, default_label, with_quote,
+    SavedDraft, Sender, Server, Store, StoreError, Unsent, default_label, full_text,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{
@@ -183,7 +183,7 @@ impl Store for SqliteStore {
             .prepare_cached(
                 "SELECT id, kind, email, display_name, server_host, server_port, server_user,
                         server_certificate, smtp_host, smtp_port, smtp_user, smtp_certificate,
-                        color, label, keep_days, needs_sign_in, new_mail
+                        color, label, keep_days, needs_sign_in, new_mail, signature
                  FROM account ORDER BY id",
             )
             .map_err(storage)?;
@@ -211,6 +211,7 @@ impl Store for SqliteStore {
                 keep_days: r.get(14)?,
                 needs_sign_in: r.get(15)?,
                 new_mail: r.get::<_, StoredNewMail>(16)?.0,
+                signature: r.get(17)?,
             })
         });
         rows.and_then(|rows| rows.collect()).map_err(storage)
@@ -266,6 +267,39 @@ impl Store for SqliteStore {
             )
             .map_err(storage)?;
         found(changed)
+    }
+
+    fn set_account_signature(&self, account: AccountId, signature: &str) -> Result<(), StoreError> {
+        let changed = self
+            .conn()
+            .execute(
+                "UPDATE account SET signature = ?2 WHERE id = ?1",
+                params![account.0, signature.trim_end()],
+            )
+            .map_err(storage)?;
+        found(changed)
+    }
+
+    fn signature(&self) -> Result<String, StoreError> {
+        self.conn()
+            .query_row(
+                "SELECT value FROM setting WHERE key = 'signature'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .map(Option::unwrap_or_default)
+            .map_err(storage)
+    }
+
+    fn set_signature(&self, signature: &str) -> Result<(), StoreError> {
+        self.conn()
+            .execute(
+                "INSERT OR REPLACE INTO setting (key, value) VALUES ('signature', ?1)",
+                [signature.trim_end()],
+            )
+            .map_err(storage)?;
+        Ok(())
     }
 
     fn set_account_keep(&self, account: AccountId, days: u32) -> Result<(), StoreError> {
@@ -1013,9 +1047,9 @@ impl Store for SqliteStore {
         let id = tx
             .query_row(
                 "INSERT INTO outbox (account_id, recipients, subject, text, reply_to, in_reply_to,
-                                     message_id, date, not_before, quote, forward)
+                                     message_id, date, not_before, quote, forward, signature)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
-                         (SELECT id FROM message WHERE id = ?11))
+                         (SELECT id FROM message WHERE id = ?11), ?12)
                  RETURNING id",
                 params![
                     draft.account_id.0,
@@ -1029,6 +1063,7 @@ impl Store for SqliteStore {
                     not_before,
                     draft.quote,
                     draft.forward.map(|m| m.0),
+                    draft.signature,
                 ],
                 |r| r.get(0),
             )
@@ -1059,7 +1094,8 @@ impl Store for SqliteStore {
         let tx = conn.transaction().map_err(storage)?;
         let taken = tx
             .query_row(
-                "SELECT account_id, recipients, subject, text, reply_to, quote, forward, copy
+                "SELECT account_id, recipients, subject, text, reply_to, quote, forward, copy,
+                        signature
                  FROM outbox WHERE id = ?1 AND (not_before > ?2 OR failed IS NOT NULL)",
                 params![id.0, now],
                 |r| {
@@ -1069,6 +1105,7 @@ impl Store for SqliteStore {
                         to: recipients(&r.get::<_, String>(1)?).join(", "),
                         subject: r.get(2)?,
                         text: r.get(3)?,
+                        signature: r.get(8)?,
                         reply_to: r.get::<_, Option<i64>>(4)?.map(MessageId),
                         quote: r.get(5)?,
                         forward: r.get::<_, Option<i64>>(6)?.map(MessageId),
@@ -1114,7 +1151,7 @@ impl Store for SqliteStore {
                      recipients = ?2, subject = ?3, text = ?4,
                      reply_to = (SELECT id FROM message WHERE id = ?5),
                      quote = ?6, saved = ?7,
-                     forward = (SELECT id FROM message WHERE id = ?9)
+                     forward = (SELECT id FROM message WHERE id = ?9), signature = ?10
                  WHERE id = ?8 AND gone IS NULL",
                 params![
                     draft.account_id.map(|a| a.0),
@@ -1126,6 +1163,7 @@ impl Store for SqliteStore {
                     draft.saved,
                     id.0,
                     draft.forward.map(|m| m.0),
+                    draft.signature,
                 ],
             )
             .map_err(storage)?;
@@ -1137,7 +1175,8 @@ impl Store for SqliteStore {
         let conn = self.conn();
         let rows: Result<Vec<SavedDraft>, _> = conn
             .prepare_cached(
-                "SELECT id, account_id, recipients, subject, text, reply_to, quote, saved, forward
+                "SELECT id, account_id, recipients, subject, text, reply_to, quote, saved, forward,
+                        signature
                  FROM draft WHERE gone IS NULL ORDER BY saved DESC, id DESC",
             )
             .and_then(|mut s| {
@@ -1148,6 +1187,7 @@ impl Store for SqliteStore {
                         to: r.get(2)?,
                         subject: r.get(3)?,
                         text: r.get(4)?,
+                        signature: r.get(9)?,
                         reply_to: r.get::<_, Option<i64>>(5)?.map(MessageId),
                         quote: r.get(6)?,
                         forward: r.get::<_, Option<i64>>(8)?.map(MessageId),
@@ -1328,7 +1368,8 @@ impl Store for SqliteStore {
         let conn = self.conn();
         let rows = conn
             .prepare_cached(
-                "SELECT id, recipients, subject, text, message_id, in_reply_to, date, quote, forward
+                "SELECT id, recipients, subject, text, message_id, in_reply_to, date, quote, forward,
+                        signature
                  FROM outbox
                  WHERE account_id = ?1 AND not_before <= ?2 AND failed IS NULL ORDER BY id",
             )
@@ -1338,7 +1379,11 @@ impl Store for SqliteStore {
                         id: OutboxId(r.get(0)?),
                         to: recipients(&r.get::<_, String>(1)?),
                         subject: r.get(2)?,
-                        text: with_quote(&r.get::<_, String>(3)?, &r.get::<_, String>(7)?),
+                        text: full_text(
+                            &r.get::<_, String>(3)?,
+                            &r.get::<_, String>(9)?,
+                            &r.get::<_, String>(7)?,
+                        ),
                         message_id: r.get(4)?,
                         in_reply_to: r.get(5)?,
                         date: r.get(6)?,
@@ -1636,7 +1681,7 @@ fn copy_into_sent(
         return Ok(None);
     };
     let body = Body {
-        text: with_quote(&draft.text, &draft.quote),
+        text: full_text(&draft.text, &draft.signature, &draft.quote),
         ..Body::default()
     };
     let copy: i64 = tx
@@ -2423,10 +2468,11 @@ fn files_of(conn: &Connection, draft: DraftId) -> Result<Vec<DraftFile>, StoreEr
 /// Saves a new draft; an account or answered message that is gone is left out.
 fn insert_draft(conn: &Connection, draft: &SavedDraft) -> Result<DraftId, StoreError> {
     conn.query_row(
-        "INSERT INTO draft (account_id, recipients, subject, text, reply_to, quote, saved, forward)
+        "INSERT INTO draft (account_id, recipients, subject, text, reply_to, quote, saved, forward,
+                            signature)
          VALUES ((SELECT id FROM account WHERE id = ?1), ?2, ?3, ?4,
                  (SELECT id FROM message WHERE id = ?5), ?6, ?7,
-                 (SELECT id FROM message WHERE id = ?8))
+                 (SELECT id FROM message WHERE id = ?8), ?9)
          RETURNING id",
         params![
             draft.account_id.map(|a| a.0),
@@ -2437,6 +2483,7 @@ fn insert_draft(conn: &Connection, draft: &SavedDraft) -> Result<DraftId, StoreE
             draft.quote,
             draft.saved,
             draft.forward.map(|m| m.0),
+            draft.signature,
         ],
         |r| r.get(0),
     )

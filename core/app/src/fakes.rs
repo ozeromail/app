@@ -384,6 +384,18 @@ impl Store for Memory {
         Ok(())
     }
 
+    fn set_account_signature(&self, _: AccountId, _: &str) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn signature(&self) -> Result<String, StoreError> {
+        Ok(String::new())
+    }
+
+    fn set_signature(&self, _: &str) -> Result<(), StoreError> {
+        Ok(())
+    }
+
     fn set_account_keep(&self, _: AccountId, _: u32) -> Result<(), StoreError> {
         Ok(())
     }

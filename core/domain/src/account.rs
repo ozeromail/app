@@ -52,6 +52,8 @@ pub struct Account {
     /// The server refused the saved password or Google secret: the account waits for the
     /// person to sign in again, its mail and queued work kept.
     pub needs_sign_in: bool,
+    /// The account's own signature; empty to use the default one.
+    pub signature: String,
 }
 
 /// When the phone looks for an account's new mail while the app is closed.
@@ -67,6 +69,15 @@ pub enum NewMail {
 }
 
 impl Account {
+    /// What goes under the account's mail: its own signature, else `default`.
+    pub fn signs_with<'a>(&'a self, default: &'a str) -> &'a str {
+        if self.signature.trim().is_empty() {
+            default
+        } else {
+            &self.signature
+        }
+    }
+
     /// What the apps call the account: the user's name for it, else the address. Not the
     /// sender name: a person's accounts all share it, so it would not tell them apart.
     pub fn name(&self) -> &str {
@@ -182,12 +193,19 @@ mod tests {
             keep_days: 0,
             new_mail: NewMail::Push,
             needs_sign_in: false,
+            signature: String::new(),
         };
         assert_eq!(account.name(), "a@example.com");
         account.display_name = "Anna".into();
         assert_eq!(account.name(), "a@example.com");
         account.label = "Work".into();
         assert_eq!(account.name(), "Work");
+
+        assert_eq!(account.signs_with("Anna"), "Anna");
+        account.signature = " \n".into();
+        assert_eq!(account.signs_with("Anna"), "Anna");
+        account.signature = "Anna, work".into();
+        assert_eq!(account.signs_with("Anna"), "Anna, work");
     }
 
     #[test]
