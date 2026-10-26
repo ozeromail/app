@@ -47,6 +47,8 @@ struct ComposeView: View {
     @State private var choosingPhotos = false
     @State private var choosingFiles = false
     @State private var photos: [PhotosPickerItem] = []
+    /// Files of saved mail to send on, offered in the paperclip's menu.
+    @State private var recent: [RecentFileItem] = []
     @FocusState private var focus: Field?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.sideways) private var sideways
@@ -160,6 +162,8 @@ struct ComposeView: View {
         .animation(.smooth, value: focus)
         .onAppear(perform: begin)
         .task {
+            // Only an offer, the menu goes without it; a forwarded message's files go with it already.
+            recent = ((try? await mail.recentFiles()) ?? []).filter { $0.message != start.forward }
             do {
                 accounts = try await mail.accounts()
                 if let id = start.forward { forwarded = try await mail.message(id) }
@@ -269,6 +273,16 @@ struct ComposeView: View {
         Menu {
             Button { choosingPhotos = true } label: { Label("compose_attach_photos", systemImage: "photo.on.rectangle") }
             Button { choosingFiles = true } label: { Label("compose_attach_files", systemImage: "folder") }
+            if !recent.isEmpty {
+                Section("compose_attach_recent") {
+                    ForEach(recent, id: \.self) { file in
+                        Button { addFromMail(file) } label: {
+                            Text(verbatim: attachmentTitle(file.name))
+                            Text(verbatim: "\(file.sender) · \(ByteCountFormatter.string(fromByteCount: Int64(clamping: file.size), countStyle: .file))")
+                        }
+                    }
+                }
+            }
         } label: {
             Image(systemName: "paperclip")
                 .font(.body.weight(.medium))
@@ -378,6 +392,12 @@ struct ComposeView: View {
                 self.error = "compose_file_unreadable"
             }
         }
+    }
+
+    private func addFromMail(_ file: RecentFileItem) {
+        // A second tap while it downloads adds nothing.
+        guard !adding.contains(file.name) else { return }
+        add([file.name]) { [mail] _, room in file.size > room ? nil : try await mail.downloadFile(file) }
     }
 
     private func detach(_ file: DraftFileItem) {
