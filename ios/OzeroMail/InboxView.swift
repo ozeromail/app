@@ -350,8 +350,8 @@ private struct InboxList: View {
                     .accessibilityLabel(Text("action_back"))
                 }
             }
-            // On its side, without tabs, beside the title: the short height is for the mail.
-            if model.sideways && !model.isInbox && !choosing {
+            // On its side, always beside the title: the short height is for the mail.
+            if model.sideways && !choosing {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button { model.path.append(.search) } label: { Image(systemName: "magnifyingglass") }
                         .accessibilityLabel(Text("search_prompt"))
@@ -380,7 +380,7 @@ private struct InboxList: View {
                     .padding(.horizontal, 20)
                     .transition(.opacity)
                 }
-                // On its side, without tabs, search and a new message are beside the title: the dock has nothing.
+                // On its side search and a new message are beside the title: without tabs the dock has nothing.
                 if !model.sideways || model.isInbox || choosing || (model.emptyLabel != nil && !model.messages.isEmpty) {
                     Dock(model: model, choosing: choosing, picked: picked, onMore: { more = true })
                 }
@@ -475,14 +475,8 @@ private struct Dock: View {
                 if choosing {
                     ChoiceBar(model: model, picked: picked, onMore: onMore)
                 } else if model.sideways {
-                    HStack(spacing: 8) {
-                        if model.isInbox { tabs } else { EmptyFolderButton(model: model) }
-                        // Without tabs they are beside the title; beside a message the row is only the tabs.
-                        if model.isInbox && model.pane == nil {
-                            SearchButton(model: model, size: 40)
-                            ComposeButton(model: model, size: 40)
-                        }
-                    }
+                    // Search and a new message are beside the title.
+                    if model.isInbox { tabs } else { EmptyFolderButton(model: model) }
                 } else {
                     HStack(spacing: 8) {
                         AccountsButton(accounts: model.accounts) { model.accountsOpen = true }
@@ -585,7 +579,6 @@ private struct EmptyFolderButton: View {
 /// A new message, in the accent.
 private struct ComposeButton: View {
     let model: InboxModel
-    var size: CGFloat = 48
 
     var body: some View {
         Button {
@@ -594,30 +587,10 @@ private struct ComposeButton: View {
             Image(systemName: "square.and.pencil")
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(.white)
-                .frame(width: size, height: size)
+                .frame(width: 48, height: 48)
                 .background(Color.ozeroFill, in: .rect(cornerRadius: 16))
         }
         .accessibilityLabel(Text("compose_new"))
-    }
-}
-
-/// Search as a button of its own, beside the tabs.
-private struct SearchButton: View {
-    let model: InboxModel
-    var size: CGFloat = 48
-
-    var body: some View {
-        Button {
-            model.path.append(.search)
-        } label: {
-            Image(systemName: "magnifyingglass")
-                .font(.title3)
-                .foregroundStyle(.secondary)
-                .frame(width: size, height: size)
-                .background(Color.ozeroCard, in: .rect(cornerRadius: 16))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(Text("search_prompt"))
     }
 }
 
