@@ -166,6 +166,8 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
     var password by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<Int?>(null) }
+    // What the server or the connection said, for the person's IT team.
+    var detail by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     // A password typed for one way in is not sent to another.
@@ -173,6 +175,7 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
         password = ""
         step = to
         error = null
+        detail = null
     }
     fun back() = go(
         when (val at = step) {
@@ -188,11 +191,13 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
     suspend fun attempt(signIn: suspend () -> Unit) {
         busy = true
         error = null
+        detail = null
         try {
             signIn()
             onSignedIn()
         } catch (e: CoreException) {
             error = e.text()
+            detail = e.detail()
         } finally {
             busy = false
         }
@@ -216,6 +221,7 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
 
     fun google() {
         error = null
+        detail = null
         scope.launch {
             try {
                 open(mail.startGoogle(again, email.trim().takeIf { knownService(it) == MailService.GOOGLE }))
@@ -338,7 +344,19 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
                 }
             }
         }
-        Reveal(error) { Text(stringResource(it), color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 12.dp)) }
+        Reveal(error) {
+            Column(Modifier.padding(top = 12.dp)) {
+                Text(stringResource(it), color = MaterialTheme.colorScheme.error)
+                detail?.let { cause ->
+                    Text(
+                        cause,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+            }
+        }
     }
 }
 

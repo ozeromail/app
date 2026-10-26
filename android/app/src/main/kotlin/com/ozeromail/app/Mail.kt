@@ -501,6 +501,14 @@ class Mail(private val context: Context) {
     }
 }
 
+/** What a connection or server error said, for a failed sign-in; null for the others. */
+fun CoreException.detail(): String? = when (this) {
+    is CoreException.Network -> this.detail
+    is CoreException.Tls -> this.detail
+    is CoreException.Server -> this.detail
+    else -> null
+}
+
 /** The string to show for a core error; the details only go to the log. */
 @StringRes
 fun CoreException.text(): Int {

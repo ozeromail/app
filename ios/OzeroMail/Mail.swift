@@ -625,6 +625,14 @@ extension Error {
         }
     }
 
+    /// What a connection or server error said, for a failed sign-in; nil for the others.
+    var detail: String? {
+        switch self as? CoreError {
+        case .Network(let detail)?, .Tls(let detail)?, .Server(let detail)?: return detail
+        default: return nil
+        }
+    }
+
     /// Whether the network was not there, as opposed to a server that answered.
     var isNetwork: Bool {
         if case .Network? = self as? CoreError { return true }
