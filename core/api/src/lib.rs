@@ -75,7 +75,7 @@ pub fn undo_seconds() -> u32 {
 }
 
 /// How many files of saved mail compose offers to send on.
-const RECENT_FILES: usize = 12;
+const RECENT_FILES: usize = 6;
 /// The most bytes the files a person adds to one message may take together: what Gmail takes.
 const FILE_LIMIT: u64 = 25 * 1024 * 1024;
 

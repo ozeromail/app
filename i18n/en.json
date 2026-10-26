@@ -204,5 +204,6 @@
   "compose_attach_photos": "Photos and videos",
   "compose_attach_files": "Files",
   "compose_files_too_large": "One message can carry up to 25 MB of files.",
-  "compose_file_unreadable": "Can’t read this file. Try another one."
+  "compose_file_unreadable": "Can’t read this file. Try another one.",
+  "compose_attach_recent": "From mail"
 }

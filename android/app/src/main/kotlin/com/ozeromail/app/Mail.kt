@@ -44,6 +44,7 @@ import uniffi.ozero_api.InboxTab
 import uniffi.ozero_api.Mailbox
 import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
+import uniffi.ozero_api.RecentFileItem
 import uniffi.ozero_api.UnsentItem
 import uniffi.ozero_api.googleSignIn
 
@@ -345,6 +346,14 @@ class Mail(private val context: Context) {
 
     /** Adds a file to the saved draft [draft]; it goes with the message. */
     suspend fun attachFile(draft: Long, file: PickedFile): DraftFileItem = io { core.attachFile(draft, file.name, file.mime, file.data) }
+
+    /** Files of saved mail to send on, newest first. */
+    suspend fun recentFiles(): List<RecentFileItem> = io { core.recentFiles() }
+
+    /** [file] of saved mail, downloaded now to send on. */
+    suspend fun downloadFile(file: RecentFileItem): PickedFile = io {
+        PickedFile(file.name, file.mime, core.downloadFile(file.message, file.part, password(file.accountId).orEmpty()))
+    }
 
     /** Takes a file off its draft. */
     suspend fun detachFile(file: Long) = io { core.detachFile(file) }
