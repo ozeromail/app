@@ -690,7 +690,15 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
 
     /** Closed with something written: the toast says where it went. */
     fun kept() {
-        scope.launch { note(draftSaved) }
+        scope.launch {
+            try {
+                mail.pushDrafts()
+            } catch (e: CoreException) {
+                // Saved on the phone; the next sync takes it to the server.
+                Log.w("Ozero", "drafts not pushed", e)
+            }
+            note(draftSaved)
+        }
     }
 
     /** Thrown away: the toast can bring it back, with its files, saved again to go on writing. */
