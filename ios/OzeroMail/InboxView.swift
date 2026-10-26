@@ -445,7 +445,14 @@ struct OpenRow: View {
     var body: some View {
         if model.sideways {
             Button {
-                model.open(message)
+                // While choosing, a tap chooses, as the list's own selection does.
+                if model.chosen.isEmpty {
+                    model.open(message)
+                } else if model.chosen.contains(message.id) {
+                    model.chosen.remove(message.id)
+                } else {
+                    model.chosen.insert(message.id)
+                }
             } label: {
                 MessageRow(message: message).contentShape(.rect)
             }

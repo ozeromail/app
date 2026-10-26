@@ -164,7 +164,7 @@ fun Mailboxes(
             .verticalScroll(rememberScrollState())
             .padding(vertical = 8.dp),
     ) {
-        MailboxList(accounts, folders, mailbox, drafts, onDrafts, groups, onGroups, onMailbox, onAccount = { onMore() })
+        MailboxList(accounts, folders, mailbox, drafts, onDrafts, groups, onGroups, onMailbox, onAccount = null)
         SheetAction(R.drawable.ic_more, stringResource(R.string.mailboxes_more), colors.onSurface, onMore)
     }
 }
@@ -180,7 +180,8 @@ private fun MailboxList(
     groups: Groups,
     onGroups: (Groups) -> Unit,
     onMailbox: (Mailbox) -> Unit,
-    onAccount: (AccountItem) -> Unit,
+    /** An account's settings; null leaves the button out. */
+    onAccount: ((AccountItem) -> Unit)?,
 ) {
     if (drafts > 0) FolderRow(R.drawable.ic_compose, stringResource(R.string.folder_drafts), open = false, count = drafts, onClick = onDrafts)
     Folders(
@@ -211,7 +212,7 @@ private fun Folders(
     groups: Groups,
     onMailbox: (Mailbox) -> Unit,
     onToggle: (Long) -> Unit,
-    onAccount: (AccountItem) -> Unit,
+    onAccount: ((AccountItem) -> Unit)?,
 ) {
     fun open(group: Long) = groups.open(group, accounts.size > 1)
     if (accounts.size > 1) {
@@ -228,7 +229,7 @@ private fun Folders(
             open(account.id),
             lead = { AccountDot(account.tint, size = 12.dp) },
             onToggle = { onToggle(account.id) },
-            onSettings = { onAccount(account) },
+            onSettings = onAccount?.let { { it(account) } },
         ) {
             folders.filter { it.accountId == account.id && it.role != FolderRole.DRAFTS }.sortedWith(FOLDER_ORDER).forEach { folder ->
                 // With one account its inbox is the unified one, which keeps the tabs.

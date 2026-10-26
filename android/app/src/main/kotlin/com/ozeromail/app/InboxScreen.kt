@@ -358,7 +358,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
 
     suspend fun loadFolders() {
         try {
-            folders = mail.folders()
+            val found = mail.folders()
+            if (found != folders) folders = found
         } catch (e: CoreException) {
             error = e.text()
         }
@@ -447,7 +448,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             // The first read may have failed; and an account may need signing in again now, or no more.
             if (accounts.isEmpty() || refused) loadAccounts()
             load()
-            if (wide) loadFolders()
+            // The mailboxes beside the list show what the sync listed.
+            loadFolders()
         } finally {
             syncing = false
         }
@@ -489,8 +491,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     LaunchedEffect(mailbox) {
         if (mailbox != Mail.INBOX) sync(mailbox)
     }
-    // Folders show once a sync has listed them, so they are read each time the sheet opens, and
-    // after each sync while the mailboxes are beside the list.
+    // Folders show once a sync has listed them: they are read after each sync, and each time the sheet opens.
     LaunchedEffect(accountsOpen) {
         if (!accountsOpen && folders.isNotEmpty()) return@LaunchedEffect
         loadFolders()
@@ -784,24 +785,21 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
 
     val openFolder = (mailbox as? Mailbox.Folder)?.let { box -> folders.find { it.id == box.id } }
 
-    // Back from another mailbox leads to the inbox.
-    BackHandler(enabled = screen == Screen.Inbox && mailbox != Mail.INBOX && !accountsOpen) { mailbox = Mail.INBOX }
-    // Before that, back closes the message beside the list.
-    /** The message read beside the list leaves it; its row now has a snippet. */
-    suspend fun reloadList() {
-        loadList()
-        counts()
-    }
-
+    /** Which groups of mailboxes are open, kept for next time. */
     fun keepGroups(next: Groups) {
         groups = next
         settings.groups = next
     }
 
+    // Back from another mailbox leads to the inbox.
+    BackHandler(enabled = screen == Screen.Inbox && mailbox != Mail.INBOX && !accountsOpen) { mailbox = Mail.INBOX }
+
     fun closePane() {
         open = null
-        scope.launch { reloadList() }
+        // The list now has the message's snippet.
+        scope.launch { load() }
     }
+    // Before that, back closes the message beside the list.
     BackHandler(enabled = screen == Screen.Inbox && open != null && !accountsOpen, onBack = ::closePane)
 
     /** A message on its own screen, or beside the list in a [pane]; done with it, it closes. */
@@ -920,7 +918,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         }
                         Middle(
                             LIST_MAX,
-                            if (reading != null) Modifier.width(LIST_PANE).fillMaxHeight() else Modifier.weight(1f),
+                            // On a small phone on its side the message keeps the larger part.
+                            if (reading != null) Modifier.fillMaxWidth(0.42f).widthIn(max = LIST_PANE).fillMaxHeight() else Modifier.weight(1f),
                         ) {
                             InboxList(
                                 listState = listState,
@@ -964,7 +963,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                     }
                                 },
                                 onOpen = {
-                                    if (open != null) scope.launch { reloadList() }
+                                    // The one left beside the list now has a snippet.
+                                    if (open != null) scope.launch { load() }
                                     open = it
                                 },
                                 onSwipe = ::swiped,

@@ -399,6 +399,12 @@ final class InboxModel {
         pane = message
     }
 
+    /// The message read, on its own screen or beside the list: the same across a turn of the phone.
+    private var readingID: Int64? {
+        if case .message(let message)? = path.last { return message.id }
+        return pane?.id
+    }
+
     /// Closes the message beside the list.
     func closePane() {
         pane = nil
@@ -549,12 +555,12 @@ final class InboxModel {
     func write(_ original: MessageItem, _ make: @escaping () async throws -> DraftItem) {
         guard !writing else { return }
         writing = true
-        let reading = (path.last, pane)
+        let reading = readingID
         Task {
             defer { writing = false }
             do {
                 let draft = try await make()
-                if (path.last, pane) == reading { composing = Composing(draft: draft, original: original) }
+                if readingID == reading { composing = Composing(draft: draft, original: original) }
             } catch {
                 self.error = error.textKey()
             }
