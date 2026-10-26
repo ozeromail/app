@@ -131,7 +131,8 @@ struct ComposeView: View {
                     }
                     fields
                     errorLine
-                    Divider().padding(.top, 10)
+                    // As much room under the text as at its sides, so it never touches the bar.
+                    Divider().padding(.top, 20)
                     HStack(spacing: 8) {
                         RoundButton(icon: "xmark", label: "action_close", size: 44, action: close)
                         if hasDraft { deleteButton }
