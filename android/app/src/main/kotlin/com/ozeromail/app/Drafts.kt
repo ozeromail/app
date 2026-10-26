@@ -26,10 +26,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import uniffi.ozero_api.CoreException
+import uniffi.ozero_api.DraftFileItem
 import uniffi.ozero_api.DraftItem
 
 /**
@@ -79,10 +82,23 @@ class DraftKeeper(private val mail: Mail, private val scope: CoroutineScope, id:
         mail.send(draft.copy(id = id)).also { done = true }
     }
 
-    /** Throws the saved draft away, and stops saving. */
-    fun discard() {
+    /** Adds [file] to the draft, saving [draft] first while there is no saved one to add it to. */
+    suspend fun attach(draft: DraftItem, file: PickedFile): DraftFileItem = lock.withLock {
+        if (done) throw CoreException.Gone()
+        if (id == 0L) id = mail.saveDraft(draft)
+        mail.attachFile(id, file)
+    }
+
+    /** Takes [file] off the draft, in turn with saves and the send, so a send after it goes without it. */
+    suspend fun detach(file: DraftFileItem) = lock.withLock { mail.detachFile(file.id) }
+
+    /**
+     * Throws the saved draft away, and stops saving. Gives the id it had once saves on their way
+     * have landed, 0 for none.
+     */
+    fun discard(): Deferred<Long> {
         latest.set(null)
-        scope.launch {
+        return scope.async {
             lock.withLock {
                 done = true
                 if (id != 0L) {
@@ -92,13 +108,14 @@ class DraftKeeper(private val mail: Mail, private val scope: CoroutineScope, id:
                         Log.w("Ozero", "draft not deleted", e)
                     }
                 }
+                id
             }
         }
     }
 }
 
-/** Nothing worth keeping: no text, and for a new message no recipients or subject either. */
-fun DraftItem.isBlank(): Boolean = text.isBlank() && (replyTo != null || (to.isBlank() && subject.isBlank()))
+/** Nothing worth keeping: no text or files, and for a new message no recipients or subject either. */
+fun DraftItem.isBlank(): Boolean = text.isBlank() && files.isEmpty() && (replyTo != null || (to.isBlank() && subject.isBlank()))
 
 /**
  * The drafts on the phone, last saved first; a tap opens one to go on writing. The toast

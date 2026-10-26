@@ -664,7 +664,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         scope.launch { note(draftSaved) }
     }
 
-    /** Thrown away: the toast can bring it back, saved again, to go on writing. */
+    /** Thrown away: the toast can bring it back, with its files, saved again to go on writing. */
     fun discarded(draft: DraftItem, original: MessageItem?) {
         composing = null
         scope.launch {
@@ -672,7 +672,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             if (draft.isBlank()) return@launch note(draftDeleted)
             if (!offerUndo(draftDeleted)) return@launch
             try {
-                composing = Composing(draft.copy(id = mail.saveDraft(draft)), original)
+                composing = Composing(mail.restoreDraft(draft), original)
             } catch (e: CoreException) {
                 error = e.text()
             }

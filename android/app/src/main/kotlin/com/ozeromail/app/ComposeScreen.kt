@@ -1,6 +1,10 @@
 package com.ozeromail.app
 
 import android.content.Context
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -62,10 +66,13 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
+import java.io.IOException
 import kotlinx.coroutines.launch
 import uniffi.ozero_api.AccountItem
 import uniffi.ozero_api.CoreException
+import uniffi.ozero_api.DraftFileItem
 import uniffi.ozero_api.DraftItem
+import uniffi.ozero_api.fileLimit
 import uniffi.ozero_api.ForwardLabels
 import uniffi.ozero_api.MessageItem
 
@@ -116,6 +123,10 @@ fun ComposeScreen(
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<Int?>(null) }
     var picking by remember { mutableStateOf(false) }
+    var files by remember { mutableStateOf(start.files) }
+    // The names of picked files still being read, in the order they were picked.
+    var adding by remember { mutableStateOf(emptyList<String>()) }
+    var attaching by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val keeper = remember { mail.keeper(start.id) }
@@ -139,7 +150,7 @@ fun ComposeScreen(
     val from = accounts.find { it.id == accountId } ?: accounts.firstOrNull()
 
     // Account 0 is kept as none, and opens with the first account again.
-    fun current() = DraftItem(0, accountId, to, subject, text, start.replyTo, quote, 0, start.forward)
+    fun current() = DraftItem(0, accountId, to, subject, text, start.replyTo, quote, 0, start.forward, files)
     fun keep() {
         if (changed && !finished) keeper.save(current())
     }
@@ -164,8 +175,52 @@ fun ComposeScreen(
 
     fun discard() {
         finished = true
-        keeper.discard()
-        onDiscard(current().copy(accountId = from?.id ?: accountId))
+        val thrown = current().copy(accountId = from?.id ?: accountId)
+        val id = keeper.discard()
+        // Its id, so undo brings it back with its files.
+        scope.launch { onDiscard(thrown.copy(id = id.await())) }
+    }
+
+    // Read one at a time, so a message never holds more than fits in it.
+    fun add(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        error = null
+        scope.launch {
+            val names = uris.map { pickedName(context, it) }
+            adding = adding + names
+            var done = 0
+            try {
+                for ((uri, name) in uris.zip(names)) {
+                    val room = fileLimit().toLong() - files.sumOf { it.size.toLong() }
+                    val picked = readPicked(context, uri, name, room) ?: throw CoreException.TooLarge()
+                    files = files + keeper.attach(current(), picked)
+                    adding = adding - name
+                    done++
+                }
+            } catch (e: CoreException) {
+                error = e.text()
+            } catch (_: IOException) {
+                error = R.string.compose_file_unreadable
+            } catch (_: SecurityException) {
+                error = R.string.compose_file_unreadable
+            } finally {
+                // What did not come stops showing; another pick's files of the same name stay.
+                names.drop(done).forEach { adding = adding - it }
+            }
+        }
+    }
+    val pickMedia = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(), ::add)
+    val pickFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments(), ::add)
+
+    fun detach(file: DraftFileItem) {
+        files = files - file
+        scope.launch {
+            try {
+                keeper.detach(file)
+            } catch (e: CoreException) {
+                error = e.text()
+            }
+        }
     }
 
     fun send() {
@@ -235,10 +290,11 @@ fun ComposeScreen(
                     },
                 ),
         )
+        if (files.isNotEmpty() || adding.isNotEmpty()) FileChips(files, adding, ::detach)
         // A forward is its quote, so it stays.
         val forwarding = start.forward != null
-        val files = forwarded?.takeIf { it.accountId == from?.id }?.attachments.orEmpty()
-        if (files.isNotEmpty()) AttachmentChips(files)
+        val forwardedFiles = forwarded?.takeIf { it.accountId == from?.id }?.attachments.orEmpty()
+        if (forwardedFiles.isNotEmpty()) AttachmentChips(forwardedFiles)
         if (quote.isNotEmpty()) {
             Quote(quote.takeIf { original == null }, forwarding, onRemove = { quote = "" }.takeUnless { forwarding })
         } else if (original != null && quotable) {
@@ -261,7 +317,11 @@ fun ComposeScreen(
             Text(stringResource(it), color = colors.error, modifier = Modifier.padding(horizontal = Gap.screen, vertical = 8.dp))
         }
     }
-    val ready = !busy && from != null
+    // The files still being read go with it, so it waits for them.
+    val ready = !busy && from != null && adding.isEmpty()
+    val attachTile = @Composable {
+        IconTile(R.drawable.ic_attach, stringResource(R.string.compose_attach), { attaching = true }, shape = CircleShape)
+    }
     val sendTile = @Composable {
         IconTile(
             R.drawable.ic_send,
@@ -319,8 +379,12 @@ fun ComposeScreen(
                 }
                 Column(
                     Modifier.fillMaxHeight().padding(Gap.bar),
-                    verticalArrangement = Arrangement.Bottom,
-                ) { sendTile() }
+                    verticalArrangement = Arrangement.spacedBy(Gap.inBar, Alignment.Bottom),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    attachTile()
+                    sendTile()
+                }
             }
         } else {
             Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
@@ -347,8 +411,21 @@ fun ComposeScreen(
                     Box(Modifier.weight(1f)) {
                         if (from != null) Sender(from, enabled = accounts.size > 1, onClick = { picking = true })
                     }
+                    attachTile()
                     sendTile()
                 }
+            }
+        }
+        // Where the files come from, low in reach of the thumb like every menu.
+        Sheet(visible = attaching, onClose = { attaching = false }) {
+            SheetTitle(stringResource(R.string.compose_attach))
+            SheetAction(R.drawable.ic_photo, stringResource(R.string.compose_attach_photos), colors.onSurface) {
+                attaching = false
+                pickMedia.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
+            }
+            SheetAction(R.drawable.ic_folder, stringResource(R.string.compose_attach_files), colors.onSurface) {
+                attaching = false
+                pickFiles.launch(arrayOf("*/*"))
             }
         }
         // Like every menu, the other accounts open in a sheet, low in reach of the thumb.

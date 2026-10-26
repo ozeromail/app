@@ -199,5 +199,10 @@
   "error_no_server": "No Exchange server found for this address. Enter it below: it is in your work mail settings, or your IT team knows it.",
   "error_no_ews": "There is no Exchange Web Services (EWS) at this server. Check the address: it is in your work mail settings, or your IT team knows it.",
   "error_device_blocked": "Your company's server has not let this phone in yet. Ask your IT team to allow Ozero Mail in Exchange ActiveSync, then try again.",
-  "mailboxes_more": "Accounts and settings"
+  "mailboxes_more": "Accounts and settings",
+  "compose_attach": "Attach",
+  "compose_attach_photos": "Photos and videos",
+  "compose_attach_files": "Files",
+  "compose_files_too_large": "One message can carry up to 25 MB of files.",
+  "compose_file_unreadable": "Can’t read this file. Try another one."
 }

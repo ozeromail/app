@@ -109,18 +109,25 @@ val AttachmentItem.preview: Preview
 private val AttachmentItem.extension: String get() = name.substringAfterLast('.', "").lowercase()
 
 /** The type to hand to other apps: as sent, or from the name when the sender said nothing useful. */
-private val AttachmentItem.type: String
-    get() = mime.takeUnless { it == "application/octet-stream" }
-        ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
+private val AttachmentItem.type: String get() = fileType(name, mime)
+
+/** [mime] unless it says nothing useful, else the type [name]'s extension stands for, else octet-stream. */
+fun fileType(name: String, mime: String?): String =
+    mime?.takeUnless { it == "application/octet-stream" }
+        ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substringAfterLast('.', "").lowercase())
         ?: mime
+        ?: "application/octet-stream"
+
+/** [untitled] with the extension of [mime], for a file that came without a name. */
+fun untitledName(untitled: String, mime: String): String {
+    val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime)
+    return if (ext == null) untitled else "$untitled.$ext"
+}
 
 /** A name safe to save under, with an extension when the sender gave none. */
 fun AttachmentItem.fileName(untitled: String): String {
     val clean = name.replace(UNSAFE, "_").trim('.', ' ')
-    if (clean.isEmpty()) {
-        val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime)
-        return if (ext == null) untitled else "$untitled.$ext"
-    }
+    if (clean.isEmpty()) return untitledName(untitled, mime)
     if (clean.toByteArray().size <= MAX_NAME_BYTES) return clean
     // File systems cap a name at 255 bytes; keep the extension so apps still know the type.
     val dot = clean.lastIndexOf('.')
