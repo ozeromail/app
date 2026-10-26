@@ -6,6 +6,7 @@ import android.provider.OpenableColumns
 import android.text.format.Formatter
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -27,6 +28,7 @@ import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import uniffi.ozero_api.DraftFileItem
+import uniffi.ozero_api.RecentFileItem
 
 /** A file picked to go with a message: its name, type and content. */
 class PickedFile(val name: String, val mime: String, val data: ByteArray)
@@ -81,6 +83,24 @@ fun FileChips(files: List<DraftFileItem>, adding: List<String>, onRemove: (Draft
             FileChip(attachmentTitle(file.name), Formatter.formatShortFileSize(LocalContext.current, file.size.toLong()), onRemove = { onRemove(file) })
         }
         adding.forEach { name -> FileChip(attachmentTitle(name), null, onRemove = null) }
+    }
+}
+
+/** A file of saved mail to send on: its name, then who sent it and its size. */
+@Composable
+fun RecentFileRow(file: RecentFileItem, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    SheetRow(onClick, lead = { Glyph(R.drawable.ic_attach, null, colors.onSurfaceVariant) }) {
+        Column(Modifier.weight(1f)) {
+            Text(attachmentTitle(file.name), style = Type.Row, maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
+            Text(
+                "${file.sender} · ${Formatter.formatShortFileSize(LocalContext.current, file.size.toLong())}",
+                color = colors.onSurfaceVariant,
+                style = Type.Caption,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 

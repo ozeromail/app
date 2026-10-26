@@ -75,6 +75,7 @@ import uniffi.ozero_api.DraftItem
 import uniffi.ozero_api.fileLimit
 import uniffi.ozero_api.ForwardLabels
 import uniffi.ozero_api.MessageItem
+import uniffi.ozero_api.RecentFileItem
 
 /** A blank message; account 0 is none, so compose starts from the first account. */
 val NEW_DRAFT = DraftItem(0, 0, "", "", "", null, "", 0)
@@ -127,6 +128,7 @@ fun ComposeScreen(
     // The names of picked files still being read, in the order they were picked.
     var adding by remember { mutableStateOf(emptyList<String>()) }
     var attaching by remember { mutableStateOf(false) }
+    var recent by remember { mutableStateOf(emptyList<RecentFileItem>()) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val keeper = remember { mail.keeper(start.id) }
@@ -181,18 +183,21 @@ fun ComposeScreen(
         scope.launch { onDiscard(thrown.copy(id = id.await())) }
     }
 
-    // Read one at a time, so a message never holds more than fits in it.
-    fun add(uris: List<Uri>) {
-        if (uris.isEmpty()) return
+    /**
+     * Adds the files [named] gives the names of, one at a time so a message never holds more than fits in
+     * it: [read] gets each by its index and name whole, or null when it takes more than the
+     * room left.
+     */
+    fun addFiles(named: suspend () -> List<String>, read: suspend (Int, String, Long) -> PickedFile?) {
         error = null
         scope.launch {
-            val names = uris.map { pickedName(context, it) }
+            val names = named()
             adding = adding + names
             var done = 0
             try {
-                for ((uri, name) in uris.zip(names)) {
+                for ((index, name) in names.withIndex()) {
                     val room = fileLimit().toLong() - files.sumOf { it.size.toLong() }
-                    val picked = readPicked(context, uri, name, room) ?: throw CoreException.TooLarge()
+                    val picked = read(index, name, room) ?: throw CoreException.TooLarge()
                     files = files + keeper.attach(current(), picked)
                     adding = adding - name
                     done++
@@ -209,8 +214,31 @@ fun ComposeScreen(
             }
         }
     }
+
+    fun add(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        addFiles({ uris.map { pickedName(context, it) } }) { index, name, room -> readPicked(context, uris[index], name, room) }
+    }
     val pickMedia = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(), ::add)
     val pickFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments(), ::add)
+
+    fun addFromMail(file: RecentFileItem) {
+        // A second tap while it downloads adds nothing.
+        if (file.name in adding) return
+        addFiles({ listOf(file.name) }) { _, _, room -> if (file.size.toLong() > room) null else mail.downloadFile(file) }
+    }
+    // Read each time the sheet opens, as mail keeps coming.
+    LaunchedEffect(attaching) {
+        if (attaching) {
+            try {
+                // A forwarded message's files go with it already.
+                recent = mail.recentFiles().filter { it.message != start.forward }
+            } catch (e: CoreException) {
+                // The pickers are there still; text() logs why the list is not.
+                e.text()
+            }
+        }
+    }
 
     fun detach(file: DraftFileItem) {
         files = files - file
@@ -426,6 +454,15 @@ fun ComposeScreen(
             SheetAction(R.drawable.ic_folder, stringResource(R.string.compose_attach_files), colors.onSurface) {
                 attaching = false
                 pickFiles.launch(arrayOf("*/*"))
+            }
+            if (recent.isNotEmpty()) {
+                SheetTitle(stringResource(R.string.compose_attach_recent), Modifier.padding(start = Gap.sheet, end = Gap.sheet, top = 16.dp, bottom = 4.dp))
+                recent.forEach { file ->
+                    RecentFileRow(file) {
+                        attaching = false
+                        addFromMail(file)
+                    }
+                }
             }
         }
         // Like every menu, the other accounts open in a sheet, low in reach of the thumb.
