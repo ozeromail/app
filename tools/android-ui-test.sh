@@ -23,5 +23,6 @@ rm -rf ui-films
 mkdir -p ui-films
 find app/build/outputs/connected_android_test_additional_output -path '*films/*' -type f -exec cp {} ui-films/ \; 2>/dev/null
 find app/build/outputs/androidTest-results/connected -name '*.xml' -exec cp {} ui-films/ \; 2>/dev/null
-adb logcat -d > ui-films/logcat.txt
+# A device gone offline would keep adb waiting until the job times out, and the report with it.
+timeout 60 adb logcat -d > ui-films/logcat.txt
 exit $status
