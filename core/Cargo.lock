@@ -727,6 +727,7 @@ dependencies = [
  "log",
  "nom",
  "ozero-domain",
+ "ring",
  "rustls-platform-verifier",
  "tokio",
  "tokio-rustls",
