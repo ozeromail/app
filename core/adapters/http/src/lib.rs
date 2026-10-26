@@ -101,6 +101,8 @@ pub struct HttpsClient {
     limit: usize,
     /// Refuses hosts that resolve to a private or local address.
     public_only: bool,
+    /// How much longer than `TIMEOUT` the server may take to start answering.
+    wait: Duration,
 }
 
 impl fmt::Debug for HttpsClient {
@@ -122,6 +124,7 @@ impl HttpsClient {
             conn: None,
             limit: MAX_BODY,
             public_only: false,
+            wait: Duration::ZERO,
         }
     }
 
@@ -161,6 +164,12 @@ impl HttpsClient {
         self.exchange(method, path, headers, body, true).await
     }
 
+    /// Lets the server hold the next requests up to `wait` before it answers, as a long poll
+    /// does; zero again for ordinary ones.
+    pub fn set_wait(&mut self, wait: Duration) {
+        self.wait = wait;
+    }
+
     /// Whether the next request goes over the connection the last one used: a login bound to
     /// the connection, as NTLM's, then still holds.
     pub fn is_open(&self) -> bool {
@@ -185,14 +194,14 @@ impl HttpsClient {
             Some((conn, used, certificate)) if used.elapsed() < IDLE => (conn, certificate),
             _ => self.connect().await?,
         };
-        let (response, conn, certificate) = match exchange(conn, &request).await {
+        let (response, conn, certificate) = match exchange(conn, &request, self.wait).await {
             Ok((response, conn)) => (response, conn, certificate),
             // The server closed the connection before answering: a kept-alive one it dropped
             // as idle, or a new one it dropped at once. A new one asks again, but only what is
             // safe to ask twice: a POST may have gone through.
             Err(Failure::Closed) if repeatable => {
                 let (conn, certificate) = self.connect().await?;
-                let (response, conn) = exchange(conn, &request).await?;
+                let (response, conn) = exchange(conn, &request, self.wait).await?;
                 (response, conn, certificate)
             }
             Err(Failure::Closed) => return Err(closed()),
@@ -275,11 +284,12 @@ impl From<Failure> for ProviderError {
 async fn exchange<S: AsyncRead + AsyncWrite + Unpin>(
     mut conn: Conn<S>,
     request: &[u8],
+    wait: Duration,
 ) -> Result<(Response, Option<Conn<S>>), Failure> {
     if conn.write(request).await.is_err() {
         return Err(Failure::Closed);
     }
-    let (response, keep) = conn.response().await?;
+    let (response, keep) = conn.response(wait).await?;
     Ok((response, keep.then_some(conn)))
 }
 
@@ -354,8 +364,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
     /// Reads more into `buf`; false at the end of the stream. A connection dropped without a
     /// TLS goodbye, as servers drop idle ones, is `Closed`.
     async fn fill(&mut self) -> Result<bool, Failure> {
+        self.fill_within(TIMEOUT).await
+    }
+
+    async fn fill_within(&mut self, limit: Duration) -> Result<bool, Failure> {
         let mut chunk = [0; 16 * 1024];
-        let n = match tokio::time::timeout(TIMEOUT, self.stream.read(&mut chunk)).await {
+        let n = match tokio::time::timeout(limit, self.stream.read(&mut chunk)).await {
             Ok(Ok(n)) => n,
             Ok(Err(e)) if dropped(&e) => return Err(Failure::Closed),
             Ok(Err(e)) => return Err(ProviderError::Network(e.to_string()).into()),
@@ -365,8 +379,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
         Ok(n > 0)
     }
 
-    /// The response and whether the connection can carry another request.
-    async fn response(&mut self) -> Result<(Response, bool), Failure> {
+    /// The response and whether the connection can carry another request. Its first byte
+    /// may take `wait` longer than the rest.
+    async fn response(&mut self, wait: Duration) -> Result<(Response, bool), Failure> {
         // Whether any byte of an answer came, an interim response's too.
         let mut answered = !self.buf.is_empty();
         let (mut response, length, close) = loop {
@@ -376,7 +391,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
             if self.buf.len() > MAX_HEAD {
                 return Err(protocol("response head too long").into());
             }
-            let more = match self.fill().await {
+            let within = if answered { TIMEOUT } else { TIMEOUT + wait };
+            let more = match self.fill_within(within).await {
                 Err(Failure::Closed) => false,
                 more => more?,
             };
