@@ -389,40 +389,42 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             return true
         }
         syncing = true
-        if (!quiet) error = null
+        // Whatever ends it, also the app going away mid-sync, the next sync must not wait on it for good.
         val started = SystemClock.elapsedRealtime()
-        // A refused login shows as its account's card over the list, not as an error.
-        var refused = false
-        val synced = try {
-            refused = mail.refresh(box)
-            if (box == Mail.INBOX) lastSync = started
-            offlineSince = null
-            error = null
-            true
-        } catch (e: CoreException) {
-            // Another error means the network is there.
-            val since = if (e is CoreException.Network) offlineSince ?: started else null
-            offlineSince = since
-            if (quiet && since != null && started - since < BLIP_MS) {
-                Log.w("Ozero", "sync failed", e)
-            } else {
-                error = e.text()
-            }
-            false
-        }
-        if (box == Mail.INBOX) {
-            // Whatever synced is on screen now, also when one account failed: no notification later.
-            try {
-                mail.forgetNewMail()
-            } catch (e: CoreException) {
-                error = e.text()
-            }
-            MailWorker.clearNotifications(context)
-            mail.prefetch()
-        }
-        // The first read may have failed; and an account may need signing in again now, or no more.
-        if (accounts.isEmpty() || refused) loadAccounts()
+        var synced = false
         try {
+            if (!quiet) error = null
+            // A refused login shows as its account's card over the list, not as an error.
+            var refused = false
+            synced = try {
+                refused = mail.refresh(box)
+                if (box == Mail.INBOX) lastSync = started
+                offlineSince = null
+                error = null
+                true
+            } catch (e: CoreException) {
+                // Another error means the network is there.
+                val since = if (e is CoreException.Network) offlineSince ?: started else null
+                offlineSince = since
+                if (quiet && since != null && started - since < BLIP_MS) {
+                    Log.w("Ozero", "sync failed", e)
+                } else {
+                    error = e.text()
+                }
+                false
+            }
+            if (box == Mail.INBOX) {
+                // Whatever synced is on screen now, also when one account failed: no notification later.
+                try {
+                    mail.forgetNewMail()
+                } catch (e: CoreException) {
+                    error = e.text()
+                }
+                MailWorker.clearNotifications(context)
+                mail.prefetch()
+            }
+            // The first read may have failed; and an account may need signing in again now, or no more.
+            if (accounts.isEmpty() || refused) loadAccounts()
             load()
         } finally {
             syncing = false
@@ -499,7 +501,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     // An account signed in to again starts waiting, with its new secret.
     LifecycleStartEffect(accounts.map { it.id to it.needsSignIn }) {
         val watching = scope.launch {
-            mail.watch(accounts) { sync(quiet = true) }
+            // In the screen's scope: leaving the app ends the watch, not a sync it started.
+            mail.watch(accounts) { scope.async { sync(quiet = true) }.await() }
         }
         onStopOrDispose { watching.cancel() }
     }
