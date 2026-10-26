@@ -10,8 +10,9 @@ use ozero_domain::{
     Account, AccountId, Action, Address, Body, Category, Changes, Checkpoint, Correspondents,
     Draft, DraftFile, DraftId, FileId, Flags, Folder, FolderId, FolderRole, ListQuery,
     MailProvider, MailSender, MessageBuilder, MessageId, MessageLocation, MessageParser,
-    MessageRow, Moved, NewAccount, NewFolder, NewMail, NewMessage, Older, Op, OpId, OutboxId, Outgoing,
-    OutgoingFile, ProviderError, RawMessage, RecentFile, SavedDraft, Store, StoreError, Unsent,
+    MessageRow, Moved, NewAccount, NewFolder, NewMail, NewMessage, Older, Op, OpId, OutboxId,
+    Outgoing, OutgoingFile, ProviderError, RawMessage, RecentFile, SavedDraft, Store, StoreError,
+    Unsent,
 };
 
 /// Fakes answer at once, so one poll finishes the future.
