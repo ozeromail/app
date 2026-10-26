@@ -85,18 +85,6 @@ pub async fn check(
     Ok(session)
 }
 
-/// Whether `endpoint` serves Exchange ActiveSync, asked without a login: a server that opens
-/// only it answers there and not at the EWS path.
-pub async fn active_sync(tls: Arc<ClientConfig>, endpoint: &Endpoint) -> bool {
-    answers_active_sync(HttpsClient::new(&endpoint.host, endpoint.port, tls)).await
-}
-
-pub(crate) async fn answers_active_sync(mut http: HttpsClient) -> bool {
-    http.send("OPTIONS", ACTIVE_SYNC, &[], None)
-        .await
-        .is_ok_and(|r| r.ok() || r.status == 401)
-}
-
 /// Whether the server at `endpoint` wants a client certificate from the device: it asks for
 /// one in the handshake and, tried without, refuses or breaks off. One that only asks and
 /// answers anyway does not count.

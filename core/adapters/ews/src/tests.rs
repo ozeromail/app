@@ -626,22 +626,10 @@ async fn a_refused_password_is_tried_once() {
 }
 
 #[tokio::test]
-async fn tells_a_server_with_only_active_sync() {
-    let handler: Handler = Arc::new(|r: &Seen| {
-        let status = if r.line.starts_with("OPTIONS /Microsoft-Server-ActiveSync ") {
-            401
-        } else {
-            404
-        };
-        (status, vec![], String::new())
-    });
-    let (http, _) = serving(handler.clone()).await;
+async fn tells_a_server_without_ews() {
+    let (http, _) = serving(Arc::new(|_: &Seen| (404, vec![], String::new()))).await;
     let mut ews = EwsSession::over(Client::over(http, PATH, "anna", "pw").probing());
     assert!(matches!(ews.check().await, Err(ProviderError::Rejected(_))));
-    let (http, _) = serving(handler).await;
-    assert!(discover::answers_active_sync(http).await);
-    let (http, _) = serving(Arc::new(|_: &Seen| (404, vec![], String::new()))).await;
-    assert!(!discover::answers_active_sync(http).await);
 }
 
 fn inbox() -> String {
