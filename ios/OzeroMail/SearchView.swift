@@ -7,7 +7,6 @@ struct SearchView: View {
     let model: InboxModel
 
     @State private var query = ""
-    @Environment(\.sideways) private var sideways
     /// With the query they answer, so "No messages" never shows for a query still waiting.
     @State private var found: (query: String, messages: [MessageItem])?
     @State private var error: LocalizedStringKey?
@@ -36,7 +35,7 @@ struct SearchView: View {
             }
         }
         .listStyle(.plain)
-        .middle(sideways ? Room.list : .infinity)
+        .middle(Room.list)
         .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 8) {

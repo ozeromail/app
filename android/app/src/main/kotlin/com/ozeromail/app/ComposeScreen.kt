@@ -72,9 +72,6 @@ import uniffi.ozero_api.MessageItem
 /** A blank message; account 0 is none, so compose starts from the first account. */
 val NEW_DRAFT = DraftItem(0, 0, "", "", "", null, "", 0)
 
-/** How wide the fields get on a wide screen. */
-private val COMPOSE_MAX = 680.dp
-
 /** A pause in typing this long saves the draft, so each key does not. */
 private const val SAVE_PAUSE_MS = 1_000L
 
@@ -312,7 +309,7 @@ fun ComposeScreen(
                             }
                         }
                         // With the keyboard down there is room for the message being answered.
-                        if (original != null && !keyboard) Original(mail, original, Modifier.weight(1f))
+                        if (original != null) Original(mail, original, if (keyboard) Modifier.height(0.dp) else Modifier.weight(1f))
                         Column(
                             Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = Gap.screen, vertical = 8.dp),
                             verticalArrangement = Arrangement.spacedBy(12.dp),

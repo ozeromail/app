@@ -51,24 +51,12 @@ struct MessageView: View {
                 }
             } else if sideways {
                 // The height is short: the whole page scrolls, title and all.
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Title(message: message)
-                        From(message: message, open: true, files: fileCount(message))
-                        Divider().padding(.top, 4)
-                        LetterBody(mail: mail, files: files, bodies: bodies, message: message, fill: false)
-                    }
-                }
+                ScrollView { alone(fill: false) }
             } else {
-                VStack(alignment: .leading, spacing: 0) {
-                    Title(message: message)
-                    From(message: message, open: true, files: fileCount(message))
-                    Divider().padding(.top, 4)
-                    LetterBody(mail: mail, files: files, bodies: bodies, message: message, fill: true)
-                }
+                alone(fill: true)
             }
         }
-        .middle(sideways ? Room.letter : .infinity)
+        .middle(Room.letter)
         .navigationBarTitleDisplayMode(.inline)
         // On its side the actions move to the edges, under the thumbs: the rarer ones left, the
         // answers and Done right.
@@ -122,6 +110,16 @@ struct MessageView: View {
                     self.error = error.text()
                 }
             }
+        }
+    }
+
+    /// The message on its own, under its title.
+    private func alone(fill: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Title(message: message)
+            From(message: message, open: true, files: fileCount(message))
+            Divider().padding(.top, 4)
+            LetterBody(mail: mail, files: files, bodies: bodies, message: message, fill: fill)
         }
     }
 

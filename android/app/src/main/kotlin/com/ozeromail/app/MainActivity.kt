@@ -22,7 +22,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import uniffi.ozero_api.CoreException
 
@@ -78,7 +77,7 @@ private fun App(mail: Mail) {
     Crossfade(start, animationSpec = Motion.calm(Motion.NOTE), label = "start") { s ->
         when (s) {
             Start.Loading -> Unit
-            Start.SignIn -> Middle(if (LocalRoom.current.rails) LIST_MAX else Dp.Unspecified, Modifier.fillMaxSize()) {
+            Start.SignIn -> Middle(LIST_MAX, Modifier.fillMaxSize()) {
                 SignInScreen(mail, onSignedIn = { start = Start.Inbox })
             }
             Start.Inbox -> InboxScreen(mail, onNoAccounts = { start = Start.SignIn })
