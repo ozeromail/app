@@ -213,9 +213,14 @@ private struct ShareSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
+/// A file's name as sent, or a word for it when it came without one.
+func attachmentTitle(_ name: String) -> String {
+    name.isBlank ? tr("attachment_untitled") : name
+}
+
 extension AttachmentItem {
     /// A file's name as sent, or a word for it when it came without one.
-    var title: String { name.isBlank ? tr("attachment_untitled") : name }
+    var title: String { attachmentTitle(name) }
 
     /// The kind at a glance, "PDF", from the name or else the type; nil when neither tells.
     var kind: String? {

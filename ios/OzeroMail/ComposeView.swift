@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 
 /// A message being written, and the one it answers or forwards.
@@ -40,6 +41,12 @@ struct ComposeView: View {
     @State private var forwarded: MessageItem?
     /// The draft as it opened, to tell a change from the fields being filled in.
     @State private var firstSeen: DraftItem?
+    @State private var files: [DraftFileItem] = []
+    /// The names of picked files still being read, in the order they were picked.
+    @State private var adding: [String] = []
+    @State private var choosingPhotos = false
+    @State private var choosingFiles = false
+    @State private var photos: [PhotosPickerItem] = []
     @FocusState private var focus: Field?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.sideways) private var sideways
@@ -57,7 +64,7 @@ struct ComposeView: View {
     private var current: DraftItem {
         DraftItem(
             id: 0, accountId: accountId, to: to, subject: subject, text: text, replyTo: start.replyTo, quote: quote,
-            saved: 0, forward: start.forward)
+            saved: 0, forward: start.forward, files: files)
     }
 
     /// Something written here or before, which Delete throws away.
@@ -106,7 +113,11 @@ struct ComposeView: View {
                         errorLine
                     }
                     .middle(Room.compose)
-                    sendButton.padding(12)
+                    VStack(spacing: 8) {
+                        attachButton
+                        sendButton
+                    }
+                    .padding(12)
                 }
             } else {
                 VStack(spacing: 0) {
@@ -124,6 +135,7 @@ struct ComposeView: View {
                         if hasDraft { deleteButton }
                         sender
                         Spacer(minLength: 0)
+                        attachButton
                         sendButton
                     }
                     .padding(.horizontal, 12)
@@ -133,6 +145,17 @@ struct ComposeView: View {
         }
         .onChange(of: focus) { _, now in
             if now == nil { unfolded = false }
+        }
+        // Photos come as JPEG and H.264, which every mail app opens.
+        .photosPicker(isPresented: $choosingPhotos, selection: $photos, matching: .any(of: [.images, .videos]),
+                      preferredItemEncoding: .compatible)
+        .onChange(of: photos) { _, picked in
+            guard !picked.isEmpty else { return }
+            photos = []
+            addPhotos(picked)
+        }
+        .fileImporter(isPresented: $choosingFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+            if case .success(let urls) = result { addFiles(urls) }
         }
         .animation(.smooth, value: focus)
         .onAppear(perform: begin)
@@ -183,10 +206,13 @@ struct ComposeView: View {
             TextField("compose_text", text: $text, axis: .vertical)
                 .lineLimit(focus == nil ? 7...14 : 3...7)
                 .focused($focus, equals: .text)
+            if !files.isEmpty || !adding.isEmpty {
+                FileChips(files: files, adding: adding, onRemove: detach)
+            }
             // A forward is its quote, so it stays.
             let forwarding = start.forward != nil
-            let files = forwarded.flatMap { $0.accountId == from?.id ? $0.attachments : nil } ?? []
-            if !files.isEmpty { AttachmentChips(names: files) }
+            let forwardedFiles = forwarded.flatMap { $0.accountId == from?.id ? $0.attachments : nil } ?? []
+            if !forwardedFiles.isEmpty { AttachmentChips(names: forwardedFiles) }
             if !quote.isEmpty {
                 QuoteLine(text: composing.original == nil ? quote : nil, forwarding: forwarding,
                           onRemove: forwarding ? nil : { quote = "" })
@@ -238,6 +264,21 @@ struct ComposeView: View {
         }
     }
 
+    /// Where the files come from, in a menu like the sender's.
+    private var attachButton: some View {
+        Menu {
+            Button { choosingPhotos = true } label: { Label("compose_attach_photos", systemImage: "photo.on.rectangle") }
+            Button { choosingFiles = true } label: { Label("compose_attach_files", systemImage: "folder") }
+        } label: {
+            Image(systemName: "paperclip")
+                .font(.body.weight(.medium))
+                .foregroundStyle(.primary)
+                .frame(width: 44, height: 44)
+                .background(Color.ozeroCard, in: .circle)
+        }
+        .accessibilityLabel(Text("compose_attach"))
+    }
+
     private var sendButton: some View {
         Button(action: send) {
             Image(systemName: "paperplane.fill")
@@ -245,7 +286,8 @@ struct ComposeView: View {
                 .frame(width: 56, height: 44)
                 .background(Color.ozeroFill, in: .capsule)
         }
-        .disabled(busy || from == nil)
+        // The files still being read go with it, so it waits for them.
+        .disabled(busy || from == nil || !adding.isEmpty)
         .accessibilityLabel(Text("compose_send"))
     }
 
@@ -256,6 +298,7 @@ struct ComposeView: View {
         text = start.text
         accountId = start.accountId
         quote = start.quote
+        files = start.files
         keeper = DraftKeeper(mail: mail, id: start.id)
         firstSeen = current
     }
@@ -271,10 +314,81 @@ struct ComposeView: View {
 
     private func discard() {
         finished = true
-        keeper?.discard()
-        var thrown = current
-        thrown.accountId = from?.id ?? accountId
-        onDiscard(thrown)
+        var draft = current
+        draft.accountId = from?.id ?? accountId
+        let thrown = draft
+        Task {
+            // Its id, so undo brings it back with its files.
+            let id = await keeper?.discard() ?? 0
+            var discarded = thrown
+            discarded.id = id
+            onDiscard(discarded)
+        }
+    }
+
+    private func addPhotos(_ items: [PhotosPickerItem]) {
+        add(items.map { _ in "" }) { index, _ in
+            // Nil when the library has no photo or video for it to hand over.
+            guard let media = try await items[index].loadTransferable(type: PickedMedia.self) else {
+                throw CocoaError(.fileReadUnknown)
+            }
+            return media.file
+        }
+    }
+
+    private func addFiles(_ urls: [URL]) {
+        add(urls.map(\.lastPathComponent)) { index, room in
+            let url = urls[index]
+            return try await Task.detached {
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                return try PickedFile.read(url, room: room)
+            }.value
+        }
+    }
+
+    /// Adds picked files one at a time, so a message never holds more than fits: `read` gives
+    /// each whole, or nil when it takes more than the room left; `names` show meanwhile.
+    private func add(_ names: [String], read: @escaping (Int, UInt64) async throws -> PickedFile?) {
+        guard let keeper, !names.isEmpty else { return }
+        error = nil
+        adding += names
+        Task {
+            var done = 0
+            // What did not come stops showing; another pick's files of the same name stay.
+            defer {
+                for name in names.dropFirst(done) {
+                    if let shown = adding.firstIndex(of: name) { adding.remove(at: shown) }
+                }
+            }
+            do {
+                for index in names.indices {
+                    let room = fileLimit() - min(fileLimit(), files.reduce(0) { $0 + $1.size })
+                    // A photo is read against the whole limit, so it is measured here too.
+                    guard let file = try await read(index, room), UInt64(file.data.count) <= room else {
+                        throw CoreError.TooLarge
+                    }
+                    files.append(try await keeper.attach(current, file))
+                    if let shown = adding.firstIndex(of: names[index]) { adding.remove(at: shown) }
+                    done += 1
+                }
+            } catch let error as CoreError {
+                self.error = error.text()
+            } catch {
+                self.error = "compose_file_unreadable"
+            }
+        }
+    }
+
+    private func detach(_ file: DraftFileItem) {
+        files.removeAll { $0.id == file.id }
+        Task {
+            do {
+                try await keeper?.detach(file)
+            } catch {
+                self.error = error.text()
+            }
+        }
     }
 
     private func send() {
@@ -444,12 +558,41 @@ final class DraftKeeper: Sendable {
             return try result.get()
         }
 
-        func discard(with mail: Mail) {
+        func attach(_ draft: DraftItem, _ file: PickedFile, with mail: Mail) async throws -> DraftFileItem {
+            var result: Result<DraftFileItem, Error> = .failure(CancellationError())
+            await queue { state in
+                do {
+                    guard !state.done else { throw CoreError.Gone }
+                    if state.id == 0 { state.id = try await mail.saveDraft(draft) }
+                    result = .success(try await mail.attachFile(draft: state.id, file))
+                } catch {
+                    result = .failure(error)
+                }
+            }.value
+            return try result.get()
+        }
+
+        func detach(_ file: DraftFileItem, with mail: Mail) async throws {
+            var result: Result<Void, Error> = .success(())
+            await queue { _ in
+                do {
+                    try await mail.detachFile(file.id)
+                } catch {
+                    result = .failure(error)
+                }
+            }.value
+            try result.get()
+        }
+
+        func discard(with mail: Mail) async -> Int64 {
             latest = nil
             done = true
-            _ = queue { state in
+            var thrown: Int64 = 0
+            await queue { state in
+                thrown = state.id
                 if state.id != 0 { try? await mail.deleteDraft(state.id) }
-            }
+            }.value
+            return thrown
         }
     }
 
@@ -468,9 +611,20 @@ final class DraftKeeper: Sendable {
         try await state.send(draft, with: mail)
     }
 
-    /// Throws the saved draft away, and stops saving.
-    func discard() {
-        Task { await state.discard(with: mail) }
+    /// Adds `file` to the draft, saving `draft` first while there is no saved one to add it to.
+    func attach(_ draft: DraftItem, _ file: PickedFile) async throws -> DraftFileItem {
+        try await state.attach(draft, file, with: mail)
+    }
+
+    /// Takes `file` off the draft, in turn with saves and the send, so a send after it goes
+    /// without it.
+    func detach(_ file: DraftFileItem) async throws {
+        try await state.detach(file, with: mail)
+    }
+
+    /// Throws the saved draft away, and stops saving. Returns the id it had, 0 for none.
+    func discard() async -> Int64 {
+        await state.discard(with: mail)
     }
 }
 
