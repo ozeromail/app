@@ -17,7 +17,7 @@ use ozero_domain::{
     Changes, Checkpoint, Flags, FolderRole, MailProvider, MailSender, Moved, NewFolder, Older,
     ProviderError, ProviderState, RawMessage, Server,
 };
-use tokio_rustls::rustls::ClientConfig;
+use ozero_http::Tls;
 
 use crate::client::Client;
 use crate::discover::ACTIVE_SYNC;
@@ -82,7 +82,7 @@ impl EasSession {
     /// For the ActiveSync endpoint at `server`, signed in as `server.user`, keeping its sync
     /// keys in `state`.
     pub fn new(
-        tls: Arc<ClientConfig>,
+        tls: impl Into<Tls>,
         server: &Server,
         password: &str,
         state: Arc<dyn ProviderState>,

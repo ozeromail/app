@@ -1,13 +1,11 @@
 //! One HTTPS endpoint of an Exchange server, with the login it asks for: Basic, or NTLM bound
 //! to the connection and, for Extended Protection, to the server's certificate.
 
-use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ozero_domain::{ProviderError, base64, decode_base64};
-use ozero_http::{Body, HttpsClient, Response};
+use ozero_http::{Body, HttpsClient, Response, Tls};
 use ring::rand::{SecureRandom, SystemRandom};
-use tokio_rustls::rustls::ClientConfig;
 
 use crate::ntlm;
 
@@ -35,7 +33,7 @@ pub struct Client {
 
 impl Client {
     pub fn new(
-        tls: Arc<ClientConfig>,
+        tls: impl Into<Tls>,
         host: &str,
         port: u16,
         path: &str,

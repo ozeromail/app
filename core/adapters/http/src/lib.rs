@@ -5,6 +5,8 @@ mod fetch;
 
 pub use fetch::{MAX_IMAGE, image, split};
 
+use std::fmt;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -53,26 +55,79 @@ pub struct Body<'a> {
     pub data: &'a [u8],
 }
 
+/// A connection's bytes, as TLS carries them.
+pub trait Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync {}
+
+impl<T: AsyncRead + AsyncWrite + Unpin + Send + Sync> Stream for T {}
+
+/// A TLS connection opened by a `Tunnel`, and the server's certificate on it as DER.
+pub type Opened = (Box<dyn Stream>, Vec<u8>);
+
+/// Opens TLS connections without rustls, such as through the platform's own TLS: rustls does
+/// not renegotiate, as some servers do to ask for a client certificate after the request.
+pub trait Tunnel: Send + Sync {
+    /// A connection to `host:port` whose server certificate has passed the checks.
+    fn open<'a>(
+        &'a self,
+        host: &'a str,
+        port: u16,
+    ) -> Pin<Box<dyn Future<Output = Result<Opened, ProviderError>> + Send + 'a>>;
+}
+
+/// How a client opens its TLS connections.
+#[derive(Clone)]
+pub enum Tls {
+    Rustls(Arc<ClientConfig>),
+    Tunnel(Arc<dyn Tunnel>),
+}
+
+impl From<Arc<ClientConfig>> for Tls {
+    fn from(config: Arc<ClientConfig>) -> Self {
+        Self::Rustls(config)
+    }
+}
+
+impl fmt::Debug for Tls {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Rustls(_) => "Rustls",
+            Self::Tunnel(_) => "Tunnel",
+        })
+    }
+}
+
 /// Talks to one host over TLS on port 443 or the given one.
-#[derive(Debug)]
 pub struct HttpsClient {
     host: String,
     port: u16,
-    tls: Arc<ClientConfig>,
-    conn: Option<(Conn<TlsStream<TcpStream>>, Instant)>,
+    tls: Tls,
+    conn: Option<(Conn<Box<dyn Stream>>, Instant)>,
+    /// The server's certificate on `conn`, as DER.
+    certificate: Option<Vec<u8>>,
     /// Largest response body.
     limit: usize,
     /// Refuses hosts that resolve to a private or local address.
     public_only: bool,
 }
 
+impl fmt::Debug for HttpsClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HttpsClient")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("tls", &self.tls)
+            .finish_non_exhaustive()
+    }
+}
+
 impl HttpsClient {
-    pub fn new(host: &str, port: u16, tls: Arc<ClientConfig>) -> Self {
+    pub fn new(host: &str, port: u16, tls: impl Into<Tls>) -> Self {
         Self {
             host: host.to_owned(),
             port,
-            tls,
+            tls: tls.into(),
             conn: None,
+            certificate: None,
             limit: MAX_BODY,
             public_only: false,
         }
@@ -122,9 +177,7 @@ impl HttpsClient {
 
     /// The server's certificate on the open connection, as DER.
     pub fn certificate(&self) -> Option<Vec<u8>> {
-        let (conn, _) = self.conn.as_ref()?;
-        let (_, tls) = conn.stream.get_ref();
-        Some(tls.peer_certificates()?.first()?.to_vec())
+        self.conn.as_ref().and(self.certificate.clone())
     }
 
     async fn exchange(
@@ -155,7 +208,32 @@ impl HttpsClient {
         Ok(response)
     }
 
-    async fn connect(&self) -> Result<Conn<TlsStream<TcpStream>>, ProviderError> {
+    /// Opens a new connection and keeps its server certificate.
+    async fn connect(&mut self) -> Result<Conn<Box<dyn Stream>>, ProviderError> {
+        let (stream, certificate) = match &self.tls {
+            Tls::Rustls(config) => {
+                let tls = self.handshake(config.clone()).await?;
+                let (_, session) = tls.get_ref();
+                let certificate = session.peer_certificates().and_then(|c| c.first());
+                let certificate = certificate.map(|c| c.to_vec());
+                (Box::new(tls) as Box<dyn Stream>, certificate)
+            }
+            Tls::Tunnel(tunnel) => {
+                let opened = tokio::time::timeout(TIMEOUT, tunnel.open(&self.host, self.port));
+                let (stream, certificate) = opened
+                    .await
+                    .map_err(|_| ProviderError::Network("timed out".into()))??;
+                (stream, Some(certificate))
+            }
+        };
+        self.certificate = certificate;
+        Ok(Conn::new(stream, self.limit))
+    }
+
+    async fn handshake(
+        &self,
+        config: Arc<ClientConfig>,
+    ) -> Result<TlsStream<TcpStream>, ProviderError> {
         let name = ServerName::try_from(self.host.clone())
             .map_err(|_| ProviderError::Network(format!("bad host name {}", self.host)))?;
         let tcp = if self.public_only {
@@ -171,8 +249,7 @@ impl HttpsClient {
         } else {
             timed(TcpStream::connect((self.host.as_str(), self.port))).await?
         };
-        let tls = TlsConnector::from(self.tls.clone());
-        Ok(Conn::new(timed(tls.connect(name, tcp)).await?, self.limit))
+        timed(TlsConnector::from(config).connect(name, tcp)).await
     }
 }
 

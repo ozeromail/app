@@ -23,8 +23,8 @@ ozero-ews.workspace = true
 ozero-http.workspace = true
 ozero-store-sqlite.workspace = true
 # Makes sure the runtime UniFFI polls async exports on has IO and timers; `sync` for locks,
-# `macros` to log in to IMAP and SMTP at once.
-tokio = { version = "1.53", default-features = false, features = ["rt", "net", "time", "sync", "macros"] }
+# `macros` to log in to IMAP and SMTP at once, `io-util` to move the platform's TLS bytes.
+tokio = { version = "1.53", default-features = false, features = ["rt", "net", "time", "sync", "macros", "io-util"] }
 uniffi = { workspace = true, features = ["tokio"] }
 # Log records; only Android has a logger for them, which writes to logcat.
 log = "0.4"

@@ -23,6 +23,7 @@ use ozero_domain::{
 };
 use ozero_ews::{EasSession, EwsSession, discover};
 use ozero_gmail::{GmailSession, oauth};
+use ozero_http::Tls;
 use ozero_imap::rustls::ClientConfig;
 use ozero_imap::rustls::client::ResolvesClientCert;
 use ozero_imap::{ImapSession, RefusedCertificates};
@@ -153,6 +154,8 @@ pub struct Core {
     tls: OnceLock<Arc<ClientConfig>>,
     /// The platform's client certificates, once the app has given them.
     certificates: OnceLock<Arc<dyn ClientCertificates>>,
+    /// The platform's TLS, for Exchange with a client certificate, once the app has given it.
+    platform_tls: OnceLock<Arc<dyn PlatformTls>>,
     /// TLS settings by the client certificate they offer and the server certificate the
     /// person trusted, built on first use.
     certificate_tls: Mutex<HashMap<TlsKey, Arc<ClientConfig>>>,
@@ -222,6 +225,7 @@ impl Core {
             parser: MimeParser::default(),
             tls: OnceLock::new(),
             certificates: OnceLock::new(),
+            platform_tls: OnceLock::new(),
             certificate_tls: Mutex::default(),
             busy: Mutex::default(),
             waiting: Mutex::default(),
@@ -236,6 +240,12 @@ impl Core {
     /// start.
     pub fn use_certificates(&self, certificates: Arc<dyn ClientCertificates>) {
         let _ = self.certificates.set(certificates);
+    }
+
+    /// Lets ActiveSync with a client certificate go through the platform's TLS, which
+    /// renegotiates when a server asks for the certificate late; the app calls it once, at start.
+    pub fn use_platform_tls(&self, tls: Arc<dyn PlatformTls>) {
+        let _ = self.platform_tls.set(tls);
     }
 
     /// Whether actions the server refused were undone on the device since this was last
@@ -799,6 +809,9 @@ impl Core {
         let refused = Arc::new(RefusedCertificates::default());
         let client = self.client_certificate(certificate.as_deref())?;
         let tls = tls_config(client, trusted, Some(refused.clone()))?;
+        let active_sync = self
+            .tunnel(certificate.as_deref(), trusted, Some(refused.clone()))?
+            .unwrap_or_else(|| tls.clone().into());
         let added = self
             .add_exchange(
                 email,
@@ -806,7 +819,7 @@ impl Core {
                 server,
                 login,
                 certificate,
-                tls,
+                (tls, active_sync),
                 password,
             )
             .await;
@@ -1516,7 +1529,7 @@ impl Core {
         }
         let opened = self.signed_in(account, async {
             Ok(match account.kind {
-                AccountKind::Imap => Remote::Imap(self.connect(account, secret).await?),
+                AccountKind::Imap => Remote::Imap(Box::new(self.connect(account, secret).await?)),
                 AccountKind::Gmail => {
                     let token = self.access_token(account.id, secret).await?;
                     Remote::Gmail(GmailSession::new(self.tls()?, &token))
@@ -1592,7 +1605,7 @@ impl Core {
         email: String,
         display_name: String,
         server: Server,
-        tls: Arc<ClientConfig>,
+        tls: Tls,
         password: String,
     ) -> Result<i64, CoreError> {
         let kept = Arc::new(Kept::default());
@@ -1637,7 +1650,7 @@ impl Core {
         server: Option<String>,
         login: Option<String>,
         certificate: Option<String>,
-        tls: Arc<ClientConfig>,
+        (tls, active_sync): (Arc<ClientConfig>, Tls),
         password: String,
     ) -> Result<i64, CoreError> {
         if self.exists(&email)? {
@@ -1668,7 +1681,13 @@ impl Core {
                             certificate,
                         };
                         return match self
-                            .add_active_sync_account(email, display_name, server, tls, password)
+                            .add_active_sync_account(
+                                email,
+                                display_name,
+                                server,
+                                active_sync,
+                                password,
+                            )
                             .await
                         {
                             Err(CoreError::Server { .. }) => Err(CoreError::NoEws),
@@ -1732,7 +1751,11 @@ impl Core {
         let server = account.server.as_ref().ok_or_else(|| CoreError::Storage {
             detail: "no Exchange server".into(),
         })?;
-        let tls = self.tls_for(server.certificate.as_deref(), self.trusted(account.id)?)?;
+        let (certificate, trusted) = (server.certificate.as_deref(), self.trusted(account.id)?);
+        let tls = match self.tunnel(certificate, trusted, None)? {
+            Some(tunnel) => tunnel,
+            None => self.tls_for(certificate, trusted)?.into(),
+        };
         let state = Arc::new(AccountState {
             store: self.store.clone(),
             account: account.id,
@@ -1983,6 +2006,27 @@ impl Core {
         Ok(tls)
     }
 
+    /// The platform's TLS offering `certificate`, when there is one and the app gave it.
+    fn tunnel(
+        &self,
+        certificate: Option<&str>,
+        trusted: Option<[u8; 32]>,
+        refused: Option<Arc<RefusedCertificates>>,
+    ) -> Result<Option<Tls>, CoreError> {
+        let (Some(certificate), Some(tls)) = (certificate, self.platform_tls.get()) else {
+            return Ok(None);
+        };
+        ready()?;
+        let checks = ozero_imap::platform_checks(trusted, refused).map_err(|e| CoreError::Tls {
+            detail: e.to_string(),
+        })?;
+        Ok(Some(Tls::Tunnel(Arc::new(tunnel::Platform {
+            tls: tls.clone(),
+            certificate: certificate.to_owned(),
+            checks,
+        }))))
+    }
+
     /// Offers the platform's client certificate `certificate` to a server that asks.
     fn client_certificate(
         &self,
@@ -2077,7 +2121,7 @@ impl ProviderState for Kept {
 
 /// The open connection to an account's server.
 enum Remote {
-    Imap(ImapSession),
+    Imap(Box<ImapSession>),
     Gmail(GmailSession),
     Ews(EwsSession),
     Eas(EasSession),
@@ -2316,16 +2360,21 @@ fn tls_config(
     trusted: Option<[u8; 32]>,
     refused: Option<Arc<RefusedCertificates>>,
 ) -> Result<Arc<ClientConfig>, CoreError> {
-    // Without the JNI setup the Android verifier panics on first use; refuse cleanly instead.
+    ready()?;
+    ozero_imap::platform_tls(client, trusted, refused).map_err(|e| CoreError::Tls {
+        detail: e.to_string(),
+    })
+}
+
+/// Without the JNI setup the Android verifier panics on first use; refuse cleanly instead.
+fn ready() -> Result<(), CoreError> {
     #[cfg(target_os = "android")]
     if !android::READY.load(std::sync::atomic::Ordering::Acquire) {
         return Err(CoreError::Tls {
             detail: "CoreNative.init was not called".into(),
         });
     }
-    ozero_imap::platform_tls(client, trusted, refused).map_err(|e| CoreError::Tls {
-        detail: e.to_string(),
-    })
+    Ok(())
 }
 
 #[cfg(target_os = "android")]
@@ -3091,6 +3140,10 @@ impl From<SyncError> for CoreError {
 mod certificate;
 
 pub use certificate::{ClientCertificates, Signing};
+
+mod tunnel;
+
+pub use tunnel::{PlatformSocket, PlatformTls, PlatformTlsError, ServerChecks};
 
 #[cfg(test)]
 mod tests;

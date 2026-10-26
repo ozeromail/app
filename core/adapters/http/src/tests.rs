@@ -210,3 +210,39 @@ async fn takes_a_connection_dropped_before_answering_as_closed() {
     let answer = exchange(Conn::new(Dropped, MAX_BODY), b"GET / HTTP/1.1\r\n\r\n").await;
     assert!(matches!(answer, Err(Failure::Closed)));
 }
+
+/// Opens connections whose server has already answered once; it keeps their server ends.
+#[derive(Default)]
+struct Answered(std::sync::Mutex<Vec<DuplexStream>>);
+
+impl Tunnel for Answered {
+    fn open<'a>(
+        &'a self,
+        host: &'a str,
+        port: u16,
+    ) -> Pin<Box<dyn Future<Output = Result<Opened, ProviderError>> + Send + 'a>> {
+        Box::pin(async move {
+            assert_eq!((host, port), ("mail.example.com", 443));
+            let (client, mut server) = duplex(1 << 16);
+            server
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+                .await
+                .unwrap();
+            self.0.lock().unwrap().push(server);
+            Ok((Box::new(client) as Box<dyn Stream>, b"leaf".to_vec()))
+        })
+    }
+}
+
+#[tokio::test]
+async fn sends_through_a_tunnel_and_knows_its_certificate() {
+    let mut http = HttpsClient::new(
+        "mail.example.com",
+        443,
+        Tls::Tunnel(Arc::new(Answered::default())),
+    );
+    assert_eq!(http.certificate(), None);
+    let response = http.send("GET", "/", &[], None).await.unwrap();
+    assert_eq!(response.body, b"ok");
+    assert_eq!(http.certificate(), Some(b"leaf".to_vec()));
+}
