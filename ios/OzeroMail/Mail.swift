@@ -3,7 +3,6 @@ import UniformTypeIdentifiers
 import SwiftUI
 import os
 
-/// What the screens need from the core. The async calls run off the main actor.
 /// How one account's check went.
 private enum Checked: Sendable {
     case done
@@ -16,6 +15,7 @@ struct PartlyFailed: Error {
     let accounts: [String]
 }
 
+/// What the screens need from the core. The async calls run off the main actor.
 final class Mail: Sendable {
     static let imapsPort: UInt16 = 993
     static let smtpsPort: UInt16 = 465
@@ -490,19 +490,23 @@ final class Mail: Sendable {
                 try await core.syncMailbox(account: account.id, secret: password, mailbox: mailbox)
                 return .done
             } catch {
-                // A refused login marks its account, as `eachAccount` lets it.
+                // A refused login marks its account, as `eachAccount` lets it; leaving the app
+                // ends the check quietly.
+                if error is CancellationError { throw error }
                 if case CoreError.Auth? = error as? CoreError { throw error }
                 return .failed(account.name, error)
             }
         }
-        var failed: [(name: String, error: any Error)] = []
-        for case .failed(let name, let error) in checked {
-            failed.append((name, error))
+        let failed = checked.compactMap { checked -> (name: String, error: any Error)? in
+            guard case .failed(let name, let error) = checked else { return nil }
+            return (name, error)
         }
         if let first = failed.first {
-            // Named only while another account got through: else the whole phone is offline.
-            if failed.count < checked.count { throw PartlyFailed(error: first.error, accounts: failed.map(\.name)) }
-            throw first.error
+            // Named only while another account got through, and only those that failed the way
+            // the error shown says: else the whole phone is offline.
+            guard failed.count < checked.count else { throw first.error }
+            let key = first.error.textKey()
+            throw PartlyFailed(error: first.error, accounts: failed.filter { $0.error.textKey() == key }.map(\.name))
         }
         return try core.accounts().contains(where: \.needsSignIn)
     }

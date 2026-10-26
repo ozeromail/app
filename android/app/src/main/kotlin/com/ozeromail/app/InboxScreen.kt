@@ -448,13 +448,15 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             if (!quiet) error = null
             // A refused login shows as its account's card over the list, not as an error.
             var refused = false
+            // The accounts a failure is about, when others got through.
+            var named = emptyList<String>()
             synced = try {
                 // Snoozed mail due by now is on top before the new mail comes.
                 if (box == Mail.INBOX) {
                     mail.wake()
                     mail.scheduleWake()
                 }
-                refused = mail.refresh(box)
+                refused = mail.refresh(box) { named = it }
                 if (box == Mail.INBOX) {
                     lastSync = started
                     checkedAt = System.currentTimeMillis()
@@ -469,7 +471,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 if (quiet && since != null && started - since < BLIP_MS) {
                     Log.w("Ozero", "sync failed", e)
                 } else {
-                    fail(e, mail.failing)
+                    fail(e, named)
                 }
                 false
             }
@@ -2477,8 +2479,10 @@ private class ListPull(private val threshold: Float, private val scope: Coroutin
     }
 }
 
-/** A line over the dock: what the app is doing, or what went wrong, and whether a new check may help. */
-/** A line over the dock; with [account], about that account alone. */
+/**
+ * A line over the dock: what the app is doing, or what went wrong, and whether a new check may
+ * help; with [account], what went wrong for those accounts alone.
+ */
 private data class Status(val text: Int, val retry: Boolean = false, val account: String? = null)
 
 /** A page as it was left: its [tab], the rows from the top one on screen, and where that one was. */

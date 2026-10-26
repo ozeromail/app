@@ -429,32 +429,29 @@ class Mail(private val context: Context) {
     /**
      * Syncs [mailbox] in all accounts at once; the first failure is thrown once every one has
      * finished. A refused login is not one: it marks its account. True if an account needs
-     * signing in again.
+     * signing in again. Before a failure is thrown, [onFailing] gets the names of the accounts
+     * it is about if another account got through; else the whole phone is offline.
      */
-    suspend fun refresh(mailbox: Mailbox = INBOX): Boolean {
-        val failed = ConcurrentLinkedQueue<String>()
-        val asked = AtomicInteger()
+    suspend fun refresh(mailbox: Mailbox = INBOX, onFailing: (List<String>) -> Unit = {}): Boolean {
+        val failed = ConcurrentLinkedQueue<Pair<String, CoreException>>()
+        val done = AtomicInteger()
         try {
             eachAccount(mailbox) { account, password ->
-                asked.incrementAndGet()
                 try {
                     core.syncMailbox(account.id, password, mailbox)
+                    done.incrementAndGet()
                 } catch (e: CoreException) {
-                    if (e !is CoreException.Auth) failed += account.name
+                    if (e !is CoreException.Auth) failed += account.name to e
                     throw e
                 }
             }
-        } finally {
-            // Named only while another account got through: else the whole phone is offline.
-            failing = failed.toList().takeIf { it.size < asked.get() }.orEmpty()
+        } catch (e: CoreException) {
+            // Only those that failed the way the error shown says.
+            if (done.get() > 0) onFailing(failed.filter { it.second.javaClass == e.javaClass }.map { it.first })
+            throw e
         }
         return io { core.accounts().any { it.needsSignIn } }
     }
-
-    /** The accounts whose last [refresh] failed while others got through, by name. */
-    @Volatile
-    var failing: List<String> = emptyList()
-        private set
 
     /**
      * Runs [call] at once for every account with mail in [mailbox], but those that need signing

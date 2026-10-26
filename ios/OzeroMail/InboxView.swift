@@ -204,23 +204,22 @@ private struct InboxList: View {
         return nil
     }
 
-    /// What the line over the dock says, and whether a new check may help; `text` when it names
-    /// accounts.
-    private var status: (key: String, retry: Bool, text: String?)? {
+    /// What the line over the dock says, and whether a new check may help.
+    private var status: (text: String, retry: Bool)? {
         if let error = model.error {
             // Like Apple Mail, says which account it is when the others got through.
             let accounts = model.failing.joined(separator: ", ")
             if error == "error_network" {
-                return ("status_offline", true, accounts.isEmpty ? nil : tr("status_offline_account", accounts))
+                return (accounts.isEmpty ? tr("status_offline") : tr("status_offline_account", accounts), true)
             }
             // A sync's own failures; another error is not one a new check mends.
-            let text = accounts.isEmpty ? nil : tr("status_account_failed", accounts, tr(error))
-            return (error, error == "error_server" || error == "error_tls", text)
+            let text = accounts.isEmpty ? tr(error) : tr("status_account_failed", accounts, tr(error))
+            return (text, error == "error_server" || error == "error_tls")
         }
-        if model.syncing && slow == 2 && !waiting { return ("status_background", false, nil) }
+        if model.syncing && slow == 2 && !waiting { return (tr("status_background"), false) }
         // An empty list's words say it themselves.
-        if refreshing && !model.messages.isEmpty { return (slow > 0 ? "status_slow" : "status_checking", false, nil) }
-        if upToDate { return ("status_up_to_date", false, nil) }
+        if refreshing && !model.messages.isEmpty { return (tr(slow > 0 ? "status_slow" : "status_checking"), false) }
+        if upToDate { return (tr("status_up_to_date"), false) }
         return nil
     }
 
@@ -382,9 +381,7 @@ private struct InboxList: View {
                 }
                 if let status {
                     HStack {
-                        Group {
-                            if let text = status.text { Text(verbatim: text) } else { Text(LocalizedStringKey(status.key)) }
-                        }
+                        Text(verbatim: status.text)
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -401,7 +398,7 @@ private struct InboxList: View {
                 }
             }
             .animation(.smooth, value: model.toast)
-            .animation(.smooth, value: status?.key)
+            .animation(.smooth, value: status?.text)
         }
         .confirmationDialog("action_more", isPresented: $more) {
             Button("action_select_all") { model.chosen.formUnion(model.messages.map(\.id)) }
