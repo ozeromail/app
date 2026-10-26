@@ -6,6 +6,8 @@ import SwiftUI
 struct MessageView: View {
     let model: InboxModel
     let message: MessageItem
+    /// Beside the list, on its side: the actions fit one row.
+    var pane = false
 
     @State private var thread: [MessageItem] = []
     @State private var error: LocalizedStringKey?
@@ -57,31 +59,23 @@ struct MessageView: View {
             }
         }
         .middle(Room.letter)
-        .navigationBarTitleDisplayMode(.inline)
-        // On its side the actions move to the edges, under the thumbs: the rarer ones left, the
-        // answers and Done right.
-        .safeAreaInset(edge: .leading, spacing: 0) {
-            if sideways {
-                Rail {
-                    BarAction(icon: "trash", label: message.canTrash ? "action_delete" : "action_delete_forever", action: delete)
-                    BarAction(icon: "ellipsis", label: "action_more") { more = true }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if pane {
+                // Back to the mailboxes beside the list.
+                Button(action: model.closePane) {
+                    Image(systemName: "chevron.left").font(.title3.weight(.semibold)).frame(width: 44, height: 44)
                 }
-            }
-        }
-        .safeAreaInset(edge: .trailing, spacing: 0) {
-            if sideways {
-                Rail {
-                    BarAction(icon: "arrowshape.turn.up.left", label: "message_reply") { reply(answer, all: false) }
-                    BarAction(icon: "arrowshape.turn.up.left.2", label: "message_reply_all") { reply(answer, all: true) }
-                    BarAction(icon: "arrowshape.turn.up.right", label: "message_forward") { forward(shown.last ?? message) }
-                    if message.canArchive {
-                        BarAction(icon: "checkmark", label: "action_done", tint: .white, background: .ozeroFill, action: done)
-                    }
-                }
+                .accessibilityLabel(Text("action_back"))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if !sideways { bars(answer: answer, newest: shown.last ?? message) }
+            if pane {
+                row(answer: answer, newest: shown.last ?? message)
+            } else {
+                bars(answer: answer, newest: shown.last ?? message)
+            }
         }
         .confirmationDialog("action_more", isPresented: $more) {
             Button("action_mark_unread") {
@@ -126,21 +120,7 @@ struct MessageView: View {
     /// Reply, Reply all and Forward over Delete, More and Done, along the bottom.
     private func bars(answer: MessageItem, newest: MessageItem) -> some View {
         VStack(spacing: 8) {
-            HStack(spacing: 8) {
-                Button {
-                    reply(answer, all: false)
-                } label: {
-                    Text("message_reply_prompt")
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
-                        .padding(.horizontal, 16)
-                        .background(Color.ozeroCard, in: .capsule)
-                }
-                .buttonStyle(.plain)
-                RoundButton(icon: "arrowshape.turn.up.left.2", label: "message_reply_all") { reply(answer, all: true) }
-                // The newest message, the user's own too.
-                RoundButton(icon: "arrowshape.turn.up.right", label: "message_forward") { forward(newest) }
-            }
+            HStack(spacing: 8) { answers(answer: answer, newest: newest) }
             HStack(spacing: 8) {
                 BarAction(icon: "trash", label: message.canTrash ? "action_delete" : "action_delete_forever", action: delete)
                 BarAction(icon: "ellipsis", label: "action_more") { more = true }
@@ -153,6 +133,39 @@ struct MessageView: View {
         .padding(.top, 10)
         .padding(.bottom, 4)
         .background(.bar)
+    }
+
+    /// Beside the list, where the height is short: the answers and the actions in one row.
+    private func row(answer: MessageItem, newest: MessageItem) -> some View {
+        HStack(spacing: 8) {
+            answers(answer: answer, newest: newest)
+            RoundButton(icon: "trash", label: message.canTrash ? "action_delete" : "action_delete_forever", action: delete)
+            RoundButton(icon: "ellipsis", label: "action_more") { more = true }
+            if message.canArchive {
+                RoundButton(icon: "checkmark", label: "action_done", tint: .white, background: .ozeroFill, action: done)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.bar)
+    }
+
+    /// Reply, Reply all and Forward; the newest message is forwarded, the user's own too.
+    @ViewBuilder
+    private func answers(answer: MessageItem, newest: MessageItem) -> some View {
+        Button {
+            reply(answer, all: false)
+        } label: {
+            Text("message_reply_prompt")
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
+                .padding(.horizontal, 16)
+                .background(Color.ozeroCard, in: .capsule)
+        }
+        .buttonStyle(.plain)
+        RoundButton(icon: "arrowshape.turn.up.left.2", label: "message_reply_all") { reply(answer, all: true) }
+        RoundButton(icon: "arrowshape.turn.up.right", label: "message_forward") { forward(newest) }
     }
 
     private func reply(_ answer: MessageItem, all: Bool) {
@@ -178,6 +191,7 @@ struct MessageView: View {
     private func leave(_ act: @escaping () async -> Void) {
         // Search over the list goes too: the toast shows in the inbox.
         model.path.removeAll { $0 == .message(message) || $0 == .search }
+        if model.pane?.id == message.id { model.pane = nil }
         Task { await act() }
     }
 
@@ -502,15 +516,17 @@ struct RoundButton: View {
     let icon: String
     let label: LocalizedStringKey
     var size: CGFloat = 46
+    var tint: Color = .primary
+    var background: Color = .ozeroCard
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.body.weight(.medium))
-                .foregroundStyle(.primary)
+                .foregroundStyle(tint)
                 .frame(width: size, height: size)
-                .background(Color.ozeroCard, in: .circle)
+                .background(background, in: .circle)
         }
         .accessibilityLabel(Text(label))
     }

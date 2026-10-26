@@ -174,7 +174,6 @@
   "attachment_save_files": "Save to Files",
   "attachment_saved_files": "Saved to Files",
   "crash_text_ios": "Send the report to the author? The letter opens first, so you can read it. It holds where the app failed, the app and iOS versions and the phone model. No mail.",
-  "split_nothing_open": "Pick a message to read it here.",
   "lake_checking_title": "Checking for new mail",
   "lake_checking_text": "Asking the server of each account. This takes a few seconds.",
   "lake_loading_title": "Loading your mail",
@@ -197,5 +196,6 @@
   "signin_exchange_certificate_choose": "Add a certificate",
   "signin_exchange_certificate_password": "Password of the certificate file",
   "error_certificate_unreadable": "Could not open the certificate. Check the file and its password.",
-  "error_no_server": "No Exchange server found for this address. Enter it below: it is in your work mail settings, or your IT team knows it."
+  "error_no_server": "No Exchange server found for this address. Enter it below: it is in your work mail settings, or your IT team knows it.",
+  "mailboxes_more": "Accounts and settings"
 }

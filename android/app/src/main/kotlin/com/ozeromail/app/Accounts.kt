@@ -16,16 +16,23 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -116,17 +123,7 @@ fun AccountsSheet(
                     )
                     else -> {
                         SheetTitle(stringResource(R.string.folders_title))
-                        if (drafts > 0) FolderRow(R.drawable.ic_compose, stringResource(R.string.folder_drafts), open = false, count = drafts, onClick = onDrafts)
-                        Folders(
-                            accounts,
-                            folders,
-                            mailbox,
-                            groups,
-                            onMailbox,
-                            onToggle = { group -> onGroups(groups.toggle(group, accounts.size > 1)) },
-                            onAccount = { page = it.id },
-                        )
-                        HorizontalDivider(Modifier.padding(vertical = 6.dp), color = colors.outlineVariant)
+                        MailboxList(accounts, folders, mailbox, drafts, onDrafts, groups, onGroups, onMailbox, onAccount = { page = it.id })
                         SheetRow(onClick = { page = SWIPES }, lead = { Glyph(R.drawable.ic_swipe, null, colors.primary) }) {
                             Column(Modifier.weight(1f)) {
                                 Text(stringResource(R.string.swipes_title), style = Type.Row)
@@ -140,6 +137,63 @@ fun AccountsSheet(
             }
         }
     }
+}
+
+/**
+ * The mailboxes down the side of a wide screen: the sheet's list of them, always there. The
+ * rest of the sheet, the accounts' and the swipes' settings, opens with [onMore].
+ */
+@Composable
+fun Mailboxes(
+    accounts: List<AccountItem>,
+    folders: List<FolderItem>,
+    mailbox: Mailbox,
+    drafts: Int,
+    onDrafts: () -> Unit,
+    groups: Groups,
+    onGroups: (Groups) -> Unit,
+    onMailbox: (Mailbox) -> Unit,
+    onMore: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    Column(
+        modifier
+            .background(colors.bar)
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Vertical))
+            .verticalScroll(rememberScrollState())
+            .padding(vertical = 8.dp),
+    ) {
+        MailboxList(accounts, folders, mailbox, drafts, onDrafts, groups, onGroups, onMailbox, onAccount = null)
+        SheetAction(R.drawable.ic_more, stringResource(R.string.mailboxes_more), colors.onSurface, onMore)
+    }
+}
+
+/** The drafts, if any, and the mailboxes of all accounts and of each, with a line under them. */
+@Composable
+private fun MailboxList(
+    accounts: List<AccountItem>,
+    folders: List<FolderItem>,
+    mailbox: Mailbox,
+    drafts: Int,
+    onDrafts: () -> Unit,
+    groups: Groups,
+    onGroups: (Groups) -> Unit,
+    onMailbox: (Mailbox) -> Unit,
+    /** An account's settings; null leaves the button out. */
+    onAccount: ((AccountItem) -> Unit)?,
+) {
+    if (drafts > 0) FolderRow(R.drawable.ic_compose, stringResource(R.string.folder_drafts), open = false, count = drafts, onClick = onDrafts)
+    Folders(
+        accounts,
+        folders,
+        mailbox,
+        groups,
+        onMailbox,
+        onToggle = { group -> onGroups(groups.toggle(group, accounts.size > 1)) },
+        onAccount = onAccount,
+    )
+    HorizontalDivider(Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.outlineVariant)
 }
 
 /** The page of the sheet with the swipes; account pages are named by their ids, which are positive. */
@@ -158,7 +212,7 @@ private fun Folders(
     groups: Groups,
     onMailbox: (Mailbox) -> Unit,
     onToggle: (Long) -> Unit,
-    onAccount: (AccountItem) -> Unit,
+    onAccount: ((AccountItem) -> Unit)?,
 ) {
     fun open(group: Long) = groups.open(group, accounts.size > 1)
     if (accounts.size > 1) {
@@ -175,7 +229,7 @@ private fun Folders(
             open(account.id),
             lead = { AccountDot(account.tint, size = 12.dp) },
             onToggle = { onToggle(account.id) },
-            onSettings = { onAccount(account) },
+            onSettings = onAccount?.let { { it(account) } },
         ) {
             folders.filter { it.accountId == account.id && it.role != FolderRole.DRAFTS }.sortedWith(FOLDER_ORDER).forEach { folder ->
                 // With one account its inbox is the unified one, which keeps the tabs.

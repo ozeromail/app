@@ -62,6 +62,12 @@ final class InboxModel {
     var toast: Toast?
 
     var path: [Route] = []
+    /// On its side the list stays on the left and the message opens beside it, here.
+    var pane: MessageItem?
+    /// On its side: the mailboxes beside the list, and the message beside the list.
+    var sideways = false {
+        didSet { if sideways != oldValue { turned() } }
+    }
     var composing: Composing?
     var addingAccount = false
     /// The account being signed in to again.
@@ -162,6 +168,10 @@ final class InboxModel {
             let found = isInbox ? try await mail.inbox(tab, limit: size) : try await mail.mailbox(mailbox, limit: size)
             // A tab or mailbox picked meanwhile loads its own list.
             if (tab, mailbox) == shown {
+                // Beside the list, the message goes when its row does, as when it moved on another device.
+                if let pane, messages.contains(where: { $0.id == pane.id }), !found.contains(where: { $0.id == pane.id }) {
+                    self.pane = nil
+                }
                 // Only a real change: the list diffs every row otherwise.
                 if found != messages { messages = found }
                 if !found.isEmpty { hadMail = true }
@@ -200,7 +210,8 @@ final class InboxModel {
 
     func loadFolders() async {
         do {
-            folders = try await mail.folders()
+            let folders = try await mail.folders()
+            if folders != self.folders { self.folders = folders }
         } catch {
             self.error = error.textKey()
         }
@@ -214,6 +225,7 @@ final class InboxModel {
     /// A tab or mailbox was picked: its list from the top.
     func switched() async {
         chosen = []
+        pane = nil
         hadMail = false
         listSize = Self.page
         await loadList()
@@ -401,6 +413,45 @@ final class InboxModel {
         if (try? await mail.undo(actions)) != true { note(tr("inbox_undo_late")) }
     }
 
+    // MARK: Opening
+
+    /// Opens `message`: beside the list on its side, on a screen of its own upright.
+    func open(_ message: MessageItem) {
+        guard sideways else {
+            path.append(.message(message))
+            return
+        }
+        // The one left beside the list now has a snippet.
+        if pane != nil { Task { await load() } }
+        // Opened from search, it shows beside the list, so search goes.
+        path.removeAll { $0 == .search }
+        pane = message
+    }
+
+    /// The message read, on its own screen or beside the list: the same across a turn of the phone.
+    private var readingID: Int64? {
+        if case .message(let message)? = path.last { return message.id }
+        return pane?.id
+    }
+
+    /// Closes the message beside the list.
+    func closePane() {
+        pane = nil
+        Task { await load() }
+    }
+
+    /// Turning the phone keeps the message open: beside the list, or on its own screen.
+    private func turned() {
+        if sideways, case .message(let message)? = path.last, path.allSatisfy({ $0 == .search || $0 == path.last }) {
+            // From search too: beside the list, as when it is opened there.
+            path.removeAll()
+            pane = message
+        } else if !sideways, let pane {
+            self.pane = nil
+            path.append(.message(pane))
+        }
+    }
+
     // MARK: Acting on mail
 
     /// The messages leave the list at once, for their account's folder of `role` if they go to
@@ -419,6 +470,8 @@ final class InboxModel {
         }
         let moved = Set(gone.map(\.id))
         withAnimation(.smooth) { messages.removeAll { moved.contains($0.id) } }
+        // Beside the list, the message goes with its row.
+        if let pane, moved.contains(pane.id) { self.pane = nil }
         if await offerUndo(text, go: go == mailbox ? nil : go) { await takeBack(actions) }
     }
 
@@ -478,7 +531,10 @@ final class InboxModel {
             self.error = error.textKey()
             return
         }
-        if mailbox == from { messages = [] }
+        if mailbox == from {
+            messages = []
+            pane = nil
+        }
         if await offerUndo(tr("inbox_emptied")) { await takeBack(actions) }
     }
 
@@ -533,12 +589,12 @@ final class InboxModel {
     func write(_ original: MessageItem, _ make: @escaping () async throws -> DraftItem) {
         guard !writing else { return }
         writing = true
-        let reading = path.last
+        let reading = readingID
         Task {
             defer { writing = false }
             do {
                 let draft = try await make()
-                if path.last == reading { composing = Composing(draft: draft, original: original) }
+                if readingID == reading { composing = Composing(draft: draft, original: original) }
             } catch {
                 self.error = error.textKey()
             }
@@ -549,6 +605,7 @@ final class InboxModel {
     func sent(_ id: Int64, _ message: Composing) {
         composing = nil
         if case .message? = path.last { path.removeLast() }
+        pane = nil
         Task {
             guard await offerUndo(tr("inbox_sending")) else { return }
             if let draft = try? await mail.undoSend(id) {
