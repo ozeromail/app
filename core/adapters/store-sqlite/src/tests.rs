@@ -2159,3 +2159,48 @@ fn a_thrown_away_draft_comes_back_until_its_time() {
         .unwrap();
     assert_eq!(files, 0);
 }
+
+#[test]
+fn offers_recent_files_once_each_newest_first() {
+    let store = store();
+    let a = account(&store, "a@example.com");
+    let folder = inbox(&store, a);
+    store
+        .save_messages(folder, &[message(1, 100), message(2, 200), message(3, 300)])
+        .unwrap();
+    let rows = list(&store, ListScope::Folder(folder), 10, None);
+    let id = |subject: &str| rows.iter().find(|r| r.subject == subject).unwrap().id;
+    let with = |files: Vec<Attachment>| Body {
+        text: String::new(),
+        html: None,
+        attachments: files,
+    };
+    let file = |part: u32, name: &str| Attachment {
+        part,
+        name: name.into(),
+        mime: "application/pdf".into(),
+        size: 10,
+    };
+    store
+        .save_body(id("Subject 1"), &with(vec![file(2, "bill.pdf")]))
+        .unwrap();
+    // The same file again in a reply, and one with no name.
+    let reply = with(vec![file(2, "bill.pdf"), file(3, ""), file(4, "act.pdf")]);
+    store.save_body(id("Subject 3"), &reply).unwrap();
+    let names = |limit| {
+        store
+            .recent_files(limit)
+            .unwrap()
+            .into_iter()
+            .map(|f| (f.message, f.file.name))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        names(10),
+        [
+            (id("Subject 3"), "bill.pdf".to_owned()),
+            (id("Subject 3"), "act.pdf".into())
+        ]
+    );
+    assert_eq!(names(1).len(), 1);
+}

@@ -173,6 +173,16 @@ pub struct Attachment {
     pub size: u64,
 }
 
+/// A file that came with a saved message, to send on in another.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecentFile {
+    pub message: MessageId,
+    pub account_id: AccountId,
+    pub from_name: Option<String>,
+    pub from_email: String,
+    pub file: Attachment,
+}
+
 impl Body {
     /// The start of the text on one line, for message lists.
     pub fn snippet(&self) -> String {

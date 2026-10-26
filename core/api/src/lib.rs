@@ -18,7 +18,8 @@ use ozero_domain::{
     Checkpoint, Draft, DraftFile, DraftId, FileId, Folder, FolderId, FolderRole, ListQuery,
     ListScope, MailProvider, MailSender, MessageId, MessageRow, Moved, NewAccount, NewFolder,
     Older, OpId, OutboxId, Outgoing, OutgoingFile, ProviderError, ProviderState, RawMessage,
-    SavedDraft, Sender, Server, Store, StoreError, html, parse_recipients, saves_sent_itself,
+    RecentFile, SavedDraft, Sender, Server, Store, StoreError, html, parse_recipients,
+    saves_sent_itself,
 };
 use ozero_ews::{EasSession, EwsSession, discover};
 use ozero_gmail::{GmailSession, oauth};
@@ -73,6 +74,8 @@ pub fn undo_seconds() -> u32 {
     u32::try_from(HOLD / 1_000 - 1).unwrap_or(0)
 }
 
+/// How many files of saved mail compose offers to send on.
+const RECENT_FILES: usize = 12;
 /// The most bytes the files a person adds to one message may take together: what Gmail takes.
 const FILE_LIMIT: u64 = 25 * 1024 * 1024;
 
@@ -603,6 +606,16 @@ impl Core {
         }
     }
 
+    /// The files of saved mail to send on, newest first, each name and size once.
+    pub fn recent_files(&self) -> Result<Vec<RecentFileItem>, CoreError> {
+        Ok(self
+            .store
+            .recent_files(RECENT_FILES)?
+            .into_iter()
+            .map(RecentFileItem::from)
+            .collect())
+    }
+
     /// Takes a file off its draft.
     pub fn detach_file(&self, file: i64) -> Result<(), CoreError> {
         Ok(self.store.detach(FileId(file))?)
@@ -1054,9 +1067,9 @@ impl Core {
     ) -> Result<DraftItem, CoreError> {
         let id = MessageId(message.id);
         let text = self.body(id, &secret).await?.text;
-        let from = match message.from_name.as_deref().map(str::trim) {
-            Some(name) if !name.is_empty() => format!("{name} <{}>", message.from_email),
-            _ => message.from_email.clone(),
+        let from = match shown_name(message.from_name.as_deref()) {
+            Some(name) => format!("{name} <{}>", message.from_email),
+            None => message.from_email.clone(),
         };
         let fields = [
             (labels.from.as_str(), from.as_str()),
@@ -1077,6 +1090,36 @@ impl Core {
         })
     }
 
+    /// The content of the message's attachment `part`, downloaded now with `secret` as for
+    /// `message_body`; `Gone` once the message is off the server or the part is not in it.
+    pub async fn download_file(
+        &self,
+        message: i64,
+        part: u32,
+        secret: String,
+    ) -> Result<Vec<u8>, CoreError> {
+        let found = self.download_parts(message, &[part], &secret).await?;
+        found.into_iter().next().flatten().ok_or(CoreError::Gone)
+    }
+
+    /// The message's attachment `part`s, in order, from one download of the whole message;
+    /// none for a part it lacks.
+    async fn download_parts(
+        &self,
+        message: i64,
+        parts: &[u32],
+        secret: &str,
+    ) -> Result<Vec<Option<Vec<u8>>>, CoreError> {
+        let location = self.store.location(MessageId(message))?;
+        let account = self.account(location.account_id)?;
+        let mut slot = None;
+        let remote = self.remote(&mut slot, &account, secret).await?;
+        let found =
+            download_attachments(&*self.store, remote, &self.parser, &location, parts).await;
+        drop(slot);
+        self.refused(&account, found)
+    }
+
     /// Writes the message's attachment `part`s to their `path`s, from one download of the
     /// whole message; each file appears whole or not at all. `secret` as for `message_body`.
     pub async fn save_attachments(
@@ -1085,15 +1128,8 @@ impl Core {
         files: Vec<AttachmentFile>,
         secret: String,
     ) -> Result<(), CoreError> {
-        let location = self.store.location(MessageId(message))?;
-        let account = self.account(location.account_id)?;
-        let mut slot = None;
-        let remote = self.remote(&mut slot, &account, &secret).await?;
         let parts: Vec<u32> = files.iter().map(|f| f.part).collect();
-        let found =
-            download_attachments(&*self.store, remote, &self.parser, &location, &parts).await;
-        drop(slot);
-        let found = self.refused(&account, found)?;
+        let found = self.download_parts(message, &parts, &secret).await?;
         // Every part there is gets written; one the whole message lacks is as good as gone.
         let gone = found.iter().any(Option::is_none);
         let write = move || {
@@ -2346,6 +2382,43 @@ pub struct DraftItem {
     /// or sending the draft leaves them be.
     #[uniffi(default = [])]
     pub files: Vec<DraftFileItem>,
+}
+
+/// A file of saved mail, offered to send on.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RecentFileItem {
+    /// The message it came with.
+    pub message: i64,
+    pub account_id: i64,
+    /// Its part in the message, as `AttachmentItem::part`.
+    pub part: u32,
+    pub name: String,
+    /// The lowercase content type, such as `application/pdf`.
+    pub mime: String,
+    /// Bytes.
+    pub size: u64,
+    /// Who sent it: the name, or the address without one.
+    pub sender: String,
+}
+
+impl From<RecentFile> for RecentFileItem {
+    fn from(f: RecentFile) -> Self {
+        let sender = shown_name(f.from_name.as_deref()).map_or(f.from_email, str::to_owned);
+        Self {
+            message: f.message.0,
+            account_id: f.account_id.0,
+            part: f.file.part,
+            name: f.file.name,
+            mime: f.file.mime,
+            size: f.file.size,
+            sender,
+        }
+    }
+}
+
+/// A sender's name as shown, none when it is blank.
+fn shown_name(name: Option<&str>) -> Option<&str> {
+    name.map(str::trim).filter(|n| !n.is_empty())
 }
 
 /// A file added to a message being written.

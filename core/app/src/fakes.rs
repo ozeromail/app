@@ -11,7 +11,7 @@ use ozero_domain::{
     Draft, DraftFile, DraftId, FileId, Flags, Folder, FolderId, ListQuery, MailProvider,
     MailSender, MessageBuilder, MessageId, MessageLocation, MessageParser, MessageRow, Moved,
     NewAccount, NewFolder, NewMessage, Older, Op, OpId, OutboxId, Outgoing, OutgoingFile,
-    ProviderError, RawMessage, SavedDraft, Store, StoreError, Unsent,
+    ProviderError, RawMessage, RecentFile, SavedDraft, Store, StoreError, Unsent,
 };
 
 /// Fakes answer at once, so one poll finishes the future.
@@ -567,6 +567,10 @@ impl Store for Memory {
         _: u64,
     ) -> Result<Option<DraftFile>, StoreError> {
         Err(StoreError::NotFound)
+    }
+
+    fn recent_files(&self, _: usize) -> Result<Vec<RecentFile>, StoreError> {
+        Ok(vec![])
     }
 
     fn detach(&self, _: FileId) -> Result<(), StoreError> {
