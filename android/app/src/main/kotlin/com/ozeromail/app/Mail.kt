@@ -291,6 +291,29 @@ class Mail(private val context: Context) {
     /** As [archive], back into the inbox: for mail in the archive, trash or spam. */
     suspend fun moveToInbox(messages: List<MessageItem>): List<Long> = move(messages) { core.moveToInbox(it) }
 
+    /**
+     * As [archive], into the account's snoozed folder; the conversations come back to the top of
+     * the inbox, unread, at [until], in epoch seconds.
+     */
+    suspend fun snooze(messages: List<MessageItem>, until: Long): List<Long> {
+        val actions = move(messages) { core.snooze(it, until) }
+        scheduleWake()
+        return actions
+    }
+
+    /**
+     * Brings back the snoozed mail whose time has come and returns it, to tell about; the server
+     * hears about it in the background. Then [scheduleWake] for the rest.
+     */
+    suspend fun wake(): List<MessageItem> {
+        val woken = io { core.wake() }
+        push(woken)
+        return woken
+    }
+
+    /** Wakes the next snoozed mail on time, the app open or not; see [WakeWorker]. */
+    suspend fun scheduleWake() = WakeWorker.schedule(context, io { core.nextWake() })
+
     /** As [archive], into the trash, or gone from the server for good for mail already there. */
     suspend fun delete(messages: List<MessageItem>): List<Long> {
         val (toTrash, forever) = messages.partition { it.canTrash }
@@ -533,6 +556,7 @@ fun CoreException.text(): Int {
         is CoreException.Gone -> R.string.error_gone
         is CoreException.NoArchive -> R.string.error_no_archive
         is CoreException.NoTrash -> R.string.error_no_trash
+        is CoreException.NoSnoozed -> R.string.error_no_snoozed
         is CoreException.BadRecipients -> R.string.error_bad_recipients
         is CoreException.NoSmtp -> R.string.error_no_smtp
         is CoreException.NoServer -> R.string.error_no_server

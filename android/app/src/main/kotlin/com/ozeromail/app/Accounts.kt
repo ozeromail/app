@@ -248,25 +248,27 @@ private fun Folders(
 }
 
 /** The mailboxes shared by all accounts, in order. */
-private val UNIFIED = listOf(FolderRole.INBOX, FolderRole.FLAGGED, FolderRole.SENT, FolderRole.ARCHIVE, FolderRole.TRASH)
+private val UNIFIED = listOf(FolderRole.INBOX, FolderRole.SNOOZED, FolderRole.FLAGGED, FolderRole.SENT, FolderRole.ARCHIVE, FolderRole.TRASH)
 
 /** System folders first in the usual order, then the account's own by name. */
 private val FOLDER_ORDER = compareBy<FolderItem>({ it.role.rank() }, { it.name.lowercase() })
 
 private fun FolderRole.rank(): Int = when (this) {
     FolderRole.INBOX -> 0
-    FolderRole.FLAGGED -> 1
-    FolderRole.SENT -> 2
-    FolderRole.DRAFTS -> 3
-    FolderRole.ARCHIVE -> 4
-    FolderRole.JUNK -> 5
-    FolderRole.TRASH -> 6
-    FolderRole.CUSTOM -> 7
+    FolderRole.SNOOZED -> 1
+    FolderRole.FLAGGED -> 2
+    FolderRole.SENT -> 3
+    FolderRole.DRAFTS -> 4
+    FolderRole.ARCHIVE -> 5
+    FolderRole.JUNK -> 6
+    FolderRole.TRASH -> 7
+    FolderRole.CUSTOM -> 8
 }
 
 @DrawableRes
 fun FolderRole.icon(): Int = when (this) {
     FolderRole.INBOX -> R.drawable.ic_inbox
+    FolderRole.SNOOZED -> R.drawable.ic_snooze
     FolderRole.FLAGGED -> R.drawable.ic_flag
     FolderRole.SENT -> R.drawable.ic_send
     FolderRole.DRAFTS -> R.drawable.ic_compose
@@ -280,6 +282,7 @@ fun FolderRole.icon(): Int = when (this) {
 @Composable
 fun FolderRole.title(name: String): String = when (this) {
     FolderRole.INBOX -> stringResource(R.string.inbox_title)
+    FolderRole.SNOOZED -> stringResource(R.string.folder_snoozed)
     FolderRole.FLAGGED -> stringResource(R.string.folder_flagged)
     FolderRole.SENT -> stringResource(R.string.folder_sent)
     FolderRole.DRAFTS -> stringResource(R.string.folder_drafts)
@@ -295,6 +298,7 @@ fun FolderItem.title(): String = role.title(name)
 /** A mailbox of all accounts together, told apart from one account's folder. */
 @Composable
 private fun FolderRole.allTitle(): String = when (this) {
+    FolderRole.SNOOZED -> stringResource(R.string.folder_all_snoozed)
     FolderRole.FLAGGED -> stringResource(R.string.folder_all_flagged)
     FolderRole.SENT -> stringResource(R.string.folder_all_sent)
     FolderRole.ARCHIVE -> stringResource(R.string.folder_all_archive)

@@ -212,5 +212,20 @@
   "compose_attach_files": "Files",
   "compose_files_too_large": "One message can carry up to 25 MB of files.",
   "compose_file_unreadable": "Can’t read this file. Try another one.",
-  "compose_attach_recent": "From mail"
+  "compose_attach_recent": "From mail",
+  "action_snooze": "Snooze",
+  "snooze_title": "Snooze until",
+  "snooze_later": "Later today",
+  "snooze_evening": "This evening",
+  "snooze_tomorrow": "Tomorrow",
+  "snooze_weekend": "This weekend",
+  "snooze_next_week": "Next week",
+  "snooze_pick": "Pick a date and time",
+  "snooze_note": "The message leaves the inbox and comes back on top, unread, at that time.",
+  "snooze_past": "Pick a time later than now.",
+  "inbox_snoozed": "Snoozed until %1$s",
+  "folder_snoozed": "Snoozed",
+  "folder_all_snoozed": "All snoozed",
+  "error_no_snoozed": "The Snoozed folder isn't ready yet. Pull to refresh and try again.",
+  "action_next": "Next"
 }

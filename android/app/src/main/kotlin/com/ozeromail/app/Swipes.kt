@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -47,6 +48,7 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -57,6 +59,7 @@ enum class SwipeAction(@StringRes val label: Int, @DrawableRes val icon: Int) {
     DONE(R.string.action_done, R.drawable.ic_done),
     READ(R.string.action_read, R.drawable.ic_unread),
     DELETE(R.string.action_delete, R.drawable.ic_delete),
+    SNOOZE(R.string.action_snooze, R.drawable.ic_snooze),
 }
 
 /** By default left is Done and right is Read, as in the prototype. */
@@ -122,8 +125,12 @@ data class Groups(val collapsed: Set<Long>, val expanded: Set<Long>) {
         if (open(group, many)) Groups(collapsed + group, expanded - group) else Groups(collapsed - group, expanded + group)
 }
 
-/** Where an action applies: Done only where it files mail; Delete in the trash is for good. */
-fun SwipeAction.appliesTo(message: MessageItem): Boolean = this != SwipeAction.DONE || message.canArchive
+/** Where an action applies: Done and Snooze only where they file mail; Delete in the trash is for good. */
+fun SwipeAction.appliesTo(message: MessageItem): Boolean = when (this) {
+    SwipeAction.DONE -> message.canArchive
+    SwipeAction.SNOOZE -> message.canSnooze
+    SwipeAction.READ, SwipeAction.DELETE -> true
+}
 
 /**
  * A row that does [swipes] when swiped; a side whose action does not apply to [message] stays
@@ -286,6 +293,7 @@ private fun SwipeAction.colors(): Pair<Color, Color> = with(MaterialTheme.colorS
         SwipeAction.DONE -> accent to onAccent
         SwipeAction.READ -> secondary to onSecondary
         SwipeAction.DELETE -> error to onError
+        SwipeAction.SNOOZE -> tertiary to onTertiary
     }
 }
 
@@ -325,15 +333,17 @@ fun SwipeSettings(swipes: Swipes, onChange: (Swipes) -> Unit) {
 @Composable
 private fun Side(@StringRes title: Int, picked: SwipeAction, onPick: (SwipeAction) -> Unit) {
     val colors = MaterialTheme.colorScheme
-    Choices(title, SwipeAction.entries, picked, onPick) { action, on ->
-        Glyph(action.icon, null, if (on) colors.primary else colors.onSurfaceVariant, size = 18.dp)
-        Text(
-            stringResource(action.label),
-            color = if (on) colors.primary else colors.onSurface,
-            style = Type.Text,
-            fontWeight = Weight.Medium,
-            maxLines = 1,
-        )
+    // Four to a row: the name goes under the icon to fit.
+    Choices(title, SwipeAction.entries, picked, onPick, height = 56.dp) { action, on ->
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Glyph(action.icon, null, if (on) colors.primary else colors.onSurfaceVariant, size = 18.dp)
+            Text(
+                stringResource(action.label),
+                color = if (on) colors.primary else colors.onSurface,
+                style = Type.Label,
+                maxLines = 1,
+            )
+        }
     }
 }
 
@@ -344,6 +354,7 @@ fun <T> Choices(
     options: List<T>,
     picked: T,
     onPick: (T) -> Unit,
+    height: Dp = 44.dp,
     content: @Composable (option: T, on: Boolean) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -363,7 +374,7 @@ fun <T> Choices(
             Row(
                 Modifier
                     .weight(1f)
-                    .height(44.dp)
+                    .height(height)
                     .clip(shape)
                     .background(if (on) colors.primary.copy(alpha = 0.1f) else colors.surfaceVariant)
                     .then(if (on) Modifier.border(1.5.dp, colors.primary, shape) else Modifier)

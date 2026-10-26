@@ -34,6 +34,13 @@ class MailWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             Log.w("Ozero", "accounts not read", e)
             emptyList()
         }
+        // Snoozed mail the exact run missed, say after a restart, comes back now.
+        val woken = try {
+            mail.wake().also { mail.scheduleWake() }
+        } catch (e: CoreException) {
+            Log.w("Ozero", "snoozed mail not woken", e)
+            emptyList()
+        }
         try {
             mail.refresh()
         } catch (e: CoreException) {
@@ -48,7 +55,7 @@ class MailWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         }
         try {
             // With the app open, the inbox shows the mail; a notification would only repeat it.
-            if (app.inForeground) mail.forgetNewMail() else notify(applicationContext, mail.newMail())
+            if (app.inForeground) mail.forgetNewMail() else notifyMail(applicationContext, woken + mail.newMail())
         } catch (e: CoreException) {
             Log.w("Ozero", "new mail not read", e)
         }
@@ -110,7 +117,7 @@ private fun notifySignIn(context: Context, accounts: List<AccountItem>) {
 }
 
 /** One notification per message, newest first, grouped under a summary; a tap opens the inbox. */
-private fun notify(context: Context, messages: List<MessageItem>) {
+internal fun notifyMail(context: Context, messages: List<MessageItem>) {
     if (messages.isEmpty()) return
     if (context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
     val manager = NotificationManagerCompat.from(context)
