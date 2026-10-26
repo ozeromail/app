@@ -92,9 +92,12 @@ struct ComposeView: View {
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
-                        // With the keyboard down there is room for the message being answered.
-                        if let original = composing.original, focus == nil {
+                        // With the keyboard down there is room for the message being answered;
+                        // with it up the card only folds away, so it keeps what it loaded.
+                        if let original = composing.original {
                             Original(mail: mail, message: original)
+                                .frame(maxHeight: focus == nil ? .infinity : 0)
+                                .clipped()
                         }
                         ScrollView {
                             fields.padding(.vertical, 8)
@@ -474,7 +477,6 @@ final class DraftKeeper: Sendable {
 /// The drafts on the phone, last saved first; a tap opens one to go on writing.
 struct DraftsView: View {
     let model: InboxModel
-    @Environment(\.sideways) private var sideways
 
     var body: some View {
         List {
@@ -488,7 +490,7 @@ struct DraftsView: View {
             }
         }
         .listStyle(.plain)
-        .middle(sideways ? Room.list : .infinity)
+        .middle(Room.list)
         .navigationTitle("folder_drafts")
         .task { await model.counts() }
     }

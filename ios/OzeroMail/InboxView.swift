@@ -269,7 +269,7 @@ private struct InboxList: View {
         }
         .environment(\.editMode, .constant(choosing ? .active : .inactive))
         .animation(.smooth, value: model.messages.map(\.id))
-        .middle(sideways ? Room.list : .infinity)
+        .middle(Room.list)
         .navigationTitle(choosing ? tr("select_count", picked.count) : model.title)
         .toolbar {
             if !model.isInbox && !choosing {

@@ -80,6 +80,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -242,9 +243,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     // Counts the loads that found more older mail, so the list looks at its end again after each.
     var olderLoads by remember { mutableIntStateOf(0) }
     var error by remember { mutableStateOf<Int?>(null) }
+    // The message read: on its own screen, or beside the list on a screen large enough for both.
     var open by remember { mutableStateOf<MessageItem?>(null) }
-    // The message open beside the list, on a screen large enough for both.
-    var paned by remember { mutableStateOf<MessageItem?>(null) }
     var composing by remember { mutableStateOf<Composing?>(null) }
     // One answer or forward at a time: a second tap would replace the one being written.
     var writing by remember { mutableStateOf(false) }
@@ -453,7 +453,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     }
     LaunchedEffect(tab, mailbox) {
         chosen = emptySet()
-        paned = null
+        open = null
         listSize = PAGE
         loadList()
         // On the list's next layout: a scroll now would lay it out at once, maybe in the middle of a layout.
@@ -574,11 +574,11 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     fun write(original: MessageItem, make: suspend () -> DraftItem) {
         if (writing) return
         writing = true
-        val reading = (open ?: paned)?.id
+        val reading = open?.id
         scope.launch {
             try {
                 val draft = make()
-                if ((open ?: paned)?.id == reading) composing = Composing(draft, original)
+                if (open?.id == reading) composing = Composing(draft, original)
             } catch (e: CoreException) {
                 error = e.text()
             } finally {
@@ -714,28 +714,16 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     }
 
     val again = accounts.find { it.id == signingIn }
-    val room = LocalRoom.current
-    // The other screens keep a column on a wide screen, as their lines are short.
-    val narrow = if (room.rails) LIST_MAX else Dp.Unspecified
     // The list and the message side by side; an empty list keeps the whole width for its water.
-    val split = room.split && messages.isNotEmpty()
     // Turning the screen keeps the message open: beside the list, or on its own screen.
-    LaunchedEffect(room.split) {
-        if (!room.split) {
-            paned?.let { open = it }
-            paned = null
-        } else if (screenOf(null, null, addingAccount, again, searching, draftsOpen) == Screen.Inbox) {
-            open?.let { paned = it }
-            open = null
-        }
-    }
-    val screen = screenOf(composing, open, addingAccount, again, searching, draftsOpen)
+    val split = LocalRoom.current.split && messages.isNotEmpty()
+    val screen = screenOf(composing, open, split, addingAccount, again, searching, draftsOpen)
     // Where back leads: the same screens with the top one gone.
     val behind: Screen? = when (screen) {
         Screen.Inbox -> null
         Screen.Search, Screen.AddAccount, is Screen.SignInAgain, Screen.Drafts -> Screen.Inbox
-        is Screen.Read -> screenOf(null, null, addingAccount, again, searching, draftsOpen)
-        is Screen.Write -> screenOf(null, open, addingAccount, again, searching, draftsOpen)
+        is Screen.Read -> screenOf(null, null, split, addingAccount, again, searching, draftsOpen)
+        is Screen.Write -> screenOf(null, open, split, addingAccount, again, searching, draftsOpen)
     }
 
     fun closeSearch() {
@@ -783,14 +771,11 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     // Back from another mailbox leads to the inbox.
     BackHandler(enabled = screen == Screen.Inbox && mailbox != Mail.INBOX && !accountsOpen) { mailbox = Mail.INBOX }
     // Before that, back closes the message beside the list.
-    BackHandler(enabled = screen == Screen.Inbox && split && paned != null && !accountsOpen) { paned = null }
+    BackHandler(enabled = screen == Screen.Inbox && open != null && !accountsOpen) { open = null }
 
     /** A message on its own screen, or beside the list in a [pane]; done with it, it closes. */
     @Composable
     fun Reader(message: MessageItem, pane: Boolean) {
-        fun close() {
-            if (pane) paned = null else open = null
-        }
         MessageScreen(
             mail,
             message,
@@ -799,12 +784,12 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 write(original) { mail.forward(original, forwardLabels(context), longDate(context, original.date)) }
             },
             onDelete = {
-                close()
+                open = null
                 closeSearch()
                 delete(listOf(message))
             },
             onUnread = {
-                close()
+                open = null
                 scope.launch {
                     try {
                         mail.markRead(listOf(message), seen = false)
@@ -814,12 +799,12 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 }
             },
             onMoveToInbox = {
-                close()
+                open = null
                 closeSearch()
                 moveToInbox(listOf(message))
             }.takeIf { message.canMoveToInbox },
             onDone = {
-                close()
+                open = null
                 // Back to the list, where the toast can undo it.
                 closeSearch()
                 archive(listOf(message))
@@ -842,9 +827,9 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         onKept = ::kept,
                         onDiscard = { discarded(it, shown.composing.original) },
                     )
-                    Screen.Drafts -> Middle(narrow, Modifier.fillMaxSize()) { DraftsScreen(mail, snackbar, onOpen = ::openDraft, onBack = ::back) }
+                    Screen.Drafts -> Middle(LIST_MAX, Modifier.fillMaxSize()) { DraftsScreen(mail, snackbar, onOpen = ::openDraft, onBack = ::back) }
                     is Screen.Read -> Reader(shown.message, pane = false)
-                    Screen.AddAccount -> Middle(narrow, Modifier.fillMaxSize()) {
+                    Screen.AddAccount -> Middle(LIST_MAX, Modifier.fillMaxSize()) {
                         SignInScreen(
                             mail,
                             onSignedIn = {
@@ -854,7 +839,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                             onCancel = ::back,
                         )
                     }
-                    is Screen.SignInAgain -> Middle(narrow, Modifier.fillMaxSize()) {
+                    is Screen.SignInAgain -> Middle(LIST_MAX, Modifier.fillMaxSize()) {
                         SignInScreen(
                             mail,
                             onSignedIn = {
@@ -865,12 +850,16 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                             again = shown.account,
                         )
                     }
-                    Screen.Search -> Middle(narrow, Modifier.fillMaxSize()) {
+                    Screen.Search -> Middle(LIST_MAX, Modifier.fillMaxSize()) {
                         SearchScreen(
                             mail,
                             query,
                             onQuery = { query = it },
-                            onOpen = { open = it },
+                            onOpen = {
+                                open = it
+                                // Beside the list, the message opens in the inbox's pane.
+                                if (split) searching = false
+                            },
                             onBack = ::back,
                         )
                     }
@@ -917,7 +906,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                         counts()
                                     }
                                 },
-                                onOpen = { if (split) paned = it else open = it },
+                                onOpen = { open = it },
                                 onSwipe = ::swiped,
                                 onTab = { next ->
                                     // The next tab's rows are there at once, so its page comes in with them;
@@ -941,13 +930,13 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                 onDelete = { choice { delete(it) } },
                                 onDone = { choice { rows -> archive(rows.filter { it.canArchive }) } },
                                 pane = split,
-                                showing = paned?.id.takeIf { split },
+                                showing = open?.id,
                             )
                         }
                         if (split) {
-                            Box(Modifier.width(1.dp).fillMaxHeight().background(colors.outlineVariant))
+                            VerticalDivider(color = colors.outlineVariant)
                             Box(Modifier.weight(1f).fillMaxHeight()) {
-                                when (val reading = paned) {
+                                when (val reading = open) {
                                     null -> NothingOpen()
                                     else -> key(reading.id) { Reader(reading, pane = true) }
                                 }
@@ -1055,20 +1044,22 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
 private fun screenOf(
     composing: Composing?,
     open: MessageItem?,
+    split: Boolean,
     addingAccount: Boolean,
     again: AccountItem?,
     searching: Boolean,
     drafts: Boolean,
-): Screen =
-    composing?.let { Screen.Write(it) }
-        ?: open?.let { Screen.Read(it) }
-        ?: when {
-            addingAccount -> Screen.AddAccount
-            again != null -> Screen.SignInAgain(again)
-            searching -> Screen.Search
-            drafts -> Screen.Drafts
-            else -> Screen.Inbox
-        }
+): Screen {
+    val under = when {
+        addingAccount -> Screen.AddAccount
+        again != null -> Screen.SignInAgain(again)
+        searching -> Screen.Search
+        drafts -> Screen.Drafts
+        else -> Screen.Inbox
+    }
+    // Beside the list, the message stays in the inbox's pane.
+    return composing?.let { Screen.Write(it) } ?: open?.takeIf { !split }?.let { Screen.Read(it) } ?: under
+}
 
 /** What fills the screen; a deeper screen slides over the one it came from. */
 private sealed class Screen(val depth: Int) {

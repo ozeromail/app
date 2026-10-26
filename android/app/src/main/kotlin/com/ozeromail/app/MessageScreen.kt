@@ -135,44 +135,36 @@ fun MessageScreen(
     val sideways = LocalRoom.current.rails || pane
     // The conversation, or the message on its own. On its side the whole page scrolls, title
     // and all, as the height is short; upright a message alone takes the screen below its title.
-    val letters = @Composable { column: ColumnScope ->
-        with(column) {
-            if (thread.size > 1 || message.threadCount > 1u) {
-                Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
-                    Title(message)
-                    // A long run of closed messages in the middle folds into one line.
-                    val middle = 1 until thread.size - 2
-                    val folded = !showAll && middle.count() >= 2 && middle.none { isOpen(thread[it]) }
-                    thread.forEachIndexed { i, m ->
-                        if (i == 1) {
-                            Reveal(middle.count().takeIf { folded }) { count -> More(count, onClick = { showAll = true }) }
-                        }
-                        key(m.id) {
-                            val letter = @Composable { Letter(mail, files, m, bodies, isOpen(m), onToggle = { opened[m.id] = !isOpen(m) }) }
-                            if (i in middle) {
-                                AnimatedVisibility(!folded, enter = opening, exit = closing) { letter() }
-                            } else {
-                                letter()
-                            }
+    val letters: @Composable ColumnScope.() -> Unit = {
+        if (thread.size > 1 || message.threadCount > 1u) {
+            Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
+                Title(message)
+                // A long run of closed messages in the middle folds into one line.
+                val middle = 1 until thread.size - 2
+                val folded = !showAll && middle.count() >= 2 && middle.none { isOpen(thread[it]) }
+                thread.forEachIndexed { i, m ->
+                    if (i == 1) {
+                        Reveal(middle.count().takeIf { folded }) { count -> More(count, onClick = { showAll = true }) }
+                    }
+                    key(m.id) {
+                        val letter = @Composable { Letter(mail, files, m, bodies, isOpen(m), onToggle = { opened[m.id] = !isOpen(m) }) }
+                        if (i in middle) {
+                            AnimatedVisibility(!folded, enter = opening, exit = closing) { letter() }
+                        } else {
+                            letter()
                         }
                     }
-                    Reveal(error) { Text(stringResource(it), color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(Gap.screen)) }
-                    Spacer(Modifier.height(12.dp))
                 }
-            } else if (sideways) {
-                val filesAt = remember { BringIntoViewRequester() }
-                Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
-                    Title(message)
-                    From(message, open = true, fileCount(message, bodies), filesAt)
-                    HorizontalDivider(Modifier.padding(top = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
-                    LetterBody(mail, files, filesAt, message, bodies, Modifier.fillMaxWidth(), fill = false)
-                }
-            } else {
-                val filesAt = remember { BringIntoViewRequester() }
+                Reveal(error) { Text(stringResource(it), color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(Gap.screen)) }
+                Spacer(Modifier.height(12.dp))
+            }
+        } else {
+            val filesAt = remember { BringIntoViewRequester() }
+            Column(Modifier.weight(1f).fillMaxWidth().then(if (sideways) Modifier.verticalScroll(rememberScrollState()) else Modifier)) {
                 Title(message)
                 From(message, open = true, fileCount(message, bodies), filesAt)
                 HorizontalDivider(Modifier.padding(top = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
-                LetterBody(mail, files, filesAt, message, bodies, Modifier.weight(1f), fill = true)
+                LetterBody(mail, files, filesAt, message, bodies, if (sideways) Modifier.fillMaxWidth() else Modifier.weight(1f), fill = !sideways)
             }
         }
     }
@@ -184,30 +176,30 @@ fun MessageScreen(
             // The actions move to the edges, under the thumbs: the rarer ones left, the answers and Done right.
             // Beside the list all of them go right, as the list has the left.
             Row(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
-                val rarer = @Composable {
-                    RailAction(R.drawable.ic_delete, stringResource(delete), colors.onSurface, onClick = onDelete)
-                    RailAction(R.drawable.ic_more, stringResource(R.string.action_more), colors.onSurface, onClick = { more = true })
+                val rarer: @Composable ColumnScope.() -> Unit = {
+                    BarAction(R.drawable.ic_delete, stringResource(delete), colors.onSurface, onClick = onDelete)
+                    BarAction(R.drawable.ic_more, stringResource(R.string.action_more), colors.onSurface, onClick = { more = true })
                 }
                 if (!pane) Rail(start = true) { rarer() }
                 Middle(LETTER_MAX, Modifier.weight(1f)) {
                     Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))) {
                         if (onBack != null) BackArrow(onBack, Modifier.padding(top = 4.dp)) else Spacer(Modifier.height(12.dp))
-                        letters(this)
+                        letters()
                     }
                 }
                 Rail(start = false) {
                     if (pane) rarer()
-                    RailAction(R.drawable.ic_reply, stringResource(R.string.message_reply), colors.onSurface, onClick = { onReply(answer, false) })
-                    RailAction(R.drawable.ic_reply_all, stringResource(R.string.message_reply_all), colors.onSurface, onClick = { onReply(answer, true) })
+                    BarAction(R.drawable.ic_reply, stringResource(R.string.message_reply), colors.onSurface, onClick = { onReply(answer, false) })
+                    BarAction(R.drawable.ic_reply_all, stringResource(R.string.message_reply_all), colors.onSurface, onClick = { onReply(answer, true) })
                     // The newest message, the user's own too.
-                    RailAction(R.drawable.ic_forward, stringResource(R.string.message_forward), colors.onSurface, onClick = { onForward(thread.lastOrNull() ?: message) })
-                    onDone?.let { RailAction(R.drawable.ic_done, stringResource(R.string.action_done), colors.onAccent, colors.accent, it) }
+                    BarAction(R.drawable.ic_forward, stringResource(R.string.message_forward), colors.onSurface, onClick = { onForward(thread.lastOrNull() ?: message) })
+                    onDone?.let { BarAction(R.drawable.ic_done, stringResource(R.string.action_done), colors.onAccent, colors.accent, it) }
                 }
             }
         } else {
             Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
                 onBack?.let { BackArrow(it, Modifier.padding(top = 4.dp)) }
-                letters(this)
+                letters()
                 Column(
                     Modifier.fillMaxWidth().navigationBarsPadding().padding(top = Gap.barTop, bottom = Gap.barBottom),
                     verticalArrangement = Arrangement.spacedBy(Gap.inBar),
@@ -505,10 +497,18 @@ private fun Actions(onDelete: () -> Unit, forever: Boolean, onMore: () -> Unit, 
 
 /** One of the big buttons along the bottom of a screen: an icon over its name. */
 @Composable
-fun RowScope.BarAction(@DrawableRes icon: Int, label: String, tint: Color, background: Color = Color.Transparent, onClick: () -> Unit) {
+fun RowScope.BarAction(@DrawableRes icon: Int, label: String, tint: Color, background: Color = Color.Transparent, onClick: () -> Unit) =
+    BigAction(icon, label, tint, background, Modifier.weight(1f), onClick)
+
+/** The same button on a rail, the bars' place on a screen on its side. */
+@Composable
+fun ColumnScope.BarAction(@DrawableRes icon: Int, label: String, tint: Color, background: Color = Color.Transparent, onClick: () -> Unit) =
+    BigAction(icon, label, tint, background, Modifier.fillMaxWidth(), onClick)
+
+@Composable
+private fun BigAction(@DrawableRes icon: Int, label: String, tint: Color, background: Color, modifier: Modifier, onClick: () -> Unit) {
     Column(
-        Modifier
-            .weight(1f)
+        modifier
             .height(52.dp)
             .clip(RoundedCornerShape(Radius.medium))
             .background(background)

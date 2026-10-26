@@ -1,8 +1,6 @@
 package com.ozeromail.app
 
-import androidx.annotation.DrawableRes
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -13,27 +11,21 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -65,6 +57,9 @@ val LIST_MAX = 640.dp
 
 /** How wide a message gets: a newsletter made for 600 px fits at its own size. */
 val LETTER_MAX = 720.dp
+
+/** How wide the fields of a message being written get. */
+val COMPOSE_MAX = 680.dp
 
 /** How wide the list is beside a message. */
 val LIST_PANE = 380.dp
@@ -104,22 +99,4 @@ fun Rail(start: Boolean, width: Dp = RAIL, modifier: Modifier = Modifier, conten
         horizontalAlignment = Alignment.CenterHorizontally,
         content = content,
     )
-}
-
-/** One of the big buttons of a rail: an icon over its name, as in the bottom bars. */
-@Composable
-fun RailAction(@DrawableRes icon: Int, label: String, tint: Color, background: Color = Color.Transparent, onClick: () -> Unit) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .height(52.dp)
-            .clip(RoundedCornerShape(Radius.medium))
-            .background(background)
-            .clickable(role = Role.Button, onClick = onClick),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically),
-    ) {
-        Glyph(icon, null, tint, size = 21.dp)
-        Text(label, color = tint, style = Type.Label, maxLines = 1)
-    }
 }
