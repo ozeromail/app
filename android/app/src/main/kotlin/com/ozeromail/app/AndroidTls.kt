@@ -3,6 +3,7 @@ package com.ozeromail.app
 import android.content.Context
 import android.security.KeyChain
 import android.util.Log
+import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.security.Principal
@@ -12,6 +13,7 @@ import java.security.cert.X509Certificate
 import javax.net.ssl.SNIHostName
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLEngine
+import javax.net.ssl.SSLException
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.X509ExtendedKeyManager
 import javax.net.ssl.X509TrustManager
@@ -118,6 +120,11 @@ private inline fun <T> failing(block: () -> T): T = try {
     block()
 } catch (e: PlatformTlsException) {
     throw e
+} catch (e: SSLException) {
+    throw PlatformTlsException.Failed(e.message ?: e.javaClass.simpleName)
+} catch (e: IOException) {
+    // A reset or closed socket, as a server drops a kept-alive connection.
+    throw PlatformTlsException.Dropped(e.message ?: e.javaClass.simpleName)
 } catch (e: Exception) {
     throw PlatformTlsException.Failed(e.message ?: e.javaClass.simpleName)
 }
