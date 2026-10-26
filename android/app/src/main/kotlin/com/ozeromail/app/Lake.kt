@@ -663,7 +663,8 @@ private class Still(private var falling: Boolean) {
                 // The reflection: a soft glow under the horizon, flattened by perspective, and a
                 // few streaks that follow the surface. It breathes deeper while the water swells.
                 val r = 150.dp.toPx() * lv + 1f
-                val flatten = r * 0.32f * (1f + 0.14f * sea * sin(t * 1.3f))
+                // Never deeper than the water, so the glow fades out before it ends.
+                val flatten = min(r * 0.32f * (1f + 0.14f * sea * sin(t * 1.3f)), maxOf(1f, bottom - hzPx))
                 withTransform({
                     translate(cx, hzPx)
                     scale(r, flatten, Offset.Zero)
@@ -710,7 +711,7 @@ private class Still(private var falling: Boolean) {
                 val near = 1f - (d.land - d.y) / 90f
                 if (near <= 0f || d.y >= d.land) continue
                 val y = d.land + (d.land - d.y) * 0.3f
-                drawOval(drop.copy(alpha = 0.22f * near), Offset((d.x - d.r) * u, (y - d.r * 0.45f) * u), Size(d.r * 2 * u, d.r * 0.9f * u))
+                drawOval(drop.copy(alpha = 0.22f * near * edge(d.x, y, below)), Offset((d.x - d.r) * u, (y - d.r * 0.45f) * u), Size(d.r * 2 * u, d.r * 0.9f * u))
             }
         }
         if (lv > 0f) waterline(0.55f, middle, 150f * lv, hz, 0f, t, water, stroke)

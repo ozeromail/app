@@ -201,7 +201,6 @@ private const val AHEAD = 20
 /** Rows read of each other tab: what shows of its page as it glides past. */
 private const val PAGE_ROWS = 12
 
-/** A folder by its id, which is positive; the unified mailboxes as their role below zero. */
 private val MailboxSaver = Saver<Mailbox, Long>(
     save = { it.key() },
     restore = { if (it >= 0) Mailbox.Folder(it) else Mailbox.Unified(FolderRole.entries[(-1L - it).toInt()]) },
@@ -275,6 +274,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     val settings = remember { Settings(context) }
     // Mailboxes ever synced on this phone: one opened again shows its saved mail and syncs quietly.
     var everSynced by remember { mutableStateOf(settings.syncedBoxes) }
+    fun keepSynced(boxes: Set<Long>) {
+        everSynced = boxes
+        settings.syncedBoxes = boxes
+    }
     var swipes by remember { mutableStateOf(settings.swipes) }
     var groups by remember { mutableStateOf(settings.groups) }
     var swipeTip by remember { mutableStateOf(!settings.swipeTipSeen) }
@@ -450,10 +453,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         }
         if (synced) {
             syncedBoxes += box
-            if (box.key() !in everSynced) {
-                everSynced += box.key()
-                settings.syncedBoxes = everSynced
-            }
+            if (box.key() !in everSynced) keepSynced(everSynced + box.key())
         }
         syncAgain.entries.firstOrNull()?.let { (next, quietly) ->
             syncAgain -= next
@@ -862,9 +862,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         mail,
                         onSignedIn = {
                             addingAccount = false
-                            // Its mail is all still to come.
-                            everSynced = emptySet()
-                            settings.syncedBoxes = everSynced
+                            // Its mail is all still to come in the mailboxes together.
+                            keepSynced(everSynced.filterTo(mutableSetOf()) { it >= 0 })
                             scope.launch { sync() }
                         },
                         onCancel = ::back,
@@ -1028,7 +1027,12 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                     // Its folders, and with them the mailboxes together, may be gone.
                     mailbox = Mail.INBOX
                     loadAccounts()
-                    if (accounts.isEmpty()) onNoAccounts() else load()
+                    if (accounts.isEmpty()) {
+                        keepSynced(emptySet())
+                        onNoAccounts()
+                    } else {
+                        load()
+                    }
                 }
             },
             onWrite = {

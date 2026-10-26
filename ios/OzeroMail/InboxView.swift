@@ -36,10 +36,7 @@ struct InboxView: View {
         .fullScreenCover(isPresented: $model.addingAccount) {
             SignInView(mail: model.mail, onCancel: { model.addingAccount = false }) {
                 model.addingAccount = false
-                // Its mail is all still to come.
-                model.everSynced = []
-                Settings.syncedBoxes = []
-                model.signedIn()
+                model.signedIn(new: true)
             }
         }
         .fullScreenCover(item: $model.signingIn) { account in

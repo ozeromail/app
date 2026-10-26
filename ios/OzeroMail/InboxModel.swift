@@ -48,7 +48,9 @@ final class InboxModel {
     /// Mailboxes synced since the app opened: until then, their empty list waits for its mail.
     var syncedBoxes: Set<Mailbox> = []
     /// Mailboxes ever synced on this phone: one opened again shows its saved mail and syncs quietly.
-    var everSynced = Settings.syncedBoxes
+    var everSynced = Settings.syncedBoxes {
+        didSet { Settings.syncedBoxes = everSynced }
+    }
     var loadingOlder = false
     /// Whether this tab or mailbox had mail since it was picked: then the lake draws itself in as
     /// the last message leaves, and not on opening the app or on picking an empty tab.
@@ -302,7 +304,7 @@ final class InboxModel {
         syncing = false
         if synced {
             syncedBoxes.insert(box)
-            if everSynced.insert(box.key).inserted { Settings.syncedBoxes = everSynced }
+            if !everSynced.contains(box.key) { everSynced.insert(box.key) }
         }
         if let (next, quietly) = syncAgain.first {
             syncAgain[next] = nil
@@ -516,7 +518,12 @@ final class InboxModel {
         // Its folders, and with them the mailboxes together, may be gone.
         mailbox = Mail.inbox
         await loadAccounts()
-        if accounts.isEmpty { onNoAccounts() } else { await load() }
+        if accounts.isEmpty {
+            everSynced = []
+            onNoAccounts()
+        } else {
+            await load()
+        }
     }
 
     // MARK: Writing
@@ -596,7 +603,9 @@ final class InboxModel {
     }
 
     /// An account was added or signed in to again: its mail comes in.
-    func signedIn() {
+    func signedIn(new: Bool = false) {
+        // A new account's mail is all still to come in the mailboxes together.
+        if new { everSynced = everSynced.filter { !$0.hasPrefix(Mailbox.unifiedKey) } }
         Task {
             await loadAccounts()
             await sync()
@@ -628,7 +637,9 @@ extension Mailbox {
     var key: String {
         switch self {
         case .folder(let id): "folder-\(id)"
-        case .unified(let role): "all-\(role)"
+        case .unified(let role): "\(Mailbox.unifiedKey)\(role)"
         }
     }
+
+    static let unifiedKey = "all-"
 }

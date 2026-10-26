@@ -577,7 +577,8 @@ final class Still {
             // The reflection: a soft glow under the horizon, flattened by perspective, and a few
             // streaks that follow the surface. It breathes deeper while the water swells.
             let r = 150 * lv + 1
-            let flatten = r * 0.32 * (1 + 0.14 * sea * sin(t * 1.3))
+            // Never deeper than the water, so the glow fades out before it ends.
+            let flatten = min(r * 0.32 * (1 + 0.14 * sea * sin(t * 1.3)), max(1, Double(bottom) - hz))
             // Eased, so the glow has no rim where it ends.
             let strength = 0.14 + 0.04 * sea
             let glow = Gradient(stops: [
@@ -631,7 +632,7 @@ final class Still {
             if near <= 0 || d.y >= d.land { continue }
             let y = d.land + (d.land - d.y) * 0.3
             below.fill(Path(ellipseIn: CGRect(x: d.x - d.r, y: y - d.r * 0.45, width: d.r * 2, height: d.r * 0.9)),
-                       with: .color(drop.opacity(0.22 * near)))
+                       with: .color(drop.opacity(0.22 * near * edge(d.x, y, below: Double(bottom)))))
         }
         if lv > 0 { waterline(&context, alpha: 0.55, x: middle, half: 150 * lv, y: hz, near: 0, t: t, color: water, width: stroke) }
         // The gathering drop grows with the pull, a round bead that fills into a drop.
@@ -650,8 +651,8 @@ final class Still {
     /// How much of the water shows at `x`, `y`: all of it in the middle, fading out toward its sides
     /// and toward the eye before it ends `below`, so a wave never ends on an edge.
     private func edge(_ x: Double, _ y: Double, below: Double) -> Double {
-        let side = min(x, middle * 2 - x) / 48
-        let near = (below - y) / 28
+        let side = min(x, middle * 2 - x) / edgeSide
+        let near = (below - y) / edgeNear
         let v = min(max(min(side, near), 0), 1)
         return v * v * (3 - 2 * v)
     }
@@ -768,6 +769,9 @@ private let streaks: [(dy: Double, half: Double, alpha: Double)] = [
 
 /// Gravity, points a second squared: a drop falls its 40–50 points in about a third of a second.
 private let gravity: Double = 760
+/// How far from its sides, and from where it ends below, the water fades out.
+private let edgeSide = 48.0
+private let edgeNear = 28.0
 private let dropSteps = 48
 
 /// How slowly a wait's swell comes and goes, in seconds, and how often a faint ring goes out.
