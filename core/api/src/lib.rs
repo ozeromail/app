@@ -16,9 +16,9 @@ use ozero_app::sync::{
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Attachment, Body, Category, Changes,
     Checkpoint, Draft, DraftFile, DraftId, FileId, Folder, FolderId, FolderRole, ListQuery,
-    ListScope, MailProvider, MailSender, MessageId, MessageRow, Moved, NewAccount, NewFolder,
-    Older, OpId, OutboxId, Outgoing, OutgoingFile, ProviderError, ProviderState, RawMessage,
-    RecentFile, SavedDraft, Sender, Server, Store, StoreError, html, parse_recipients,
+    ListScope, MailProvider, MailSender, MailService, MessageId, MessageRow, Moved, NewAccount,
+    NewFolder, Older, OpId, OutboxId, Outgoing, OutgoingFile, ProviderError, ProviderState,
+    RawMessage, RecentFile, SavedDraft, Sender, Server, Store, StoreError, html, parse_recipients,
     saves_sent_itself,
 };
 use ozero_ews::{EasSession, EwsSession, discover};
@@ -74,6 +74,10 @@ pub fn undo_seconds() -> u32 {
     u32::try_from(HOLD / 1_000 - 1).unwrap_or(0)
 }
 
+/// The usual ports of IMAP and SMTP over TLS, which a found account is tried on.
+const IMAPS_PORT: u16 = 993;
+const SMTPS_PORT: u16 = 465;
+
 /// How many files of saved mail compose offers to send on.
 const RECENT_FILES: usize = 6;
 /// The most bytes the files a person adds to one message may take together: what Gmail takes.
@@ -96,6 +100,12 @@ pub fn core_version() -> String {
 #[uniffi::export]
 pub fn suggested_imap_host(email: String) -> Option<String> {
     ozero_domain::guess_imap_host(&email)
+}
+
+/// The service an address is at, if sign-in knows it by its domain.
+#[uniffi::export]
+pub fn known_service(email: String) -> Option<MailService> {
+    ozero_domain::mail_service(&email)
 }
 
 /// The SMTP server sign-in suggests, like `suggested_imap_host`.
@@ -662,6 +672,59 @@ impl Core {
             smtp: Some(smtp),
         };
         Ok(self.store.add_account(&account)?.0)
+    }
+
+    /// Saves an account from an address and a password alone, for a domain sign-in does not
+    /// know: first IMAP and SMTP at the domain's usual hosts, then Exchange found from the
+    /// address. Fails with `NotFound` when neither answers, so the app asks for the servers.
+    pub async fn add_found_account(
+        &self,
+        email: String,
+        password: String,
+    ) -> Result<i64, CoreError> {
+        let (Some(imap), Some(smtp)) = (
+            ozero_domain::guess_imap_host(&email),
+            ozero_domain::guess_smtp_host(&email),
+        ) else {
+            return Err(CoreError::NotFound);
+        };
+        let imap = Endpoint {
+            host: imap,
+            port: IMAPS_PORT,
+        };
+        let smtp = Endpoint {
+            host: smtp,
+            port: SMTPS_PORT,
+        };
+        if self.exists(&email)? {
+            return Err(CoreError::AccountExists);
+        }
+        // IMAP alone first, so a slow or missing SMTP server does not hide one that answers.
+        match self.login(&imap.clone().server(&email), &password).await {
+            Ok(_) => {
+                return match self
+                    .add_imap_account(email.clone(), email, imap, smtp, password)
+                    .await
+                {
+                    // IMAP answers, but SMTP not at its usual host: the servers are typed.
+                    Err(CoreError::Network { .. } | CoreError::Server { .. }) => {
+                        Err(CoreError::NotFound)
+                    }
+                    added => added,
+                };
+            }
+            // Nothing answers there, or something else than IMAP: maybe the mail is on Exchange.
+            Err(CoreError::Network { .. } | CoreError::Server { .. }) => {}
+            Err(e) => return Err(e),
+        }
+        // No name: the server is asked for the owner's.
+        match self
+            .add_exchange_account(email, String::new(), None, None, None, password)
+            .await
+        {
+            Err(CoreError::NoServer) => Err(CoreError::NotFound),
+            added => added,
+        }
     }
 
     /// Saves an Exchange account once its server has taken the login. Without `server` the
@@ -2199,6 +2262,16 @@ pub enum AccountKind {
     Exchange,
 }
 
+/// A mail service sign-in knows by the domain of an address.
+#[uniffi::remote(Enum)]
+pub enum MailService {
+    Google,
+    ICloud,
+    Yahoo,
+    Yandex,
+    MailRu,
+}
+
 /// Inbox tab, sorted by rules on the device.
 #[uniffi::remote(Enum)]
 pub enum Category {
@@ -2737,6 +2810,8 @@ pub enum CoreError {
     NoSmtp,
     /// No Exchange server was found for the address, or the one typed is no server address.
     NoServer,
+    /// Neither IMAP nor Exchange answers for an address, so its servers have to be typed.
+    NotFound,
     /// The Exchange server typed answers, but not as EWS.
     NoEws,
     /// The Exchange server typed asks for a client certificate, and none was picked.
@@ -2767,6 +2842,7 @@ impl fmt::Display for CoreError {
             Self::BadRecipients => write!(f, "a recipient is not an email address"),
             Self::NoSmtp => write!(f, "the account has no SMTP server"),
             Self::NoServer => write!(f, "no Exchange server found"),
+            Self::NotFound => write!(f, "no server found for the address"),
             Self::NoEws => write!(f, "the server does not answer as EWS"),
             Self::CertificateNeeded => write!(f, "the server asks for a client certificate"),
             Self::DeviceBlocked => write!(f, "the server has not let this device in"),

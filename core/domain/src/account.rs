@@ -78,6 +78,29 @@ fn guess_host(email: &str, service: &str) -> Option<String> {
     Some(format!("{service}.{}", email_domain(email)?))
 }
 
+/// A mail service sign-in knows by the domain of an address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MailService {
+    Google,
+    ICloud,
+    Yahoo,
+    Yandex,
+    MailRu,
+}
+
+/// The service an address is at, if sign-in knows it by its domain.
+pub fn mail_service(email: &str) -> Option<MailService> {
+    let service = match email_domain(email)?.as_str() {
+        "gmail.com" | "googlemail.com" => MailService::Google,
+        "icloud.com" | "me.com" | "mac.com" => MailService::ICloud,
+        "yahoo.com" | "ymail.com" | "rocketmail.com" => MailService::Yahoo,
+        "yandex.ru" | "yandex.com" | "ya.ru" | "yandex.by" | "yandex.kz" => MailService::Yandex,
+        "mail.ru" | "bk.ru" | "list.ru" | "inbox.ru" | "internet.ru" => MailService::MailRu,
+        _ => return None,
+    };
+    Some(service)
+}
+
 /// The domain of an email address, lowercased; None without one.
 pub fn email_domain(email: &str) -> Option<String> {
     // The last '@': a quoted local part may contain one too.
@@ -121,6 +144,15 @@ mod tests {
         assert_eq!(account.name(), "a@example.com");
         account.label = "Work".into();
         assert_eq!(account.name(), "Work");
+    }
+
+    #[test]
+    fn tells_a_known_service_by_the_domain() {
+        assert_eq!(mail_service("a@Gmail.com "), Some(MailService::Google));
+        assert_eq!(mail_service("a@ya.ru"), Some(MailService::Yandex));
+        assert_eq!(mail_service("a@bk.ru"), Some(MailService::MailRu));
+        assert_eq!(mail_service("a@example.com"), None);
+        assert_eq!(mail_service("gmail.com"), None);
     }
 
     #[test]
