@@ -212,7 +212,7 @@ async fn takes_a_connection_dropped_before_answering_as_closed() {
 }
 
 /// Opens connections whose server has already answered once; it keeps their server ends.
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct Answered(std::sync::Mutex<Vec<DuplexStream>>);
 
 impl Tunnel for Answered {
