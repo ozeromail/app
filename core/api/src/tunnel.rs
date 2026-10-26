@@ -107,6 +107,12 @@ pub struct Platform {
     pub checks: Arc<dyn ServerCertVerifier>,
 }
 
+impl fmt::Debug for Platform {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Platform({})", self.certificate)
+    }
+}
+
 impl Tunnel for Platform {
     fn open<'a>(
         &'a self,
@@ -149,32 +155,27 @@ async fn blocking<T: Send + 'static>(
     }
 }
 
-/// The socket as an async stream: one task moves what it reads in, another what is written
-/// out. Dropping the stream closes the socket.
+/// The socket as an async stream: one blocking thread moves what it reads in, another what is
+/// written out. Dropping the stream closes the socket.
 fn pump(socket: Arc<dyn PlatformSocket>) -> DuplexStream {
     let (ours, theirs) = tokio::io::duplex(4 * CHUNK);
     let (mut from_core, mut to_core) = tokio::io::split(theirs);
+    let runtime = tokio::runtime::Handle::current();
     let reader = socket.clone();
-    tokio::spawn(async move {
-        loop {
-            let socket = reader.clone();
-            match blocking(move || socket.read(CHUNK as u32)).await {
-                Ok(data) if !data.is_empty() => {
-                    if to_core.write_all(&data).await.is_err() {
-                        break;
-                    }
-                }
-                _ => break,
+    let reading = runtime.clone();
+    tokio::task::spawn_blocking(move || {
+        while let Ok(data) = reader.read(CHUNK as u32) {
+            if data.is_empty() || reading.block_on(to_core.write_all(&data)).is_err() {
+                break;
             }
         }
         // The core reads the end of the stream.
-        let _ = to_core.shutdown().await;
+        let _ = reading.block_on(to_core.shutdown());
     });
-    tokio::spawn(async move {
+    tokio::task::spawn_blocking(move || {
         let mut chunk = vec![0; CHUNK];
-        while let Ok(n @ 1..) = from_core.read(&mut chunk).await {
-            let (socket, data) = (socket.clone(), chunk[..n].to_vec());
-            if blocking(move || socket.write(data)).await.is_err() {
+        while let Ok(n @ 1..) = runtime.block_on(from_core.read(&mut chunk)) {
+            if socket.write(chunk[..n].to_vec()).is_err() {
                 break;
             }
         }

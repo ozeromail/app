@@ -21,9 +21,9 @@ import uniffi.ozero_api.PlatformTls
 import uniffi.ozero_api.PlatformTlsException
 import uniffi.ozero_api.ServerChecks
 
-private const val CONNECT_TIMEOUT_MS = 30_000
-/** A read the core gave up on long ago; the core closes the socket before this as a rule. */
-private const val READ_TIMEOUT_MS = 120_000
+/** For the connection and the handshake. Later reads wait as long as the core does: it times
+ * them itself, long polls included, and closes the socket when it gives up. */
+private const val TIMEOUT_MS = 30_000
 
 /**
  * Android's own TLS, for Exchange with a client certificate: some servers ask for the certificate
@@ -36,13 +36,14 @@ class AndroidTls(private val context: Context) : PlatformTls {
             init(arrayOf(KeyChainKey(context, certificate)), arrayOf(CoreChecks(checks)), null)
         }
         val tcp = Socket().apply {
-            connect(InetSocketAddress(host, port.toInt()), CONNECT_TIMEOUT_MS)
-            soTimeout = READ_TIMEOUT_MS
+            connect(InetSocketAddress(host, port.toInt()), TIMEOUT_MS)
+            soTimeout = TIMEOUT_MS
         }
         val socket = tls.socketFactory.createSocket(tcp, host, port.toInt(), true) as SSLSocket
         try {
             socket.sslParameters = socket.sslParameters.apply { serverNames = listOf(SNIHostName(host)) }
             socket.startHandshake()
+            socket.soTimeout = 0
         } catch (e: IOException) {
             socket.close()
             throw e
@@ -54,10 +55,12 @@ class AndroidTls(private val context: Context) : PlatformTls {
 private class AndroidSocket(private val socket: SSLSocket) : PlatformSocket {
     private val input = socket.inputStream
     private val output = socket.outputStream
+    /** Only one thread reads. */
+    private var buffer = ByteArray(0)
 
     override fun read(max: UInt): ByteArray = failing {
-        val buffer = ByteArray(max.toInt())
-        val n = input.read(buffer)
+        if (buffer.size < max.toInt()) buffer = ByteArray(max.toInt())
+        val n = input.read(buffer, 0, max.toInt())
         if (n < 0) ByteArray(0) else buffer.copyOf(n)
     }
 

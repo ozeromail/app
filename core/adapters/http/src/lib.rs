@@ -65,7 +65,7 @@ pub type Opened = (Box<dyn Stream>, Vec<u8>);
 
 /// Opens TLS connections without rustls, such as through the platform's own TLS: rustls does
 /// not renegotiate, as some servers do to ask for a client certificate after the request.
-pub trait Tunnel: Send + Sync {
+pub trait Tunnel: Send + Sync + fmt::Debug {
     /// A connection to `host:port` whose server certificate has passed the checks.
     fn open<'a>(
         &'a self,
@@ -75,7 +75,7 @@ pub trait Tunnel: Send + Sync {
 }
 
 /// How a client opens its TLS connections.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Tls {
     Rustls(Arc<ClientConfig>),
     Tunnel(Arc<dyn Tunnel>),
@@ -87,23 +87,16 @@ impl From<Arc<ClientConfig>> for Tls {
     }
 }
 
-impl fmt::Debug for Tls {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Rustls(_) => "Rustls",
-            Self::Tunnel(_) => "Tunnel",
-        })
-    }
-}
+/// A connection over any TLS.
+type Link = Conn<Box<dyn Stream>>;
 
 /// Talks to one host over TLS on port 443 or the given one.
 pub struct HttpsClient {
     host: String,
     port: u16,
     tls: Tls,
-    conn: Option<(Conn<Box<dyn Stream>>, Instant)>,
-    /// The server's certificate on `conn`, as DER.
-    certificate: Option<Vec<u8>>,
+    /// The open connection, when it was last used, and its server's certificate as DER.
+    conn: Option<(Link, Instant, Option<Vec<u8>>)>,
     /// Largest response body.
     limit: usize,
     /// Refuses hosts that resolve to a private or local address.
@@ -127,7 +120,6 @@ impl HttpsClient {
             port,
             tls: tls.into(),
             conn: None,
-            certificate: None,
             limit: MAX_BODY,
             public_only: false,
         }
@@ -172,12 +164,12 @@ impl HttpsClient {
     /// Whether the next request goes over the connection the last one used: a login bound to
     /// the connection, as NTLM's, then still holds.
     pub fn is_open(&self) -> bool {
-        matches!(&self.conn, Some((_, used)) if used.elapsed() < IDLE)
+        matches!(&self.conn, Some((_, used, _)) if used.elapsed() < IDLE)
     }
 
     /// The server's certificate on the open connection, as DER.
     pub fn certificate(&self) -> Option<Vec<u8>> {
-        self.conn.as_ref().and(self.certificate.clone())
+        self.conn.as_ref()?.2.clone()
     }
 
     async fn exchange(
@@ -189,33 +181,39 @@ impl HttpsClient {
         repeatable: bool,
     ) -> Result<Response, ProviderError> {
         let request = request(method, &self.host, path, headers, body)?;
-        let conn = match self.conn.take() {
-            Some((conn, used)) if used.elapsed() < IDLE => conn,
+        let (conn, certificate) = match self.conn.take() {
+            Some((conn, used, certificate)) if used.elapsed() < IDLE => (conn, certificate),
             _ => self.connect().await?,
         };
-        let (response, conn) = match exchange(conn, &request).await {
-            Ok(done) => done,
+        let (response, conn, certificate) = match exchange(conn, &request).await {
+            Ok((response, conn)) => (response, conn, certificate),
             // The server closed the connection before answering: a kept-alive one it dropped
             // as idle, or a new one it dropped at once. A new one asks again, but only what is
             // safe to ask twice: a POST may have gone through.
-            Err(Failure::Closed) if repeatable => exchange(self.connect().await?, &request).await?,
+            Err(Failure::Closed) if repeatable => {
+                let (conn, certificate) = self.connect().await?;
+                let (response, conn) = exchange(conn, &request).await?;
+                (response, conn, certificate)
+            }
             Err(Failure::Closed) => return Err(closed()),
             Err(Failure::Error(e)) => return Err(e),
         };
         if let Some(conn) = conn {
-            self.conn = Some((conn, Instant::now()));
+            self.conn = Some((conn, Instant::now(), certificate));
         }
         Ok(response)
     }
 
-    /// Opens a new connection and keeps its server certificate.
-    async fn connect(&mut self) -> Result<Conn<Box<dyn Stream>>, ProviderError> {
+    /// Opens a new connection; also gives its server's certificate.
+    async fn connect(&self) -> Result<(Link, Option<Vec<u8>>), ProviderError> {
         let (stream, certificate) = match &self.tls {
             Tls::Rustls(config) => {
                 let tls = self.handshake(config.clone()).await?;
                 let (_, session) = tls.get_ref();
-                let certificate = session.peer_certificates().and_then(|c| c.first());
-                let certificate = certificate.map(|c| c.to_vec());
+                let certificate = session
+                    .peer_certificates()
+                    .and_then(|c| c.first())
+                    .map(|c| c.to_vec());
                 (Box::new(tls) as Box<dyn Stream>, certificate)
             }
             Tls::Tunnel(tunnel) => {
@@ -226,8 +224,7 @@ impl HttpsClient {
                 (stream, Some(certificate))
             }
         };
-        self.certificate = certificate;
-        Ok(Conn::new(stream, self.limit))
+        Ok((Conn::new(stream, self.limit), certificate))
     }
 
     async fn handshake(

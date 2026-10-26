@@ -26,6 +26,7 @@ use ozero_gmail::{GmailSession, oauth};
 use ozero_http::Tls;
 use ozero_imap::rustls::ClientConfig;
 use ozero_imap::rustls::client::ResolvesClientCert;
+use ozero_imap::rustls::client::danger::ServerCertVerifier;
 use ozero_imap::{ImapSession, RefusedCertificates};
 use ozero_mime::{MimeBuilder, MimeParser};
 use ozero_smtp::SmtpSession;
@@ -2016,14 +2017,10 @@ impl Core {
         let (Some(certificate), Some(tls)) = (certificate, self.platform_tls.get()) else {
             return Ok(None);
         };
-        ready()?;
-        let checks = ozero_imap::platform_checks(trusted, refused).map_err(|e| CoreError::Tls {
-            detail: e.to_string(),
-        })?;
         Ok(Some(Tls::Tunnel(Arc::new(tunnel::Platform {
             tls: tls.clone(),
             certificate: certificate.to_owned(),
-            checks,
+            checks: server_checks(trusted, refused)?,
         }))))
     }
 
@@ -2362,6 +2359,17 @@ fn tls_config(
 ) -> Result<Arc<ClientConfig>, CoreError> {
     ready()?;
     ozero_imap::platform_tls(client, trusted, refused).map_err(|e| CoreError::Tls {
+        detail: e.to_string(),
+    })
+}
+
+/// The checks `tls_config` builds into its settings, for the platform's TLS to ask.
+fn server_checks(
+    trusted: Option<[u8; 32]>,
+    refused: Option<Arc<RefusedCertificates>>,
+) -> Result<Arc<dyn ServerCertVerifier>, CoreError> {
+    ready()?;
+    ozero_imap::platform_checks(trusted, refused).map_err(|e| CoreError::Tls {
         detail: e.to_string(),
     })
 }
