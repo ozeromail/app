@@ -419,8 +419,9 @@ fun ComposeScreen(
                 // The message being answered takes the room the fields leave; alone, the fields sit low.
                 // With the keyboard up the card may close to nothing, so Send always stays in sight.
                 if (original != null) Original(mail, original, Modifier.weight(1f).heightIn(min = if (keyboard) 0.dp else 112.dp))
+                // As much room under the text as at its sides, so it never touches the bar.
                 Column(
-                    (if (original == null) Modifier.weight(1f) else Modifier).padding(horizontal = Gap.screen),
+                    (if (original == null) Modifier.weight(1f) else Modifier).padding(start = Gap.screen, end = Gap.screen, bottom = Gap.screen),
                     verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
                 ) { fields() }
                 errorLine()
