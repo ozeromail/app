@@ -68,11 +68,13 @@ fn account(store: &SqliteStore, email: &str) -> AccountId {
                 host: "imap.example.com".into(),
                 port: 993,
                 user: email.into(),
+                certificate: None,
             }),
             smtp: Some(Server {
                 host: "smtp.example.com".into(),
                 port: 465,
                 user: email.into(),
+                certificate: None,
             }),
         })
         .unwrap()
@@ -1340,6 +1342,30 @@ fn accounts_keep_their_smtp_server() {
     account(&store, "a@example.com");
     let smtp = store.accounts().unwrap()[0].smtp.clone().unwrap();
     assert_eq!((smtp.host.as_str(), smtp.port), ("smtp.example.com", 465));
+}
+
+#[test]
+fn accounts_keep_their_client_certificates() {
+    let store = store();
+    let server = |host: &str, certificate: Option<&str>| Server {
+        host: host.into(),
+        port: 443,
+        user: "CORP\\anna".into(),
+        certificate: certificate.map(Into::into),
+    };
+    store
+        .add_account(&NewAccount {
+            kind: AccountKind::Exchange,
+            email: "anna@corp.ru".into(),
+            display_name: "Anna".into(),
+            server: Some(server("mail.corp.ru", Some("T-Bank"))),
+            smtp: Some(server("smtp.corp.ru", Some("Other"))),
+        })
+        .unwrap();
+    let account = &store.accounts().unwrap()[0];
+    assert_eq!(account.server, Some(server("mail.corp.ru", Some("T-Bank"))));
+    assert_eq!(account.smtp, Some(server("smtp.corp.ru", Some("Other"))));
+    assert_eq!((account.color, account.label.as_str()), (0, ""));
 }
 
 #[test]

@@ -18,6 +18,8 @@ pub struct Server {
     pub host: String,
     pub port: u16,
     pub user: String,
+    /// The client certificate the server asks for, by the name the platform keeps it under.
+    pub certificate: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

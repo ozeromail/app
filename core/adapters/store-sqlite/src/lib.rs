@@ -141,8 +141,10 @@ impl Store for SqliteStore {
         let id: i64 = tx
             .query_row(
                 "INSERT INTO account (id, kind, email, display_name, server_host, server_port,
-                                      server_user, smtp_host, smtp_port, smtp_user, color)
+                                      server_user, server_certificate, smtp_host, smtp_port,
+                                      smtp_user, smtp_certificate, color)
                  VALUES ((SELECT last + 1 FROM account_seq), ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
+                         ?10, ?11,
                          (SELECT min(c) FROM (SELECT 0 AS c UNION SELECT color + 1 FROM account)
                           WHERE c NOT IN (SELECT color FROM account)))
                  RETURNING id",
@@ -153,9 +155,11 @@ impl Store for SqliteStore {
                     server.map(|s| &s.host),
                     server.map(|s| s.port),
                     server.map(|s| &s.user),
+                    server.and_then(|s| s.certificate.as_ref()),
                     smtp.map(|s| &s.host),
                     smtp.map(|s| s.port),
                     smtp.map(|s| &s.user),
+                    smtp.and_then(|s| s.certificate.as_ref()),
                 ],
                 |r| r.get(0),
             )
@@ -171,14 +175,20 @@ impl Store for SqliteStore {
         let mut stmt = conn
             .prepare_cached(
                 "SELECT id, kind, email, display_name, server_host, server_port, server_user,
-                        smtp_host, smtp_port, smtp_user, color, label, keep_days, needs_sign_in
+                        server_certificate, smtp_host, smtp_port, smtp_user, smtp_certificate,
+                        color, label, keep_days, needs_sign_in
                  FROM account ORDER BY id",
             )
             .map_err(storage)?;
         let rows = stmt.query_map([], |r| {
             let server = |at: usize| -> rusqlite::Result<Option<Server>> {
                 Ok(match (r.get(at)?, r.get(at + 1)?, r.get(at + 2)?) {
-                    (Some(host), Some(port), Some(user)) => Some(Server { host, port, user }),
+                    (Some(host), Some(port), Some(user)) => Some(Server {
+                        host,
+                        port,
+                        user,
+                        certificate: r.get(at + 3)?,
+                    }),
                     _ => None,
                 })
             };
@@ -188,11 +198,11 @@ impl Store for SqliteStore {
                 email: r.get(2)?,
                 display_name: r.get(3)?,
                 server: server(4)?,
-                smtp: server(7)?,
-                color: r.get(10)?,
-                label: r.get(11)?,
-                keep_days: r.get(12)?,
-                needs_sign_in: r.get(13)?,
+                smtp: server(8)?,
+                color: r.get(12)?,
+                label: r.get(13)?,
+                keep_days: r.get(14)?,
+                needs_sign_in: r.get(15)?,
             })
         });
         rows.and_then(|rows| rows.collect()).map_err(storage)
