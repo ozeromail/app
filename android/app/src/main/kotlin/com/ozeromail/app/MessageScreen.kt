@@ -94,6 +94,7 @@ fun MessageScreen(
     onUnread: () -> Unit,
     onMoveToInbox: (() -> Unit)?,
     onDone: (() -> Unit)?,
+    onSnooze: (() -> Unit)?,
     onBack: () -> Unit,
     /** Beside the list: the actions fit one row, and the list keeps the start edge clear. */
     pane: Boolean = false,
@@ -172,7 +173,7 @@ fun MessageScreen(
                 // The newest message is forwarded, the user's own too.
                 val answers = @Composable { row: RowScope -> row.Answers({ onReply(answer, it) }, { onForward(thread.lastOrNull() ?: message) }) }
                 if (pane) {
-                    PaneActions(answers, onDelete = onDelete, forever = !message.canTrash, onMore = { more = true }, onDone = onDone)
+                    PaneActions(answers, onDelete = onDelete, forever = !message.canTrash, onSnooze = onSnooze, onMore = { more = true }, onDone = onDone)
                 } else {
                     Column(
                         Modifier.fillMaxWidth().navigationBarsPadding().padding(top = Gap.barTop, bottom = Gap.barBottom),
@@ -183,7 +184,7 @@ fun MessageScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
                         ) { answers(this) }
-                        Actions(onDelete = onDelete, forever = !message.canTrash, onMore = { more = true }, onDone = onDone)
+                        Actions(onDelete = onDelete, forever = !message.canTrash, onSnooze = onSnooze, onMore = { more = true }, onDone = onDone)
                     }
                 }
             }
@@ -434,15 +435,16 @@ private fun PlainText(text: String, quote: String, modifier: Modifier) {
 
 /**
  * The actions under the thumb, each in an equal place; Done, the one used most, takes the last.
- * Delete and Done are null in a folder where they do not apply, such as Done in the archive;
+ * Snooze and Done are null in a folder where they do not apply, such as Done in the archive;
  * Delete is [forever] in the trash.
  */
 @Composable
-private fun Actions(onDelete: () -> Unit, forever: Boolean, onMore: () -> Unit, onDone: (() -> Unit)?) {
+private fun Actions(onDelete: () -> Unit, forever: Boolean, onSnooze: (() -> Unit)?, onMore: () -> Unit, onDone: (() -> Unit)?) {
     val colors = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth().padding(horizontal = Gap.bar), horizontalArrangement = Arrangement.spacedBy(Gap.inBar)) {
         val delete = if (forever) R.string.action_delete_forever else R.string.action_delete
         BarAction(R.drawable.ic_delete, stringResource(delete), colors.onSurface, onClick = onDelete)
+        onSnooze?.let { BarAction(R.drawable.ic_snooze, stringResource(R.string.action_snooze), colors.onSurface, onClick = it) }
         BarAction(R.drawable.ic_more, stringResource(R.string.action_more), colors.onSurface, onClick = onMore)
         onDone?.let { BarAction(R.drawable.ic_done, stringResource(R.string.action_done), colors.onAccent, colors.accent, it) }
     }
@@ -613,6 +615,7 @@ private fun PaneActions(
     answers: @Composable (RowScope) -> Unit,
     onDelete: () -> Unit,
     forever: Boolean,
+    onSnooze: (() -> Unit)?,
     onMore: () -> Unit,
     onDone: (() -> Unit)?,
 ) {
@@ -636,6 +639,7 @@ private fun PaneActions(
             shape = CircleShape,
             size = button,
         )
+        onSnooze?.let { IconTile(R.drawable.ic_snooze, stringResource(R.string.action_snooze), it, shape = CircleShape, size = button) }
         IconTile(R.drawable.ic_more, stringResource(R.string.action_more), onMore, shape = CircleShape, size = button)
         onDone?.let {
             IconTile(R.drawable.ic_done, stringResource(R.string.action_done), it, background = colors.accent, tint = colors.onAccent, shape = CircleShape, size = button)

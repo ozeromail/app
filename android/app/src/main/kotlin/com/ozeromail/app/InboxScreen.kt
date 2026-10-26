@@ -187,6 +187,7 @@ import uniffi.ozero_api.undoSeconds
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.temporal.ChronoUnit
 import java.util.Date
 
 /** How soon after a sync a return to the app syncs again. */
@@ -295,6 +296,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }
     // Messages chosen to act on together, in the order they were chosen.
     var chosen by remember { mutableStateOf(emptySet<Long>()) }
+    // Messages waiting on the snooze sheet for a time.
+    var snoozing by remember { mutableStateOf<Snoozing?>(null) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -439,6 +442,11 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             // A refused login shows as its account's card over the list, not as an error.
             var refused = false
             synced = try {
+                // Snoozed mail due by now is on top before the new mail comes.
+                if (box == Mail.INBOX) {
+                    mail.wake()
+                    mail.scheduleWake()
+                }
                 refused = mail.refresh(box)
                 if (box == Mail.INBOX) {
                     lastSync = started
@@ -746,6 +754,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     /** Done: into the archive. */
     fun archive(gone: List<MessageItem>, reset: () -> Unit = {}) = remove(gone, archived, FolderRole.ARCHIVE, mail::archive, reset)
 
+    /** Snooze: into the snoozed folder, back on top of the inbox at [until], in epoch seconds. */
+    fun snooze(gone: List<MessageItem>, until: Long, reset: () -> Unit = {}) =
+        remove(gone, context.getString(R.string.inbox_snoozed, snoozeTime(context, until)), FolderRole.SNOOZED, { mail.snooze(it, until) }, reset)
+
     /** Back into the inbox, out of the archive, trash or spam. */
     fun moveToInbox(gone: List<MessageItem>) = remove(gone, movedBack, FolderRole.INBOX, mail::moveToInbox)
 
@@ -772,6 +784,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         SwipeAction.DELETE -> delete(listOf(message), reset)
         // Read if it is unread, unread if it is read.
         SwipeAction.READ -> setRead(listOf(message), message.threadUnread > 0u, reset)
+        // Off the list while the sheet asks until when; back if it closes without a time.
+        SwipeAction.SNOOZE -> { snoozing = Snoozing(listOf(message), reset) }
     }
 
     /** The chosen messages, as the list shows them; acting on them ends the choosing. */
@@ -888,6 +902,13 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 closeSearch()
                 archive(listOf(message))
             }.takeIf { message.canArchive },
+            onSnooze = {
+                // The message stays open until a time is picked.
+                snoozing = Snoozing(listOf(message)) {
+                    open = null
+                    closeSearch()
+                }
+            }.takeIf { message.canSnooze },
             onBack = if (pane) ::closePane else ::back,
             pane = pane,
         )
@@ -1059,6 +1080,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                 onRead = { read -> choice { setRead(it, read) } },
                                 onDelete = { choice { delete(it) } },
                                 onDone = { choice { rows -> archive(rows.filter { it.canArchive }) } },
+                                onSnooze = { choice { rows -> snoozing = Snoozing(rows.filter { it.canSnooze }) } },
                                 wide = wide,
                                 showing = reading?.id,
                             )
@@ -1140,6 +1162,20 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 composing = Composing(authorDraft(context))
             },
             onClose = { accountsOpen = false },
+        )
+        SnoozeSheet(
+            visible = snoozing != null,
+            onPick = { until ->
+                snoozing?.let {
+                    snoozing = null
+                    it.then()
+                    snooze(it.messages, until, it.reset)
+                }
+            },
+            onClose = {
+                snoozing?.reset?.invoke()
+                snoozing = null
+            },
         )
     }
     crash?.let { report ->
@@ -1277,6 +1313,7 @@ private fun InboxList(
     onRead: (read: Boolean) -> Unit,
     onDelete: () -> Unit,
     onDone: () -> Unit,
+    onSnooze: () -> Unit,
     /** Beside the mailboxes: the dock is one row. */
     wide: Boolean = false,
     /** The message open beside the list, which leaves the dock only the tabs where there are tabs. */
@@ -1626,6 +1663,12 @@ private fun InboxList(
             SheetAction(R.drawable.ic_done, stringResource(R.string.action_select_all), colors.onSurface) {
                 more = false
                 onChoose(chosen + messages.map { it.id })
+            }
+            if (picked.any { it.canSnooze }) {
+                SheetAction(R.drawable.ic_snooze, stringResource(R.string.action_snooze), colors.onSurface) {
+                    more = false
+                    onSnooze()
+                }
             }
             // The sender of the message chosen last.
             messages.find { it.id == chosen.lastOrNull() }?.let { last ->
@@ -2201,6 +2244,18 @@ fun shortDate(context: Context, seconds: Long): String =
 
 /** The date and time, as a message header shows them. */
 fun longDate(context: Context, seconds: Long): String = format(context, seconds, day(seconds) + time(context))
+
+/** When snoozed mail comes back: the time today, the weekday and time within a week, else the date and time. */
+fun snoozeTime(context: Context, seconds: Long): String {
+    val zone = ZoneId.systemDefault()
+    val days = ChronoUnit.DAYS.between(LocalDate.now(zone), Instant.ofEpochSecond(seconds).atZone(zone).toLocalDate())
+    val skeleton = when {
+        days == 0L -> time(context)
+        days < 7 -> "EEE" + time(context)
+        else -> day(seconds) + time(context)
+    }
+    return format(context, seconds, skeleton)
+}
 
 /**
  * [seconds] by an ICU skeleton, in the language the app shows: with a per-app language that is
