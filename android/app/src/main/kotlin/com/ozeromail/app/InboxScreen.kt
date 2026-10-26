@@ -1566,7 +1566,7 @@ private fun InboxList(
                     Column(Modifier.align(Alignment.BottomCenter)) {
                         // Low on the screen, in reach of the thumb that swiped.
                         Toast(snackbar, onGo = onGo, modifier = Modifier.padding(bottom = 8.dp))
-                        Reveal(status) {
+                        Reveal(status.takeIf { false }) {
                             Row(
                                 Modifier
                                     .fillMaxWidth()
