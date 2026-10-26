@@ -204,17 +204,23 @@ private struct InboxList: View {
         return nil
     }
 
-    /// What the line over the dock says, and whether a new check may help.
-    private var status: (key: String, retry: Bool)? {
+    /// What the line over the dock says, and whether a new check may help; `text` when it names
+    /// accounts.
+    private var status: (key: String, retry: Bool, text: String?)? {
         if let error = model.error {
-            if error == "error_network" { return ("status_offline", true) }
+            // Like Apple Mail, says which account it is when the others got through.
+            let accounts = model.failing.joined(separator: ", ")
+            if error == "error_network" {
+                return ("status_offline", true, accounts.isEmpty ? nil : tr("status_offline_account", accounts))
+            }
             // A sync's own failures; another error is not one a new check mends.
-            return (error, error == "error_server" || error == "error_tls")
+            let text = accounts.isEmpty ? nil : tr("status_account_failed", accounts, tr(error))
+            return (error, error == "error_server" || error == "error_tls", text)
         }
-        if model.syncing && slow == 2 && !waiting { return ("status_background", false) }
+        if model.syncing && slow == 2 && !waiting { return ("status_background", false, nil) }
         // An empty list's words say it themselves.
-        if refreshing && !model.messages.isEmpty { return (slow > 0 ? "status_slow" : "status_checking", false) }
-        if upToDate { return ("status_up_to_date", false) }
+        if refreshing && !model.messages.isEmpty { return (slow > 0 ? "status_slow" : "status_checking", false, nil) }
+        if upToDate { return ("status_up_to_date", false, nil) }
         return nil
     }
 
@@ -376,7 +382,9 @@ private struct InboxList: View {
                 }
                 if let status {
                     HStack {
-                        Text(LocalizedStringKey(status.key))
+                        Group {
+                            if let text = status.text { Text(verbatim: text) } else { Text(LocalizedStringKey(status.key)) }
+                        }
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)

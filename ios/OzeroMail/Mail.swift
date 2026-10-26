@@ -4,6 +4,18 @@ import SwiftUI
 import os
 
 /// What the screens need from the core. The async calls run off the main actor.
+/// How one account's check went.
+private enum Checked: Sendable {
+    case done
+    case failed(String, any Error)
+}
+
+/// A check that failed for `accounts`, by name, while the others got through.
+struct PartlyFailed: Error {
+    let error: any Error
+    let accounts: [String]
+}
+
 final class Mail: Sendable {
     static let imapsPort: UInt16 = 993
     static let smtpsPort: UInt16 = 465
@@ -473,8 +485,24 @@ final class Mail: Sendable {
     /// signing in again.
     @discardableResult
     func refresh(_ mailbox: Mailbox = Mail.inbox) async throws -> Bool {
-        _ = try await eachAccount(mailbox) { core, account, password in
-            try await core.syncMailbox(account: account.id, secret: password, mailbox: mailbox)
+        let checked = try await eachAccount(mailbox) { core, account, password -> Checked in
+            do {
+                try await core.syncMailbox(account: account.id, secret: password, mailbox: mailbox)
+                return .done
+            } catch {
+                // A refused login marks its account, as `eachAccount` lets it.
+                if case CoreError.Auth? = error as? CoreError { throw error }
+                return .failed(account.name, error)
+            }
+        }
+        var failed: [(name: String, error: any Error)] = []
+        for case .failed(let name, let error) in checked {
+            failed.append((name, error))
+        }
+        if let first = failed.first {
+            // Named only while another account got through: else the whole phone is offline.
+            if failed.count < checked.count { throw PartlyFailed(error: first.error, accounts: failed.map(\.name)) }
+            throw first.error
         }
         return try core.accounts().contains(where: \.needsSignIn)
     }

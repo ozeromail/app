@@ -56,7 +56,11 @@ final class InboxModel {
     /// the last message leaves, and not on opening the app or on picking an empty tab.
     var hadMail = false
     /// The key of the error to show, if any.
-    var error: String?
+    var error: String? {
+        didSet { failing = [] }
+    }
+    /// The accounts `error` is about, by name, when a check failed for some and not others.
+    var failing: [String] = []
     /// When the inbox last synced, to say how fresh it is.
     var checkedAt: Date?
     var toast: Toast?
@@ -297,6 +301,8 @@ final class InboxModel {
             finish(false)
             return false
         } catch {
+            let partly = error as? PartlyFailed
+            let error = partly?.error ?? error
             // Another error means the network is there.
             let since = error.isNetwork ? offlineSince ?? started : nil
             offlineSince = since
@@ -304,6 +310,7 @@ final class InboxModel {
                 _ = error.textKey()
             } else {
                 self.error = error.textKey()
+                failing = partly?.accounts ?? []
             }
             synced = false
         }
