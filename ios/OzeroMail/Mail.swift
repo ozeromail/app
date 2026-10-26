@@ -394,6 +394,18 @@ final class Mail: Sendable {
         try core.attachFile(draft: draft, name: file.name, mime: file.mime, data: file.data)
     }
 
+    /// Files of saved mail to send on, newest first.
+    func recentFiles() async throws -> [RecentFileItem] {
+        try core.recentFiles()
+    }
+
+    /// `file` of saved mail, downloaded now to send on.
+    func downloadFile(_ file: RecentFileItem) async throws -> PickedFile {
+        let data = try await core.downloadFile(message: file.message, part: file.part,
+                                               secret: password(of: file.accountId) ?? "")
+        return PickedFile(name: file.name, mime: file.mime, data: data)
+    }
+
     /// Takes a file off its draft.
     func detachFile(_ file: Int64) async throws {
         try core.detachFile(file: file)
