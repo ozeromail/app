@@ -691,6 +691,13 @@ impl Core {
             Some(typed) => {
                 let endpoint = discover::endpoint(typed).ok_or(CoreError::NoServer)?;
                 let ews = match discover::check(tls.clone(), &endpoint, &login, &password).await {
+                    // Refused, or the connection broke off: maybe for want of a certificate.
+                    Err(ProviderError::Rejected(_) | ProviderError::Network(_))
+                        if certificate.is_none()
+                            && discover::asks_for_certificate(tls.clone(), &endpoint).await =>
+                    {
+                        return Err(CoreError::CertificateNeeded);
+                    }
                     // Something answers there with an HTTP error, but not EWS.
                     Err(ProviderError::Rejected(_)) => {
                         if !discover::active_sync(tls.clone(), &endpoint).await {
@@ -2730,6 +2737,8 @@ pub enum CoreError {
     NoServer,
     /// The Exchange server typed answers, but not as EWS.
     NoEws,
+    /// The Exchange server typed asks for a client certificate, and none was picked.
+    CertificateNeeded,
     /// The company's Exchange server has not let this device in over ActiveSync, or blocked it.
     DeviceBlocked,
     /// The files added to a message would take more than `file_limit`.
@@ -2757,6 +2766,7 @@ impl fmt::Display for CoreError {
             Self::NoSmtp => write!(f, "the account has no SMTP server"),
             Self::NoServer => write!(f, "no Exchange server found"),
             Self::NoEws => write!(f, "the server does not answer as EWS"),
+            Self::CertificateNeeded => write!(f, "the server asks for a client certificate"),
             Self::DeviceBlocked => write!(f, "the server has not let this device in"),
             Self::TooLarge => write!(f, "the files are too large for one message"),
             Self::Storage { detail } => write!(f, "storage error: {detail}"),

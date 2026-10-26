@@ -607,6 +607,7 @@ extension Error {
         case .NoSmtp?: return "error_no_smtp"
         case .NoServer?: return "error_no_server"
         case .NoEws?: return "error_no_ews"
+        case .CertificateNeeded?: return "error_certificate_needed"
         case .DeviceBlocked?: return "error_device_blocked"
         case .TooLarge?: return "compose_files_too_large"
         default: return "error_storage"

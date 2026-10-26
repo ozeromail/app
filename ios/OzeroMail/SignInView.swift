@@ -90,7 +90,7 @@ struct SignInView: View {
                     }
                 } else if step == .exchange {
                     // The server was not found: the fields to type it come out.
-                    Exchange(busy: busy, manual: error == "error_no_server", onBack: { go(nil) }) {
+                    Exchange(busy: busy, manual: error == "error_no_server" || error == "error_certificate_needed", onBack: { go(nil) }) {
                         email, password, server, login, certificate in
                         attempt {
                             try await mail.signInExchange(
@@ -249,19 +249,21 @@ private struct Again: View {
     private var ready: Bool { !busy && (google || !password.isEmpty) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            StepBack(label: "action_back", onBack: onCancel, busy: busy)
-            Text("signin_again_title").font(.largeTitle.bold())
-            Text(tr(google ? "signin_again_google" : "signin_again_password", account.email))
-                .foregroundStyle(.secondary)
-            Spacer()
-            if !google {
-                SecureField("signin_password", text: $password)
-                    .textContentType(.password)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit(submit)
+        Fitting {
+            VStack(alignment: .leading, spacing: 12) {
+                StepBack(label: "action_back", onBack: onCancel, busy: busy)
+                Text("signin_again_title").font(.largeTitle.bold())
+                Text(tr(google ? "signin_again_google" : "signin_again_password", account.email))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if !google {
+                    SecureField("signin_password", text: $password)
+                        .textContentType(.password)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit(submit)
+                }
+                SubmitButton(label: google ? "signin_again_with_google" : "signin_action", busy: busy, ready: ready, action: submit)
             }
-            SubmitButton(label: google ? "signin_again_with_google" : "signin_action", busy: busy, ready: ready, action: submit)
         }
     }
 
@@ -310,29 +312,31 @@ private struct Credentials: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            StepBack(label: "signin_title", onBack: onBack, busy: busy)
-            Text(provider?.label ?? "signin_other").font(.largeTitle.bold())
-            if let provider {
-                Text(provider.hint).foregroundStyle(.secondary)
-                Button("signin_app_password_make") { onAppPasswords(provider.appPasswords) }
-                    .disabled(busy)
+        Fitting {
+            VStack(alignment: .leading, spacing: 12) {
+                StepBack(label: "signin_title", onBack: onBack, busy: busy)
+                Text(provider?.label ?? "signin_other").font(.largeTitle.bold())
+                if let provider {
+                    Text(provider.hint).foregroundStyle(.secondary)
+                    Button("signin_app_password_make") { onAppPasswords(provider.appPasswords) }
+                        .disabled(busy)
+                }
+                Spacer()
+                TextField("signin_email", text: $email)
+                    .textContentType(.emailAddress)
+                    .keyboardType(.emailAddress)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                SecureField(provider == nil ? "signin_password" : "signin_app_password", text: $password)
+                    .textContentType(.password)
+                if provider == nil {
+                    ServerFields(label: "signin_server", host: Binding(get: { host }, set: { server = $0 }), port: $port)
+                    ServerFields(
+                        label: "signin_smtp_server", host: Binding(get: { smtpHost }, set: { smtpServer = $0 }),
+                        port: $smtpPort)
+                }
+                SubmitButton(label: "signin_action", busy: busy, ready: ready, action: submit)
             }
-            Spacer()
-            TextField("signin_email", text: $email)
-                .textContentType(.emailAddress)
-                .keyboardType(.emailAddress)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-            SecureField(provider == nil ? "signin_password" : "signin_app_password", text: $password)
-                .textContentType(.password)
-            if provider == nil {
-                ServerFields(label: "signin_server", host: Binding(get: { host }, set: { server = $0 }), port: $port)
-                ServerFields(
-                    label: "signin_smtp_server", host: Binding(get: { smtpHost }, set: { smtpServer = $0 }),
-                    port: $smtpPort)
-            }
-            SubmitButton(label: "signin_action", busy: busy, ready: ready, action: submit)
         }
         .textFieldStyle(.roundedBorder)
         .onSubmit(submit)
@@ -374,40 +378,42 @@ private struct Exchange: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            StepBack(label: "signin_title", onBack: onBack, busy: busy)
-            Text("signin_exchange").font(.largeTitle.bold())
-            Text("signin_exchange_text").foregroundStyle(.secondary)
-            if !shown {
-                Button("signin_exchange_manual") { typing = true }
-                    .disabled(busy)
-            }
-            Spacer()
-            TextField("signin_email", text: $email)
-                .textContentType(.emailAddress)
-                .keyboardType(.emailAddress)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-            SecureField("signin_password", text: $password)
-                .textContentType(.password)
-            if shown {
-                Group {
-                    TextField("signin_exchange_server", text: $server)
-                        .keyboardType(.URL)
-                    TextField("signin_exchange_login", text: $login)
-                        .textContentType(.username)
-                    Button(certificate.map { tr("signin_exchange_certificate", $0) }
-                        ?? tr("signin_exchange_certificate_choose")) { picking = true }
+        Fitting {
+            VStack(alignment: .leading, spacing: 12) {
+                StepBack(label: "signin_title", onBack: onBack, busy: busy)
+                Text("signin_exchange").font(.largeTitle.bold())
+                Text("signin_exchange_text").foregroundStyle(.secondary)
+                if !shown {
+                    Button("signin_exchange_manual") { typing = true }
                         .disabled(busy)
-                    if unreadable {
-                        Text("error_certificate_unreadable").foregroundStyle(.red)
-                    }
                 }
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                Spacer()
+                TextField("signin_email", text: $email)
+                    .textContentType(.emailAddress)
+                    .keyboardType(.emailAddress)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                SecureField("signin_password", text: $password)
+                    .textContentType(.password)
+                if shown {
+                    Group {
+                        TextField("signin_exchange_server", text: $server)
+                            .keyboardType(.URL)
+                        // Not a username for autofill: it would fill or clear it.
+                        TextField("signin_exchange_login", text: $login)
+                        Button(certificate.map { tr("signin_exchange_certificate", $0) }
+                            ?? tr("signin_exchange_certificate_choose")) { picking = true }
+                            .disabled(busy)
+                        if unreadable {
+                            Text("error_certificate_unreadable").foregroundStyle(.red)
+                        }
+                    }
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
+                SubmitButton(label: "signin_action", busy: busy, ready: ready, action: submit)
             }
-            SubmitButton(label: "signin_action", busy: busy, ready: ready, action: submit)
         }
         .textFieldStyle(.roundedBorder)
         .onSubmit(submit)
@@ -453,6 +459,24 @@ private struct Exchange: View {
         onSubmit(
             email.trimmingCharacters(in: .whitespaces), password, typed(server), typed(login),
             shown ? certificate : nil)
+    }
+}
+
+/// A step's form: it fills the screen, scrolls when the keyboard leaves too little room, and
+/// a drag or a tap outside the fields puts the keyboard away.
+private struct Fitting<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        GeometryReader { space in
+            ScrollView {
+                content.frame(minHeight: space.size.height, alignment: .top)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .onTapGesture {
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+            }
+        }
     }
 }
 

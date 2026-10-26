@@ -1,6 +1,9 @@
 package com.ozeromail.app
 
+import android.app.Activity
 import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
@@ -14,9 +17,12 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -28,9 +34,11 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LocalContentColor
@@ -48,10 +56,15 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentType
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -219,7 +232,7 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
                     Exchange(
                         busy = busy,
                         // The server was not found: the fields to type it come out.
-                        manual = error == R.string.error_no_server,
+                        manual = error == R.string.error_no_server || error == R.string.error_certificate_needed,
                         onBack = { go(null) },
                         onSubmit = { email, password, server, login, certificate ->
                             busy = true
@@ -308,20 +321,24 @@ private fun Again(
         if (!ready) return
         if (google) onGoogle() else onSubmit(password)
     }
-    Column(modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        // With the column's spacing, the title sits where the first step's does.
-        Box(Modifier.height(44.dp)) {
-            if (onCancel != null) StepBack(stringResource(R.string.action_back), onCancel, busy)
-        }
-        LargeTitle(stringResource(R.string.signin_again_title))
-        Text(
-            stringResource(if (google) R.string.signin_again_google else R.string.signin_again_password, account.email),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.weight(1f))
-        if (!google) Field(password, { password = it }, R.string.signin_password, KeyboardType.Password, onDone = ::submit)
-        SubmitButton(if (google) R.string.signin_again_with_google else R.string.signin_action, busy, ready, ::submit)
-    }
+    Form(
+        modifier,
+        top = {
+            // With the column's spacing, the title sits where the first step's does.
+            Box(Modifier.height(44.dp)) {
+                if (onCancel != null) StepBack(stringResource(R.string.action_back), onCancel, busy)
+            }
+            LargeTitle(stringResource(R.string.signin_again_title))
+            Text(
+                stringResource(if (google) R.string.signin_again_google else R.string.signin_again_password, account.email),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        },
+        bottom = {
+            if (!google) Field(password, { password = it }, R.string.signin_password, KeyboardType.Password, onDone = ::submit)
+            SubmitButton(if (google) R.string.signin_again_with_google else R.string.signin_action, busy, ready, ::submit)
+        },
+    )
 }
 
 /** A row of the list of services, with a spinner while [waiting] on it. */
@@ -379,34 +396,37 @@ private fun Credentials(
         if (ready && imap != null && smtp != null) onSubmit(email.trim(), password, imap, smtp)
     }
 
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        StepBack(stringResource(R.string.signin_title), onBack, busy)
-        LargeTitle(stringResource(provider?.label ?: R.string.signin_other))
-        if (provider != null) {
-            Text(stringResource(provider.hint), color = colors.onSurfaceVariant)
-            TextButton(
-                onClick = { onAppPasswords(provider.appPasswords) },
-                enabled = !busy,
-                contentPadding = PaddingValues(0.dp),
-            ) {
-                Text(stringResource(R.string.signin_app_password_make))
+    Form(
+        top = {
+            StepBack(stringResource(R.string.signin_title), onBack, busy)
+            LargeTitle(stringResource(provider?.label ?: R.string.signin_other))
+            if (provider != null) {
+                Text(stringResource(provider.hint), color = colors.onSurfaceVariant)
+                TextButton(
+                    onClick = { onAppPasswords(provider.appPasswords) },
+                    enabled = !busy,
+                    contentPadding = PaddingValues(0.dp),
+                ) {
+                    Text(stringResource(R.string.signin_app_password_make))
+                }
             }
-        }
-        Spacer(Modifier.weight(1f))
-        Field(email, { email = it }, R.string.signin_email, KeyboardType.Email)
-        Field(
-            password,
-            { password = it },
-            if (provider == null) R.string.signin_password else R.string.signin_app_password,
-            KeyboardType.Password,
-            onDone = if (provider == null) null else ::submit,
-        )
-        if (provider == null) {
-            Server(host, { server = it }, R.string.signin_server, port, { port = it })
-            Server(smtpHost, { smtpServer = it }, R.string.signin_smtp_server, smtpPort, { smtpPort = it }, onDone = ::submit)
-        }
-        SubmitButton(R.string.signin_action, busy, ready, ::submit)
-    }
+        },
+        bottom = {
+            Field(email, { email = it }, R.string.signin_email, KeyboardType.Email)
+            Field(
+                password,
+                { password = it },
+                if (provider == null) R.string.signin_password else R.string.signin_app_password,
+                KeyboardType.Password,
+                onDone = if (provider == null) null else ::submit,
+            )
+            if (provider == null) {
+                Server(host, { server = it }, R.string.signin_server, port, { port = it })
+                Server(smtpHost, { smtpServer = it }, R.string.signin_smtp_server, smtpPort, { smtpPort = it }, onDone = ::submit)
+            }
+            SubmitButton(R.string.signin_action, busy, ready, ::submit)
+        },
+    )
 }
 
 /**
@@ -421,7 +441,8 @@ private fun Exchange(
     onBack: () -> Unit,
     onSubmit: (email: String, password: String, server: String?, login: String?, certificate: String?) -> Unit,
 ) {
-    val activity = LocalActivity.current
+    val context = LocalContext.current
+    val activity = LocalActivity.current ?: context.activity()
     var email by rememberSaveable { mutableStateOf("") }
     // Not saveable, as in [Credentials].
     var password by remember { mutableStateOf("") }
@@ -443,36 +464,72 @@ private fun Exchange(
         onSubmit(email.trim(), password, typed(server), typed(login), certificate.takeIf { shown })
     }
 
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        StepBack(stringResource(R.string.signin_title), onBack, busy)
-        LargeTitle(stringResource(R.string.signin_exchange))
-        Text(stringResource(R.string.signin_exchange_text), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (!shown) {
-            TextButton(onClick = { typing = true }, enabled = !busy, contentPadding = PaddingValues(0.dp)) {
-                Text(stringResource(R.string.signin_exchange_manual))
-            }
-        }
-        Spacer(Modifier.weight(1f))
-        Field(email, { email = it }, R.string.signin_email, KeyboardType.Email)
-        Field(password, { password = it }, R.string.signin_password, KeyboardType.Password, onDone = if (shown) null else ::submit)
-        Reveal(shown.takeIf { it }) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Field(server, { server = it }, R.string.signin_exchange_server, KeyboardType.Uri)
-                Field(login, { login = it }, R.string.signin_exchange_login, KeyboardType.Email, onDone = ::submit)
-                TextButton(
-                    onClick = { activity?.let { chooseCertificate(it, certificate) { picked -> certificate = picked } } },
-                    enabled = !busy && activity != null,
-                    contentPadding = PaddingValues(0.dp),
-                ) {
-                    Text(
-                        certificate?.let { stringResource(R.string.signin_exchange_certificate, it) }
-                            ?: stringResource(R.string.signin_exchange_certificate_choose),
-                    )
+    Form(
+        top = {
+            StepBack(stringResource(R.string.signin_title), onBack, busy)
+            LargeTitle(stringResource(R.string.signin_exchange))
+            Text(stringResource(R.string.signin_exchange_text), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (!shown) {
+                TextButton(onClick = { typing = true }, enabled = !busy, contentPadding = PaddingValues(0.dp)) {
+                    Text(stringResource(R.string.signin_exchange_manual))
                 }
             }
+        },
+        bottom = {
+            Field(email, { email = it }, R.string.signin_email, KeyboardType.Email)
+            Field(password, { password = it }, R.string.signin_password, KeyboardType.Password, onDone = if (shown) null else ::submit)
+            Reveal(shown.takeIf { it }) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Field(server, { server = it }, R.string.signin_exchange_server, KeyboardType.Uri)
+                    Field(login, { login = it }, R.string.signin_exchange_login, KeyboardType.Email, onDone = ::submit)
+                    TextButton(
+                        onClick = { activity?.let { chooseCertificate(it, certificate) { picked -> certificate = picked } } },
+                        enabled = !busy && activity != null,
+                        contentPadding = PaddingValues(0.dp),
+                    ) {
+                        Text(
+                            certificate?.let { stringResource(R.string.signin_exchange_certificate, it) }
+                                ?: stringResource(R.string.signin_exchange_certificate_choose),
+                        )
+                    }
+                }
+            }
+            SubmitButton(R.string.signin_action, busy, ready, ::submit)
+        },
+    )
+}
+
+/**
+ * A form: [top] at the top, [bottom] low on the screen where the thumb is. It scrolls when
+ * the keyboard leaves too little room, and a tap outside the fields puts the keyboard away.
+ */
+@Composable
+private fun Form(
+    modifier: Modifier = Modifier,
+    top: @Composable ColumnScope.() -> Unit,
+    bottom: @Composable ColumnScope.() -> Unit,
+) {
+    val focus = LocalFocusManager.current
+    BoxWithConstraints(modifier.fillMaxSize()) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .heightIn(min = maxHeight)
+                .pointerInput(Unit) { detectTapGestures { focus.clearFocus() } },
+            verticalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp), content = top)
+            Column(Modifier.padding(top = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = bottom)
         }
-        SubmitButton(R.string.signin_action, busy, ready, ::submit)
     }
+}
+
+/** The activity a context belongs to, through the wrappers around it. */
+private tailrec fun Context.activity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.activity()
+    else -> null
 }
 
 /** The full-width button that sends a form, with a spinner while it goes. */
@@ -521,6 +578,13 @@ private fun Field(
     modifier: Modifier = Modifier.fillMaxWidth(),
     onDone: (() -> Unit)? = null,
 ) {
+    val focus = LocalFocusManager.current
+    // Autofill fills only the address and the password: a login or server it took for a
+    // username would be filled, or emptied, over what was typed.
+    val autofill = when (keyboard) {
+        KeyboardType.Password -> ContentType.Password
+        else -> if (label == R.string.signin_email) ContentType.Username else null
+    }
     OutlinedTextField(
         value = value,
         onValueChange = onChange,
@@ -533,8 +597,12 @@ private fun Field(
             imeAction = if (onDone == null) ImeAction.Next else ImeAction.Done,
             autoCorrectEnabled = false,
         ),
-        keyboardActions = KeyboardActions(onDone = { onDone?.invoke() }),
-        modifier = modifier,
+        // Done always puts the keyboard away, also while the form is not ready to send.
+        keyboardActions = KeyboardActions(onDone = {
+            focus.clearFocus()
+            onDone?.invoke()
+        }),
+        modifier = modifier.semantics { if (autofill != null) contentType = autofill },
     )
 }
 

@@ -2,10 +2,13 @@
 //! the usual host names.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use ozero_domain::{ProviderError, email_domain};
 use ozero_http::{HttpsClient, split};
-use tokio_rustls::rustls::ClientConfig;
+use tokio_rustls::rustls::client::{ResolvesClientCert, Resumption};
+use tokio_rustls::rustls::sign::CertifiedKey;
+use tokio_rustls::rustls::{ClientConfig, SignatureScheme};
 
 use crate::client::Client;
 use crate::xml::{self, escape};
@@ -92,6 +95,36 @@ pub(crate) async fn answers_active_sync(mut http: HttpsClient) -> bool {
     http.send("OPTIONS", ACTIVE_SYNC, &[], None)
         .await
         .is_ok_and(|r| r.ok() || r.status == 401)
+}
+
+/// Whether the server at `endpoint` wants a client certificate from the device: it asks for
+/// one in the handshake and, tried without, refuses or breaks off. One that only asks and
+/// answers anyway does not count.
+pub async fn asks_for_certificate(tls: Arc<ClientConfig>, endpoint: &Endpoint) -> bool {
+    let asked = Arc::new(Asked::default());
+    let mut config = (*tls).clone();
+    config.client_auth_cert_resolver = asked.clone();
+    // A resumed session skips the request for a certificate.
+    config.resumption = Resumption::disabled();
+    let mut http = HttpsClient::new(&endpoint.host, endpoint.port, Arc::new(config));
+    let answer = http.send("OPTIONS", ACTIVE_SYNC, &[], None).await;
+    let refused = answer.map_or(true, |r| r.status == 403);
+    asked.0.load(Ordering::Relaxed) && refused
+}
+
+/// Offers no certificate, and notes whether the server asked for one.
+#[derive(Debug, Default)]
+struct Asked(AtomicBool);
+
+impl ResolvesClientCert for Asked {
+    fn resolve(&self, _: &[&[u8]], _: &[SignatureScheme]) -> Option<Arc<CertifiedKey>> {
+        self.0.store(true, Ordering::Relaxed);
+        None
+    }
+
+    fn has_certs(&self) -> bool {
+        true
+    }
 }
 
 /// The EWS URL Autodiscover at `host` gives for `email`, following one redirect to another

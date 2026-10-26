@@ -509,6 +509,7 @@ fun CoreException.text(): Int {
         is CoreException.NoSmtp -> R.string.error_no_smtp
         is CoreException.NoServer -> R.string.error_no_server
         is CoreException.NoEws -> R.string.error_no_ews
+        is CoreException.CertificateNeeded -> R.string.error_certificate_needed
         is CoreException.DeviceBlocked -> R.string.error_device_blocked
         is CoreException.TooLarge -> R.string.compose_files_too_large
         else -> R.string.error_storage
