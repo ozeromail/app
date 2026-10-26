@@ -47,12 +47,18 @@ final class InboxModel {
     var listLoaded = false
     /// Mailboxes synced since the app opened: until then, their empty list waits for its mail.
     var syncedBoxes: Set<Mailbox> = []
+    /// Mailboxes ever synced on this phone: one opened again shows its saved mail and syncs quietly.
+    var everSynced = Settings.syncedBoxes {
+        didSet { Settings.syncedBoxes = everSynced }
+    }
     var loadingOlder = false
     /// Whether this tab or mailbox had mail since it was picked: then the lake draws itself in as
     /// the last message leaves, and not on opening the app or on picking an empty tab.
     var hadMail = false
     /// The key of the error to show, if any.
     var error: String?
+    /// When the inbox last synced, to say how fresh it is.
+    var checkedAt: Date?
     var toast: Toast?
 
     var path: [Route] = []
@@ -74,6 +80,8 @@ final class InboxModel {
     // A sync asked for while one runs, say for a new account, runs right after it; quiet if
     // every ask for it was.
     private var syncAgain: [Mailbox: Bool] = [:]
+    /// Those who asked for it, waiting for it to end.
+    private var inLine: [CheckedContinuation<Bool, Never>] = []
     /// When the last inbox sync that went through began.
     private var lastSync: ContinuousClock.Instant?
     /// Since when syncs on their own have met no network, if they do.
@@ -243,7 +251,8 @@ final class InboxModel {
     func sync(_ box: Mailbox = Mail.inbox, quiet: Bool = false) async -> Bool {
         if syncing {
             syncAgain[box] = quiet && syncAgain[box] != false
-            return true
+            // Over once the syncs in line are, with how the last one went.
+            return await withCheckedContinuation { inLine.append($0) }
         }
         syncing = true
         if !quiet { error = nil }
@@ -253,10 +262,19 @@ final class InboxModel {
         var synced: Bool
         do {
             refused = try await mail.refresh(box)
-            if box == Mail.inbox { lastSync = started }
+            if box == Mail.inbox {
+                lastSync = started
+                checkedAt = .now
+            }
             offlineSince = nil
             error = nil
             synced = true
+        } catch is CancellationError {
+            // The app went away mid-sync: nothing went wrong, and nothing new is on screen. The
+            // next sync picks it up, with whatever waits in line.
+            syncing = false
+            finish(false)
+            return false
         } catch {
             // Another error means the network is there.
             let since = error.isNetwork ? offlineSince ?? started : nil
@@ -284,12 +302,23 @@ final class InboxModel {
         await loadFolders()
         await load()
         syncing = false
-        if synced { syncedBoxes.insert(box) }
+        if synced {
+            syncedBoxes.insert(box)
+            if !everSynced.contains(box.key) { everSynced.insert(box.key) }
+        }
         if let (next, quietly) = syncAgain.first {
             syncAgain[next] = nil
             return await sync(next, quiet: quietly)
         }
+        finish(synced)
         return synced
+    }
+
+    /// Lets the syncs asked for while one ran know it is over.
+    private func finish(_ synced: Bool) {
+        let waiting = inLine
+        inLine = []
+        for sync in waiting { sync.resume(returning: synced) }
     }
 
     /// On opening and on every return to the app: mail that came meanwhile shows without a pull.
@@ -489,7 +518,12 @@ final class InboxModel {
         // Its folders, and with them the mailboxes together, may be gone.
         mailbox = Mail.inbox
         await loadAccounts()
-        if accounts.isEmpty { onNoAccounts() } else { await load() }
+        if accounts.isEmpty {
+            everSynced = []
+            onNoAccounts()
+        } else {
+            await load()
+        }
     }
 
     // MARK: Writing
@@ -569,7 +603,9 @@ final class InboxModel {
     }
 
     /// An account was added or signed in to again: its mail comes in.
-    func signedIn() {
+    func signedIn(new: Bool = false) {
+        // A new account's mail is all still to come in the mailboxes together.
+        if new { everSynced = everSynced.filter { !$0.hasPrefix(Mailbox.unifiedKey) } }
         Task {
             await loadAccounts()
             await sync()
@@ -594,4 +630,16 @@ extension DraftItem {
     var isBlank: Bool {
         text.isBlank && (replyTo != nil || (to.isBlank && subject.isBlank))
     }
+}
+
+extension Mailbox {
+    /// What names it when kept on the phone: a folder by its id, the unified mailboxes by their role.
+    var key: String {
+        switch self {
+        case .folder(let id): "folder-\(id)"
+        case .unified(let role): "\(Mailbox.unifiedKey)\(role)"
+        }
+    }
+
+    static let unifiedKey = "all-"
 }

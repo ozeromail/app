@@ -3,27 +3,34 @@ import SwiftUI
 /// The note of a list with nothing left in it: still water. A horizon and a soft reflection under
 /// it, at rest until something moves it. With `drawIn`, as the last message leaves, a drop lands on
 /// the water and the horizon comes out of its waves. A touch sends a wave out too. `grey` water is
-/// for plain empty folders: it never draws in. While `waiting` for its mail, the water swells and
-/// says it is checking, as it swells through a pull's sync while `refreshing`. As the list is
+/// for plain empty folders: it never draws in. While there are `checking` words, the water swells
+/// and they say what it waits for, as through a pull's sync while `refreshing`: water never moves
+/// under words that say nothing is going on. `checkedAt` shows under the words. As the list is
 /// pulled, a drop gathers over the water, growing with the pull, and falls on each of `drops`.
 struct LakeNote: View {
     let title: LocalizedStringKey
     let text: LocalizedStringKey
     var drawIn = false
     var grey = false
-    var waiting = false
+    var checking: LakeWords?
+    var checkedAt: Date?
     var refreshing = false
     var pull: PullState
 
     @State private var still: Still
+    /// The checking words, kept while they fade out.
+    @State private var shownChecking: LakeWords?
+
+    private var waiting: Bool { checking != nil }
 
     init(title: LocalizedStringKey, text: LocalizedStringKey, drawIn: Bool = false, grey: Bool = false,
-         waiting: Bool = false, refreshing: Bool = false, pull: PullState) {
+         checking: LakeWords? = nil, checkedAt: Date? = nil, refreshing: Bool = false, pull: PullState) {
         self.title = title
         self.text = text
         self.drawIn = drawIn
         self.grey = grey
-        self.waiting = waiting
+        self.checking = checking
+        self.checkedAt = checkedAt
         self.refreshing = refreshing
         self.pull = pull
         // Only as it first shows: the caller's flag turns off right after.
@@ -40,19 +47,31 @@ struct LakeNote: View {
                 })
             ZStack(alignment: .top) {
                 VStack(spacing: 6) {
-                    Text(title).font(.title3.weight(.semibold)).multilineTextAlignment(.center)
-                    Text(text)
+                    words(title, text)
+                    if let checkedAt {
+                        // "Just now" turns into a time.
+                        TimelineView(.explicit([checkedAt, checkedAt.addingTimeInterval(60)])) { now in
+                            Text(now.date.timeIntervalSince(checkedAt) < 60
+                                 ? tr("lake_checked_now")
+                                 : tr("lake_checked_at", shortDate(Int64(checkedAt.timeIntervalSince1970))))
+                        }
+                        .font(.footnote)
                         .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 280)
-                        .padding(.horizontal, 32)
+                        .padding(.top, 4)
+                    }
                 }
                 .opacity(waiting ? 0 : still.wordsShown)
                 .offset(y: waiting ? 8 : (1 - still.wordsShown) * 8)
-                // Until then the water is not empty yet, only checking: the words take its place.
-                Text("inbox_checking").foregroundStyle(.secondary).opacity(waiting ? 1 : 0)
+                // Until then the water is not empty yet, only checking: these words take its place.
+                if let shown = checking ?? shownChecking {
+                    VStack(spacing: 6) { words(LocalizedStringKey(shown.title), LocalizedStringKey(shown.text)) }
+                        .opacity(waiting ? 1 : 0)
+                        .offset(y: waiting ? 0 : 8)
+                }
             }
             .animation(.easeOut(duration: 0.4), value: waiting)
+            .onAppear { shownChecking = checking }
+            .onChange(of: checking) { _, now in if let now { shownChecking = now } }
         }
         .frame(maxWidth: .infinity)
         .padding(.top, Lake.top)
@@ -62,6 +81,23 @@ struct LakeNote: View {
         .onChange(of: pull.drops) { _, _ in still.release(pull.lastDrop) }
         .accessibilityElement(children: .combine)
     }
+
+    private func words(_ title: LocalizedStringKey, _ text: LocalizedStringKey) -> some View {
+        Group {
+            Text(title).font(.title3.weight(.semibold)).multilineTextAlignment(.center)
+            Text(text)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 280)
+                .padding(.horizontal, 32)
+        }
+    }
+}
+
+/// What an empty list waits for: the keys of its title and of the line under it.
+struct LakeWords: Equatable {
+    let title: String
+    let text: String
 }
 
 /// The same water as an empty list's, in the gap a pull opens over the rows: the water stays where
@@ -541,8 +577,16 @@ final class Still {
             // The reflection: a soft glow under the horizon, flattened by perspective, and a few
             // streaks that follow the surface. It breathes deeper while the water swells.
             let r = 150 * lv + 1
-            let flatten = r * 0.32 * (1 + 0.14 * sea * sin(t * 1.3))
-            let glow = Gradient(colors: [water.opacity(0.14 + 0.04 * sea), water.opacity(0)])
+            // Never deeper than the water, so the glow fades out before it ends.
+            let flatten = min(r * 0.32 * (1 + 0.14 * sea * sin(t * 1.3)), max(1, Double(bottom) - hz))
+            // Eased, so the glow has no rim where it ends.
+            let strength = 0.14 + 0.04 * sea
+            let glow = Gradient(stops: [
+                .init(color: water.opacity(strength), location: 0),
+                .init(color: water.opacity(strength * 0.6), location: 0.35),
+                .init(color: water.opacity(strength * 0.2), location: 0.7),
+                .init(color: water.opacity(0), location: 1),
+            ])
             var lit = below
             lit.translateBy(x: middle, y: hz)
             lit.scaleBy(x: 1, y: flatten / r)
@@ -570,7 +614,7 @@ final class Still {
                 if i > 0 {
                     let face = sin(a - .pi / Double(n))
                     // The near side catches more light than the far one.
-                    let alpha = 0.5 * c.amp * abs(face * face * face) * (face > 0 ? 1 : 0.55)
+                    let alpha = 0.5 * c.amp * abs(face * face * face) * (face > 0 ? 1 : 0.55) * edge(x, y, below: Double(bottom))
                     if alpha > 0.008 {
                         var line = Path()
                         line.move(to: CGPoint(x: px, y: py))
@@ -588,7 +632,7 @@ final class Still {
             if near <= 0 || d.y >= d.land { continue }
             let y = d.land + (d.land - d.y) * 0.3
             below.fill(Path(ellipseIn: CGRect(x: d.x - d.r, y: y - d.r * 0.45, width: d.r * 2, height: d.r * 0.9)),
-                       with: .color(drop.opacity(0.22 * near)))
+                       with: .color(drop.opacity(0.22 * near * edge(d.x, y, below: Double(bottom)))))
         }
         if lv > 0 { waterline(&context, alpha: 0.55, x: middle, half: 150 * lv, y: hz, near: 0, t: t, color: water, width: stroke) }
         // The gathering drop grows with the pull, a round bead that fills into a drop.
@@ -602,6 +646,15 @@ final class Still {
         for j in jets {
             context.fill(Path(ellipseIn: CGRect(x: j.x - 1.3, y: j.y - 1.3, width: 2.6, height: 2.6)), with: .color(drop.opacity(0.6)))
         }
+    }
+
+    /// How much of the water shows at `x`, `y`: all of it in the middle, fading out toward its sides
+    /// and toward the eye before it ends `below`, so a wave never ends on an edge.
+    private func edge(_ x: Double, _ y: Double, below: Double) -> Double {
+        let side = min(x, middle * 2 - x) / edgeSide
+        let near = (below - y) / edgeNear
+        let v = min(max(min(side, near), 0), 1)
+        return v * v * (3 - 2 * v)
     }
 
     /// A water drop: round below, rising to a soft point above as `point` goes from 0 to 1.
@@ -716,6 +769,9 @@ private let streaks: [(dy: Double, half: Double, alpha: Double)] = [
 
 /// Gravity, points a second squared: a drop falls its 40–50 points in about a third of a second.
 private let gravity: Double = 760
+/// How far from its sides, and from where it ends below, the water fades out.
+private let edgeSide = 48.0
+private let edgeNear = 28.0
 private let dropSteps = 48
 
 /// How slowly a wait's swell comes and goes, in seconds, and how often a faint ring goes out.

@@ -77,6 +77,11 @@ class Settings(context: Context) {
         get() = prefs.getBoolean(TIP, false)
         set(value) = prefs.edit().putBoolean(TIP, value).apply()
 
+    /** The mailboxes synced on this phone, by [Mailbox] key: only one never synced waits for its first mail. */
+    var syncedBoxes: Set<Long>
+        get() = ids(SYNCED)
+        set(value) = prefs.edit().putStringSet(SYNCED, value.strings()).apply()
+
     /** The groups of the accounts sheet the person closed or opened. */
     var groups: Groups
         get() = Groups(ids(COLLAPSED), ids(EXPANDED))
@@ -97,6 +102,7 @@ class Settings(context: Context) {
         private const val TIP = "swipe_tip_seen"
         private const val COLLAPSED = "collapsed_groups"
         private const val EXPANDED = "expanded_groups"
+        private const val SYNCED = "synced_boxes"
     }
 }
 

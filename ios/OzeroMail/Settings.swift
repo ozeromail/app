@@ -95,6 +95,12 @@ enum Settings {
         set { defaults.set(newValue, forKey: "swipe_tip_seen") }
     }
 
+    /// The mailboxes synced on this phone, by `Mailbox.key`: only one never synced waits for its first mail.
+    static var syncedBoxes: Set<String> {
+        get { Set(defaults.stringArray(forKey: "synced_boxes") ?? []) }
+        set { defaults.set(Array(newValue), forKey: "synced_boxes") }
+    }
+
     /// The groups of the accounts sheet the person closed or opened.
     static var groups: Groups {
         get { Groups(collapsed: ids("collapsed_groups"), expanded: ids("expanded_groups")) }

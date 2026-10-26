@@ -36,7 +36,7 @@ struct InboxView: View {
         .fullScreenCover(isPresented: $model.addingAccount) {
             SignInView(mail: model.mail, onCancel: { model.addingAccount = false }) {
                 model.addingAccount = false
-                model.signedIn()
+                model.signedIn(new: true)
             }
         }
         .fullScreenCover(item: $model.signingIn) { account in
@@ -161,6 +161,37 @@ private struct InboxList: View {
     /// How much of the gap is held open, from 0 to 1.
     @State private var held: CGFloat = 0
     @Environment(\.sideways) private var sideways
+    /// A check the user waits on: how long it has gone (0, slow, given up), and whether it just went through.
+    @State private var slow = 0
+    @State private var upToDate = false
+    /// Counts the checks asked for, so one let go of does not end a newer one.
+    @State private var checks = 0
+
+    /// The first mail of an empty list is on its way: the water waits, and says what for.
+    private var waiting: Bool {
+        // Only the first time: after that an empty list is empty until a sync brings something.
+        model.syncing && model.listLoaded && model.messages.isEmpty && !model.everSynced.contains(model.mailbox.key)
+    }
+
+    private var checking: LakeWords? {
+        if waiting { return LakeWords(title: "lake_loading_title", text: slow > 0 ? "lake_loading_slow" : "lake_loading_text") }
+        if refreshing { return LakeWords(title: "lake_checking_title", text: slow > 0 ? "status_slow" : "lake_checking_text") }
+        return nil
+    }
+
+    /// What the line over the dock says, and whether a new check may help.
+    private var status: (key: String, retry: Bool)? {
+        if let error = model.error {
+            if error == "error_network" { return ("status_offline", true) }
+            // A sync's own failures; another error is not one a new check mends.
+            return (error, error == "error_server" || error == "error_tls")
+        }
+        if model.syncing && slow == 2 && !waiting { return ("status_background", false) }
+        // An empty list's words say it themselves.
+        if refreshing && !model.messages.isEmpty { return (slow > 0 ? "status_slow" : "status_checking", false) }
+        if upToDate { return ("status_up_to_date", false) }
+        return nil
+    }
 
     private var picked: [MessageItem] {
         // Only what the list still shows: a sync may take a chosen message away.
@@ -201,10 +232,9 @@ private struct InboxList: View {
             }
             if lake {
                 let words = model.emptyWords
-                // The first mail of an empty list is on its way: the water waits, without words.
-                let waiting = model.syncing && model.listLoaded && !model.syncedBoxes.contains(model.mailbox)
                 LakeNote(title: words.title, text: words.text, drawIn: model.hadMail, grey: !model.isInbox,
-                         waiting: waiting, refreshing: refreshing, pull: pull)
+                         checking: checking, checkedAt: model.isInbox ? model.checkedAt : nil,
+                         refreshing: refreshing, pull: pull)
                     .id(model.mailbox)
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
@@ -264,6 +294,26 @@ private struct InboxList: View {
                     .allowsHitTesting(false)
             }
         }
+        // A check the user waits on says when it is slow; a pull lets go after a while, and the sync
+        // goes on behind. Its words then say so, until it ends.
+        .task(id: refreshing || waiting) {
+            guard refreshing || waiting else { return }
+            slow = 0
+            do {
+                try await Task.sleep(for: Self.slowAfter)
+                slow = 1
+                try await Task.sleep(for: Self.giveUpAfter - Self.slowAfter)
+            } catch {
+                return
+            }
+            slow = 2
+            refreshing = false
+        }
+        .onChange(of: model.syncing) { _, now in if !now { slow = 0 } }
+        .task(id: upToDate) {
+            guard upToDate, (try? await Task.sleep(for: Self.upToDateFor)) != nil else { return }
+            upToDate = false
+        }
         .onChange(of: !lake && (refreshing || !waterCalm)) { _, hold in
             withAnimation(.spring(duration: 0.35, bounce: 0)) { held = hold ? 1 : 0 }
         }
@@ -290,12 +340,18 @@ private struct InboxList: View {
                     ToastView(toast: toast, onUndo: model.tapUndo, onGo: model.tapGo)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
-                if let error = model.error {
-                    Text(LocalizedStringKey(error))
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 20)
+                if let status {
+                    HStack {
+                        Text(LocalizedStringKey(status.key))
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if status.retry {
+                            Button("status_try_again", action: check).font(.footnote.weight(.semibold))
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .transition(.opacity)
                 }
                 if !sideways {
                     Dock(model: model, choosing: choosing, picked: picked, onMore: { more = true })
@@ -310,6 +366,7 @@ private struct InboxList: View {
                 }
             }
             .animation(.smooth, value: model.toast)
+            .animation(.smooth, value: status?.key)
         }
         // On its side the dock's controls move to the edges, under the thumbs.
         .safeAreaInset(edge: .leading, spacing: 0) {
@@ -351,16 +408,33 @@ private struct InboxList: View {
         pull.lastDrop = fraction
         pull.drops += 1
         if !lake { waterCalm = false }
-        guard fraction >= 1, !refreshing else { return }
+        guard fraction >= 1 else { return }
+        check()
+    }
+
+    /// A check the user asked for, by a pull or by Try again; not while one runs.
+    private func check() {
+        guard !refreshing else { return }
         refreshing = true
+        checks += 1
+        let mine = checks
         Task {
             let started = ContinuousClock.now
-            await model.sync(model.mailbox)
+            let synced = await model.sync(model.mailbox)
             // The pulled drop lands before the gap closes, however quick the sync.
             try? await Task.sleep(until: started + .milliseconds(1100))
+            // Not one let go of: nobody waits on it any more, and a newer one may run.
+            guard mine == checks, refreshing else { return }
+            upToDate = synced
             refreshing = false
         }
     }
+
+    /// How long a check the user waits on goes before it says it is slow, and before it lets them
+    /// go; and how long the line over the dock says it went through.
+    private static let slowAfter: Duration = .seconds(10)
+    private static let giveUpAfter: Duration = .seconds(30)
+    private static let upToDateFor: Duration = .seconds(2)
 
     @ViewBuilder
     private func swipe(_ action: SwipeAction, _ message: MessageItem) -> some View {

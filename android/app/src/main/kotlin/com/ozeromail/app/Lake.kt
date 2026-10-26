@@ -41,6 +41,7 @@ import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Density
@@ -56,6 +57,7 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.random.Random
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 
@@ -64,8 +66,9 @@ import kotlinx.coroutines.flow.emptyFlow
  * it, at rest until something moves it. With [drawIn], as the last message leaves, a drop lands
  * on the water and the horizon comes out of its waves. A touch sends a wave out too. [grey] water
  * is for plain empty folders: it never draws in. The words come in one way, once the list is known
- * to be empty: while [waiting] for its mail, the water swells and says it is checking, as it swells
- * through a pull's sync while [refreshing]. As the list is [pulled], a drop gathers over the water,
+ * to be empty, with [checked] under them when there is one. While there are [checking] words, the
+ * water swells and they say what it waits for, as through a pull's sync while [refreshing]: water
+ * never moves under words that say nothing is going on. As the list is [pulled], a drop gathers over the water,
  * growing with the pull, and falls on each of [drops], which carry how far it was pulled. The tabs'
  * [glide] sends a wave along it. [water] is how much of the water shows; [wordsModifier] moves
  * the words alone, while the water stays.
@@ -76,7 +79,8 @@ fun StillNote(
     text: String,
     drawIn: Boolean,
     grey: Boolean = false,
-    waiting: Boolean = false,
+    checking: Pair<String, String>? = null,
+    checkedAt: Long? = null,
     refreshing: Boolean = false,
     pulled: () -> Float = { 0f },
     drops: Flow<Float> = emptyFlow(),
@@ -86,8 +90,10 @@ fun StillNote(
 ) {
     val colors = MaterialTheme.colorScheme
     val still = rememberStill(fall = drawIn)
+    val waiting = checking != null
     val known by animateFloatAsState(if (waiting) 0f else 1f, Motion.calm(WORDS_MS), label = "words")
-    val checking by remember { derivedStateOf { known < 1f } }
+    val waitWords = rememberLast(checking)
+    val fading by remember { derivedStateOf { known < 1f } }
     LaunchedEffect(waiting, refreshing) { still.beat = waiting || refreshing }
     LaunchedEffect(drops) { drops.collect { still.release(it) } }
     Column(
@@ -97,36 +103,74 @@ fun StillNote(
     ) {
         // Grey water still takes a drop of the accent's color: a drop is a drop.
         val tint = colors.water(grey)
-        Canvas(Modifier.fillMaxWidth().height(LAKE_HEIGHT).graphicsLayer { alpha = water() }.touches(still)) {
+        Canvas(
+            Modifier.fillMaxWidth().height(LAKE_HEIGHT).graphicsLayer { alpha = water() }.touches(still),
+        ) {
             still.draw(this, tint, colors.accent, HORIZON, size.height, pulled(), FALL, glide())
         }
         Box(wordsModifier, contentAlignment = Alignment.TopCenter) {
-            Column(
+            Words(
+                title,
+                text,
                 Modifier.graphicsLayer {
                     val shown = still.words() * known
                     alpha = shown
                     translationY = (1f - shown) * 8.dp.toPx()
                 },
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Text(title, style = Type.Heading, textAlign = TextAlign.Center)
-                Text(
-                    text,
-                    color = colors.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.widthIn(max = 280.dp).padding(horizontal = 32.dp),
-                )
+                checkedAt?.let { Checked(it) }
             }
-            // Until then the water is not empty yet, only checking: the words take its place.
-            if (checking) {
-                Text(
-                    stringResource(R.string.inbox_checking),
-                    color = colors.onSurfaceVariant,
-                    modifier = Modifier.graphicsLayer { alpha = 1f - known },
-                )
+            // Until then the water is not empty yet, only checking: these words take its place.
+            if (fading) {
+                waitWords?.let { (title, text) ->
+                    Words(
+                        title,
+                        text,
+                        Modifier.graphicsLayer {
+                            alpha = 1f - known
+                            translationY = known * 8.dp.toPx()
+                        },
+                    )
+                }
             }
         }
+    }
+}
+
+/** When the list was checked [at], ms on the clock: just now, then the time. */
+@Composable
+private fun Checked(at: Long) {
+    val context = LocalContext.current
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(at) {
+        now = System.currentTimeMillis()
+        delay(at + CHECKED_NOW_MS - now)
+        now = System.currentTimeMillis()
+    }
+    Text(
+        if (now - at < CHECKED_NOW_MS) stringResource(R.string.lake_checked_now)
+        else stringResource(R.string.lake_checked_at, shortDate(context, at / 1000)),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        style = Type.Caption,
+        modifier = Modifier.padding(top = 4.dp),
+    )
+}
+
+/** Within this long a check is "just now". */
+private const val CHECKED_NOW_MS = 60_000L
+
+/** An empty list's title and the line under it, and [more] under them. */
+@Composable
+private fun Words(title: String, text: String, modifier: Modifier, more: @Composable () -> Unit = {}) {
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(title, style = Type.Heading, textAlign = TextAlign.Center)
+        Text(
+            text,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.widthIn(max = 280.dp).padding(horizontal = 32.dp),
+        )
+        more()
     }
 }
 
@@ -572,6 +616,7 @@ private class Still(private var falling: Boolean) {
         if (color == tint) return
         tint = color
         line = Brush.horizontalGradient(listOf(Color.Transparent, color, Color.Transparent), -1f, 1f)
+        // Two stops only: more, on a gradient this small and stretched this far, took the test emulator down.
         glow = Brush.radialGradient(listOf(color, Color.Transparent), Offset.Zero, 1f)
     }
 
@@ -605,12 +650,14 @@ private class Still(private var falling: Boolean) {
         val hzPx = hz * u
         val lv = Calm.transform(level)
         val stroke = 1.dp.toPx()
+        val below = bottom / u
         clipRect(top = hzPx, bottom = bottom) {
             if (lv > 0f) {
                 // The reflection: a soft glow under the horizon, flattened by perspective, and a
                 // few streaks that follow the surface. It breathes deeper while the water swells.
                 val r = 150.dp.toPx() * lv + 1f
-                val flatten = r * 0.32f * (1f + 0.14f * sea * sin(t * 1.3f))
+                // Never deeper than the water, so the glow fades out before it ends.
+                val flatten = min(r * 0.32f * (1f + 0.14f * sea * sin(t * 1.3f)), maxOf(1f, bottom - hzPx))
                 withTransform({
                     translate(cx, hzPx)
                     scale(r, flatten, Offset.Zero)
@@ -645,7 +692,7 @@ private class Still(private var falling: Boolean) {
                     if (i > 0) {
                         val face = sin(a - PI.toFloat() / n)
                         // The near side catches more light than the far one.
-                        val alpha = 0.5f * amp * abs(face * face * face) * (if (face > 0f) 1f else 0.55f)
+                        val alpha = 0.5f * amp * abs(face * face * face) * (if (face > 0f) 1f else 0.55f) * edge(x, y, below)
                         if (alpha > 0.008f) drawLine(water.copy(alpha = min(0.42f, alpha)), Offset(px * u, py * u), Offset(x * u, y * u), stroke)
                     }
                     px = x
@@ -657,7 +704,7 @@ private class Still(private var falling: Boolean) {
                 val near = 1f - (d.land - d.y) / 90f
                 if (near <= 0f || d.y >= d.land) continue
                 val y = d.land + (d.land - d.y) * 0.3f
-                drawOval(drop.copy(alpha = 0.22f * near), Offset((d.x - d.r) * u, (y - d.r * 0.45f) * u), Size(d.r * 2 * u, d.r * 0.9f * u))
+                drawOval(drop.copy(alpha = 0.22f * near * edge(d.x, y, below)), Offset((d.x - d.r) * u, (y - d.r * 0.45f) * u), Size(d.r * 2 * u, d.r * 0.9f * u))
             }
         }
         if (lv > 0f) waterline(0.55f, middle, 150f * lv, hz, 0f, t, water, stroke)
@@ -671,6 +718,18 @@ private class Still(private var falling: Boolean) {
         for (d in drops) bead(drop, d.x, d.y, d.r, d.point, 1f + min(0.35f, d.v / 1100f))
         for (j in jets) drawCircle(drop.copy(alpha = 0.6f), 1.3.dp.toPx(), Offset(j.x * u, j.y * u))
     }
+
+    /**
+     * How much of the water shows at [x], [y] dp: all of it in the middle, fading out toward its
+     * sides and toward the eye before it ends [below] dp down, so a wave never ends on an edge.
+     */
+    private fun edge(x: Float, y: Float, below: Float): Float {
+        val side = min(x, middle * 2 - x) / EDGE_SIDE
+        val near = (below - y) / EDGE_NEAR
+        return smooth(min(side, near))
+    }
+
+    private fun smooth(v: Float): Float = v.coerceIn(0f, 1f).let { it * it * (3f - 2f * it) }
 
     /** A water drop, in dp: round below, rising to a soft point above as [point] goes from 0 to 1. */
     private fun DrawScope.bead(color: Color, x: Float, y: Float, r: Float, point: Float, stretch: Float) {
@@ -823,6 +882,10 @@ private val SWELLS = listOf(
     Swell(40f, 0.22f, -1f, 2.6f),
 )
 private const val LEVEL_MS = 1900f
+/** How far in from its sides, and up from where it ends, the water fades out, in dp. */
+private const val EDGE_SIDE = 48f
+private const val EDGE_NEAR = 28f
+
 /** How long the words take to come in, however they come. */
 private const val WORDS_MS = 400
 
