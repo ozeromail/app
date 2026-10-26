@@ -187,5 +187,11 @@
   "status_background": "This is taking long. The check goes on in the background.",
   "status_up_to_date": "Checked just now. Mail is up to date.",
   "status_offline": "No connection. Showing mail saved on this phone. It checks again once you are online.",
-  "status_try_again": "Try again"
+  "status_try_again": "Try again",
+  "signin_exchange": "Exchange",
+  "signin_exchange_text": "Work mail on the Exchange server your company runs. The server is found from your address; if it is not, enter it yourself.",
+  "signin_exchange_manual": "Enter the server yourself",
+  "signin_exchange_server": "Server, such as mail.company.com",
+  "signin_exchange_login": "Login, if not your email",
+  "error_no_server": "No Exchange server found for this address. Enter it below: it is in your work mail settings, or your IT team knows it."
 }

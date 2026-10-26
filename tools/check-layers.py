@@ -4,7 +4,7 @@
 The layer is the crate's top folder in core/:
   domain/    std and serde only
   app/       domain only
-  adapters/  domain and external crates; gmail and graph may also use http
+  adapters/  domain and external crates; gmail, graph and ews may also use http
   api/       anything
 """
 import json
@@ -14,7 +14,7 @@ from pathlib import Path
 
 CORE = Path(__file__).resolve().parent.parent / "core"
 LAYERS = ("domain", "app", "adapters", "api")
-HTTP_USERS = {"ozero-gmail", "ozero-graph"}
+HTTP_USERS = {"ozero-gmail", "ozero-graph", "ozero-ews"}
 
 
 def allowed(crate, layer, dep, internal):

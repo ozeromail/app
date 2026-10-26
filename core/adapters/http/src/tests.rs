@@ -31,6 +31,7 @@ async fn reads_a_fixed_length_body() {
             status: 200,
             content_type: "text/plain; Charset=A".into(),
             location: String::new(),
+            authenticate: vec![],
             body: b"hello".to_vec()
         }
     );
@@ -66,6 +67,7 @@ async fn has_no_body_for_204_and_skips_100() {
             status: 204,
             content_type: String::new(),
             location: String::new(),
+            authenticate: vec![],
             body: Vec::new()
         }
     );
@@ -158,6 +160,7 @@ fn parses_a_response_held_in_memory() {
             status: 404,
             content_type: "application/json".into(),
             location: String::new(),
+            authenticate: vec![],
             body: b"{}\r\n".to_vec(),
         })
     );

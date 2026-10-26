@@ -565,6 +565,7 @@ impl MailProvider for ImapSession {
         folder: &str,
         since: Checkpoint,
         known: &[String],
+        _oldest: i64,
         limit: u32,
     ) -> Result<Changes, ProviderError> {
         let opened = self.open(folder, false).await?;

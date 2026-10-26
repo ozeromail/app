@@ -315,7 +315,7 @@ fn syncs_an_imap_inbox_into_the_list() {
         let account = core.account(AccountId(account))?;
         let mut imap = core.connect(&account, "pass").await?;
         Ok::<_, CoreError>(
-            imap.changes("Sent", Checkpoint::default(), &[], 50)
+            imap.changes("Sent", Checkpoint::default(), &[], i64::MAX, 50)
                 .await?
                 .new,
         )
@@ -504,6 +504,53 @@ fn saves_a_gmail_account_that_can_send() {
     assert_eq!((account.kind, account.smtp), (AccountKind::Gmail, None));
     assert_eq!(account.display_name, "Anna");
     // Gmail sends over its API, so no SMTP server is needed.
+    core.send(DraftItem {
+        id: 0,
+        account_id: id,
+        to: "you@example.com".into(),
+        subject: "Hi".into(),
+        text: "Text".into(),
+        reply_to: None,
+        quote: String::new(),
+        saved: 0,
+        forward: None,
+    })
+    .unwrap();
+}
+
+#[test]
+fn saves_an_exchange_account_that_sends_without_smtp() {
+    let db = TempDb::new("exchange");
+    let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    let add = |server: &str| {
+        runtime.block_on(core.add_exchange_account(
+            "me@corp.ru".into(),
+            String::new(),
+            Some(server.into()),
+            None,
+            "pw".into(),
+        ))
+    };
+    // Not a server address: the app asks again before going online.
+    assert_eq!(add("http://mail.corp.ru"), Err(CoreError::NoServer));
+    let account = NewAccount {
+        kind: AccountKind::Exchange,
+        email: "me@corp.ru".into(),
+        display_name: "Anna".into(),
+        server: Some(Server {
+            host: "mail.corp.ru".into(),
+            port: 443,
+            user: "CORP\\anna".into(),
+        }),
+        smtp: None,
+    };
+    let id = core.store.add_account(&account).unwrap().0;
+    assert_eq!(add("mail.corp.ru"), Err(CoreError::AccountExists));
+    assert_eq!(core.accounts().unwrap()[0].kind, AccountKind::Exchange);
+    // Exchange sends over EWS.
     core.send(DraftItem {
         id: 0,
         account_id: id,

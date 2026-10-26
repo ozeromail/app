@@ -16,10 +16,11 @@ use ozero_app::sync::{
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Attachment, Body, Category, Changes,
     Checkpoint, Draft, DraftId, Folder, FolderId, FolderRole, ListQuery, ListScope, MailProvider,
-    MessageId, MessageRow, Moved, NewAccount, NewFolder, Older, OpId, OutboxId, Outgoing,
-    ProviderError, RawMessage, SavedDraft, Sender, Server, Store, StoreError, html,
+    MailSender, MessageId, MessageRow, Moved, NewAccount, NewFolder, Older, OpId, OutboxId,
+    Outgoing, ProviderError, RawMessage, SavedDraft, Sender, Server, Store, StoreError, html,
     parse_recipients, saves_sent_itself,
 };
+use ozero_ews::{EwsSession, discover};
 use ozero_gmail::{GmailSession, oauth};
 use ozero_imap::ImapSession;
 use ozero_imap::rustls::ClientConfig;
@@ -572,10 +573,69 @@ impl Core {
         Ok(self.store.add_account(&account)?.0)
     }
 
-    /// Checks a new password of a saved IMAP account on both its servers, for signing in
-    /// again; `signed_in_again` follows once the app has kept it.
+    /// Saves an Exchange account once its server has taken the login. Without `server` the
+    /// server is found from the address; with it, it is a host or a URL the person typed.
+    /// `login` is the address unless given, such as `DOMAIN\user`. Fails with `NoServer`
+    /// when no server is found, so the app asks for one.
+    pub async fn add_exchange_account(
+        &self,
+        email: String,
+        display_name: String,
+        server: Option<String>,
+        login: Option<String>,
+        password: String,
+    ) -> Result<i64, CoreError> {
+        if self.exists(&email)? {
+            return Err(CoreError::AccountExists);
+        }
+        let login = login
+            .map(|l| l.trim().to_owned())
+            .filter(|l| !l.is_empty())
+            .unwrap_or_else(|| email.clone());
+        let (endpoint, mut ews) = match server.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(typed) => {
+                let endpoint = discover::endpoint(typed).ok_or(CoreError::NoServer)?;
+                let ews = discover::check(self.tls()?, &endpoint, &login, &password).await?;
+                (endpoint, ews)
+            }
+            None => match discover::discover(self.tls()?, &email, &login, &password).await {
+                Err(ProviderError::Gone) => return Err(CoreError::NoServer),
+                found => found?,
+            },
+        };
+        let display_name = match display_name.trim() {
+            // Without it the mail goes out under the address alone.
+            "" => ews
+                .name(&email)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| email.clone()),
+            name => name.to_owned(),
+        };
+        let server = Server {
+            host: endpoint.host,
+            port: endpoint.port,
+            user: login,
+        };
+        let account = NewAccount {
+            kind: AccountKind::Exchange,
+            email,
+            display_name,
+            server: Some(server),
+            smtp: None,
+        };
+        Ok(self.store.add_account(&account)?.0)
+    }
+
+    /// Checks a new password of a saved IMAP or Exchange account on its servers, for signing
+    /// in again; `signed_in_again` follows once the app has kept it.
     pub async fn check_password(&self, account: i64, password: String) -> Result<(), CoreError> {
         let account = self.account(AccountId(account))?;
+        if account.kind == AccountKind::Exchange {
+            self.ews(&account, &password).await?;
+            return Ok(());
+        }
         match &account.smtp {
             Some(smtp) => {
                 tokio::try_join!(
@@ -1213,6 +1273,7 @@ impl Core {
                     let token = self.access_token(account.id, secret).await?;
                     Remote::Gmail(GmailSession::new(self.tls()?, &token))
                 }
+                AccountKind::Exchange => Remote::Ews(self.ews(account, secret).await?),
                 AccountKind::Graph => {
                     return Err(CoreError::Storage {
                         detail: "Outlook accounts are not supported yet".into(),
@@ -1271,6 +1332,17 @@ impl Core {
             tokens.remove(&account.id);
         }
         result
+    }
+
+    /// Signs in to a saved Exchange account: one call, so a wrong password is found before
+    /// more of them count against the company's lockout.
+    async fn ews(&self, account: &Account, password: &str) -> Result<EwsSession, CoreError> {
+        let server = account.server.as_ref().ok_or_else(|| CoreError::Storage {
+            detail: "no Exchange server".into(),
+        })?;
+        let mut ews = EwsSession::new(self.tls()?, server, password);
+        ews.check().await?;
+        Ok(ews)
     }
 
     /// Logs in to a saved IMAP account.
@@ -1373,18 +1445,17 @@ impl Core {
             name: Some(account.display_name.clone()).filter(|n| *n != account.email),
             email: account.email.clone(),
         };
-        if account.kind == AccountKind::Gmail {
-            if from.name.is_none() {
+        if matches!(account.kind, AccountKind::Gmail | AccountKind::Exchange) {
+            if account.kind == AccountKind::Gmail && from.name.is_none() {
                 from.name = Box::pin(self.gmail_name(account, secret, slot)).await;
             }
             for message in mail {
                 let message = Box::pin(self.with_files(account, secret, slot, message)).await?;
-                // Gmail keeps the copy in Sent itself.
+                // Gmail and Exchange keep the copy in Sent themselves.
                 let copy: Option<SentCopy<'_, Remote>> = None;
-                if let Remote::Gmail(gmail) = Box::pin(self.remote(slot, account, secret)).await? {
-                    let one = vec![message];
-                    push_sends(&self.store, gmail, &MimeBuilder, &from, copy, one).await?;
-                }
+                let remote = Box::pin(self.remote(slot, account, secret)).await?;
+                let one = vec![message];
+                push_sends(&self.store, remote, &MimeBuilder, &from, copy, one).await?;
             }
             return Ok(());
         }
@@ -1484,6 +1555,7 @@ impl Core {
 enum Remote {
     Imap(ImapSession),
     Gmail(GmailSession),
+    Ews(EwsSession),
 }
 
 impl Remote {
@@ -1494,12 +1566,29 @@ impl Remote {
     }
 }
 
+/// Sends through the provider's own call, where it has one.
+impl MailSender for Remote {
+    async fn send(
+        &mut self,
+        from: &str,
+        to: &[String],
+        message: &[u8],
+    ) -> Result<(), ProviderError> {
+        match self {
+            Self::Gmail(p) => p.send(from, to, message).await,
+            Self::Ews(p) => p.send(from, to, message).await,
+            Self::Imap(_) => Err(ProviderError::Rejected("IMAP sends over SMTP".into())),
+        }
+    }
+}
+
 /// Passes each call on to the account's own provider.
 impl MailProvider for Remote {
     async fn folders(&mut self) -> Result<Vec<NewFolder>, ProviderError> {
         match self {
             Self::Imap(p) => p.folders().await,
             Self::Gmail(p) => p.folders().await,
+            Self::Ews(p) => p.folders().await,
         }
     }
 
@@ -1508,11 +1597,13 @@ impl MailProvider for Remote {
         folder: &str,
         since: Checkpoint,
         known: &[String],
+        oldest: i64,
         limit: u32,
     ) -> Result<Changes, ProviderError> {
         match self {
-            Self::Imap(p) => p.changes(folder, since, known, limit).await,
-            Self::Gmail(p) => p.changes(folder, since, known, limit).await,
+            Self::Imap(p) => p.changes(folder, since, known, oldest, limit).await,
+            Self::Gmail(p) => p.changes(folder, since, known, oldest, limit).await,
+            Self::Ews(p) => p.changes(folder, since, known, oldest, limit).await,
         }
     }
 
@@ -1527,6 +1618,7 @@ impl MailProvider for Remote {
         match self {
             Self::Imap(p) => p.older(folder, validity, known, oldest, limit).await,
             Self::Gmail(p) => p.older(folder, validity, known, oldest, limit).await,
+            Self::Ews(p) => p.older(folder, validity, known, oldest, limit).await,
         }
     }
 
@@ -1540,6 +1632,7 @@ impl MailProvider for Remote {
         match self {
             Self::Imap(p) => p.search(folder, validity, text, limit).await,
             Self::Gmail(p) => p.search(folder, validity, text, limit).await,
+            Self::Ews(p) => p.search(folder, validity, text, limit).await,
         }
     }
 
@@ -1552,6 +1645,7 @@ impl MailProvider for Remote {
         match self {
             Self::Imap(p) => p.body(folder, validity, remote_id).await,
             Self::Gmail(p) => p.body(folder, validity, remote_id).await,
+            Self::Ews(p) => p.body(folder, validity, remote_id).await,
         }
     }
 
@@ -1564,6 +1658,7 @@ impl MailProvider for Remote {
         match self {
             Self::Imap(p) => p.message(folder, validity, remote_id).await,
             Self::Gmail(p) => p.message(folder, validity, remote_id).await,
+            Self::Ews(p) => p.message(folder, validity, remote_id).await,
         }
     }
 
@@ -1577,6 +1672,7 @@ impl MailProvider for Remote {
         match self {
             Self::Imap(p) => p.set_seen(folder, validity, remote_ids, seen).await,
             Self::Gmail(p) => p.set_seen(folder, validity, remote_ids, seen).await,
+            Self::Ews(p) => p.set_seen(folder, validity, remote_ids, seen).await,
         }
     }
 
@@ -1590,6 +1686,7 @@ impl MailProvider for Remote {
         match self {
             Self::Imap(p) => p.move_to(folder, validity, remote_ids, to).await,
             Self::Gmail(p) => p.move_to(folder, validity, remote_ids, to).await,
+            Self::Ews(p) => p.move_to(folder, validity, remote_ids, to).await,
         }
     }
 
@@ -1602,6 +1699,7 @@ impl MailProvider for Remote {
         match self {
             Self::Imap(p) => p.delete(folder, validity, remote_ids).await,
             Self::Gmail(p) => p.delete(folder, validity, remote_ids).await,
+            Self::Ews(p) => p.delete(folder, validity, remote_ids).await,
         }
     }
 
@@ -1614,6 +1712,7 @@ impl MailProvider for Remote {
         match self {
             Self::Imap(p) => p.empty(folder, validity, keep).await,
             Self::Gmail(p) => p.empty(folder, validity, keep).await,
+            Self::Ews(p) => p.empty(folder, validity, keep).await,
         }
     }
 
@@ -1621,6 +1720,7 @@ impl MailProvider for Remote {
         match self {
             Self::Imap(p) => p.append(folder, message).await,
             Self::Gmail(p) => p.append(folder, message).await,
+            Self::Ews(p) => p.append(folder, message).await,
         }
     }
 
@@ -1633,6 +1733,7 @@ impl MailProvider for Remote {
         match self {
             Self::Imap(p) => p.wait(folder, since, wait).await,
             Self::Gmail(p) => p.wait(folder, since, wait).await,
+            Self::Ews(p) => p.wait(folder, since, wait).await,
         }
     }
 }
@@ -1780,6 +1881,7 @@ pub enum AccountKind {
     Imap,
     Gmail,
     Graph,
+    Exchange,
 }
 
 /// Inbox tab, sorted by rules on the device.
@@ -2252,6 +2354,8 @@ pub enum CoreError {
     BadRecipients,
     /// The account has no SMTP server to send through.
     NoSmtp,
+    /// No Exchange server was found for the address, or the one typed is no server address.
+    NoServer,
     Storage {
         detail: String,
     },
@@ -2273,6 +2377,7 @@ impl fmt::Display for CoreError {
             Self::NoTrash => write!(f, "the account has no trash folder"),
             Self::BadRecipients => write!(f, "a recipient is not an email address"),
             Self::NoSmtp => write!(f, "the account has no SMTP server"),
+            Self::NoServer => write!(f, "no Exchange server found"),
             Self::Storage { detail } => write!(f, "storage error: {detail}"),
         }
     }

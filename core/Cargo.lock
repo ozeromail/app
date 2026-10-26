@@ -654,6 +654,7 @@ dependencies = [
  "log",
  "ozero-app",
  "ozero-domain",
+ "ozero-ews",
  "ozero-gmail",
  "ozero-http",
  "ozero-imap",
@@ -682,6 +683,18 @@ dependencies = [
 [[package]]
 name = "ozero-domain"
 version = "0.1.0"
+
+[[package]]
+name = "ozero-ews"
+version = "0.1.0"
+dependencies = [
+ "mail-parser",
+ "ozero-domain",
+ "ozero-http",
+ "ring",
+ "tokio",
+ "tokio-rustls",
+]
 
 [[package]]
 name = "ozero-gmail"

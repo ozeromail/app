@@ -72,7 +72,8 @@ pub struct Older {
 pub trait MailProvider: Send {
     fn folders(&mut self) -> impl Future<Output = Result<Vec<NewFolder>, ProviderError>> + Send;
 
-    /// What changed in a folder since `since`, for the messages saved with `known` ids.
+    /// What changed in a folder since `since`, for the messages saved with `known` ids, the
+    /// earliest of which was received at `oldest` (seconds; `i64::MAX` with none saved).
     /// After a validity change, or without a checkpoint, `new` holds the newest `limit`
     /// messages and nothing else is returned. Otherwise `new` holds at most the newest
     /// `limit` messages that arrived since.
@@ -81,6 +82,7 @@ pub trait MailProvider: Send {
         folder: &str,
         since: Checkpoint,
         known: &[String],
+        oldest: i64,
         limit: u32,
     ) -> impl Future<Output = Result<Changes, ProviderError>> + Send;
 
