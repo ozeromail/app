@@ -350,6 +350,15 @@ private struct InboxList: View {
                     .accessibilityLabel(Text("action_back"))
                 }
             }
+            // On its side, without tabs, beside the title: the short height is for the mail.
+            if model.sideways && !model.isInbox && !choosing {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button { model.path.append(.search) } label: { Image(systemName: "magnifyingglass") }
+                        .accessibilityLabel(Text("search_prompt"))
+                    Button { model.composing = Composing(draft: newDraft) } label: { Image(systemName: "square.and.pencil") }
+                        .accessibilityLabel(Text("compose_new"))
+                }
+            }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 8) {
@@ -371,7 +380,7 @@ private struct InboxList: View {
                     .padding(.horizontal, 20)
                     .transition(.opacity)
                 }
-                // On its side search and a new message are under the mailboxes: with no tabs, the dock has nothing.
+                // On its side, without tabs, search and a new message are beside the title: the dock has nothing.
                 if !model.sideways || model.isInbox || choosing || (model.emptyLabel != nil && !model.messages.isEmpty) {
                     Dock(model: model, choosing: choosing, picked: picked, onMore: { more = true })
                 }
@@ -466,7 +475,14 @@ private struct Dock: View {
                 if choosing {
                     ChoiceBar(model: model, picked: picked, onMore: onMore)
                 } else if model.sideways {
-                    if model.isInbox { tabs } else { EmptyFolderButton(model: model) }
+                    HStack(spacing: 8) {
+                        if model.isInbox { tabs } else { EmptyFolderButton(model: model) }
+                        // Without tabs they are beside the title; beside a message the row is only the tabs.
+                        if model.isInbox && model.pane == nil {
+                            SearchButton(model: model, size: 40)
+                            ComposeButton(model: model, size: 40)
+                        }
+                    }
                 } else {
                     HStack(spacing: 8) {
                         AccountsButton(accounts: model.accounts) { model.accountsOpen = true }
@@ -544,16 +560,6 @@ private struct Mailboxes: View {
         }
         .listStyle(.sidebar)
         .environment(\.defaultMinListRowHeight, 36)
-        // Search and a new message, in reach of the thumb.
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            HStack(spacing: 8) {
-                SearchButton(model: model)
-                ComposeButton(model: model, size: 40)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(.bar)
-        }
         .frame(width: Room.mailboxes)
         // Read once here; a sync reads them again.
         .task { if model.folders.isEmpty { await model.loadFolders() } }
@@ -595,20 +601,20 @@ private struct ComposeButton: View {
     }
 }
 
-/// Search under the mailboxes.
+/// Search as a button of its own, beside the tabs.
 private struct SearchButton: View {
     let model: InboxModel
+    var size: CGFloat = 48
 
     var body: some View {
         Button {
             model.path.append(.search)
         } label: {
-            Label("search_prompt", systemImage: "magnifyingglass")
-                .lineLimit(1)
+            Image(systemName: "magnifyingglass")
+                .font(.title3)
                 .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
-                .padding(.horizontal, 14)
-                .background(Color.ozeroCard, in: .capsule)
+                .frame(width: size, height: size)
+                .background(Color.ozeroCard, in: .rect(cornerRadius: 16))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(Text("search_prompt"))
