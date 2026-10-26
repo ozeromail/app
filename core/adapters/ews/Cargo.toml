@@ -1,6 +1,6 @@
 [package]
 name = "ozero-ews"
-description = "Exchange Web Services provider for Exchange servers a company runs itself."
+description = "Exchange Web Services and ActiveSync providers for Exchange servers a company runs itself."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

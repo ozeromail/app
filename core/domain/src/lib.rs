@@ -28,7 +28,7 @@ pub use outbox::{
 };
 pub use provider::{
     Changes, Checkpoint, MailProvider, MailSender, MessageBuilder, MessageParser, Moved, Older,
-    ProviderError, RawMessage,
+    ProviderError, ProviderState, RawMessage,
 };
 pub use sort::{Category, Signals};
 pub use store::{Store, StoreError};

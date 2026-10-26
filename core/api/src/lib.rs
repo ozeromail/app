@@ -17,10 +17,10 @@ use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Attachment, Body, Category, Changes,
     Checkpoint, Draft, DraftId, Folder, FolderId, FolderRole, ListQuery, ListScope, MailProvider,
     MailSender, MessageId, MessageRow, Moved, NewAccount, NewFolder, Older, OpId, OutboxId,
-    Outgoing, ProviderError, RawMessage, SavedDraft, Sender, Server, Store, StoreError, html,
-    parse_recipients, saves_sent_itself,
+    Outgoing, ProviderError, ProviderState, RawMessage, SavedDraft, Sender, Server, Store,
+    StoreError, html, parse_recipients, saves_sent_itself,
 };
-use ozero_ews::{EwsSession, discover};
+use ozero_ews::{EasSession, EwsSession, discover};
 use ozero_gmail::{GmailSession, oauth};
 use ozero_imap::ImapSession;
 use ozero_imap::rustls::ClientConfig;
@@ -111,7 +111,7 @@ async fn sender_name(gmail: &mut GmailSession) -> Option<String> {
 /// The mail core of one app install: the encrypted database and the network.
 #[derive(uniffi::Object)]
 pub struct Core {
-    store: SqliteStore,
+    store: Arc<SqliteStore>,
     parser: MimeParser,
     tls: OnceLock<Arc<ClientConfig>>,
     /// The platform's client certificates, once the app has given them.
@@ -180,7 +180,7 @@ impl Core {
         let changed = changes.clone();
         store.on_change(move || changed.send_modify(|n| *n += 1))?;
         Ok(Arc::new(Self {
-            store,
+            store: Arc::new(store),
             parser: MimeParser::default(),
             tls: OnceLock::new(),
             certificates: OnceLock::new(),
@@ -615,11 +615,18 @@ impl Core {
                 let ews = match discover::check(tls.clone(), &endpoint, &login, &password).await {
                     // Something answers there with an HTTP error, but not EWS.
                     Err(ProviderError::Rejected(_)) => {
-                        return Err(if discover::active_sync(tls, &endpoint).await {
-                            CoreError::OnlyActiveSync
-                        } else {
-                            CoreError::NoEws
-                        });
+                        if !discover::active_sync(tls.clone(), &endpoint).await {
+                            return Err(CoreError::NoEws);
+                        }
+                        let server = Server {
+                            host: endpoint.host,
+                            port: endpoint.port,
+                            user: login,
+                            certificate,
+                        };
+                        return self
+                            .add_active_sync_account(email, display_name, server, tls, password)
+                            .await;
                     }
                     found => found?,
                 };
@@ -661,7 +668,11 @@ impl Core {
     pub async fn check_password(&self, account: i64, password: String) -> Result<(), CoreError> {
         let account = self.account(AccountId(account))?;
         if account.kind == AccountKind::Exchange {
-            self.ews(&account, &password).await?;
+            if self.speaks_active_sync(account.id)? {
+                self.eas(&account, &password).await?.check().await?;
+            } else {
+                self.ews(&account, &password).await?;
+            }
             return Ok(());
         }
         match &account.smtp {
@@ -811,10 +822,10 @@ impl Core {
             if mailbox == INBOX || !folders.is_empty() {
                 let remote = self.remote(&mut slot, &account, &secret).await?;
                 let synced = if mailbox == INBOX {
-                    sync_mail(&self.store, remote, &self.parser, id, SYNC_LIMIT, since).await
+                    sync_mail(&*self.store, remote, &self.parser, id, SYNC_LIMIT, since).await
                 } else {
                     let parser = &self.parser;
-                    sync_folders(&self.store, remote, parser, &folders, SYNC_LIMIT, since).await
+                    sync_folders(&*self.store, remote, parser, &folders, SYNC_LIMIT, since).await
                 };
                 self.refused(&account, synced)?;
             }
@@ -848,8 +859,14 @@ impl Core {
             let (mut slot, mut more) = (None, false);
             for (folder, _) in &folders {
                 let remote = self.remote(&mut slot, &account, &secret).await?;
-                let loaded =
-                    load_older(&self.store, remote, &self.parser, folder, OLDER_PAGE, since);
+                let loaded = load_older(
+                    &*self.store,
+                    remote,
+                    &self.parser,
+                    folder,
+                    OLDER_PAGE,
+                    since,
+                );
                 match self.refused(&account, loaded.await) {
                     Ok(true) => more = true,
                     // The next sync starts the folder over.
@@ -881,7 +898,7 @@ impl Core {
         let mut slot = None;
         let remote = self.remote(&mut slot, &account, &secret).await?;
         let found = search_server(
-            &self.store,
+            &*self.store,
             remote,
             &self.parser,
             account.id,
@@ -925,7 +942,7 @@ impl Core {
         let mut slot = None;
         let remote = self.remote(&mut slot, &account, &secret).await?;
         let fetched =
-            prefetch_bodies(&self.store, remote, &self.parser, account.id, PREFETCH).await;
+            prefetch_bodies(&*self.store, remote, &self.parser, account.id, PREFETCH).await;
         drop(slot);
         self.refused(&account, fetched)
     }
@@ -937,7 +954,7 @@ impl Core {
         let account = self.account(AccountId(account))?;
         let mut slot = None;
         let remote = self.remote(&mut slot, &account, &secret).await?;
-        let waited = wait_for_mail(&self.store, remote, account.id, MAIL_WAIT).await;
+        let waited = wait_for_mail(&*self.store, remote, account.id, MAIL_WAIT).await;
         if let Some(remote) = slot {
             remote.close().await;
         }
@@ -1007,7 +1024,7 @@ impl Core {
         let remote = self.remote(&mut slot, &account, &secret).await?;
         let parts: Vec<u32> = files.iter().map(|f| f.part).collect();
         let found =
-            download_attachments(&self.store, remote, &self.parser, &location, &parts).await;
+            download_attachments(&*self.store, remote, &self.parser, &location, &parts).await;
         drop(slot);
         let found = self.refused(&account, found)?;
         // Every part there is gets written; one the whole message lacks is as good as gone.
@@ -1278,7 +1295,7 @@ impl Core {
         let account = self.account(location.account_id)?;
         let mut slot = None;
         let remote = self.remote(&mut slot, &account, secret).await?;
-        let body = download_body(&self.store, remote, &self.parser, &location).await;
+        let body = download_body(&*self.store, remote, &self.parser, &location).await;
         // Closing without LOGOUT saves the reader a round trip; the server cleans up.
         drop(slot);
         self.refused(&account, body)
@@ -1300,6 +1317,9 @@ impl Core {
                 AccountKind::Gmail => {
                     let token = self.access_token(account.id, secret).await?;
                     Remote::Gmail(GmailSession::new(self.tls()?, &token))
+                }
+                AccountKind::Exchange if self.speaks_active_sync(account.id)? => {
+                    Remote::Eas(self.eas(account, secret).await?)
                 }
                 AccountKind::Exchange => Remote::Ews(self.ews(account, secret).await?),
                 AccountKind::Graph => {
@@ -1362,6 +1382,70 @@ impl Core {
         result
     }
 
+    /// Saves an Exchange account that opens only ActiveSync, once the server has taken the
+    /// login and let the device in.
+    async fn add_active_sync_account(
+        &self,
+        email: String,
+        display_name: String,
+        server: Server,
+        tls: Arc<ClientConfig>,
+        password: String,
+    ) -> Result<i64, CoreError> {
+        let kept = Arc::new(Kept::default());
+        EasSession::register(&*kept)?;
+        let mut eas = EasSession::new(tls, &server, &password, kept.clone())?;
+        eas.check().await?;
+        let display_name = match display_name.trim() {
+            // Without it the mail goes out under the address alone.
+            "" => eas
+                .name()
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| email.clone()),
+            name => name.to_owned(),
+        };
+        let account = NewAccount {
+            kind: AccountKind::Exchange,
+            email,
+            display_name,
+            server: Some(server),
+            smtp: None,
+        };
+        let id = self.store.add_account(&account)?;
+        let state = [(PROTOCOL.to_owned(), ACTIVE_SYNC.to_owned())]
+            .into_iter()
+            .chain(kept.take())
+            .try_for_each(|(key, value)| self.store.set_provider_state(id, &key, Some(&value)));
+        // Without its state the account would speak EWS, or be another phone.
+        if let Err(e) = state {
+            let _ = self.store.remove_account(id);
+            return Err(e.into());
+        }
+        Ok(id.0)
+    }
+
+    /// Whether a saved Exchange account speaks ActiveSync rather than EWS.
+    fn speaks_active_sync(&self, account: AccountId) -> Result<bool, CoreError> {
+        let protocol = self.store.provider_state(account, PROTOCOL)?;
+        Ok(protocol.as_deref() == Some(ACTIVE_SYNC))
+    }
+
+    /// A session with a saved ActiveSync account. Each request signs in, so the first one
+    /// finds a wrong password.
+    async fn eas(&self, account: &Account, password: &str) -> Result<EasSession, CoreError> {
+        let server = account.server.as_ref().ok_or_else(|| CoreError::Storage {
+            detail: "no Exchange server".into(),
+        })?;
+        let tls = self.tls_for(server.certificate.as_deref())?;
+        let state = Arc::new(AccountState {
+            store: self.store.clone(),
+            account: account.id,
+        });
+        Ok(EasSession::new(tls, server, password, state)?)
+    }
+
     /// Signs in to a saved Exchange account: one call, so a wrong password is found before
     /// more of them count against the company's lockout.
     async fn ews(&self, account: &Account, password: &str) -> Result<EwsSession, CoreError> {
@@ -1401,7 +1485,7 @@ impl Core {
         if !unclaimed.is_empty() {
             let remote = Box::pin(self.remote(slot, account, secret)).await?;
             let (parser, since) = (&self.parser, keep_since(account.keep_days));
-            let synced = sync_folders(&self.store, remote, parser, &unclaimed, SYNC_LIMIT, since);
+            let synced = sync_folders(&*self.store, remote, parser, &unclaimed, SYNC_LIMIT, since);
             // The actions went already: what waits on the copies goes with a later push.
             if Box::pin(synced).await.is_ok() {
                 Box::pin(self.send_ops(account, secret, slot)).await?;
@@ -1420,7 +1504,7 @@ impl Core {
         let ops = self.store.due(account.id, now())?;
         if !ops.is_empty() {
             let remote = self.remote(slot, account, secret).await?;
-            push_ops(&self.store, remote, ops).await?;
+            push_ops(&*self.store, remote, ops).await?;
         }
         Ok(())
     }
@@ -1484,7 +1568,7 @@ impl Core {
                 let copy: Option<SentCopy<'_, Remote>> = None;
                 let remote = Box::pin(self.remote(slot, account, secret)).await?;
                 let one = vec![message];
-                push_sends(&self.store, remote, &MimeBuilder, &from, copy, one).await?;
+                push_sends(&*self.store, remote, &MimeBuilder, &from, copy, one).await?;
             }
             return Ok(());
         }
@@ -1523,7 +1607,7 @@ impl Core {
                 _ => None,
             };
             let one = vec![message];
-            push_sends(&self.store, &mut session, &MimeBuilder, &from, copy, one).await?;
+            push_sends(&*self.store, &mut session, &MimeBuilder, &from, copy, one).await?;
             smtp = Some(session);
         }
         if let Some(session) = smtp {
@@ -1542,7 +1626,7 @@ impl Core {
     ) -> Result<Outgoing, CoreError> {
         if let Some(original) = message.forward {
             let remote = self.remote(slot, account, secret).await?;
-            let files = forwarded_files(&self.store, remote, &self.parser, account.id, original);
+            let files = forwarded_files(&*self.store, remote, &self.parser, account.id, original);
             message.files = files.await?;
         }
         Ok(message)
@@ -1601,11 +1685,65 @@ impl Core {
     }
 }
 
+/// The provider state key that says which protocol an Exchange account speaks.
+const PROTOCOL: &str = "protocol";
+const ACTIVE_SYNC: &str = "activesync";
+
+/// An account's provider state in the store. A failed write is logged: the provider then
+/// starts over where it needed the value.
+struct AccountState {
+    store: Arc<SqliteStore>,
+    account: AccountId,
+}
+
+impl ProviderState for AccountState {
+    fn get(&self, key: &str) -> Option<String> {
+        self.store
+            .provider_state(self.account, key)
+            .unwrap_or_else(|e| {
+                log::warn!("no provider state {key}: {e}");
+                None
+            })
+    }
+
+    fn set(&self, key: &str, value: Option<&str>) {
+        if let Err(e) = self.store.set_provider_state(self.account, key, value) {
+            log::warn!("provider state {key} not kept: {e}");
+        }
+    }
+}
+
+/// Provider state kept in memory while signing in, before the account is saved.
+#[derive(Default)]
+struct Kept(Mutex<HashMap<String, String>>);
+
+impl Kept {
+    fn take(&self) -> HashMap<String, String> {
+        std::mem::take(&mut self.0.lock().unwrap_or_else(|p| p.into_inner()))
+    }
+}
+
+impl ProviderState for Kept {
+    fn get(&self, key: &str) -> Option<String> {
+        let kept = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        kept.get(key).cloned()
+    }
+
+    fn set(&self, key: &str, value: Option<&str>) {
+        let mut kept = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        match value {
+            Some(v) => kept.insert(key.to_owned(), v.to_owned()),
+            None => kept.remove(key),
+        };
+    }
+}
+
 /// The open connection to an account's server.
 enum Remote {
     Imap(ImapSession),
     Gmail(GmailSession),
     Ews(EwsSession),
+    Eas(EasSession),
 }
 
 impl Remote {
@@ -1627,6 +1765,7 @@ impl MailSender for Remote {
         match self {
             Self::Gmail(p) => p.send(from, to, message).await,
             Self::Ews(p) => p.send(from, to, message).await,
+            Self::Eas(p) => p.send(from, to, message).await,
             Self::Imap(_) => Err(ProviderError::Rejected("IMAP sends over SMTP".into())),
         }
     }
@@ -1639,6 +1778,7 @@ impl MailProvider for Remote {
             Self::Imap(p) => p.folders().await,
             Self::Gmail(p) => p.folders().await,
             Self::Ews(p) => p.folders().await,
+            Self::Eas(p) => p.folders().await,
         }
     }
 
@@ -1654,6 +1794,7 @@ impl MailProvider for Remote {
             Self::Imap(p) => p.changes(folder, since, known, oldest, limit).await,
             Self::Gmail(p) => p.changes(folder, since, known, oldest, limit).await,
             Self::Ews(p) => p.changes(folder, since, known, oldest, limit).await,
+            Self::Eas(p) => p.changes(folder, since, known, oldest, limit).await,
         }
     }
 
@@ -1669,6 +1810,7 @@ impl MailProvider for Remote {
             Self::Imap(p) => p.older(folder, validity, known, oldest, limit).await,
             Self::Gmail(p) => p.older(folder, validity, known, oldest, limit).await,
             Self::Ews(p) => p.older(folder, validity, known, oldest, limit).await,
+            Self::Eas(p) => p.older(folder, validity, known, oldest, limit).await,
         }
     }
 
@@ -1683,6 +1825,7 @@ impl MailProvider for Remote {
             Self::Imap(p) => p.search(folder, validity, text, limit).await,
             Self::Gmail(p) => p.search(folder, validity, text, limit).await,
             Self::Ews(p) => p.search(folder, validity, text, limit).await,
+            Self::Eas(p) => p.search(folder, validity, text, limit).await,
         }
     }
 
@@ -1696,6 +1839,7 @@ impl MailProvider for Remote {
             Self::Imap(p) => p.body(folder, validity, remote_id).await,
             Self::Gmail(p) => p.body(folder, validity, remote_id).await,
             Self::Ews(p) => p.body(folder, validity, remote_id).await,
+            Self::Eas(p) => p.body(folder, validity, remote_id).await,
         }
     }
 
@@ -1709,6 +1853,7 @@ impl MailProvider for Remote {
             Self::Imap(p) => p.message(folder, validity, remote_id).await,
             Self::Gmail(p) => p.message(folder, validity, remote_id).await,
             Self::Ews(p) => p.message(folder, validity, remote_id).await,
+            Self::Eas(p) => p.message(folder, validity, remote_id).await,
         }
     }
 
@@ -1723,6 +1868,7 @@ impl MailProvider for Remote {
             Self::Imap(p) => p.set_seen(folder, validity, remote_ids, seen).await,
             Self::Gmail(p) => p.set_seen(folder, validity, remote_ids, seen).await,
             Self::Ews(p) => p.set_seen(folder, validity, remote_ids, seen).await,
+            Self::Eas(p) => p.set_seen(folder, validity, remote_ids, seen).await,
         }
     }
 
@@ -1737,6 +1883,7 @@ impl MailProvider for Remote {
             Self::Imap(p) => p.move_to(folder, validity, remote_ids, to).await,
             Self::Gmail(p) => p.move_to(folder, validity, remote_ids, to).await,
             Self::Ews(p) => p.move_to(folder, validity, remote_ids, to).await,
+            Self::Eas(p) => p.move_to(folder, validity, remote_ids, to).await,
         }
     }
 
@@ -1750,6 +1897,7 @@ impl MailProvider for Remote {
             Self::Imap(p) => p.delete(folder, validity, remote_ids).await,
             Self::Gmail(p) => p.delete(folder, validity, remote_ids).await,
             Self::Ews(p) => p.delete(folder, validity, remote_ids).await,
+            Self::Eas(p) => p.delete(folder, validity, remote_ids).await,
         }
     }
 
@@ -1763,6 +1911,7 @@ impl MailProvider for Remote {
             Self::Imap(p) => p.empty(folder, validity, keep).await,
             Self::Gmail(p) => p.empty(folder, validity, keep).await,
             Self::Ews(p) => p.empty(folder, validity, keep).await,
+            Self::Eas(p) => p.empty(folder, validity, keep).await,
         }
     }
 
@@ -1771,6 +1920,7 @@ impl MailProvider for Remote {
             Self::Imap(p) => p.append(folder, message).await,
             Self::Gmail(p) => p.append(folder, message).await,
             Self::Ews(p) => p.append(folder, message).await,
+            Self::Eas(p) => p.append(folder, message).await,
         }
     }
 
@@ -1784,6 +1934,7 @@ impl MailProvider for Remote {
             Self::Imap(p) => p.wait(folder, since, wait).await,
             Self::Gmail(p) => p.wait(folder, since, wait).await,
             Self::Ews(p) => p.wait(folder, since, wait).await,
+            Self::Eas(p) => p.wait(folder, since, wait).await,
         }
     }
 }
@@ -2409,8 +2560,8 @@ pub enum CoreError {
     NoServer,
     /// The Exchange server typed answers, but not as EWS.
     NoEws,
-    /// The Exchange server typed opens only ActiveSync, which the core does not speak.
-    OnlyActiveSync,
+    /// The company's Exchange server has not let this device in over ActiveSync, or blocked it.
+    DeviceBlocked,
     Storage {
         detail: String,
     },
@@ -2434,7 +2585,7 @@ impl fmt::Display for CoreError {
             Self::NoSmtp => write!(f, "the account has no SMTP server"),
             Self::NoServer => write!(f, "no Exchange server found"),
             Self::NoEws => write!(f, "the server does not answer as EWS"),
-            Self::OnlyActiveSync => write!(f, "the server opens only ActiveSync"),
+            Self::DeviceBlocked => write!(f, "the server has not let this device in"),
             Self::Storage { detail } => write!(f, "storage error: {detail}"),
         }
     }
@@ -2460,6 +2611,7 @@ impl From<ProviderError> for CoreError {
     fn from(e: ProviderError) -> Self {
         match e {
             ProviderError::Auth => Self::Auth,
+            ProviderError::Blocked => Self::DeviceBlocked,
             ProviderError::Network(detail) => Self::Network { detail },
             ProviderError::Protocol(detail) | ProviderError::Rejected(detail) => {
                 Self::Server { detail }

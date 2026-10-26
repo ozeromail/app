@@ -327,6 +327,14 @@ impl Store for Memory {
         Ok(vec![])
     }
 
+    fn provider_state(&self, _: AccountId, _: &str) -> Result<Option<String>, StoreError> {
+        Ok(None)
+    }
+
+    fn set_provider_state(&self, _: AccountId, _: &str, _: Option<&str>) -> Result<(), StoreError> {
+        Ok(())
+    }
+
     fn shows_images(&self, _: MessageId) -> Result<bool, StoreError> {
         Ok(false)
     }

@@ -25,6 +25,15 @@ pub trait Store: Send + Sync {
     fn prune(&self, account: AccountId, before: i64) -> Result<(), StoreError>;
     /// Marks whether the account waits for the person to sign in again.
     fn set_needs_sign_in(&self, account: AccountId, needs: bool) -> Result<(), StoreError>;
+    /// What the account's provider kept under `key`.
+    fn provider_state(&self, account: AccountId, key: &str) -> Result<Option<String>, StoreError>;
+    /// Keeps `value` for the account's provider under `key`; None forgets it.
+    fn set_provider_state(
+        &self,
+        account: AccountId,
+        key: &str,
+        value: Option<&str>,
+    ) -> Result<(), StoreError>;
 
     /// Inserts new folders and updates known ones, matched by `remote_id`.
     fn save_folders(

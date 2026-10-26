@@ -1,5 +1,6 @@
 //! Exchange Web Services provider (`MailProvider`, `MailSender`) for Exchange servers a
-//! company runs itself, signed in with a password over Basic or NTLM.
+//! company runs itself, signed in with a password over Basic or NTLM; `EasSession` speaks
+//! ActiveSync to a server that opens only that.
 //!
 //! Messages travel as MIME both ways. Item ids change when mail moves, so a folder has no
 //! validity; its checkpoint is when its newest message came, for `wait`.
@@ -7,9 +8,11 @@
 pub mod discover;
 
 mod client;
+mod eas;
 mod md;
 mod ntlm;
 mod soap;
+mod wbxml;
 mod xml;
 
 use std::borrow::Cow;
@@ -25,6 +28,8 @@ use ozero_domain::{
 use tokio_rustls::rustls::ClientConfig;
 
 pub use crate::client::Client;
+use crate::client::random;
+pub use crate::eas::EasSession;
 use crate::soap::{CONTENT_TYPE, check, envelope, first, messages};
 use crate::xml::{Element, escape};
 
@@ -335,18 +340,9 @@ impl MailProvider for EwsSession {
             if role.is_none() && (!mail || f.hidden || skipped.contains(f.id.as_str())) {
                 continue;
             }
-            // The full path, so folders of one name under different parents tell apart.
-            let mut name = f.name.clone();
-            let mut parent = by_id.get(f.parent.as_str());
-            let mut depth = 0;
-            while let Some(p) = parent
-                && depth < 32
-            {
-                name = format!("{}/{name}", p.name);
-                parent = by_id.get(p.parent.as_str());
-                depth += 1;
-            }
-            let top = !by_id.contains_key(f.parent.as_str());
+            let (name, top) = path(&f.name, &f.parent, |id| {
+                by_id.get(id).map(|p| (p.name.as_str(), p.parent.as_str()))
+            });
             let archive =
                 !archived && top && ARCHIVE_NAMES.contains(&f.name.to_lowercase().as_str());
             archived |= archive;
@@ -790,9 +786,50 @@ fn flags(item: &Element) -> Flags {
     }
 }
 
-/// Seconds since the Unix epoch of an EWS time.
+/// Seconds since the Unix epoch of a time as Exchange writes it, with or without fractions
+/// of a second: `2026-10-26T10:00:00.000Z`.
 fn time(text: &str) -> Option<i64> {
-    DateTime::parse_rfc3339(text.trim()).map(|t| t.to_timestamp())
+    let text = text.trim();
+    let whole = match (text.split_once('.'), text.ends_with('Z')) {
+        (Some((seconds, _)), true) => Cow::Owned(format!("{seconds}Z")),
+        _ => Cow::Borrowed(text),
+    };
+    DateTime::parse_rfc3339(&whole).map(|t| t.to_timestamp())
+}
+
+/// A header block of these fields, one a line whatever line breaks a value holds; empty
+/// ones are left out.
+fn header<'a>(fields: impl IntoIterator<Item = (&'a str, &'a str)>) -> Vec<u8> {
+    let mut header = Vec::new();
+    for (name, value) in fields {
+        let value = value.replace(['\r', '\n'], " ");
+        if !value.trim().is_empty() {
+            header.extend_from_slice(format!("{name}: {}\r\n", value.trim()).as_bytes());
+        }
+    }
+    header.extend_from_slice(b"\r\n");
+    header
+}
+
+/// A folder's full path, so folders of one name under different parents tell apart, and
+/// whether it is at the top. `parent_of` gives a folder's name and parent by its id.
+fn path<'a>(
+    name: &str,
+    parent: &'a str,
+    parent_of: impl Fn(&str) -> Option<(&'a str, &'a str)>,
+) -> (String, bool) {
+    let mut path = name.to_owned();
+    let mut next = parent_of(parent);
+    let top = next.is_none();
+    let mut depth = 0;
+    while let Some((name, parent)) = next
+        && depth < 32
+    {
+        path = format!("{name}/{path}");
+        next = parent_of(parent);
+        depth += 1;
+    }
+    (path, top)
 }
 
 /// Headers the server adds on the way that only take room.
@@ -865,16 +902,7 @@ fn raw_message(item: &Element) -> Option<RawMessage> {
         }
         fields.push((name.to_owned(), h.text.clone()));
     }
-    let mut header = Vec::new();
-    for (name, value) in fields {
-        // One header per line, whatever line breaks the value holds.
-        let value: String = value
-            .chars()
-            .map(|c| if c == '\r' || c == '\n' { ' ' } else { c })
-            .collect();
-        header.extend_from_slice(format!("{name}: {}\r\n", value.trim()).as_bytes());
-    }
-    header.extend_from_slice(b"\r\n");
+    let header = header(fields.iter().map(|(n, v)| (n.as_str(), v.as_str())));
     Some(RawMessage {
         remote_id: item_id(item)?.to_owned(),
         flags: flags(item),

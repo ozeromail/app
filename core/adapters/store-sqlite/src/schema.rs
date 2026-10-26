@@ -273,4 +273,13 @@ pub const MIGRATIONS: &[&str] = &[
     ALTER TABLE account ADD COLUMN server_certificate TEXT;
     ALTER TABLE account ADD COLUMN smtp_certificate TEXT;
     ",
+    // 29: what a provider keeps between sessions, such as ActiveSync's sync keys.
+    "
+    CREATE TABLE provider_state (
+        account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+        key        TEXT NOT NULL,
+        value      TEXT NOT NULL,
+        PRIMARY KEY (account_id, key)
+    ) WITHOUT ROWID;
+    ",
 ];

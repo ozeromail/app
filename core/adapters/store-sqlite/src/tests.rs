@@ -1369,6 +1369,26 @@ fn accounts_keep_their_client_certificates() {
 }
 
 #[test]
+fn provider_state_lives_and_goes_with_its_account() {
+    let store = store();
+    let (a, b) = (
+        account(&store, "a@example.com"),
+        account(&store, "b@example.com"),
+    );
+    store.set_provider_state(a, "sync.1", Some("1")).unwrap();
+    store.set_provider_state(a, "sync.1", Some("2")).unwrap();
+    store.set_provider_state(b, "sync.1", Some("3")).unwrap();
+    assert_eq!(
+        store.provider_state(a, "sync.1").unwrap().as_deref(),
+        Some("2")
+    );
+    store.set_provider_state(a, "sync.1", None).unwrap();
+    assert_eq!(store.provider_state(a, "sync.1").unwrap(), None);
+    store.remove_account(b).unwrap();
+    assert_eq!(store.provider_state(b, "sync.1").unwrap(), None);
+}
+
+#[test]
 fn new_people_mail_is_taken_once() {
     let store = store();
     let folder = inbox(&store, account(&store, "a@example.com"));

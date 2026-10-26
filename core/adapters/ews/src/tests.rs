@@ -18,18 +18,31 @@ const KEY: &[u8] = include_bytes!("../../imap/tests/dovecot/tls.key");
 
 /// A request as the server saw it: which connection, the Authorization header, the body.
 #[derive(Debug, Clone)]
-struct Seen {
-    conn: usize,
+pub(crate) struct Seen {
+    pub(crate) conn: usize,
     /// The method and path.
-    line: String,
-    auth: Option<String>,
-    body: String,
+    pub(crate) line: String,
+    /// The whole request head.
+    pub(crate) head: String,
+    pub(crate) auth: Option<String>,
+    pub(crate) body: String,
+    pub(crate) raw: Vec<u8>,
 }
 
 /// Answers a request: status, extra headers, body.
 type Handler = Arc<dyn Fn(&Seen) -> (u16, Vec<String>, String) + Send + Sync>;
+/// Like `Handler`, with a body of any bytes.
+pub(crate) type RawHandler = Arc<dyn Fn(&Seen) -> (u16, Vec<String>, Vec<u8>) + Send + Sync>;
 
 async fn serving(handler: Handler) -> (HttpsClient, Arc<Mutex<Vec<Seen>>>) {
+    serving_raw(Arc::new(move |r: &Seen| {
+        let (status, headers, body) = handler(r);
+        (status, headers, body.into_bytes())
+    }))
+    .await
+}
+
+pub(crate) async fn serving_raw(handler: RawHandler) -> (HttpsClient, Arc<Mutex<Vec<Seen>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let seen: Arc<Mutex<Vec<Seen>>> = Arc::default();
@@ -63,7 +76,8 @@ async fn serving(handler: Handler) -> (HttpsClient, Arc<Mutex<Vec<Seen>>>) {
                         let n = tls.read(&mut chunk).await.unwrap();
                         buf.extend_from_slice(&chunk[..n]);
                     }
-                    let body = String::from_utf8(buf.drain(..length).collect()).unwrap();
+                    let raw: Vec<u8> = buf.drain(..length).collect();
+                    let body = String::from_utf8_lossy(&raw).into_owned();
                     let auth = head
                         .lines()
                         .find_map(|l| l.strip_prefix("Authorization: "))
@@ -72,8 +86,10 @@ async fn serving(handler: Handler) -> (HttpsClient, Arc<Mutex<Vec<Seen>>>) {
                     let request = Seen {
                         conn,
                         line,
+                        head,
                         auth,
                         body,
+                        raw,
                     };
                     let (status, headers, reply) = handler(&request);
                     log.lock().unwrap().push(request);
@@ -83,8 +99,9 @@ async fn serving(handler: Handler) -> (HttpsClient, Arc<Mutex<Vec<Seen>>>) {
                         response.push_str(&format!("{h}\r\n"));
                     }
                     response.push_str("\r\n");
-                    response.push_str(&reply);
-                    tls.write_all(response.as_bytes()).await.unwrap();
+                    let mut response = response.into_bytes();
+                    response.extend_from_slice(&reply);
+                    tls.write_all(&response).await.unwrap();
                 }
             });
         }
