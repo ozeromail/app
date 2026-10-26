@@ -337,6 +337,8 @@ private struct InboxList: View {
         .animation(.smooth, value: model.messages.map(\.id))
         .middle(Room.list)
         .navigationTitle(choosing ? tr("select_count", picked.count) : model.title)
+        // On its side a large title would take a third of the height.
+        .navigationBarTitleDisplayMode(model.sideways ? .inline : .automatic)
         .toolbar {
             if !model.isInbox && !choosing {
                 ToolbarItem(placement: .topBarLeading) {
@@ -369,7 +371,10 @@ private struct InboxList: View {
                     .padding(.horizontal, 20)
                     .transition(.opacity)
                 }
-                Dock(model: model, choosing: choosing, picked: picked, onMore: { more = true })
+                // On its side search and a new message are under the mailboxes: with no tabs, the dock has nothing.
+                if !model.sideways || model.isInbox || choosing || (model.emptyLabel != nil && !model.messages.isEmpty) {
+                    Dock(model: model, choosing: choosing, picked: picked, onMore: { more = true })
+                }
             }
             .animation(.smooth, value: model.toast)
             .animation(.smooth, value: status?.key)
@@ -461,18 +466,7 @@ private struct Dock: View {
                 if choosing {
                     ChoiceBar(model: model, picked: picked, onMore: onMore)
                 } else if model.sideways {
-                    HStack(spacing: 8) {
-                        if model.isInbox {
-                            tabs
-                        } else {
-                            EmptyFolderButton(model: model)
-                            Spacer(minLength: 0)
-                        }
-                        if model.pane == nil || !model.isInbox {
-                            SearchButton(model: model)
-                            ComposeButton(model: model)
-                        }
-                    }
+                    if model.isInbox { tabs } else { EmptyFolderButton(model: model) }
                 } else {
                     HStack(spacing: 8) {
                         AccountsButton(accounts: model.accounts) { model.accountsOpen = true }
@@ -490,11 +484,12 @@ private struct Dock: View {
                     }
                 }
             }
-            .frame(height: 52)
+            .frame(height: model.sideways && !choosing ? 40 : 52)
             .animation(.smooth, value: choosing)
         }
         .padding(.horizontal, 12)
-        .padding(.top, 10)
+        // On its side the height is for the mail.
+        .padding(.top, model.sideways ? 6 : 10)
         .padding(.bottom, 4)
         .background(.bar)
     }
@@ -548,6 +543,17 @@ private struct Mailboxes: View {
             }
         }
         .listStyle(.sidebar)
+        .environment(\.defaultMinListRowHeight, 36)
+        // Search and a new message, in reach of the thumb.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            HStack(spacing: 8) {
+                SearchButton(model: model)
+                ComposeButton(model: model, size: 40)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(.bar)
+        }
         .frame(width: Room.mailboxes)
         // Read once here; a sync reads them again.
         .task { if model.folders.isEmpty { await model.loadFolders() } }
@@ -573,6 +579,7 @@ private struct EmptyFolderButton: View {
 /// A new message, in the accent.
 private struct ComposeButton: View {
     let model: InboxModel
+    var size: CGFloat = 48
 
     var body: some View {
         Button {
@@ -581,14 +588,14 @@ private struct ComposeButton: View {
             Image(systemName: "square.and.pencil")
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(.white)
-                .frame(width: 48, height: 48)
+                .frame(width: size, height: size)
                 .background(Color.ozeroFill, in: .rect(cornerRadius: 16))
         }
         .accessibilityLabel(Text("compose_new"))
     }
 }
 
-/// Search as a button of its own, beside the tabs.
+/// Search under the mailboxes.
 private struct SearchButton: View {
     let model: InboxModel
 
@@ -596,11 +603,12 @@ private struct SearchButton: View {
         Button {
             model.path.append(.search)
         } label: {
-            Image(systemName: "magnifyingglass")
-                .font(.title3)
+            Label("search_prompt", systemImage: "magnifyingglass")
+                .lineLimit(1)
                 .foregroundStyle(.secondary)
-                .frame(width: 48, height: 48)
-                .background(Color.ozeroCard, in: .rect(cornerRadius: 16))
+                .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
+                .padding(.horizontal, 14)
+                .background(Color.ozeroCard, in: .capsule)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(Text("search_prompt"))

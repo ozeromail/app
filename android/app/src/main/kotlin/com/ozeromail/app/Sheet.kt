@@ -200,12 +200,14 @@ fun SheetTitle(text: String, modifier: Modifier = Modifier.padding(start = Gap.s
 /** A row of a sheet: a dot or an icon in a slot of its own, so every label starts at the same place. */
 @Composable
 fun SheetRow(onClick: () -> Unit, lead: @Composable () -> Unit, content: @Composable RowScope.() -> Unit) {
+    // On its side the rows are lower, so more of them fit the short height.
+    val short = LocalRoom.current.short
     Row(
         Modifier
             .fillMaxWidth()
-            .heightIn(min = 52.dp)
+            .heightIn(min = if (short) 40.dp else 52.dp)
             .clickable(onClick = onClick)
-            .padding(horizontal = Gap.sheet, vertical = 10.dp),
+            .padding(horizontal = Gap.sheet, vertical = if (short) 6.dp else 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(Gap.slot), contentAlignment = Alignment.Center) { lead() }

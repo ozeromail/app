@@ -9,7 +9,7 @@ enum Room {
     /// The fields of a message being written.
     static let compose: CGFloat = 680
     /// The mailboxes beside the list, and the list beside an open message.
-    static let mailboxes: CGFloat = 240
+    static let mailboxes: CGFloat = 200
     static let listPane: CGFloat = 320
 }
 
