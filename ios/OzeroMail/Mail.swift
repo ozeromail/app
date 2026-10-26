@@ -157,6 +157,18 @@ final class Mail: Sendable {
             email: email, displayName: email, imap: imap, smtp: smtp, password: password)
     }
 
+    /// Like `signIn`, for Exchange: the core finds the server from the email unless `server`
+    /// is given, and signs in as the email unless `login` is.
+    func signInExchange(email: String, password: String, server: String?, login: String?) async throws {
+        if try core.accounts().contains(where: { $0.email.lowercased() == email.lowercased() }) {
+            throw CoreError.AccountExists
+        }
+        try vault.setPassword(password, email: email)
+        // No name: the core asks the server for the owner's.
+        _ = try await core.addExchangeAccount(
+            email: email, displayName: "", server: server, login: login, password: password)
+    }
+
     /// Starts Google sign-in and returns the page to open in the browser; `again` signs in to
     /// that saved account, which Google then offers. A second tap opens the same sign-in, so
     /// whichever browser finishes it, the answer is one we expect.
@@ -193,7 +205,7 @@ final class Mail: Sendable {
         }
     }
 
-    /// A new password for a saved IMAP account, kept once both its servers accept it.
+    /// A new password for a saved IMAP or Exchange account, kept once its servers accept it.
     func signInAgain(_ account: AccountItem, password: String) async throws {
         try await core.checkPassword(account: account.id, password: password)
         try vault.setPassword(password, email: account.email)
@@ -560,6 +572,7 @@ extension Error {
         case .NoTrash?: return "error_no_trash"
         case .BadRecipients?: return "error_bad_recipients"
         case .NoSmtp?: return "error_no_smtp"
+        case .NoServer?: return "error_no_server"
         default: return "error_storage"
         }
     }

@@ -159,6 +159,17 @@ class Mail(private val context: Context) {
         core.addImapAccount(email, email, imap, smtp, password)
     }
 
+    /**
+     * Like [signIn], for Exchange: the core finds the server from the email unless [server]
+     * is given, and signs in as the email unless [login] is.
+     */
+    suspend fun signInExchange(email: String, password: String, server: String?, login: String?) = io {
+        if (core.accounts().any { it.email.equals(email, ignoreCase = true) }) throw CoreException.AccountExists()
+        vault.setPassword(email, password)
+        // No name: the core asks the server for the owner's.
+        core.addExchangeAccount(email, "", server, login, password)
+    }
+
     /** Addresses the browser came back to from Google, for the sign-in screen to finish. */
     val googleRedirects = Channel<String>(Channel.CONFLATED)
 
@@ -188,7 +199,7 @@ class Mail(private val context: Context) {
         if (again == null) core.addGmailAccount(account.email, account.name) else core.signedInAgain(again.id, account.name)
     }
 
-    /** A new password for a saved IMAP account, kept once both its servers accept it. */
+    /** A new password for a saved IMAP or Exchange account, kept once its servers accept it. */
     suspend fun signInAgain(account: AccountItem, password: String) = io {
         core.checkPassword(account.id, password)
         vault.setPassword(account.email, password)
@@ -475,6 +486,7 @@ fun CoreException.text(): Int {
         is CoreException.NoTrash -> R.string.error_no_trash
         is CoreException.BadRecipients -> R.string.error_bad_recipients
         is CoreException.NoSmtp -> R.string.error_no_smtp
+        is CoreException.NoServer -> R.string.error_no_server
         else -> R.string.error_storage
     }
 }

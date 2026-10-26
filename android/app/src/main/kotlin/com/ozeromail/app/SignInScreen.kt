@@ -92,13 +92,20 @@ private enum class Provider(
     MAILRU(R.string.signin_mailru, "imap.mail.ru", "smtp.mail.ru", Mail.SMTPS_PORT, "https://account.mail.ru/user/2-step-auth/passwords/"),
 }
 
-/** Where the person is: picking a service, or signing in to one; [provider] null is any IMAP server. */
-private data class Step(val provider: Provider?) : java.io.Serializable
+/** Where the person is, once past the list: a known service, Exchange, or any IMAP server. */
+private sealed interface Step : java.io.Serializable {
+    data class Known(val provider: Provider) : Step
+
+    data object Exchange : Step
+
+    data object Other : Step
+}
 
 /**
  * Adds an account in two steps: first where the mail lives, then the sign-in for it. Google
- * goes straight to the browser; known services need only an email and an app password; any
- * other server shows its IMAP and SMTP fields. Everything to tap sits in the lower half.
+ * goes straight to the browser; known services need only an email and an app password;
+ * Exchange finds its server from the email; any other server shows its IMAP and SMTP fields.
+ * Everything to tap sits in the lower half.
  * With [onCancel], for a further account, system back and the back arrow leave it.
  * With [again], it signs in to that saved account again instead, keeping its mail.
  */
@@ -182,7 +189,14 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
                 step,
                 Modifier.weight(1f),
                 // Stable across process death, so each step's saved fields come back.
-                contentKey = { it?.provider?.name ?: if (it == null) "pick" else "other" },
+                contentKey = {
+                    when (it) {
+                        null -> "pick"
+                        is Step.Known -> it.provider.name
+                        Step.Exchange -> "exchange"
+                        Step.Other -> "other"
+                    }
+                },
                 transitionSpec = {
                     val move = Motion.calm<IntOffset>(Motion.SCREEN)
                     val fade = Motion.calm<Float>(Motion.SCREEN)
@@ -198,11 +212,22 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
                         busy = busy,
                         onCancel = onCancel,
                         onGoogle = ::google,
-                        onPick = { go(Step(it)) },
+                        onPick = { go(it) },
+                    )
+                } else if (shown == Step.Exchange) {
+                    Exchange(
+                        busy = busy,
+                        // The server was not found: the fields to type it come out.
+                        manual = error == R.string.error_no_server,
+                        onBack = { go(null) },
+                        onSubmit = { email, password, server, login ->
+                            busy = true
+                            scope.launch { attempt { mail.signInExchange(email, password, server, login) } }
+                        },
                     )
                 } else {
                     Credentials(
-                        shown.provider,
+                        (shown as? Step.Known)?.provider,
                         busy = busy,
                         onBack = { go(null) },
                         onAppPasswords = ::open,
@@ -221,7 +246,12 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
 
 /** The first step: where the mail lives, as a list low on the screen. */
 @Composable
-private fun Choose(busy: Boolean, onCancel: (() -> Unit)?, onGoogle: () -> Unit, onPick: (Provider?) -> Unit) {
+private fun Choose(
+    busy: Boolean,
+    onCancel: (() -> Unit)?,
+    onGoogle: () -> Unit,
+    onPick: (Step) -> Unit,
+) {
     val colors = MaterialTheme.colorScheme
     Column(Modifier.fillMaxSize()) {
         // Adding another account goes back to the mail; the arrow's row is there even without
@@ -243,11 +273,15 @@ private fun Choose(busy: Boolean, onCancel: (() -> Unit)?, onGoogle: () -> Unit,
                 .background(colors.surfaceContainer),
         ) {
             Choice(stringResource(R.string.signin_google), !busy, onGoogle, waiting = busy)
-            // Any other server last.
-            (Provider.entries + null).forEach { provider ->
+            HorizontalDivider(Modifier.padding(start = Gap.card), color = colors.outlineVariant)
+            Choice(stringResource(R.string.signin_exchange), !busy, onClick = { onPick(Step.Exchange) })
+            Provider.entries.forEach { provider ->
                 HorizontalDivider(Modifier.padding(start = Gap.card), color = colors.outlineVariant)
-                Choice(stringResource(provider?.label ?: R.string.signin_other), !busy, onClick = { onPick(provider) })
+                Choice(stringResource(provider.label), !busy, onClick = { onPick(Step.Known(provider)) })
             }
+            // Any other server last.
+            HorizontalDivider(Modifier.padding(start = Gap.card), color = colors.outlineVariant)
+            Choice(stringResource(R.string.signin_other), !busy, onClick = { onPick(Step.Other) })
         }
     }
 }
@@ -285,17 +319,7 @@ private fun Again(
         )
         Spacer(Modifier.weight(1f))
         if (!google) Field(password, { password = it }, R.string.signin_password, KeyboardType.Password, onDone = ::submit)
-        Button(
-            onClick = ::submit,
-            enabled = ready,
-            modifier = Modifier.fillMaxWidth().height(48.dp),
-        ) {
-            if (busy) {
-                Spinner(LocalContentColor.current)
-            } else {
-                Text(stringResource(if (google) R.string.signin_again_with_google else R.string.signin_action))
-            }
-        }
+        SubmitButton(if (google) R.string.signin_again_with_google else R.string.signin_action, busy, ready, ::submit)
     }
 }
 
@@ -380,16 +404,75 @@ private fun Credentials(
             Server(host, { server = it }, R.string.signin_server, port, { port = it })
             Server(smtpHost, { smtpServer = it }, R.string.signin_smtp_server, smtpPort, { smtpPort = it }, onDone = ::submit)
         }
-        Button(
-            onClick = ::submit,
-            enabled = ready,
-            modifier = Modifier.fillMaxWidth().height(48.dp),
-        ) {
-            if (busy) {
-                Spinner(LocalContentColor.current)
-            } else {
-                Text(stringResource(R.string.signin_action))
+        SubmitButton(R.string.signin_action, busy, ready, ::submit)
+    }
+}
+
+/**
+ * Exchange: an email and a password, the server found from the email. The server and a login
+ * other than the email can be typed too, and come out on their own when no server is found.
+ */
+@Composable
+private fun Exchange(
+    busy: Boolean,
+    manual: Boolean,
+    onBack: () -> Unit,
+    onSubmit: (email: String, password: String, server: String?, login: String?) -> Unit,
+) {
+    var email by rememberSaveable { mutableStateOf("") }
+    // Not saveable, as in [Credentials].
+    var password by remember { mutableStateOf("") }
+    var server by rememberSaveable { mutableStateOf("") }
+    var login by rememberSaveable { mutableStateOf("") }
+    var typing by rememberSaveable { mutableStateOf(false) }
+    // Once no server was found, it has to be typed, also after the error is gone.
+    var needed by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(manual) {
+        if (manual) needed = true
+    }
+    val shown = typing || manual || needed
+    val ready = !busy && suggestedImapHost(email) != null && password.isNotEmpty() && (!(manual || needed) || server.isNotBlank())
+
+    fun submit() {
+        if (!ready) return
+        val typed = { text: String -> text.trim().takeIf { shown && it.isNotEmpty() } }
+        onSubmit(email.trim(), password, typed(server), typed(login))
+    }
+
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        StepBack(stringResource(R.string.signin_title), onBack, busy)
+        LargeTitle(stringResource(R.string.signin_exchange))
+        Text(stringResource(R.string.signin_exchange_text), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (!shown) {
+            TextButton(onClick = { typing = true }, enabled = !busy, contentPadding = PaddingValues(0.dp)) {
+                Text(stringResource(R.string.signin_exchange_manual))
             }
+        }
+        Spacer(Modifier.weight(1f))
+        Field(email, { email = it }, R.string.signin_email, KeyboardType.Email)
+        Field(password, { password = it }, R.string.signin_password, KeyboardType.Password, onDone = if (shown) null else ::submit)
+        Reveal(shown.takeIf { it }) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Field(server, { server = it }, R.string.signin_exchange_server, KeyboardType.Uri)
+                Field(login, { login = it }, R.string.signin_exchange_login, KeyboardType.Email, onDone = ::submit)
+            }
+        }
+        SubmitButton(R.string.signin_action, busy, ready, ::submit)
+    }
+}
+
+/** The full-width button that sends a form, with a spinner while it goes. */
+@Composable
+private fun SubmitButton(@StringRes label: Int, busy: Boolean, ready: Boolean, onClick: () -> Unit) {
+    Button(
+        onClick = onClick,
+        enabled = ready,
+        modifier = Modifier.fillMaxWidth().height(48.dp),
+    ) {
+        if (busy) {
+            Spinner(LocalContentColor.current)
+        } else {
+            Text(stringResource(label))
         }
     }
 }
