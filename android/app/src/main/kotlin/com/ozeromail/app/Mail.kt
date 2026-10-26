@@ -33,6 +33,7 @@ import uniffi.ozero_api.AttachmentItem
 import uniffi.ozero_api.Category
 import uniffi.ozero_api.Core
 import uniffi.ozero_api.CoreException
+import uniffi.ozero_api.DraftFileItem
 import uniffi.ozero_api.DraftItem
 import uniffi.ozero_api.Endpoint
 import uniffi.ozero_api.FolderItem
@@ -339,6 +340,15 @@ class Mail(private val context: Context) {
 
     suspend fun deleteDraft(id: Long) = io { core.deleteDraft(id) }
 
+    /** Brings back [draft] as it was thrown away, saved: with its files if [deleteDraft] was a moment ago. */
+    suspend fun restoreDraft(draft: DraftItem): DraftItem = io { core.restoreDraft(draft) }
+
+    /** Adds a file to the saved draft [draft]; it goes with the message. */
+    suspend fun attachFile(draft: Long, file: PickedFile): DraftFileItem = io { core.attachFile(draft, file.name, file.mime, file.data) }
+
+    /** Takes a file off its draft. */
+    suspend fun detachFile(file: Long) = io { core.detachFile(file) }
+
     /** Saves a message being written as it changes, starting from the saved draft [id], or 0. */
     fun keeper(id: Long) = DraftKeeper(this, background, id)
 
@@ -491,6 +501,7 @@ fun CoreException.text(): Int {
         is CoreException.NoServer -> R.string.error_no_server
         is CoreException.NoEws -> R.string.error_no_ews
         is CoreException.DeviceBlocked -> R.string.error_device_blocked
+        is CoreException.TooLarge -> R.string.compose_files_too_large
         else -> R.string.error_storage
     }
 }
