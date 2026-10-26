@@ -76,6 +76,7 @@
   "signin_manual": "Set up manually",
   "signin_trust": "Your mail stays on this phone. No tracking.",
   "signin_found_text": "Enter the password for this mail.",
+  "signin_finding": "Looking for the server…",
   "signin_imap": "IMAP",
   "error_server_not_found": "No server found for this address. Enter it below.",
   "signin_gmail": "Gmail with an app password",
