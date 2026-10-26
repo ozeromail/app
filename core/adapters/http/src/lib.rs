@@ -3,7 +3,7 @@
 
 mod fetch;
 
-pub use fetch::{MAX_IMAGE, image};
+pub use fetch::{MAX_IMAGE, image, split};
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -33,6 +33,8 @@ pub struct Response {
     pub content_type: String,
     /// The Location header, empty without one.
     pub location: String,
+    /// Each WWW-Authenticate header as sent: the ways the server takes a login.
+    pub authenticate: Vec<String>,
     pub body: Vec<u8>,
 }
 
@@ -108,6 +110,19 @@ impl HttpsClient {
         body: Option<Body<'_>>,
     ) -> Result<Response, ProviderError> {
         self.exchange(method, path, headers, body, true).await
+    }
+
+    /// Whether the next request goes over the connection the last one used: a login bound to
+    /// the connection, as NTLM's, then still holds.
+    pub fn is_open(&self) -> bool {
+        matches!(&self.conn, Some((_, used)) if used.elapsed() < IDLE)
+    }
+
+    /// The server's certificate on the open connection, as DER.
+    pub fn certificate(&self) -> Option<Vec<u8>> {
+        let (conn, _) = self.conn.as_ref()?;
+        let (_, tls) = conn.stream.get_ref();
+        Some(tls.peer_certificates()?.first()?.to_vec())
     }
 
     async fn exchange(
@@ -344,6 +359,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
             status,
             content_type: content_type(parsed.headers),
             location: raw(parsed.headers, "location"),
+            authenticate: all(parsed.headers, "www-authenticate"),
             body: Vec::new(),
         };
         self.buf.drain(..size);
@@ -423,6 +439,7 @@ pub fn parse(data: &[u8]) -> Option<Response> {
         status: parsed.code?,
         content_type: content_type(parsed.headers),
         location: raw(parsed.headers, "location"),
+        authenticate: all(parsed.headers, "www-authenticate"),
         body: data[size..].to_vec(),
     })
 }
@@ -439,6 +456,15 @@ fn values(headers: &[httparse::Header<'_>], name: &str) -> Vec<String> {
 /// As sent: a multipart boundary in it is case-sensitive.
 fn content_type(headers: &[httparse::Header<'_>]) -> String {
     raw(headers, "content-type")
+}
+
+/// Every header called `name` as sent, trimmed.
+fn all(headers: &[httparse::Header<'_>], name: &str) -> Vec<String> {
+    headers
+        .iter()
+        .filter(|h| h.name.eq_ignore_ascii_case(name))
+        .map(|h| String::from_utf8_lossy(h.value).trim().to_owned())
+        .collect()
 }
 
 /// The first header called `name` as sent, trimmed; empty without one.

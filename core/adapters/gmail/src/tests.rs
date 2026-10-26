@@ -200,7 +200,7 @@ async fn starts_with_the_newest_messages() {
     ])
     .await;
     let changes = gmail
-        .changes("INBOX", Checkpoint::default(), &[], 10)
+        .changes("INBOX", Checkpoint::default(), &[], i64::MAX, 10)
         .await
         .unwrap();
     assert_eq!(
@@ -297,7 +297,10 @@ async fn follows_the_history() {
         validity: 3,
         next: 100,
     };
-    let changes = gmail.changes("INBOX", since, &known, 10).await.unwrap();
+    let changes = gmail
+        .changes("INBOX", since, &known, i64::MAX, 10)
+        .await
+        .unwrap();
     assert_eq!(
         changes.checkpoint,
         Checkpoint {
@@ -315,7 +318,10 @@ async fn follows_the_history() {
     assert_eq!(changes.flags, [("read".to_owned(), read)]);
     assert_eq!(changes.gone, ["archived", "deleted"]);
     // Known mail and mail only in Sent cost no request, and Sent reads the same history.
-    let sent = gmail.changes("SENT", since, &[], 10).await.unwrap();
+    let sent = gmail
+        .changes("SENT", since, &[], i64::MAX, 10)
+        .await
+        .unwrap();
     assert_eq!(sent.checkpoint.next, 120);
     let paths: Vec<String> = seen
         .lock()
@@ -341,7 +347,10 @@ async fn starts_over_when_the_history_is_gone() {
         validity: 7,
         next: 100,
     };
-    let changes = gmail.changes("INBOX", since, &[], 10).await.unwrap();
+    let changes = gmail
+        .changes("INBOX", since, &[], i64::MAX, 10)
+        .await
+        .unwrap();
     assert_eq!(
         changes.checkpoint,
         Checkpoint {
@@ -374,13 +383,13 @@ async fn the_archive_is_mail_in_no_other_system_folder() {
     ])
     .await;
     let first = gmail
-        .changes(ARCHIVE, Checkpoint::default(), &[], 10)
+        .changes(ARCHIVE, Checkpoint::default(), &[], i64::MAX, 10)
         .await
         .unwrap();
     assert!(first.new.is_empty());
     let known = ["binned".to_owned()];
     let changes = gmail
-        .changes(ARCHIVE, first.checkpoint, &known, 10)
+        .changes(ARCHIVE, first.checkpoint, &known, i64::MAX, 10)
         .await
         .unwrap();
     assert_eq!(changes.new[0].remote_id, "done");

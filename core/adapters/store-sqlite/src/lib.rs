@@ -2114,6 +2114,7 @@ fn kind_str(kind: AccountKind) -> &'static str {
         AccountKind::Imap => "imap",
         AccountKind::Gmail => "gmail",
         AccountKind::Graph => "graph",
+        AccountKind::Exchange => "exchange",
     }
 }
 
@@ -2177,6 +2178,7 @@ impl FromSql for Kind {
             "imap" => Ok(Self(AccountKind::Imap)),
             "gmail" => Ok(Self(AccountKind::Gmail)),
             "graph" => Ok(Self(AccountKind::Graph)),
+            "exchange" => Ok(Self(AccountKind::Exchange)),
             _ => Err(FromSqlError::InvalidType),
         }
     }

@@ -61,6 +61,7 @@ impl MailProvider for Server {
         folder: &str,
         since: Checkpoint,
         known: &[String],
+        _oldest: i64,
         limit: u32,
     ) -> impl Future<Output = Result<Changes, ProviderError>> + Send {
         self.synced

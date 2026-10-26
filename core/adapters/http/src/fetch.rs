@@ -58,7 +58,7 @@ fn relative(path: &str, next: &str) -> String {
 }
 
 /// Host, port and path of an `https` address, without its fragment.
-fn split(url: &str) -> Result<(String, u16, String), ProviderError> {
+pub fn split(url: &str) -> Result<(String, u16, String), ProviderError> {
     let rest = url
         .get(..8)
         .filter(|s| s.eq_ignore_ascii_case("https://"))
