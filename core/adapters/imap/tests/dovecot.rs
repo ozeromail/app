@@ -36,7 +36,7 @@ async fn session() -> ImapSession {
 
 /// The newest `limit` messages of a folder, as a first sync gets them.
 async fn recent(imap: &mut ImapSession, folder: &str, limit: u32) -> Changes {
-    imap.changes(folder, Checkpoint::default(), &[], limit)
+    imap.changes(folder, Checkpoint::default(), &[], i64::MAX, limit)
         .await
         .unwrap()
 }
@@ -242,7 +242,7 @@ async fn fetches_only_what_changed() {
     // Its own folders, so other tests keep their messages.
     let mut imap = session().await;
     let first = imap
-        .changes("Changes", Checkpoint::default(), &[], 50)
+        .changes("Changes", Checkpoint::default(), &[], i64::MAX, 50)
         .await
         .unwrap();
     let uids: Vec<_> = first.new.iter().map(|m| m.remote_id.as_str()).collect();
@@ -251,7 +251,7 @@ async fn fetches_only_what_changed() {
     let known = ["1".to_string(), "2".to_string()];
 
     let same = imap
-        .changes("Changes", first.checkpoint, &known, 50)
+        .changes("Changes", first.checkpoint, &known, i64::MAX, 50)
         .await
         .unwrap();
     assert!(same.new.is_empty() && same.gone.is_empty());
@@ -271,7 +271,7 @@ async fn fetches_only_what_changed() {
     .await
     .unwrap();
     let changed = imap
-        .changes("Changes", first.checkpoint, &known, 50)
+        .changes("Changes", first.checkpoint, &known, i64::MAX, 50)
         .await
         .unwrap();
     let uids: Vec<_> = changed.new.iter().map(|m| m.remote_id.as_str()).collect();
@@ -286,7 +286,7 @@ async fn fetches_only_what_changed() {
     // Without a checkpoint the newest messages come again, so their headers are saved anew.
     let upgraded = Checkpoint { validity, next: 0 };
     let after = imap
-        .changes("Changes", upgraded, &["1".into()], 50)
+        .changes("Changes", upgraded, &["1".into()], i64::MAX, 50)
         .await
         .unwrap();
     let uids: Vec<_> = after.new.iter().map(|m| m.remote_id.as_str()).collect();
@@ -298,7 +298,10 @@ async fn fetches_only_what_changed() {
         validity: validity + 1,
         next: 4,
     };
-    let reset = imap.changes("Changes", stale, &known, 1).await.unwrap();
+    let reset = imap
+        .changes("Changes", stale, &known, i64::MAX, 1)
+        .await
+        .unwrap();
     let uids: Vec<_> = reset.new.iter().map(|m| m.remote_id.as_str()).collect();
     assert_eq!(uids, ["3"]);
     assert!(reset.gone.is_empty() && reset.flags.is_empty());

@@ -1,0 +1,25 @@
+[package]
+name = "ozero-ews"
+description = "Exchange Web Services provider for Exchange servers a company runs itself."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ozero-domain.workspace = true
+ozero-http.workspace = true
+# Already in the tree through ozero-mime: EWS times and the Date header.
+mail-parser = { version = "0.11", default-features = false }
+# The same ring rustls already brings: random bytes for NTLM, SHA-2 for its channel binding.
+ring = { version = "0.17", default-features = false }
+# Already in the tree through ozero-http: paces `wait`.
+tokio = { version = "1.53", default-features = false, features = ["time"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+
+[dev-dependencies]
+tokio = { version = "1.53", default-features = false, features = ["rt", "macros", "net", "io-util", "time"] }
+
+[lints]
+workspace = true

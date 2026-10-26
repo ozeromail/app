@@ -8,6 +8,8 @@ pub enum AccountKind {
     Imap,
     Gmail,
     Graph,
+    /// Exchange Web Services: an Exchange server a company runs itself.
+    Exchange,
 }
 
 /// Where an IMAP account lives; the password is kept by the platform, not here.
@@ -23,7 +25,7 @@ pub struct NewAccount {
     pub kind: AccountKind,
     pub email: String,
     pub display_name: String,
-    /// Set for IMAP accounts.
+    /// Set for IMAP accounts, and for Exchange ones: the EWS host and the login.
     pub server: Option<Server>,
     /// Where IMAP accounts send mail; same password as `server`.
     pub smtp: Option<Server>,
@@ -71,9 +73,14 @@ pub fn guess_smtp_host(email: &str) -> Option<String> {
 }
 
 fn guess_host(email: &str, service: &str) -> Option<String> {
+    Some(format!("{service}.{}", email_domain(email)?))
+}
+
+/// The domain of an email address, lowercased; None without one.
+pub fn email_domain(email: &str) -> Option<String> {
     // The last '@': a quoted local part may contain one too.
     let domain = email.rsplit_once('@')?.1.trim().to_ascii_lowercase();
-    (!domain.is_empty()).then(|| format!("{service}.{domain}"))
+    (!domain.is_empty()).then_some(domain)
 }
 
 /// Servers that put a sent message into the Sent folder on their own, so the client must not.

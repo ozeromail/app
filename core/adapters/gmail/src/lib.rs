@@ -14,13 +14,13 @@ use std::time::{Duration, Instant};
 
 use ozero_domain::{
     Changes, Checkpoint, Flags, FolderRole, MailProvider, MailSender, Moved, NewFolder, Older,
-    ProviderError, RawMessage,
+    ProviderError, RawMessage, decode_base64,
 };
 use ozero_http::{Body, HttpsClient, Response};
 use serde_json::{Value, json};
 use tokio_rustls::rustls::ClientConfig;
 
-use crate::codec::{base64url, decode_base64, percent};
+use crate::codec::{base64url, percent};
 
 const HOST: &str = "gmail.googleapis.com";
 const BASE: &str = "/gmail/v1/users/me";
@@ -367,6 +367,7 @@ impl MailProvider for GmailSession {
         folder: &str,
         since: Checkpoint,
         known: &[String],
+        _oldest: i64,
         limit: u32,
     ) -> Result<Changes, ProviderError> {
         let mut validity = since.validity;

@@ -162,8 +162,9 @@ async fn sync_folder(
     since: i64,
 ) -> Result<(), SyncError> {
     let (checkpoint, known) = store.checkpoint(folder.id)?;
+    let oldest = store.oldest(folder.id)?.unwrap_or(i64::MAX);
     let mut changes = provider
-        .changes(&folder.remote_id, checkpoint, &known, limit)
+        .changes(&folder.remote_id, checkpoint, &known, oldest, limit)
         .await?;
     changes.new.retain(|m| m.received >= since);
     store.save_changes(folder.id, &changes.map(|m| parser.parse(m)))?;
