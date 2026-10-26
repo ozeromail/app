@@ -170,35 +170,7 @@ private struct WaterCanvas: View {
                            bottom: bottom ?? size.height, pull: pulled, fall: fall)
             }
         }
-        .mask { WaterFade(surface: surface, bottom: bottom) }
         .onChange(of: pulled) { _, _ in still.wake() }
-    }
-}
-
-/// The water fades out at its sides and toward the eye, so it never ends on an edge.
-private struct WaterFade: View {
-    let surface: CGFloat
-    let bottom: CGFloat?
-
-    var body: some View {
-        GeometryReader { geo in
-            let h = max(geo.size.height, 1)
-            // In order and inside the view, however short it is while a pull opens.
-            let end = min(max(bottom ?? h, surface + 1), h) / h
-            let from = min(surface / h + (end - surface / h) * 0.35, end)
-            LinearGradient(stops: [
-                .init(color: .black, location: 0),
-                .init(color: .black, location: from),
-                .init(color: .black.opacity(0.55), location: (from + end) / 2),
-                .init(color: .clear, location: end),
-            ], startPoint: .top, endPoint: .bottom)
-            .mask(LinearGradient(stops: [
-                .init(color: .clear, location: 0),
-                .init(color: .black, location: 0.12),
-                .init(color: .black, location: 0.88),
-                .init(color: .clear, location: 1),
-            ], startPoint: .leading, endPoint: .trailing))
-        }
     }
 }
 
@@ -641,7 +613,7 @@ final class Still {
                 if i > 0 {
                     let face = sin(a - .pi / Double(n))
                     // The near side catches more light than the far one.
-                    let alpha = 0.5 * c.amp * abs(face * face * face) * (face > 0 ? 1 : 0.55)
+                    let alpha = 0.5 * c.amp * abs(face * face * face) * (face > 0 ? 1 : 0.55) * edge(x, y, below: Double(bottom))
                     if alpha > 0.008 {
                         var line = Path()
                         line.move(to: CGPoint(x: px, y: py))
@@ -673,6 +645,15 @@ final class Still {
         for j in jets {
             context.fill(Path(ellipseIn: CGRect(x: j.x - 1.3, y: j.y - 1.3, width: 2.6, height: 2.6)), with: .color(drop.opacity(0.6)))
         }
+    }
+
+    /// How much of the water shows at `x`, `y`: all of it in the middle, fading out toward its sides
+    /// and toward the eye before it ends `below`, so a wave never ends on an edge.
+    private func edge(_ x: Double, _ y: Double, below: Double) -> Double {
+        let side = min(x, middle * 2 - x) / 48
+        let near = (below - y) / 28
+        let v = min(max(min(side, near), 0), 1)
+        return v * v * (3 - 2 * v)
     }
 
     /// A water drop: round below, rising to a soft point above as `point` goes from 0 to 1.

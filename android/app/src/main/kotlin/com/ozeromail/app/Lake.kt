@@ -26,20 +26,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.MotionDurationScale
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
-import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
@@ -107,10 +104,7 @@ fun StillNote(
         // Grey water still takes a drop of the accent's color: a drop is a drop.
         val tint = colors.water(grey)
         Canvas(
-            Modifier.fillMaxWidth().height(LAKE_HEIGHT).graphicsLayer {
-                alpha = water()
-                compositingStrategy = CompositingStrategy.Offscreen
-            }.touches(still),
+            Modifier.fillMaxWidth().height(LAKE_HEIGHT).graphicsLayer { alpha = water() }.touches(still),
         ) {
             still.draw(this, tint, colors.accent, HORIZON, size.height, pulled(), FALL, glide())
         }
@@ -204,7 +198,7 @@ fun PullWater(
     LaunchedEffect(refreshing) { still.beat = refreshing }
     LaunchedEffect(drops) { drops.collect { still.release(it) } }
     LaunchedEffect(still) { snapshotFlow { still.calmed }.collect(onCalm) }
-    Canvas(modifier.graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }) {
+    Canvas(modifier) {
         val depth = depth()
         val y = top() ?: run {
             // Out of sight, the water still calms, so the list need not wait for it.
@@ -638,19 +632,6 @@ private class Still(private var falling: Boolean) {
      * horizon; the water ends at [bottom] px. Water is [water], drops [drop]. The tabs stand at [glide].
      */
     fun draw(scope: DrawScope, water: Color, drop: Color, surface: Dp, bottom: Float, pull: Float, fall: Dp, glide: Float = 0f) = with(scope) {
-        drawWater(water, drop, surface, bottom, pull, fall, glide)
-        // The water fades out at its sides and toward the eye, so it never ends on an edge. The
-        // canvas draws offscreen, so this takes away only the water's own pixels.
-        val hzPx = surface.toPx()
-        val from = hzPx + (bottom - hzPx) * 0.35f
-        scale(size.width, 1f, Offset.Zero) { drawRect(SIDES, size = Size(1f, bottom), blendMode = BlendMode.DstIn) }
-        withTransform({
-            translate(top = from)
-            scale(1f, bottom - from, Offset.Zero)
-        }) { drawRect(DEPTH, size = Size(size.width, 1f), blendMode = BlendMode.DstIn) }
-    }
-
-    private fun DrawScope.drawWater(water: Color, drop: Color, surface: Dp, bottom: Float, pull: Float, fall: Dp, glide: Float) {
         val u = density
         val hz = surface.value
         horizon = hz
@@ -676,6 +657,7 @@ private class Still(private var falling: Boolean) {
         val hzPx = hz * u
         val lv = Calm.transform(level)
         val stroke = 1.dp.toPx()
+        val below = bottom / u
         clipRect(top = hzPx, bottom = bottom) {
             if (lv > 0f) {
                 // The reflection: a soft glow under the horizon, flattened by perspective, and a
@@ -716,7 +698,7 @@ private class Still(private var falling: Boolean) {
                     if (i > 0) {
                         val face = sin(a - PI.toFloat() / n)
                         // The near side catches more light than the far one.
-                        val alpha = 0.5f * amp * abs(face * face * face) * (if (face > 0f) 1f else 0.55f)
+                        val alpha = 0.5f * amp * abs(face * face * face) * (if (face > 0f) 1f else 0.55f) * edge(x, y, below)
                         if (alpha > 0.008f) drawLine(water.copy(alpha = min(0.42f, alpha)), Offset(px * u, py * u), Offset(x * u, y * u), stroke)
                     }
                     px = x
@@ -742,6 +724,18 @@ private class Still(private var falling: Boolean) {
         for (d in drops) bead(drop, d.x, d.y, d.r, d.point, 1f + min(0.35f, d.v / 1100f))
         for (j in jets) drawCircle(drop.copy(alpha = 0.6f), 1.3.dp.toPx(), Offset(j.x * u, j.y * u))
     }
+
+    /**
+     * How much of the water shows at [x], [y] dp: all of it in the middle, fading out toward its
+     * sides and toward the eye before it ends [below] dp down, so a wave never ends on an edge.
+     */
+    private fun edge(x: Float, y: Float, below: Float): Float {
+        val side = min(x, middle * 2 - x) / EDGE_SIDE
+        val near = (below - y) / EDGE_NEAR
+        return smooth(min(side, near))
+    }
+
+    private fun smooth(v: Float): Float = v.coerceIn(0f, 1f).let { it * it * (3f - 2f * it) }
 
     /** A water drop, in dp: round below, rising to a soft point above as [point] goes from 0 to 1. */
     private fun DrawScope.bead(color: Color, x: Float, y: Float, r: Float, point: Float, stretch: Float) {
@@ -894,9 +888,9 @@ private val SWELLS = listOf(
     Swell(40f, 0.22f, -1f, 2.6f),
 )
 private const val LEVEL_MS = 1900f
-/** The water's fades, one unit across: at its sides, and toward the eye below the horizon. */
-private val SIDES = Brush.horizontalGradient(0f to Color.Transparent, 0.12f to Color.Black, 0.88f to Color.Black, 1f to Color.Transparent, endX = 1f)
-private val DEPTH = Brush.verticalGradient(0f to Color.Black, 0.5f to Color.Black.copy(alpha = 0.55f), 1f to Color.Transparent, endY = 1f)
+/** How far in from its sides, and up from where it ends, the water fades out, in dp. */
+private const val EDGE_SIDE = 48f
+private const val EDGE_NEAR = 28f
 
 /** How long the words take to come in, however they come. */
 private const val WORDS_MS = 400
