@@ -962,6 +962,11 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                     onGroups = ::keepGroups,
                                     onMailbox = { mailbox = it },
                                     onMore = { accountsOpen = true },
+                                    actions = {
+                                        val tile = if (LocalRoom.current.short) 40.dp else 48.dp
+                                        SearchTile({ searching = true }, Modifier.weight(1f), tile)
+                                        ComposeTile({ composing = Composing(NEW_DRAFT) }, tile)
+                                    },
                                     modifier = Modifier.width(MAILBOXES).fillMaxHeight(),
                                 )
                                 VerticalDivider(color = colors.outlineVariant)
@@ -1554,7 +1559,7 @@ private fun InboxList(
                     .graphicsLayer { alpha = mini }
                     .background(colors.bar)
                     .padding(top = top)
-                    .height(48.dp)
+                    .height(if (LocalRoom.current.short) 40.dp else 48.dp)
                     .hairline(colors.outlineVariant, top = false),
                 contentAlignment = Alignment.Center,
             ) {
@@ -1604,7 +1609,6 @@ private fun InboxList(
                     )
                 },
                 wide = wide,
-                pane = showing != null,
             )
         }
         // The rarer ways to choose, in a sheet like every menu.
@@ -1650,6 +1654,17 @@ private fun mailboxOwner(mailbox: Mailbox, folder: FolderItem?, accounts: List<A
 /** The large title at the top of the list, where it does not need the thumb. */
 @Composable
 internal fun Hero(title: String, subtitle: String?, onBack: (() -> Unit)?) {
+    if (LocalRoom.current.short) {
+        // On its side the arrow goes beside the title, and the title is smaller: the height is for the mail.
+        Row(Modifier.padding(top = 4.dp, bottom = 8.dp).heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {
+            onBack?.let { BackArrow(it) }
+            Column(Modifier.padding(start = if (onBack == null) Gap.screen else 4.dp, end = Gap.screen)) {
+                Text(title, style = Type.Title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (subtitle != null) Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, style = Type.Caption)
+            }
+        }
+        return
+    }
     Column {
         // The arrow's row is there even without it, so every title sits at the same height.
         Box(Modifier.padding(top = 4.dp).height(44.dp)) { onBack?.let { BackArrow(it) } }
@@ -1670,8 +1685,8 @@ internal fun Hero(title: String, subtitle: String?, onBack: (() -> Unit)?) {
 /**
  * Everything the thumb needs, along the bottom: the inbox's tabs (null elsewhere), then the
  * accounts button, search and a new message. On a [wide] screen the mailboxes are beside the
- * list, so the rest fits one row, which leaves the short height to the mail; beside a message
- * ([pane]) that row is only the tabs, where there are tabs.
+ * list with search and a new message under them, so the dock is only the tabs, or the button
+ * that empties the folder, or nothing: the short height is for the mail.
  */
 @Composable
 private fun Dock(
@@ -1691,17 +1706,23 @@ private fun Dock(
     choosing: Float,
     choiceBar: @Composable () -> Unit,
     wide: Boolean,
-    pane: Boolean,
 ) {
     val colors = MaterialTheme.colorScheme
     val rise = with(LocalDensity.current) { 16.dp.toPx() }
+    // On its side the dock is as low as its controls allow.
+    val short = LocalRoom.current.short
+    // Search and a new message are beside the mailboxes: with no tabs, nothing is left for a row.
+    if (wide && tabs == null && empty == null && choosing == 0f) {
+        Spacer(modifier.fillMaxWidth().navigationBarsPadding())
+        return
+    }
     Column(
         modifier
             .fillMaxWidth()
             .background(colors.bar)
             .hairline(colors.outlineVariant, top = true)
             .navigationBarsPadding()
-            .padding(top = Gap.barTop, bottom = Gap.barBottom),
+            .padding(top = if (short) 6.dp else Gap.barTop, bottom = if (short) 6.dp else Gap.barBottom),
         verticalArrangement = Arrangement.spacedBy(Gap.inBar),
     ) {
         if (!wide) {
@@ -1709,7 +1730,7 @@ private fun Dock(
             empty?.let { (label, onClick) -> EmptyButton(stringResource(label), onClick) }
         }
         // As tall as the taller of the two, so the dock keeps its height as they change.
-        Box(Modifier.height(52.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.height(if (short) 44.dp else 52.dp), contentAlignment = Alignment.Center) {
             if (choosing < 1f) {
                 // The same edge as the tabs above, so the accounts button lines up with them.
                 Row(
@@ -1730,10 +1751,6 @@ private fun Dock(
                             tabs != null -> Tabs(tab, tabs, glide, thumb, onTab, fill)
                             empty != null -> EmptyButton(stringResource(empty.first), empty.second, fill)
                             else -> Spacer(fill)
-                        }
-                        if (!pane || tabs == null) {
-                            SearchTile(onSearch)
-                            ComposeTile(onCompose)
                         }
                     } else {
                         AccountsButton(accounts, onAccounts)
@@ -1779,17 +1796,17 @@ private fun FolderRole.emptyLabel(): Int? = when (this) {
     else -> null
 }
 
-/** Search as a button of its own, beside the tabs. */
+/** Search under the mailboxes. */
 @Composable
-private fun SearchTile(onClick: () -> Unit) {
-    IconTile(R.drawable.ic_search, stringResource(R.string.search_prompt), onClick, background = MaterialTheme.colorScheme.surfaceVariant)
+private fun SearchTile(onClick: () -> Unit, modifier: Modifier, height: Dp) {
+    Pill(stringResource(R.string.search_prompt), onClick, modifier, icon = R.drawable.ic_search, height = height)
 }
 
 /** A new message, in the accent. */
 @Composable
-private fun ComposeTile(onClick: () -> Unit) {
+private fun ComposeTile(onClick: () -> Unit, size: Dp = 48.dp) {
     val colors = MaterialTheme.colorScheme
-    IconTile(R.drawable.ic_compose, stringResource(R.string.compose_new), onClick, background = colors.accent, tint = colors.onAccent)
+    IconTile(R.drawable.ic_compose, stringResource(R.string.compose_new), onClick, background = colors.accent, tint = colors.onAccent, size = size)
 }
 
 /** The accounts' colours, overlapping; opens the accounts. */

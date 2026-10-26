@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -140,8 +141,9 @@ fun AccountsSheet(
 }
 
 /**
- * The mailboxes down the side of a wide screen: the sheet's list of them, always there. The
- * rest of the sheet, the accounts' and the swipes' settings, opens with [onMore].
+ * The mailboxes down the side of a wide screen: the sheet's list of them, always there, with
+ * [actions] under them in reach of the thumb. The rest of the sheet, the accounts' and the
+ * swipes' settings, opens with [onMore].
  */
 @Composable
 fun Mailboxes(
@@ -154,18 +156,20 @@ fun Mailboxes(
     onGroups: (Groups) -> Unit,
     onMailbox: (Mailbox) -> Unit,
     onMore: () -> Unit,
+    actions: @Composable RowScope.() -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
-    Column(
-        modifier
-            .background(colors.bar)
-            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Vertical))
-            .verticalScroll(rememberScrollState())
-            .padding(vertical = 8.dp),
-    ) {
-        MailboxList(accounts, folders, mailbox, drafts, onDrafts, groups, onGroups, onMailbox, onAccount = null)
-        SheetAction(R.drawable.ic_more, stringResource(R.string.mailboxes_more), colors.onSurface, onMore)
+    Column(modifier.background(colors.bar).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Vertical))) {
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(top = 8.dp)) {
+            MailboxList(accounts, folders, mailbox, drafts, onDrafts, groups, onGroups, onMailbox, onAccount = null)
+            SheetAction(R.drawable.ic_more, stringResource(R.string.mailboxes_more), colors.onSurface, onMore)
+        }
+        Row(
+            Modifier.fillMaxWidth().hairline(colors.outlineVariant, top = true).padding(horizontal = Gap.bar, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
+            content = actions,
+        )
     }
 }
 

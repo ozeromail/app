@@ -18,10 +18,11 @@ import androidx.compose.ui.unit.dp
 /**
  * How much room the window gives. A phone on its side is [sideways]: its height is short. A
  * window [wide] enough, sideways or a tablet or an open foldable, shows the mailboxes beside the
- * list, and the list beside an open message.
+ * list, and the list beside an open message. A [short] window, a phone on its side, keeps every
+ * bar and title tight, since its height is what the mail needs most.
  */
 @Immutable
-data class Room(val sideways: Boolean = false, val wide: Boolean = false)
+data class Room(val sideways: Boolean = false, val wide: Boolean = false, val short: Boolean = false)
 
 val LocalRoom = staticCompositionLocalOf { Room() }
 
@@ -30,7 +31,8 @@ val LocalRoom = staticCompositionLocalOf { Room() }
 fun ProvideRoom(content: @Composable () -> Unit) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val sideways = maxWidth > maxHeight && maxWidth >= 560.dp
-        val room = Room(sideways, wide = sideways || (maxWidth >= 840.dp && maxHeight >= 480.dp))
+        val short = maxHeight < 480.dp
+        val room = Room(sideways, wide = sideways || (maxWidth >= 840.dp && !short), short = sideways && short)
         CompositionLocalProvider(LocalRoom provides room, content = content)
     }
 }
@@ -45,7 +47,7 @@ val LETTER_MAX = 720.dp
 val COMPOSE_MAX = 680.dp
 
 /** The mailboxes beside the list. */
-val MAILBOXES = 240.dp
+val MAILBOXES = 200.dp
 
 /** The list beside an open message. */
 val LIST_PANE = 320.dp

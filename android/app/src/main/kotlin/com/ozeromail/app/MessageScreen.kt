@@ -65,6 +65,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.async
@@ -453,7 +454,7 @@ fun RowScope.BarAction(@DrawableRes icon: Int, label: String, tint: Color, backg
     Column(
         Modifier
             .weight(1f)
-            .height(52.dp)
+            .height(if (LocalRoom.current.short) 44.dp else 52.dp)
             .clip(RoundedCornerShape(Radius.medium))
             .background(background)
             .clickable(role = Role.Button, onClick = onClick),
@@ -600,9 +601,10 @@ private val TOAST_ABOVE_ROW = 72.dp
 /** Reply, Reply all and Forward. */
 @Composable
 private fun RowScope.Answers(onReply: (all: Boolean) -> Unit, onForward: () -> Unit) {
-    Pill(stringResource(R.string.message_reply_prompt), onClick = { onReply(false) }, modifier = Modifier.weight(1f), height = 46.dp)
-    IconTile(R.drawable.ic_reply_all, stringResource(R.string.message_reply_all), { onReply(true) }, shape = CircleShape, size = 46.dp)
-    IconTile(R.drawable.ic_forward, stringResource(R.string.message_forward), onForward, shape = CircleShape, size = 46.dp)
+    val button = paneButton()
+    Pill(stringResource(R.string.message_reply_prompt), onClick = { onReply(false) }, modifier = Modifier.weight(1f), height = button)
+    IconTile(R.drawable.ic_reply_all, stringResource(R.string.message_reply_all), { onReply(true) }, shape = CircleShape, size = button)
+    IconTile(R.drawable.ic_forward, stringResource(R.string.message_forward), onForward, shape = CircleShape, size = button)
 }
 
 /** Beside the list, where the height is short: the answers and the actions in one row. */
@@ -615,13 +617,14 @@ private fun PaneActions(
     onDone: (() -> Unit)?,
 ) {
     val colors = MaterialTheme.colorScheme
+    val button = paneButton()
     Row(
         Modifier
             .fillMaxWidth()
             .background(colors.bar)
             .hairline(colors.outlineVariant, top = true)
             .navigationBarsPadding()
-            .padding(horizontal = Gap.bar, vertical = Gap.barTop),
+            .padding(horizontal = Gap.bar, vertical = if (LocalRoom.current.short) 6.dp else Gap.barTop),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
     ) {
@@ -631,14 +634,18 @@ private fun PaneActions(
             stringResource(if (forever) R.string.action_delete_forever else R.string.action_delete),
             onDelete,
             shape = CircleShape,
-            size = 46.dp,
+            size = button,
         )
-        IconTile(R.drawable.ic_more, stringResource(R.string.action_more), onMore, shape = CircleShape, size = 46.dp)
+        IconTile(R.drawable.ic_more, stringResource(R.string.action_more), onMore, shape = CircleShape, size = button)
         onDone?.let {
-            IconTile(R.drawable.ic_done, stringResource(R.string.action_done), it, background = colors.accent, tint = colors.onAccent, shape = CircleShape, size = 46.dp)
+            IconTile(R.drawable.ic_done, stringResource(R.string.action_done), it, background = colors.accent, tint = colors.onAccent, shape = CircleShape, size = button)
         }
     }
 }
+
+/** The round buttons along the bottom of a message: smaller on its side, where the height is short. */
+@Composable
+private fun paneButton(): Dp = if (LocalRoom.current.short) 40.dp else 46.dp
 
 /** How long a page waits for its images before it shows without them. */
 private const val IMAGES_WAIT_MS = 2_000L

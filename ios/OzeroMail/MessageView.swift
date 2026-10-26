@@ -139,14 +139,14 @@ struct MessageView: View {
     private func row(answer: MessageItem, newest: MessageItem) -> some View {
         HStack(spacing: 8) {
             answers(answer: answer, newest: newest)
-            RoundButton(icon: "trash", label: message.canTrash ? "action_delete" : "action_delete_forever", action: delete)
-            RoundButton(icon: "ellipsis", label: "action_more") { more = true }
+            RoundButton(icon: "trash", label: message.canTrash ? "action_delete" : "action_delete_forever", size: button, action: delete)
+            RoundButton(icon: "ellipsis", label: "action_more", size: button) { more = true }
             if message.canArchive {
-                RoundButton(icon: "checkmark", label: "action_done", tint: .white, background: .ozeroFill, action: done)
+                RoundButton(icon: "checkmark", label: "action_done", size: button, tint: .white, background: .ozeroFill, action: done)
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
         .background(.bar)
     }
 
@@ -159,14 +159,17 @@ struct MessageView: View {
             Text("message_reply_prompt")
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-                .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: button, alignment: .leading)
                 .padding(.horizontal, 16)
                 .background(Color.ozeroCard, in: .capsule)
         }
         .buttonStyle(.plain)
-        RoundButton(icon: "arrowshape.turn.up.left.2", label: "message_reply_all") { reply(answer, all: true) }
-        RoundButton(icon: "arrowshape.turn.up.right", label: "message_forward") { forward(newest) }
+        RoundButton(icon: "arrowshape.turn.up.left.2", label: "message_reply_all", size: button) { reply(answer, all: true) }
+        RoundButton(icon: "arrowshape.turn.up.right", label: "message_forward", size: button) { forward(newest) }
     }
+
+    /// The round buttons along the bottom: smaller beside the list, where the height is short.
+    private var button: CGFloat { pane ? 40 : 46 }
 
     private func reply(_ answer: MessageItem, all: Bool) {
         model.write(answer) { try await mail.reply(to: answer, all: all) }
