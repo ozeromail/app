@@ -792,13 +792,85 @@ impl Store for SqliteStore {
     ) -> Result<Vec<OpId>, StoreError> {
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(storage)?;
-        let mut taken = HashSet::new();
-        let mut ops = vec![];
-        for &(message, action) in actions {
-            ops.extend(queue_thread(&tx, message, action, not_before, &mut taken)?);
+        let ops = queue_threads(&tx, actions, not_before)?;
+        tx.commit().map_err(storage)?;
+        Ok(ops)
+    }
+
+    fn snooze(
+        &self,
+        messages: &[MessageId],
+        until: i64,
+        not_before: i64,
+    ) -> Result<Vec<OpId>, StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        let actions: Vec<_> = messages.iter().map(|&m| (m, Action::Snooze)).collect();
+        let ops = queue_threads(&tx, &actions, not_before)?;
+        {
+            let mut wake = tx.prepare_cached(SNOOZE_UNTIL).map_err(storage)?;
+            for op in &ops {
+                wake.execute(params![op.0, until]).map_err(storage)?;
+            }
         }
         tx.commit().map_err(storage)?;
         Ok(ops)
+    }
+
+    fn wake(&self, now: i64, not_before: i64) -> Result<Vec<MessageRow>, StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        // Mail back for a month is dated as the server has it again.
+        tx.execute(
+            "DELETE FROM snooze WHERE woke = 1 AND wake_at < ?1",
+            [now - WOKE_KEPT],
+        )
+        .map_err(storage)?;
+        let due: Vec<(i64, i64, String)> = tx
+            .prepare_cached(SNOOZED_DUE)
+            .and_then(|mut s| {
+                s.query_map([now], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                    .collect()
+            })
+            .map_err(storage)?;
+        let mut copies = vec![];
+        for (message, account, key) in due {
+            tx.prepare_cached(
+                "UPDATE snooze SET woke = 1, wake_at = ?3 WHERE account_id = ?1 AND message_id = ?2",
+            )
+            .and_then(|mut s| s.execute(params![account, key, now]))
+            .map_err(storage)?;
+            queue_one(&tx, MessageId(message), Action::Seen(false), not_before)?;
+            let op = queue_one(&tx, MessageId(message), Action::Inbox, not_before)?;
+            let copy: Option<i64> = tx
+                .prepare_cached(
+                    "UPDATE message SET date = ?2 WHERE id = (SELECT copy FROM op WHERE id = ?1)
+                     RETURNING id",
+                )
+                .and_then(|mut s| s.query_row(params![op.0, now], |r| r.get(0)).optional())
+                .map_err(storage)?;
+            copies.extend(copy);
+        }
+        // Undone, or gone from the snoozed folder some other way: nothing to bring back.
+        tx.execute("DELETE FROM snooze WHERE woke = 0 AND wake_at <= ?1", [now])
+            .map_err(storage)?;
+        let rows = {
+            let mut row = tx.prepare_cached(MESSAGE_BY_ID).map_err(storage)?;
+            copies
+                .iter()
+                .map(|c| row.query_row([c], message_row).map_err(storage))
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        tx.commit().map_err(storage)?;
+        Ok(rows)
+    }
+
+    fn next_wake(&self) -> Result<Option<i64>, StoreError> {
+        let conn = self.conn();
+        conn.query_row("SELECT min(wake_at) FROM snooze WHERE woke = 0", [], |r| {
+            r.get(0)
+        })
+        .map_err(storage)
     }
 
     fn queue_empty(&self, folder: FolderId, not_before: i64) -> Result<Vec<OpId>, StoreError> {
@@ -1334,15 +1406,7 @@ impl Store for SqliteStore {
                     .query_row(params![op.id.0, value], |r| r.get(0))
                     .optional()
                     .map_err(storage)?;
-                if let (
-                    Some(message),
-                    Action::Archive
-                    | Action::Trash
-                    | Action::Inbox
-                    | Action::Delete
-                    | Action::Empty,
-                ) = (gone, op.action)
-                {
+                if let Some(message) = gone.filter(|_| op.action.removes()) {
                     drop_message(&tx, message)?;
                 }
             }
@@ -1420,6 +1484,20 @@ impl Store for SqliteStore {
     }
 }
 
+/// Queues each message's conversation once, however many of its messages are given.
+fn queue_threads(
+    tx: &Transaction<'_>,
+    actions: &[(MessageId, Action)],
+    not_before: i64,
+) -> Result<Vec<OpId>, StoreError> {
+    let mut taken = HashSet::new();
+    let mut ops = vec![];
+    for &(message, action) in actions {
+        ops.extend(queue_thread(tx, message, action, not_before, &mut taken)?);
+    }
+    Ok(ops)
+}
+
 /// `queue` within `tx`, adding the messages it queues to `taken`; nothing for a message
 /// already there.
 fn queue_thread(
@@ -1451,9 +1529,7 @@ fn queue_thread(
         // only the message itself.
         let changes = match action {
             Action::Seen(seen) => seen && flags & SEEN == 0,
-            Action::Archive | Action::Trash | Action::Inbox | Action::Delete | Action::Empty => {
-                true
-            }
+            _ => true,
         };
         if id == message.0 || changes {
             ops.push(queue_one(tx, MessageId(id), action, not_before)?);
@@ -1494,6 +1570,7 @@ fn queue_one(
         Action::Archive => (0, Some(role_folder(tx, message, FolderRole::Archive)?)),
         Action::Trash => (0, Some(role_folder(tx, message, FolderRole::Trash)?)),
         Action::Inbox => (0, Some(role_folder(tx, message, FolderRole::Inbox)?)),
+        Action::Snooze => (0, Some(role_folder(tx, message, FolderRole::Snoozed)?)),
         Action::Delete | Action::Empty => (0, None),
     };
     if let Some(old) = old_copy {
@@ -1779,6 +1856,7 @@ fn role_folder(
     let missing = match role {
         FolderRole::Trash => StoreError::NoTrash,
         FolderRole::Archive => StoreError::NoArchive,
+        FolderRole::Snoozed => StoreError::NoSnoozed,
         _ => StoreError::NotFound,
     };
     tx.prepare_cached(
@@ -1840,8 +1918,15 @@ fn take_back(tx: &Transaction<'_>, sql: &str, op: OpId, arg: i64) -> Result<bool
     };
     match kind.with(undo) {
         Action::Seen(seen) => set_seen(tx, message, seen)?,
+        // As the other moves, and nothing waits to come back.
+        Action::Snooze => {
+            tx.execute(UNSNOOZE, [message]).map_err(storage)?;
+            if let Some(copy) = copy {
+                drop_message(tx, copy)?;
+            }
+        }
         // Without its op the message shows in its folder again, and its copy goes.
-        Action::Archive | Action::Trash | Action::Inbox | Action::Delete | Action::Empty => {
+        _ => {
             if let Some(copy) = copy {
                 drop_message(tx, copy)?;
             }
@@ -1895,10 +1980,34 @@ const SAVE_FLAGS: &str = concat!(
     merged_flags!("?3")
 );
 
+/// The key of message `$m` that its snooze is kept under: its Message-ID, else what moving
+/// it leaves alone.
+macro_rules! snooze_key {
+    ($m:literal) => {
+        concat!(
+            "coalesce(",
+            $m,
+            ".message_id, ",
+            $m,
+            ".from_email || char(31) || ",
+            $m,
+            ".date || char(31) || ",
+            $m,
+            ".subject)"
+        )
+    };
+}
+
+/// Mail that came back from a snooze is dated when it came back, in the inbox.
 const SAVE_MESSAGE: &str = concat!(
     "INSERT INTO message (folder_id, remote_id, message_id, from_name, from_email,
                           subject, snippet, date, flags, category, answer_to, recipients, fresh)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
+             coalesce((SELECT s.wake_at FROM snooze s JOIN folder f ON f.account_id = s.account_id
+                       WHERE f.id = ?1 AND f.role = 'inbox' AND s.woke = 1
+                         AND s.message_id = coalesce(?3, ?5 || char(31) || ?8 || char(31) || ?6)),
+                      ?8),
+             ?9, ?10, ?11, ?12, 1)
      ON CONFLICT (folder_id, remote_id) DO UPDATE SET
          found = 0, message_id = excluded.message_id, from_name = excluded.from_name,
          from_email = excluded.from_email, subject = excluded.subject,
@@ -1924,7 +2033,7 @@ macro_rules! not_moving {
         concat!(
             "NOT EXISTS (SELECT 1 FROM op WHERE op.message_id = ",
             $m,
-            ".id AND op.kind IN ('archive', 'trash', 'inbox', 'delete', 'empty'))"
+            ".id AND op.kind IN ('archive', 'trash', 'inbox', 'snooze', 'delete', 'empty'))"
         )
     };
 }
@@ -2139,6 +2248,41 @@ const SAVE_FOUND: &str = "
     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1)
     ON CONFLICT (folder_id, remote_id) DO NOTHING";
 
+/// How long mail that came back from a snooze stays dated when it came back, in seconds.
+const WOKE_KEPT: i64 = 30 * 24 * 60 * 60;
+
+/// Snoozes the message of op `?1` until `?2`.
+const SNOOZE_UNTIL: &str = concat!(
+    "INSERT INTO snooze (account_id, message_id, wake_at)
+     SELECT f.account_id, ",
+    snooze_key!("m"),
+    ", ?2 FROM op o JOIN message m ON m.id = o.message_id JOIN folder f ON f.id = m.folder_id
+     WHERE o.id = ?1
+     ON CONFLICT (account_id, message_id) DO UPDATE SET wake_at = excluded.wake_at, woke = 0"
+);
+
+/// Forgets the snooze of message `?1`.
+const UNSNOOZE: &str = concat!(
+    "DELETE FROM snooze WHERE (account_id, message_id) IN (
+         SELECT f.account_id, ",
+    snooze_key!("m"),
+    " FROM message m JOIN folder f ON f.id = m.folder_id WHERE m.id = ?1)"
+);
+
+const MESSAGE_BY_ID: &str = concat!(message_select!(), "m.id = ?1");
+
+/// The messages in a snoozed folder whose time came by `?1`.
+const SNOOZED_DUE: &str = concat!(
+    "SELECT m.id, s.account_id, s.message_id FROM snooze s
+     JOIN folder f ON f.account_id = s.account_id AND f.role = 'snoozed'
+     JOIN message m ON m.folder_id = f.id AND ",
+    snooze_key!("m"),
+    " = s.message_id
+     WHERE s.woke = 0 AND s.wake_at <= ?1 AND m.found = 0 AND ",
+    not_moving!(),
+    " ORDER BY m.id"
+);
+
 const CLEAR_FRESH: &str = "UPDATE message SET fresh = 0 WHERE fresh = 1";
 
 // `1` is `SEEN`.
@@ -2220,6 +2364,7 @@ fn role_ref(role: FolderRole) -> &'static &'static str {
         FolderRole::Trash => &"trash",
         FolderRole::Junk => &"junk",
         FolderRole::Flagged => &"flagged",
+        FolderRole::Snoozed => &"snoozed",
         FolderRole::Custom => &"custom",
     }
 }
@@ -2366,6 +2511,7 @@ enum StoredAction {
     Archive,
     Trash,
     Inbox,
+    Snooze,
     Delete,
     Empty,
 }
@@ -2377,6 +2523,7 @@ fn stored(action: Action) -> (&'static str, i64) {
         Action::Archive => ("archive", 1),
         Action::Trash => ("trash", 1),
         Action::Inbox => ("inbox", 1),
+        Action::Snooze => ("snooze", 1),
         Action::Delete => ("delete", 1),
         Action::Empty => ("empty", 1),
     }
@@ -2389,6 +2536,7 @@ impl StoredAction {
             Self::Archive => Action::Archive,
             Self::Trash => Action::Trash,
             Self::Inbox => Action::Inbox,
+            Self::Snooze => Action::Snooze,
             Self::Delete => Action::Delete,
             Self::Empty => Action::Empty,
         }
@@ -2402,6 +2550,7 @@ impl FromSql for StoredAction {
             "archive" => Ok(Self::Archive),
             "trash" => Ok(Self::Trash),
             "inbox" => Ok(Self::Inbox),
+            "snooze" => Ok(Self::Snooze),
             "delete" => Ok(Self::Delete),
             "empty" => Ok(Self::Empty),
             _ => Err(FromSqlError::InvalidType),
@@ -2445,6 +2594,7 @@ impl FromSql for Role {
             "trash" => FolderRole::Trash,
             "junk" => FolderRole::Junk,
             "flagged" => FolderRole::Flagged,
+            "snoozed" => FolderRole::Snoozed,
             "custom" => FolderRole::Custom,
             _ => return Err(FromSqlError::InvalidType),
         };

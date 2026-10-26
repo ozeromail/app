@@ -139,6 +139,17 @@ fn wakes_the_app_when_the_database_changes() {
 #[test]
 #[ignore = "needs tools/dovecot-test.sh"]
 fn syncs_an_imap_inbox_into_the_list() {
+    // A debug build's futures outgrow the test thread's 2 MB; the apps run a release core.
+    let run = std::thread::Builder::new()
+        .stack_size(16 << 20)
+        .spawn(sync_an_imap_inbox_into_the_list)
+        .unwrap();
+    if let Err(panic) = run.join() {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+fn sync_an_imap_inbox_into_the_list() {
     let db = TempDb::new("sync");
     let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
 
@@ -364,6 +375,39 @@ fn syncs_an_imap_inbox_into_the_list() {
     let location = core.store.location(MessageId(copy)).unwrap();
     assert_eq!(location.folder_remote_id, "Trash");
     assert!(location.remote_id.parse::<u32>().is_ok(), "{location:?}");
+
+    // The first sync made the snoozed folder. Snoozed mail waits there on the server, and
+    // comes back on top, unread, once its time has come.
+    let snoozed = Mailbox::Unified {
+        role: FolderRole::Snoozed,
+    };
+    let newest = core.unified_inbox(Category::People, 50).unwrap()[0].clone();
+    core.mark_read(vec![newest.id], true).unwrap();
+    core.snooze(vec![newest.id], now() / 1_000).unwrap();
+    assert_ne!(
+        core.unified_inbox(Category::People, 50).unwrap()[0].id,
+        newest.id
+    );
+    assert_eq!(core.mailbox(snoozed, 50).unwrap().len(), 1);
+    runtime
+        .block_on(core.push_actions(account, "pass".into()))
+        .unwrap();
+    sync().unwrap();
+    let woke = core.wake().unwrap();
+    assert_eq!(woke.len(), 1);
+    assert!(!woke[0].seen);
+    assert!(core.next_wake().unwrap().is_none());
+    runtime
+        .block_on(core.push_actions(account, "pass".into()))
+        .unwrap();
+    sync().unwrap();
+    let back = &core.unified_inbox(Category::People, 50).unwrap()[0];
+    assert_eq!(
+        (back.subject.as_str(), back.seen),
+        (newest.subject.as_str(), false)
+    );
+    assert!(back.date >= woke[0].date);
+    assert!(core.mailbox(snoozed, 50).unwrap().is_empty());
 }
 
 /// The message list of the Mailpit test server, as JSON.

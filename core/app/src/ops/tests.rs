@@ -122,6 +122,17 @@ fn archives_after_setting_read_state() {
 }
 
 #[test]
+fn snooze_moves_to_the_snoozed_folder() {
+    let mut snooze = op(1, "INBOX", "5", Action::Snooze);
+    snooze.to = Some("Snoozed".into());
+    let store = store(vec![snooze]);
+    let mut server = Server::default();
+    run(push_ops(&store, &mut server, store.ops.clone())).unwrap();
+    assert_eq!(server.moved_to, ["Snoozed"]);
+    assert_eq!(*store.finished.lock().unwrap(), [OpId(1)]);
+}
+
+#[test]
 fn trash_moves_to_its_own_folder() {
     let mut trash = op(1, "INBOX", "5", Action::Trash);
     trash.to = Some("Trash".into());

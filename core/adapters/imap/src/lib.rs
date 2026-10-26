@@ -575,7 +575,11 @@ impl MailProvider for ImapSession {
             .data
             .into_iter()
             .filter_map(|d| match d {
-                Data::List { items, mailbox, .. } => folder(&items, &mailbox, gmail),
+                Data::List {
+                    items,
+                    delimiter,
+                    mailbox,
+                } => folder(&items, &mailbox, delimiter.map(|d| d.inner()), gmail),
                 _ => None,
             })
             .collect())
@@ -890,6 +894,49 @@ impl MailProvider for ImapSession {
         self.purge(sets).await
     }
 
+    async fn create_snoozed(&mut self, name: &str) -> Result<NewFolder, ProviderError> {
+        let list = CommandBody::list("", "INBOX").map_err(|_| protocol("bad LIST"))?;
+        let delimiter = self
+            .run(list)
+            .await?
+            .data
+            .into_iter()
+            .find_map(|d| match d {
+                Data::List { delimiter, .. } => delimiter.map(|d| d.inner()),
+                _ => None,
+            });
+        // A server that keeps the user's folders under INBOX refuses one at the top.
+        let mut refused = protocol("no snoozed folder");
+        for remote_id in [
+            Some(name.to_owned()),
+            delimiter.map(|d| format!("INBOX{d}{name}")),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let mailbox =
+                Mailbox::try_from(remote_id.as_str()).map_err(|_| protocol("bad folder name"))?;
+            let create =
+                CommandBody::create(mailbox.clone()).map_err(|_| protocol("bad CREATE"))?;
+            // Refused also when it is there already, which the listing tells.
+            match self.run(create).await {
+                Ok(_) => {}
+                Err(e @ ProviderError::Protocol(_)) => refused = e,
+                Err(e) => return Err(e),
+            }
+            let folders = self.folders().await?;
+            if let Some(made) = folders.into_iter().find(|f| f.role == FolderRole::Snoozed) {
+                // Other apps may list subscribed folders only.
+                if let Ok(found) = Mailbox::try_from(made.remote_id.as_str()) {
+                    let Ok(subscribe) = CommandBody::subscribe(found);
+                    let _ = self.run(subscribe).await;
+                }
+                return Ok(made);
+            }
+        }
+        Err(refused)
+    }
+
     async fn append(&mut self, folder: &str, message: &[u8]) -> Result<(), ProviderError> {
         let mailbox = Mailbox::try_from(folder).map_err(|_| protocol("bad folder name"))?;
         let append = CommandBody::append(mailbox, vec![Flag::Seen], None, message.to_vec())
@@ -1060,10 +1107,13 @@ fn message_bytes<'a>(
 }
 
 /// A LIST entry that can hold messages. On Gmail, archiving is moving to All Mail (`\All`),
-/// and Important (`\Important`) is left out, as it only repeats mail from other folders.
+/// and Important (`\Important`) is left out, as it only repeats mail from other folders. A
+/// folder without a special use is the snoozed one by its name, at the top or right under
+/// INBOX, the parts split by `delimiter`.
 fn folder(
     items: &[FlagNameAttribute<'_>],
     mailbox: &Mailbox<'_>,
+    delimiter: Option<char>,
     gmail: bool,
 ) -> Option<NewFolder> {
     let mut role = FolderRole::Custom;
@@ -1096,6 +1146,10 @@ fn folder(
         Mailbox::Other(other) => String::from_utf8(other.as_ref().to_vec()).ok()?,
     };
     let name = utf7::decode(&remote_id).unwrap_or_else(|| remote_id.clone());
+    if role == FolderRole::Custom {
+        let own = delimiter.and_then(|d| name.strip_prefix(&format!("INBOX{d}")));
+        role = FolderRole::from_name(own.unwrap_or(&name));
+    }
     Some(NewFolder {
         remote_id,
         name,
@@ -1224,7 +1278,7 @@ mod tests {
         let listed = |attr: &str, gmail| {
             let items = [FlagNameAttribute::from(Atom::try_from(attr).unwrap())];
             let mailbox = Mailbox::try_from("[Gmail]/Folder").unwrap();
-            folder(&items, &mailbox, gmail).map(|f| f.role)
+            folder(&items, &mailbox, Some('/'), gmail).map(|f| f.role)
         };
         assert_eq!(listed("All", true), Some(FolderRole::Archive));
         assert_eq!(listed("All", false), Some(FolderRole::Custom));
@@ -1232,5 +1286,16 @@ mod tests {
         assert_eq!(listed("Important", false), Some(FolderRole::Custom));
         assert_eq!(listed("Trash", true), Some(FolderRole::Trash));
         assert_eq!(listed("Sent", true), Some(FolderRole::Sent));
+    }
+
+    #[test]
+    fn finds_the_snoozed_folder_by_name() {
+        let listed = |name: &str| {
+            let mailbox = Mailbox::try_from(name).unwrap();
+            folder(&[], &mailbox, Some('.'), false).map(|f| f.role)
+        };
+        assert_eq!(listed("Snoozed"), Some(FolderRole::Snoozed));
+        assert_eq!(listed("INBOX.Snoozed"), Some(FolderRole::Snoozed));
+        assert_eq!(listed("Work.Snoozed"), Some(FolderRole::Custom));
     }
 }

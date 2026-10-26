@@ -348,6 +348,8 @@ impl MailProvider for EwsSession {
             archived |= archive;
             let role = role.unwrap_or(if archive {
                 FolderRole::Archive
+            } else if top {
+                FolderRole::from_name(&f.name)
             } else {
                 FolderRole::Custom
             });
@@ -585,6 +587,43 @@ SuppressReadReceipts=\"true\"><m:ItemChanges>{changes}</m:ItemChanges></m:Update
             .filter(|id| !keep.contains(id.as_str()))
             .collect();
         self.delete(folder, 0, &ids).await
+    }
+
+    async fn create_snoozed(&mut self, name: &str) -> Result<NewFolder, ProviderError> {
+        let answer = self
+            .call(
+                &format!(
+                    "<m:CreateFolder><m:ParentFolderId><t:DistinguishedFolderId Id=\"msgfolderroot\"/>\
+</m:ParentFolderId><m:Folders><t:Folder><t:FolderClass>IPF.Note</t:FolderClass>\
+<t:DisplayName>{}</t:DisplayName></t:Folder></m:Folders></m:CreateFolder>",
+                    escape(name)
+                ),
+                false,
+            )
+            .await?;
+        // Refused also when it is there already, which the listing tells.
+        let refused = match first(&answer, "CreateFolder") {
+            Ok(made) => {
+                let id = made
+                    .at(&["Folders"])
+                    .and_then(|f| f.children.first())
+                    .and_then(|f| f.child("FolderId"))
+                    .and_then(|f| f.attr("Id"))
+                    .ok_or_else(|| protocol("no id for the new folder"))?;
+                return Ok(NewFolder {
+                    remote_id: id.to_owned(),
+                    name: name.to_owned(),
+                    role: FolderRole::Snoozed,
+                });
+            }
+            Err(e @ ProviderError::Rejected(_)) => e,
+            Err(e) => return Err(e),
+        };
+        let folders = self.folders().await?;
+        folders
+            .into_iter()
+            .find(|f| f.role == FolderRole::Snoozed)
+            .ok_or(refused)
     }
 
     async fn append(&mut self, folder: &str, message: &[u8]) -> Result<(), ProviderError> {

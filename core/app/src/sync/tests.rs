@@ -12,13 +12,14 @@ fn folder(remote_id: &str, role: FolderRole) -> NewFolder {
 }
 
 #[test]
-fn saves_inbox_and_sent_changes_since_the_checkpoint() {
+fn saves_inbox_sent_and_snoozed_changes_since_the_checkpoint() {
     let since = Checkpoint {
         validity: 9,
         next: 7,
     };
     let store = Memory {
         checkpoint: (since, vec!["5".into(), "6".into()]),
+        next_wake: Some(100),
         ..Memory::default()
     };
     let mut server = Server {
@@ -36,17 +37,55 @@ fn saves_inbox_and_sent_changes_since_the_checkpoint() {
         server.synced,
         [
             ("INBOX".to_string(), since, known.clone(), 50),
-            ("Sent".to_string(), since, known, 12),
+            ("Sent".to_string(), since, known.clone(), 12),
+            ("Snoozed".to_string(), since, known, 12),
         ]
     );
+    // The server had no snoozed folder.
+    assert_eq!(server.created, ["Snoozed"]);
     let changes = store.changes.lock().unwrap();
     let folders: Vec<_> = changes.iter().map(|(f, _)| *f).collect();
-    assert_eq!(folders, [FolderId(2), FolderId(1)]);
+    // The fake numbers each save's folders from 1.
+    assert_eq!(folders, [FolderId(2), FolderId(1), FolderId(1)]);
     let saved = &changes[0].1;
     assert_eq!(saved.checkpoint.next, 8);
     assert_eq!(saved.new[0].subject, "Hi");
     assert_eq!(saved.gone, ["6"]);
     assert_eq!(saved.flags.len(), 1);
+}
+
+#[test]
+fn makes_the_snoozed_folder_only_when_the_server_has_none() {
+    let store = Memory::default();
+    let mut server = Server {
+        folders: vec![
+            folder("INBOX", FolderRole::Inbox),
+            folder("snoozed", FolderRole::Snoozed),
+        ],
+        ..Server::default()
+    };
+    run(sync_mail(&store, &mut server, &Parser, AccountId(1), 50, 0)).unwrap();
+    assert!(server.created.is_empty());
+    // Nothing waits in it, so it is not synced.
+    let synced: Vec<_> = server.synced.iter().map(|s| s.0.as_str()).collect();
+    assert_eq!(synced, ["INBOX"]);
+}
+
+#[test]
+fn makes_the_snoozed_folder_under_its_second_name_if_the_first_is_taken() {
+    let store = Memory {
+        next_wake: Some(100),
+        ..Memory::default()
+    };
+    let mut server = Server {
+        folders: vec![folder("INBOX", FolderRole::Inbox)],
+        refuse_names: vec!["Snoozed".into()],
+        ..Server::default()
+    };
+    run(sync_mail(&store, &mut server, &Parser, AccountId(1), 50, 0)).unwrap();
+    assert_eq!(server.created, ["Snoozed", "Ozero/Snoozed"]);
+    let synced: Vec<_> = server.synced.iter().map(|s| s.0.as_str()).collect();
+    assert_eq!(synced, ["INBOX", "Ozero/Snoozed"]);
 }
 
 #[test]

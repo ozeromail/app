@@ -49,6 +49,8 @@ async fn lists_folders_with_roles_and_names() {
     folders.sort_by(|a, b| a.remote_id.cmp(&b.remote_id));
     let got: Vec<_> = folders
         .iter()
+        // Another test makes it.
+        .filter(|f| f.role != FolderRole::Snoozed)
         .map(|f| (f.remote_id.as_str(), f.name.as_str(), f.role))
         .collect();
     assert_eq!(
@@ -68,6 +70,20 @@ async fn lists_folders_with_roles_and_names() {
             ("Waits", "Waits", FolderRole::Custom),
         ]
     );
+    imap.logout().await.unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "needs tools/dovecot-test.sh"]
+async fn makes_the_snoozed_folder_once() {
+    let mut imap = session().await;
+    let made = imap.create_snoozed("Snoozed").await.unwrap();
+    assert_eq!(
+        (made.remote_id.as_str(), made.role),
+        ("Snoozed", FolderRole::Snoozed)
+    );
+    // There already: found, not made again.
+    assert_eq!(imap.create_snoozed("Snoozed").await.unwrap(), made);
     imap.logout().await.unwrap();
 }
 

@@ -2204,3 +2204,120 @@ fn offers_recent_files_once_each_newest_first() {
     );
     assert_eq!(names(1).len(), 1);
 }
+
+fn inbox_and_snoozed(store: &SqliteStore) -> (AccountId, FolderId, FolderId) {
+    let account = account(store, "a@example.com");
+    let folders = store
+        .save_folders(
+            account,
+            &[
+                NewFolder {
+                    remote_id: "INBOX".into(),
+                    name: "Inbox".into(),
+                    role: FolderRole::Inbox,
+                },
+                NewFolder {
+                    remote_id: "Snoozed".into(),
+                    name: "Snoozed".into(),
+                    role: FolderRole::Snoozed,
+                },
+            ],
+        )
+        .unwrap();
+    (account, folders[0].id, folders[1].id)
+}
+
+#[test]
+fn snoozed_mail_comes_back_on_top_unread() {
+    let store = store();
+    let (account, inbox, snoozed) = inbox_and_snoozed(&store);
+    store
+        .save_messages(inbox, &[message(1, 100), message(2, 200)])
+        .unwrap();
+    let one = list(&store, ListScope::Folder(inbox), 10, None)[1].id;
+    store.queue(one, Action::Seen(true), 0).unwrap();
+    store.finish(&store.due(account, 0).unwrap()).unwrap();
+
+    store.snooze(&[one], 1_000, 0).unwrap();
+    assert_eq!(list(&store, ListScope::Folder(inbox), 10, None).len(), 1);
+    assert_eq!(
+        list(&store, ListScope::Unified(FolderRole::Snoozed), 10, None).len(),
+        1
+    );
+    assert_eq!(store.next_wake().unwrap(), Some(1_000));
+    let due = store.due(account, 0).unwrap();
+    assert_eq!(due[0].to.as_deref(), Some("Snoozed"));
+    store.finish(&due).unwrap();
+    // The server's own takes the copy's place.
+    store.save_messages(snoozed, &[moved(1, 100, "9")]).unwrap();
+
+    assert!(store.wake(999, 0).unwrap().is_empty());
+    let woke = store.wake(1_000, 0).unwrap();
+    assert_eq!(woke.len(), 1);
+    assert_eq!((woke[0].date, woke[0].flags.seen), (1_000, false));
+    assert_eq!(store.next_wake().unwrap(), None);
+    assert!(list(&store, ListScope::Folder(snoozed), 10, None).is_empty());
+    let rows = list(&store, ListScope::Folder(inbox), 10, None);
+    assert_eq!(ids(&rows)[0], woke[0].id);
+
+    // Unread first, then the move, both from the snoozed folder.
+    let due = store.due(account, 0).unwrap();
+    let sent: Vec<_> = due
+        .iter()
+        .map(|o| (o.action, o.location.folder_remote_id.as_str()))
+        .collect();
+    assert!(sent.contains(&(Action::Seen(false), "Snoozed")));
+    assert!(sent.contains(&(Action::Inbox, "Snoozed")));
+    store.finish(&due).unwrap();
+    // The server's message in the inbox keeps the time it came back.
+    store.save_messages(inbox, &[moved(1, 100, "15")]).unwrap();
+    let rows = list(&store, ListScope::Folder(inbox), 10, None);
+    assert_eq!((rows.len(), rows[0].date), (2, 1_000));
+}
+
+#[test]
+fn an_undone_snooze_brings_nothing_back() {
+    let store = store();
+    let (_, inbox, _) = inbox_and_snoozed(&store);
+    store.save_messages(inbox, &[message(1, 100)]).unwrap();
+    let one = list(&store, ListScope::Folder(inbox), 10, None)[0].id;
+    let held = store.snooze(&[one], 1_000, 50).unwrap();
+    assert!(store.undo(&held, 49).unwrap());
+    assert_eq!(store.next_wake().unwrap(), None);
+    assert!(store.wake(1_000, 0).unwrap().is_empty());
+    // Nor on the next sync.
+    store.save_messages(inbox, &[message(1, 100)]).unwrap();
+    assert_eq!(
+        list(&store, ListScope::Folder(inbox), 10, None)[0].date,
+        100
+    );
+}
+
+#[test]
+fn snooze_needs_a_snoozed_folder() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let inbox = inbox(&store, account);
+    store.save_messages(inbox, &[message(1, 100)]).unwrap();
+    let one = list(&store, ListScope::Folder(inbox), 10, None)[0].id;
+    assert_eq!(
+        store.snooze(&[one], 1_000, 0).unwrap_err(),
+        StoreError::NoSnoozed
+    );
+}
+
+#[test]
+fn snoozed_mail_still_on_its_way_comes_back_too() {
+    let store = store();
+    let (_, inbox, _) = inbox_and_snoozed(&store);
+    store.save_messages(inbox, &[message(1, 100)]).unwrap();
+    let one = list(&store, ListScope::Folder(inbox), 10, None)[0].id;
+    store.snooze(&[one], 1_000, 0).unwrap();
+    // Offline: the move never reached the server.
+    let woke = store.wake(1_000, 0).unwrap();
+    assert_eq!(woke.len(), 1);
+    assert_eq!((woke[0].date, woke[0].flags.seen), (1_000, false));
+    assert_eq!(store.next_wake().unwrap(), None);
+    let rows = list(&store, ListScope::Folder(inbox), 10, None);
+    assert_eq!(ids(&rows), [woke[0].id]);
+}

@@ -5,13 +5,14 @@ use std::time::Duration;
 
 use ozero_domain::{
     AccountId, Attachment, Body, Changes, Folder, FolderRole, MailProvider, MessageLocation,
-    MessageParser, ProviderError, Store, StoreError,
+    MessageParser, ProviderError, SNOOZED, Store, StoreError,
 };
 
 /// Forgets the account's mail received before `since` (seconds), then saves its folders and
-/// what changed in its inbox and its sent folder since the last sync: up to `limit` new
-/// messages in the inbox and fewer in sent, new flags and removed messages.
-/// The sent folder puts the user's own replies into conversations.
+/// what changed in its inbox, sent and snoozed folders since the last sync: up to `limit` new
+/// messages in the inbox and fewer in the others, new flags and removed messages.
+/// The sent folder puts the user's own replies into conversations; the snoozed folder, made
+/// on the server when it has none, holds the mail to bring back.
 pub async fn sync_mail(
     store: &dyn Store,
     provider: &mut impl MailProvider,
@@ -22,12 +23,34 @@ pub async fn sync_mail(
 ) -> Result<(), SyncError> {
     store.prune(account, since)?;
     let folders = provider.folders().await?;
-    let folders = store.save_folders(account, &folders)?;
-    let inbox = inbox(&folders)?;
-    sync_folder(store, provider, parser, inbox, limit, since).await?;
-    // Only context for conversations: a broken sent folder must not stop the inbox.
-    if let Some(sent) = folders.iter().find(|f| f.role == FolderRole::Sent) {
-        let _ = sync_folder(store, provider, parser, sent, limit / SENT_SHARE, since).await;
+    let mut folders = store.save_folders(account, &folders)?;
+    let inbox = inbox(&folders)?.clone();
+    sync_folder(store, provider, parser, &inbox, limit, since).await?;
+    if !folders.iter().any(|f| f.role == FolderRole::Snoozed) {
+        // Snooze waits for it; the next sync tries again.
+        for name in SNOOZED {
+            match provider.create_snoozed(name).await {
+                Ok(made) => {
+                    folders.extend(store.save_folders(account, &[made])?);
+                    break;
+                }
+                // The server refused the name: the next one may do.
+                Err(ProviderError::Rejected(_) | ProviderError::Protocol(_)) => {}
+                Err(_) => break,
+            }
+        }
+    }
+    // Neither stops the inbox: sent is context for conversations, and snoozed mail comes
+    // back from what is saved of it.
+    // The snoozed folder only while something waits there.
+    let snoozed = store.next_wake()?.is_some();
+    for role in [FolderRole::Sent, FolderRole::Snoozed] {
+        if role == FolderRole::Snoozed && !snoozed {
+            continue;
+        }
+        if let Some(folder) = folders.iter().find(|f| f.role == role) {
+            let _ = sync_folder(store, provider, parser, folder, limit / SIDE_SHARE, since).await;
+        }
     }
     Ok(())
 }
@@ -150,8 +173,8 @@ fn inbox(folders: &[Folder]) -> Result<&Folder, SyncError> {
         .ok_or(SyncError::NoInbox)
 }
 
-/// The sent folder gets this fraction of the inbox's limit.
-const SENT_SHARE: u32 = 4;
+/// The sent and snoozed folders get this fraction of the inbox's limit.
+const SIDE_SHARE: u32 = 4;
 
 async fn sync_folder(
     store: &dyn Store,

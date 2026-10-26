@@ -30,7 +30,7 @@ pub async fn push_ops(
         let ids: Vec<_> = ops.iter().map(|o| o.location.remote_id.clone()).collect();
         let sent = match (action, to) {
             (Action::Seen(seen), _) => provider.set_seen(&folder, validity, &ids, seen).await,
-            (Action::Archive | Action::Trash | Action::Inbox, Some(to)) => {
+            (Action::Archive | Action::Trash | Action::Inbox | Action::Snooze, Some(to)) => {
                 // The copies in the folder they went to take the ids the server gave. The
                 // move is done either way: without them a sync of that folder finds them.
                 let moved = provider.move_to(&folder, validity, &ids, &to).await;
@@ -45,7 +45,7 @@ pub async fn push_ops(
                     .empty(&folder, validity, &store.others(&ops)?)
                     .await
             }
-            (Action::Archive | Action::Trash | Action::Inbox, None) => {
+            (Action::Archive | Action::Trash | Action::Inbox | Action::Snooze, None) => {
                 Err(ProviderError::Protocol("no folder to move to".into()))
             }
         };

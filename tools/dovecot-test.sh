@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Starts a Dovecot with test mail and a Mailpit SMTP server for the IMAP and SMTP tests:
-#   tools/dovecot-test.sh && cd core && cargo test -p ozero-imap -p ozero-api -- --ignored
+#   tools/dovecot-test.sh && cd core && cargo test -p ozero-imap -- --ignored
+# Run it again before each package: the API test moves mail the IMAP tests expect.
 set -euo pipefail
 
 dir="$(cd "$(dirname "$0")/../core/adapters/imap/tests/dovecot" && pwd)"

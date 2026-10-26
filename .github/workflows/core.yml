@@ -47,8 +47,12 @@ jobs:
         with:
           workspaces: core
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      # Each on a fresh server: the API test moves mail, the IMAP tests expect the seed.
       - run: tools/dovecot-test.sh
-      - run: ../tools/cargo-test.sh --locked -p ozero-imap -p ozero-api -- --ignored
+      - run: ../tools/cargo-test.sh --locked -p ozero-imap -- --ignored
+        working-directory: core
+      - run: tools/dovecot-test.sh
+      - run: ../tools/cargo-test.sh --locked -p ozero-api -- --ignored
         working-directory: core
 
   rules:
