@@ -118,7 +118,7 @@ fun StillNote(
                     translationY = (1f - shown) * 8.dp.toPx()
                 },
             ) {
-                checkedAt?.let { Checked(it) }
+                checkedAt?.let { }
             }
             // Until then the water is not empty yet, only checking: these words take its place.
             if (fading) {
