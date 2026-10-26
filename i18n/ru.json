@@ -241,5 +241,11 @@
   "account_new_mail_manually_hint": "Письма приходят, только пока приложение открыто.",
   "action_save": "Сохранить",
   "notify_connected_channel": "Связь с почтой",
-  "notify_connected": "На связи, жду новые письма"
+  "notify_connected": "На связи, жду новые письма",
+  "signature_title": "Общая подпись",
+  "signature_none": "Нет",
+  "signature_hint": "Ставится в письма со всех аккаунтов, где нет своей подписи. В каждом письме её можно поправить.",
+  "account_signature": "Подпись",
+  "account_signature_hint": "Ставится в письма с этого аккаунта. Если оставить пустой, будет общая подпись.",
+  "compose_signature": "Подпись этого письма"
 }

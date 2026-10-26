@@ -291,6 +291,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var added by rememberSaveable { mutableStateOf<Long?>(null) }
     LaunchedEffect(accountsOpen) { if (!accountsOpen) added = null }
     var accounts by remember { mutableStateOf(emptyList<AccountItem>()) }
+    // The default signature, for accounts without their own.
+    var signature by remember { mutableStateOf("") }
     var folders by remember { mutableStateOf(emptyList<FolderItem>()) }
     val context = LocalContext.current
     val settings = remember { Settings(context) }
@@ -365,6 +367,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     suspend fun loadAccounts() {
         try {
             accounts = mail.accounts()
+            signature = mail.signature()
         } catch (e: CoreException) {
             fail(e)
         }
@@ -1096,7 +1099,18 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                 },
                                 onAccounts = { accountsOpen = true },
                                 onSearch = { searching = true },
-                                onCompose = { composing = Composing(NEW_DRAFT) },
+                                onCompose = {
+                                    scope.launch {
+                                        // Unsigned rather than not at all.
+                                        val draft = try {
+                                            mail.newDraft()
+                                        } catch (_: CoreException) {
+                                            NEW_DRAFT
+                                        }
+                                        // A second tap meanwhile opens nothing more.
+                                        if (composing == null) composing = Composing(draft)
+                                    }
+                                },
                                 onGo = { mailbox = it },
                                 onBack = { mailbox = Mail.INBOX }.takeIf { mailbox != Mail.INBOX },
                                 empty = mailboxRole(mailbox, openFolder)?.emptyLabel()?.let { it to { empty() } },
@@ -1150,6 +1164,14 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             },
             onLabel = { account, label ->
                 changeAccount { mail.setAccountLabel(account, label) }
+            },
+            signature = signature,
+            onSignature = {
+                signature = it.trimEnd()
+                changeAccount { mail.setSignature(it) }
+            },
+            onAccountSignature = { account, text ->
+                changeAccount { mail.setAccountSignature(account, text) }
             },
             onSignIn = { account ->
                 accountsOpen = false

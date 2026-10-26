@@ -52,6 +52,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
@@ -88,6 +89,9 @@ fun AccountsSheet(
     onAdd: () -> Unit,
     onColor: (AccountItem, Int) -> Unit,
     onLabel: (AccountItem, String) -> Unit,
+    signature: String,
+    onSignature: (String) -> Unit,
+    onAccountSignature: (AccountItem, String) -> Unit,
     onSignIn: (AccountItem) -> Unit,
     onKeepDays: (AccountItem, Int) -> Unit,
     /** The account whose page the sheet opens on, as after adding it. */
@@ -99,12 +103,12 @@ fun AccountsSheet(
 ) {
     val colors = MaterialTheme.colorScheme
     Sheet(visible, onClose) {
-        // Inside the sheet, so it opens on the list again next time: an account's id, or
-        // SWIPES.
+        // Inside the sheet, so it opens on the list again next time: an account's id, SWIPES
+        // or SIGNATURE.
         var page by rememberSaveable { mutableStateOf<Long?>(null) }
         LaunchedEffect(startOn) { if (startOn != null) page = startOn }
         AnimatedContent(
-            page.takeIf { it == SWIPES || accounts.any { a -> a.id == it } },
+            page.takeIf { it == SWIPES || it == SIGNATURE || accounts.any { a -> a.id == it } },
             transitionSpec = {
                 (fadeIn(Motion.calm(Motion.SMALL)) togetherWith fadeOut(Motion.calm(Motion.SMALL)))
                     .using(SizeTransform { _, _ -> Motion.settle() })
@@ -118,11 +122,17 @@ fun AccountsSheet(
                         SubPage(stringResource(R.string.swipes_title), onBack = { page = null })
                         SwipeSettings(swipes, onSwipes)
                     }
+                    shown == SIGNATURE -> {
+                        SubPage(stringResource(R.string.signature_title), onBack = { page = null })
+                        SignatureField(signature, stringResource(R.string.signature_title), "", stringResource(R.string.signature_hint), onSignature)
+                    }
                     account != null -> AccountSettings(
                         account,
                         onBack = { page = null },
                         onColor = { onColor(account, it) },
                         onLabel = { onLabel(account, it) },
+                        signature = signature,
+                        onSignature = { onAccountSignature(account, it) },
                         onSignIn = { onSignIn(account) },
                         onKeepDays = { onKeepDays(account, it) },
                         onNewMail = { onNewMail(account, it) },
@@ -135,6 +145,18 @@ fun AccountsSheet(
                             Column(Modifier.weight(1f)) {
                                 Text(stringResource(R.string.swipes_title), style = Type.Row)
                                 Text(swipes.summary(), color = colors.onSurfaceVariant, style = Type.Caption)
+                            }
+                        }
+                        SheetRow(onClick = { page = SIGNATURE }, lead = { Glyph(R.drawable.ic_compose, null, colors.primary) }) {
+                            Column(Modifier.weight(1f)) {
+                                Text(stringResource(R.string.signature_title), style = Type.Row)
+                                Text(
+                                    signature.lines().firstOrNull { it.isNotBlank() } ?: stringResource(R.string.signature_none),
+                                    color = colors.onSurfaceVariant,
+                                    style = Type.Caption,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
                             }
                         }
                         SheetAction(R.drawable.ic_add, stringResource(R.string.inbox_add_account), colors.primary, onAdd)
@@ -205,6 +227,7 @@ private fun MailboxList(
 
 /** The page of the sheet with the swipes; account pages are named by their ids, which are positive. */
 private const val SWIPES = -1L
+private const val SIGNATURE = -2L
 
 /**
  * With several accounts, their mailboxes together first; then each account under its name.
@@ -414,6 +437,8 @@ private fun AccountSettings(
     onBack: () -> Unit,
     onColor: (Int) -> Unit,
     onLabel: (String) -> Unit,
+    signature: String,
+    onSignature: (String) -> Unit,
     onSignIn: () -> Unit,
     onKeepDays: (Int) -> Unit,
     onNewMail: (NewMail) -> Unit,
@@ -432,6 +457,8 @@ private fun AccountSettings(
         SheetAction(R.drawable.ic_next, stringResource(R.string.signin_again_title), colors.primary, onSignIn)
     }
     LabelField(account, onLabel)
+    // Empty, it shows the default signature it goes out with.
+    SignatureField(account.signature, stringResource(R.string.account_signature), signature, stringResource(R.string.account_signature_hint), onSignature)
     Text(
         stringResource(R.string.account_color),
         color = colors.onSurfaceVariant,
@@ -556,6 +583,41 @@ private fun LabelField(account: AccountItem, onLabel: (String) -> Unit) {
             if (label.trim() != account.label) onLabel(label)
         }),
         modifier = Modifier.fillMaxWidth().padding(horizontal = Gap.sheet).padding(top = 8.dp),
+    )
+}
+
+/**
+ * A signature of a few lines under [label], [placeholder] while empty; saved when it loses focus
+ * and when the page closes.
+ */
+@Composable
+private fun SignatureField(saved: String, label: String, placeholder: String, hint: String, onSave: (String) -> Unit) {
+    var text by rememberSaveable { mutableStateOf(saved) }
+    // What was last sent, so leaving after a save does not send it again.
+    var sent by rememberSaveable { mutableStateOf(saved) }
+    fun save() {
+        if (text.trimEnd() == sent) return
+        sent = text.trimEnd()
+        onSave(text)
+    }
+    val leave by rememberUpdatedState(::save)
+    DisposableEffect(Unit) {
+        onDispose { leave() }
+    }
+    OutlinedTextField(
+        value = text,
+        onValueChange = { text = it },
+        label = { Text(label) },
+        placeholder = { Text(placeholder) },
+        supportingText = { Text(hint) },
+        shape = RoundedCornerShape(Radius.medium),
+        minLines = 3,
+        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Gap.sheet)
+            .padding(top = 8.dp)
+            .onFocusChanged { if (!it.isFocused) save() },
     )
 }
 

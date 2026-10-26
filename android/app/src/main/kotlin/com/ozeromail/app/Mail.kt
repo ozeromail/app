@@ -119,6 +119,14 @@ class Mail(private val context: Context) {
     /** The person's own name for [account]; empty goes back to the usual one. */
     suspend fun setAccountLabel(account: AccountItem, label: String) = io { core.setAccountLabel(account.id, label) }
 
+    /** The signature of accounts without one of their own; empty for none. */
+    suspend fun signature(): String = io { core.signature() }
+
+    suspend fun setSignature(signature: String) = io { core.setSignature(signature) }
+
+    /** Gives the account a signature of its own; empty goes back to the default one. */
+    suspend fun setAccountSignature(account: AccountItem, signature: String) = io { core.setAccountSignature(account.id, signature) }
+
     /** Removes the account and its mail from the phone, then its secret. */
     suspend fun removeAccount(account: AccountItem) = io {
         core.removeAccount(account.id)
@@ -348,6 +356,9 @@ class Mail(private val context: Context) {
 
     /** From now on the remote images of mail from [message]'s sender load on their own. */
     suspend fun allowImages(message: MessageItem) = io { core.allowImages(message.id) }
+
+    /** A blank message from the first account, with its signature. */
+    suspend fun newDraft(): DraftItem = io { core.newDraft() }
 
     /** An answer to [message]: to its sender, or with [all] to everyone it went to as well. */
     suspend fun reply(message: MessageItem, all: Boolean): DraftItem = io { core.reply(message, all) }
