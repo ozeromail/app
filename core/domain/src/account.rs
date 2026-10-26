@@ -47,12 +47,37 @@ pub struct Account {
     pub label: String,
     /// How many days back its mail is kept on the phone; 0 keeps all of it.
     pub keep_days: u32,
+    /// When the phone looks for its new mail while the app is closed.
+    pub new_mail: NewMail,
     /// The server refused the saved password or Google secret: the account waits for the
     /// person to sign in again, its mail and queued work kept.
     pub needs_sign_in: bool,
+    /// The account's own signature; empty to use the default one.
+    pub signature: String,
+}
+
+/// When the phone looks for an account's new mail while the app is closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum NewMail {
+    /// As soon as the server has it, on a connection kept open.
+    #[default]
+    Push,
+    /// Every so many minutes, as often as the system lets it.
+    Every { minutes: u32 },
+    /// Only when the app is open.
+    Manually,
 }
 
 impl Account {
+    /// What goes under the account's mail: its own signature, else `default`.
+    pub fn signs_with<'a>(&'a self, default: &'a str) -> &'a str {
+        if self.signature.trim().is_empty() {
+            default
+        } else {
+            &self.signature
+        }
+    }
+
     /// What the apps call the account: the user's name for it, else the address. Not the
     /// sender name: a person's accounts all share it, so it would not tell them apart.
     pub fn name(&self) -> &str {
@@ -101,6 +126,35 @@ pub fn mail_service(email: &str) -> Option<MailService> {
     Some(service)
 }
 
+/// What to call a new account at first: its service, or its domain without the ending
+/// (`tbank.ru` is Tbank). Empty when the address says nothing.
+pub fn default_label(email: &str) -> String {
+    let known = match mail_service(email) {
+        Some(MailService::Google) => "Gmail",
+        Some(MailService::ICloud) => "iCloud",
+        Some(MailService::Yahoo) => "Yahoo",
+        Some(MailService::Yandex) => "Yandex",
+        Some(MailService::MailRu) => "Mail.ru",
+        None => "",
+    };
+    if !known.is_empty() {
+        return known.to_owned();
+    }
+    let domain = email_domain(email).unwrap_or_default();
+    let parts: Vec<&str> = domain.split('.').filter(|p| !p.is_empty()).collect();
+    let name = match parts[..] {
+        // A host such as mail.company.com is named by the company.
+        ["mail" | "email", company, _, ..] => company,
+        [first, _, ..] => first,
+        _ => "",
+    };
+    let mut chars = name.chars();
+    chars
+        .next()
+        .map(|c| c.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+
 /// The domain of an email address, lowercased; None without one.
 pub fn email_domain(email: &str) -> Option<String> {
     // The last '@': a quoted local part may contain one too.
@@ -137,13 +191,33 @@ mod tests {
             color: 0,
             label: String::new(),
             keep_days: 0,
+            new_mail: NewMail::Push,
             needs_sign_in: false,
+            signature: String::new(),
         };
         assert_eq!(account.name(), "a@example.com");
         account.display_name = "Anna".into();
         assert_eq!(account.name(), "a@example.com");
         account.label = "Work".into();
         assert_eq!(account.name(), "Work");
+
+        assert_eq!(account.signs_with("Anna"), "Anna");
+        account.signature = " \n".into();
+        assert_eq!(account.signs_with("Anna"), "Anna");
+        account.signature = "Anna, work".into();
+        assert_eq!(account.signs_with("Anna"), "Anna, work");
+    }
+
+    #[test]
+    fn names_a_new_account_by_its_domain() {
+        assert_eq!(default_label("k@tbank.ru"), "Tbank");
+        assert_eq!(default_label("a@gmail.com"), "Gmail");
+        assert_eq!(default_label("a@mail.example.co.uk"), "Example");
+        assert_eq!(default_label("a@mail.ru"), "Mail.ru");
+        assert_eq!(default_label("a@corp.ru"), "Corp");
+        assert_eq!(default_label("a@yandex.ru"), "Yandex");
+        assert_eq!(default_label("a@localhost"), "");
+        assert_eq!(default_label("nobody"), "");
     }
 
     #[test]

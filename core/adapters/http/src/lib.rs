@@ -5,6 +5,8 @@ mod fetch;
 
 pub use fetch::{MAX_IMAGE, image, split};
 
+use std::fmt;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -53,25 +55,70 @@ pub struct Body<'a> {
     pub data: &'a [u8],
 }
 
+/// A connection's bytes, as TLS carries them.
+pub trait Stream: AsyncRead + AsyncWrite + Unpin + Send + Sync {}
+
+impl<T: AsyncRead + AsyncWrite + Unpin + Send + Sync> Stream for T {}
+
+/// A TLS connection opened by a `Tunnel`, and the server's certificate on it as DER.
+pub type Opened = (Box<dyn Stream>, Vec<u8>);
+
+/// Opens TLS connections without rustls, such as through the platform's own TLS: rustls does
+/// not renegotiate, as some servers do to ask for a client certificate after the request.
+pub trait Tunnel: Send + Sync + fmt::Debug {
+    /// A connection to `host:port` whose server certificate has passed the checks.
+    fn open<'a>(
+        &'a self,
+        host: &'a str,
+        port: u16,
+    ) -> Pin<Box<dyn Future<Output = Result<Opened, ProviderError>> + Send + 'a>>;
+}
+
+/// How a client opens its TLS connections.
+#[derive(Debug, Clone)]
+pub enum Tls {
+    Rustls(Arc<ClientConfig>),
+    Tunnel(Arc<dyn Tunnel>),
+}
+
+impl From<Arc<ClientConfig>> for Tls {
+    fn from(config: Arc<ClientConfig>) -> Self {
+        Self::Rustls(config)
+    }
+}
+
+/// A connection over any TLS.
+type Link = Conn<Box<dyn Stream>>;
+
 /// Talks to one host over TLS on port 443 or the given one.
-#[derive(Debug)]
 pub struct HttpsClient {
     host: String,
     port: u16,
-    tls: Arc<ClientConfig>,
-    conn: Option<(Conn<TlsStream<TcpStream>>, Instant)>,
+    tls: Tls,
+    /// The open connection, when it was last used, and its server's certificate as DER.
+    conn: Option<(Link, Instant, Option<Vec<u8>>)>,
     /// Largest response body.
     limit: usize,
     /// Refuses hosts that resolve to a private or local address.
     public_only: bool,
 }
 
+impl fmt::Debug for HttpsClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HttpsClient")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("tls", &self.tls)
+            .finish_non_exhaustive()
+    }
+}
+
 impl HttpsClient {
-    pub fn new(host: &str, port: u16, tls: Arc<ClientConfig>) -> Self {
+    pub fn new(host: &str, port: u16, tls: impl Into<Tls>) -> Self {
         Self {
             host: host.to_owned(),
             port,
-            tls,
+            tls: tls.into(),
             conn: None,
             limit: MAX_BODY,
             public_only: false,
@@ -98,7 +145,7 @@ impl HttpsClient {
         headers: &[(&str, &str)],
         body: Option<Body<'_>>,
     ) -> Result<Response, ProviderError> {
-        self.exchange(method, path, headers, body, method == "GET")
+        self.exchange(method, path, headers, body, method == "GET", Duration::ZERO)
             .await
     }
 
@@ -111,20 +158,34 @@ impl HttpsClient {
         headers: &[(&str, &str)],
         body: Option<Body<'_>>,
     ) -> Result<Response, ProviderError> {
-        self.exchange(method, path, headers, body, true).await
+        self.exchange(method, path, headers, body, true, Duration::ZERO)
+            .await
+    }
+
+    /// Like `send`, sent twice if `repeatable`, for a long poll: the server may hold its answer
+    /// up to `wait`.
+    pub async fn send_waiting(
+        &mut self,
+        method: &str,
+        path: &str,
+        headers: &[(&str, &str)],
+        body: Option<Body<'_>>,
+        repeatable: bool,
+        wait: Duration,
+    ) -> Result<Response, ProviderError> {
+        self.exchange(method, path, headers, body, repeatable, wait)
+            .await
     }
 
     /// Whether the next request goes over the connection the last one used: a login bound to
     /// the connection, as NTLM's, then still holds.
     pub fn is_open(&self) -> bool {
-        matches!(&self.conn, Some((_, used)) if used.elapsed() < IDLE)
+        matches!(&self.conn, Some((_, used, _)) if used.elapsed() < IDLE)
     }
 
     /// The server's certificate on the open connection, as DER.
     pub fn certificate(&self) -> Option<Vec<u8>> {
-        let (conn, _) = self.conn.as_ref()?;
-        let (_, tls) = conn.stream.get_ref();
-        Some(tls.peer_certificates()?.first()?.to_vec())
+        self.conn.as_ref()?.2.clone()
     }
 
     async fn exchange(
@@ -134,28 +195,59 @@ impl HttpsClient {
         headers: &[(&str, &str)],
         body: Option<Body<'_>>,
         repeatable: bool,
+        wait: Duration,
     ) -> Result<Response, ProviderError> {
         let request = request(method, &self.host, path, headers, body)?;
-        let conn = match self.conn.take() {
-            Some((conn, used)) if used.elapsed() < IDLE => conn,
+        let (conn, certificate) = match self.conn.take() {
+            Some((conn, used, certificate)) if used.elapsed() < IDLE => (conn, certificate),
             _ => self.connect().await?,
         };
-        let (response, conn) = match exchange(conn, &request).await {
-            Ok(done) => done,
+        let (response, conn, certificate) = match exchange(conn, &request, wait).await {
+            Ok((response, conn)) => (response, conn, certificate),
             // The server closed the connection before answering: a kept-alive one it dropped
             // as idle, or a new one it dropped at once. A new one asks again, but only what is
             // safe to ask twice: a POST may have gone through.
-            Err(Failure::Closed) if repeatable => exchange(self.connect().await?, &request).await?,
+            Err(Failure::Closed) if repeatable => {
+                let (conn, certificate) = self.connect().await?;
+                let (response, conn) = exchange(conn, &request, wait).await?;
+                (response, conn, certificate)
+            }
             Err(Failure::Closed) => return Err(closed()),
             Err(Failure::Error(e)) => return Err(e),
         };
         if let Some(conn) = conn {
-            self.conn = Some((conn, Instant::now()));
+            self.conn = Some((conn, Instant::now(), certificate));
         }
         Ok(response)
     }
 
-    async fn connect(&self) -> Result<Conn<TlsStream<TcpStream>>, ProviderError> {
+    /// Opens a new connection; also gives its server's certificate.
+    async fn connect(&self) -> Result<(Link, Option<Vec<u8>>), ProviderError> {
+        let (stream, certificate) = match &self.tls {
+            Tls::Rustls(config) => {
+                let tls = self.handshake(config.clone()).await?;
+                let (_, session) = tls.get_ref();
+                let certificate = session
+                    .peer_certificates()
+                    .and_then(|c| c.first())
+                    .map(|c| c.to_vec());
+                (Box::new(tls) as Box<dyn Stream>, certificate)
+            }
+            Tls::Tunnel(tunnel) => {
+                let opened = tokio::time::timeout(TIMEOUT, tunnel.open(&self.host, self.port));
+                let (stream, certificate) = opened
+                    .await
+                    .map_err(|_| ProviderError::Network("timed out".into()))??;
+                (stream, Some(certificate))
+            }
+        };
+        Ok((Conn::new(stream, self.limit), certificate))
+    }
+
+    async fn handshake(
+        &self,
+        config: Arc<ClientConfig>,
+    ) -> Result<TlsStream<TcpStream>, ProviderError> {
         let name = ServerName::try_from(self.host.clone())
             .map_err(|_| ProviderError::Network(format!("bad host name {}", self.host)))?;
         let tcp = if self.public_only {
@@ -171,8 +263,7 @@ impl HttpsClient {
         } else {
             timed(TcpStream::connect((self.host.as_str(), self.port))).await?
         };
-        let tls = TlsConnector::from(self.tls.clone());
-        Ok(Conn::new(timed(tls.connect(name, tcp)).await?, self.limit))
+        timed(TlsConnector::from(config).connect(name, tcp)).await
     }
 }
 
@@ -201,11 +292,12 @@ impl From<Failure> for ProviderError {
 async fn exchange<S: AsyncRead + AsyncWrite + Unpin>(
     mut conn: Conn<S>,
     request: &[u8],
+    wait: Duration,
 ) -> Result<(Response, Option<Conn<S>>), Failure> {
     if conn.write(request).await.is_err() {
         return Err(Failure::Closed);
     }
-    let (response, keep) = conn.response().await?;
+    let (response, keep) = conn.response(wait).await?;
     Ok((response, keep.then_some(conn)))
 }
 
@@ -280,8 +372,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
     /// Reads more into `buf`; false at the end of the stream. A connection dropped without a
     /// TLS goodbye, as servers drop idle ones, is `Closed`.
     async fn fill(&mut self) -> Result<bool, Failure> {
+        self.fill_within(TIMEOUT).await
+    }
+
+    async fn fill_within(&mut self, limit: Duration) -> Result<bool, Failure> {
         let mut chunk = [0; 16 * 1024];
-        let n = match tokio::time::timeout(TIMEOUT, self.stream.read(&mut chunk)).await {
+        let n = match tokio::time::timeout(limit, self.stream.read(&mut chunk)).await {
             Ok(Ok(n)) => n,
             Ok(Err(e)) if dropped(&e) => return Err(Failure::Closed),
             Ok(Err(e)) => return Err(ProviderError::Network(e.to_string()).into()),
@@ -291,8 +387,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
         Ok(n > 0)
     }
 
-    /// The response and whether the connection can carry another request.
-    async fn response(&mut self) -> Result<(Response, bool), Failure> {
+    /// The response and whether the connection can carry another request. Its first byte
+    /// may take `wait` longer than the rest.
+    async fn response(&mut self, wait: Duration) -> Result<(Response, bool), Failure> {
         // Whether any byte of an answer came, an interim response's too.
         let mut answered = !self.buf.is_empty();
         let (mut response, length, close) = loop {
@@ -302,7 +399,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
             if self.buf.len() > MAX_HEAD {
                 return Err(protocol("response head too long").into());
             }
-            let more = match self.fill().await {
+            let within = if answered { TIMEOUT } else { TIMEOUT + wait };
+            let more = match self.fill_within(within).await {
                 Err(Failure::Closed) => false,
                 more => more?,
             };

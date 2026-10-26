@@ -41,6 +41,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,6 +52,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
@@ -63,6 +65,7 @@ import uniffi.ozero_api.AccountItem
 import uniffi.ozero_api.FolderItem
 import uniffi.ozero_api.FolderRole
 import uniffi.ozero_api.Mailbox
+import uniffi.ozero_api.NewMail
 import uniffi.ozero_api.accountColors
 
 /**
@@ -86,19 +89,26 @@ fun AccountsSheet(
     onAdd: () -> Unit,
     onColor: (AccountItem, Int) -> Unit,
     onLabel: (AccountItem, String) -> Unit,
+    signature: String,
+    onSignature: (String) -> Unit,
+    onAccountSignature: (AccountItem, String) -> Unit,
     onSignIn: (AccountItem) -> Unit,
     onKeepDays: (AccountItem, Int) -> Unit,
+    /** The account whose page the sheet opens on, as after adding it. */
+    startOn: Long?,
+    onNewMail: (AccountItem, NewMail) -> Unit,
     onRemove: (AccountItem) -> Unit,
     onWrite: () -> Unit,
     onClose: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
     Sheet(visible, onClose) {
-        // Inside the sheet, so it opens on the list again next time: an account's id, or
-        // SWIPES.
+        // Inside the sheet, so it opens on the list again next time: an account's id, SWIPES
+        // or SIGNATURE.
         var page by rememberSaveable { mutableStateOf<Long?>(null) }
+        LaunchedEffect(startOn) { if (startOn != null) page = startOn }
         AnimatedContent(
-            page.takeIf { it == SWIPES || accounts.any { a -> a.id == it } },
+            page.takeIf { it == SWIPES || it == SIGNATURE || accounts.any { a -> a.id == it } },
             transitionSpec = {
                 (fadeIn(Motion.calm(Motion.SMALL)) togetherWith fadeOut(Motion.calm(Motion.SMALL)))
                     .using(SizeTransform { _, _ -> Motion.settle() })
@@ -112,13 +122,20 @@ fun AccountsSheet(
                         SubPage(stringResource(R.string.swipes_title), onBack = { page = null })
                         SwipeSettings(swipes, onSwipes)
                     }
+                    shown == SIGNATURE -> {
+                        SubPage(stringResource(R.string.signature_title), onBack = { page = null })
+                        SignatureField(signature, stringResource(R.string.signature_title), "", stringResource(R.string.signature_hint), onSignature)
+                    }
                     account != null -> AccountSettings(
                         account,
                         onBack = { page = null },
                         onColor = { onColor(account, it) },
                         onLabel = { onLabel(account, it) },
+                        signature = signature,
+                        onSignature = { onAccountSignature(account, it) },
                         onSignIn = { onSignIn(account) },
                         onKeepDays = { onKeepDays(account, it) },
+                        onNewMail = { onNewMail(account, it) },
                         onRemove = { onRemove(account) },
                     )
                     else -> {
@@ -128,6 +145,18 @@ fun AccountsSheet(
                             Column(Modifier.weight(1f)) {
                                 Text(stringResource(R.string.swipes_title), style = Type.Row)
                                 Text(swipes.summary(), color = colors.onSurfaceVariant, style = Type.Caption)
+                            }
+                        }
+                        SheetRow(onClick = { page = SIGNATURE }, lead = { Glyph(R.drawable.ic_compose, null, colors.primary) }) {
+                            Column(Modifier.weight(1f)) {
+                                Text(stringResource(R.string.signature_title), style = Type.Row)
+                                Text(
+                                    signature.lines().firstOrNull { it.isNotBlank() } ?: stringResource(R.string.signature_none),
+                                    color = colors.onSurfaceVariant,
+                                    style = Type.Caption,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
                             }
                         }
                         SheetAction(R.drawable.ic_add, stringResource(R.string.inbox_add_account), colors.primary, onAdd)
@@ -198,6 +227,7 @@ private fun MailboxList(
 
 /** The page of the sheet with the swipes; account pages are named by their ids, which are positive. */
 private const val SWIPES = -1L
+private const val SIGNATURE = -2L
 
 /**
  * With several accounts, their mailboxes together first; then each account under its name.
@@ -398,18 +428,20 @@ private fun SubPage(title: String, onBack: () -> Unit) {
 }
 
 /**
- * One account: its name and colour, and a way to remove it from the phone. One the server
- * signed out offers to sign in again first.
+ * One account: its name and colour, when new mail comes, how much of its mail the phone keeps,
+ * and a way to remove it. One the server signed out offers to sign in again first.
  */
-/** One account: its name and colour, how much of its mail the phone keeps, and a way to remove it. */
 @Composable
 private fun AccountSettings(
     account: AccountItem,
     onBack: () -> Unit,
     onColor: (Int) -> Unit,
     onLabel: (String) -> Unit,
+    signature: String,
+    onSignature: (String) -> Unit,
     onSignIn: () -> Unit,
     onKeepDays: (Int) -> Unit,
+    onNewMail: (NewMail) -> Unit,
     onRemove: () -> Unit,
 ) {
     var confirming by rememberSaveable { mutableStateOf(false) }
@@ -425,6 +457,8 @@ private fun AccountSettings(
         SheetAction(R.drawable.ic_next, stringResource(R.string.signin_again_title), colors.primary, onSignIn)
     }
     LabelField(account, onLabel)
+    // Empty, it shows the default signature it goes out with.
+    SignatureField(account.signature, stringResource(R.string.account_signature), signature, stringResource(R.string.account_signature_hint), onSignature)
     Text(
         stringResource(R.string.account_color),
         color = colors.onSurfaceVariant,
@@ -432,6 +466,28 @@ private fun AccountSettings(
         modifier = Modifier.padding(start = Gap.sheet, end = Gap.sheet, top = 8.dp, bottom = 12.dp),
     )
     Swatches(account.colorIndex.toInt(), onColor)
+    val checks = NEW_MAIL.keys.filter { account.canPush || it != NewMail.Push }
+    Choices(R.string.account_new_mail, checks, account.newMail, onNewMail) { option, on ->
+        Text(
+            stringResource(NEW_MAIL.getValue(option)),
+            color = if (on) colors.primary else colors.onSurface,
+            style = Type.Text,
+            fontWeight = Weight.Medium,
+            maxLines = 1,
+        )
+    }
+    Text(
+        stringResource(
+            when (account.newMail) {
+                NewMail.Push -> R.string.account_new_mail_push_hint
+                NewMail.Manually -> R.string.account_new_mail_manually_hint
+                is NewMail.Every -> R.string.account_new_mail_every_hint
+            },
+        ),
+        color = colors.onSurfaceVariant,
+        style = Type.Caption,
+        modifier = Modifier.padding(start = Gap.sheet, end = Gap.sheet, bottom = 12.dp),
+    )
     Choices(R.string.account_keep, KEEP_DAYS.keys.toList(), account.keepDays.toInt(), onKeepDays) { days, on ->
         Text(
             stringResource(KEEP_DAYS.getValue(days)),
@@ -470,6 +526,14 @@ private fun AccountSettings(
     }
 }
 
+/** When the phone looks for an account's new mail with the app closed, and what to call it. */
+private val NEW_MAIL = linkedMapOf(
+    NewMail.Push to R.string.account_new_mail_push,
+    NewMail.Every(15u) to R.string.account_new_mail_quarter,
+    NewMail.Every(60u) to R.string.account_new_mail_hourly,
+    NewMail.Manually to R.string.account_new_mail_manually,
+)
+
 /** How many days back an account's mail stays on the phone, 0 for all of it, and what to call it. */
 private val KEEP_DAYS = linkedMapOf(
     3 to R.string.account_keep_three_days,
@@ -480,7 +544,7 @@ private val KEEP_DAYS = linkedMapOf(
     0 to R.string.account_keep_all,
 )
 
-/** The person's own name for the account, saved on Done and when the page closes. */
+/** The person's own name for the account, saved with Save, on Done and when the page closes. */
 @Composable
 private fun LabelField(account: AccountItem, onLabel: (String) -> Unit) {
     var label by rememberSaveable(account.id) { mutableStateOf(account.label) }
@@ -503,6 +567,16 @@ private fun LabelField(account: AccountItem, onLabel: (String) -> Unit) {
             // The sender name is not what the list shows, so it is said here.
             Text(if (sender.isEmpty() || sender == account.email) hint else stringResource(R.string.account_sender, hint, sender))
         },
+        trailingIcon = if (label.trim() != account.label) {
+            {
+                TextButton(onClick = {
+                    focus.clearFocus()
+                    onLabel(label)
+                }) { Text(stringResource(R.string.action_save)) }
+            }
+        } else {
+            null
+        },
         shape = RoundedCornerShape(Radius.medium),
         singleLine = true,
         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
@@ -511,6 +585,41 @@ private fun LabelField(account: AccountItem, onLabel: (String) -> Unit) {
             if (label.trim() != account.label) onLabel(label)
         }),
         modifier = Modifier.fillMaxWidth().padding(horizontal = Gap.sheet).padding(top = 8.dp),
+    )
+}
+
+/**
+ * A signature of a few lines under [label], [placeholder] while empty; saved when it loses focus
+ * and when the page closes.
+ */
+@Composable
+private fun SignatureField(saved: String, label: String, placeholder: String, hint: String, onSave: (String) -> Unit) {
+    var text by rememberSaveable { mutableStateOf(saved) }
+    // What was last sent, so leaving after a save does not send it again.
+    var sent by rememberSaveable { mutableStateOf(saved) }
+    fun save() {
+        if (text.trimEnd() == sent) return
+        sent = text.trimEnd()
+        onSave(text)
+    }
+    val leave by rememberUpdatedState(::save)
+    DisposableEffect(Unit) {
+        onDispose { leave() }
+    }
+    OutlinedTextField(
+        value = text,
+        onValueChange = { text = it },
+        label = { Text(label) },
+        placeholder = { Text(placeholder) },
+        supportingText = { Text(hint) },
+        shape = RoundedCornerShape(Radius.medium),
+        minLines = 3,
+        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Gap.sheet)
+            .padding(top = 8.dp)
+            .onFocusChanged { if (!it.isFocused) save() },
     )
 }
 

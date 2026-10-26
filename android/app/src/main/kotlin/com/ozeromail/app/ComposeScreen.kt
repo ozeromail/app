@@ -50,11 +50,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -117,6 +120,7 @@ fun ComposeScreen(
     var subject by rememberSaveable { mutableStateOf(start.subject) }
     var text by rememberSaveable { mutableStateOf(start.text) }
     var accountId by rememberSaveable { mutableStateOf(start.accountId) }
+    var signature by rememberSaveable { mutableStateOf(start.signature) }
     // Not saveable: a long quote would not fit in the saved state.
     var quote by remember { mutableStateOf(start.quote) }
     var quotable by remember { mutableStateOf(true) }
@@ -152,7 +156,7 @@ fun ComposeScreen(
     val from = accounts.find { it.id == accountId } ?: accounts.firstOrNull()
 
     // Account 0 is kept as none, and opens with the first account again.
-    fun current() = DraftItem(0, accountId, to, subject, text, start.replyTo, quote, 0, start.forward, files)
+    fun current() = DraftItem(0, accountId, to, subject, text, start.replyTo, quote, 0, start.forward, files, signature)
     fun keep() {
         if (changed && !finished) keeper.save(current())
     }
@@ -323,6 +327,21 @@ fun ComposeScreen(
         val forwarding = start.forward != null
         val forwardedFiles = forwarded?.takeIf { it.accountId == from?.id }?.attachments.orEmpty()
         if (forwardedFiles.isNotEmpty()) AttachmentChips(forwardedFiles)
+        // Its own for this message: a change here stays here. Taken out, a tap brings it back.
+        if (signature.isNotEmpty() || from?.signsWith?.isNotBlank() == true) {
+            Plain(
+                signature,
+                { signature = it },
+                R.string.account_signature,
+                Type.Text,
+                KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                singleLine = false,
+                color = colors.onSurfaceVariant,
+                modifier = Modifier
+                    .semantics { contentDescription = context.getString(R.string.compose_signature) }
+                    .onFocusChanged { if (it.isFocused && signature.isEmpty()) from?.let { a -> signature = a.signsWith } },
+            )
+        }
         if (quote.isNotEmpty()) {
             Quote(quote.takeIf { original == null }, forwarding, onRemove = { quote = "" }.takeUnless { forwarding })
         } else if (original != null && quotable) {
@@ -419,8 +438,9 @@ fun ComposeScreen(
                 // The message being answered takes the room the fields leave; alone, the fields sit low.
                 // With the keyboard up the card may close to nothing, so Send always stays in sight.
                 if (original != null) Original(mail, original, Modifier.weight(1f).heightIn(min = if (keyboard) 0.dp else 112.dp))
+                // As much room under the text as at its sides, so it never touches the bar.
                 Column(
-                    (if (original == null) Modifier.weight(1f) else Modifier).padding(horizontal = Gap.screen),
+                    (if (original == null) Modifier.weight(1f) else Modifier).padding(start = Gap.screen, end = Gap.screen, bottom = Gap.screen),
                     verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
                 ) { fields() }
                 errorLine()
@@ -471,6 +491,8 @@ fun ComposeScreen(
                 SheetRow(
                     onClick = {
                         picking = false
+                        // Its signature comes too, unless this message's was changed.
+                        if (signature == from?.signsWith) signature = account.signsWith
                         accountId = account.id
                     },
                     lead = { AccountDot(account.tint, size = 12.dp) },
@@ -576,13 +598,14 @@ internal fun Plain(
     style: TextStyle,
     keyboard: KeyboardOptions,
     singleLine: Boolean = true,
+    color: Color = MaterialTheme.colorScheme.onSurface,
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
     BasicTextField(
         value = value,
         onValueChange = onChange,
-        textStyle = style.copy(color = colors.onSurface),
+        textStyle = style.copy(color = color),
         singleLine = singleLine,
         keyboardOptions = keyboard,
         cursorBrush = SolidColor(colors.primary),

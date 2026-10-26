@@ -21,49 +21,54 @@ import java.util.concurrent.TimeUnit
 import uniffi.ozero_api.AccountItem
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.MessageItem
+import uniffi.ozero_api.NewMail
 
-/** Checks every account for new mail while the app is closed and tells about mail from people. */
+/**
+ * Checks the accounts that are due for new mail while the app is closed, each as often as it is
+ * set to, and tells about mail from people. Accounts set to Instantly are [WatchService]'s while
+ * it runs.
+ */
 class MailWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val app = applicationContext as OzeroApp
-        val mail = app.mail
-        val signedOut = try {
-            mail.accounts().filter { it.needsSignIn }.map { it.id }
-        } catch (e: CoreException) {
-            // The mail still comes; only a sign-out may go unannounced.
-            Log.w("Ozero", "accounts not read", e)
-            emptyList()
+        val checked = applicationContext.getSharedPreferences(CHECKED, Context.MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        val due = { account: AccountItem ->
+            when (val every = account.newMail) {
+                NewMail.Push -> !WatchService.running
+                NewMail.Manually -> false
+                // A run a little early is due: runs are 15 minutes apart, give or take.
+                is NewMail.Every -> now - checked.getLong(account.id.toString(), 0) >= every.minutes.toLong() * 60_000 - SLACK_MS
+            }
         }
         // Snoozed mail the exact run missed, say after a restart, comes back now.
         val woken = try {
-            mail.wake().also { mail.scheduleWake() }
+            app.mail.wake().also { app.mail.scheduleWake() }
         } catch (e: CoreException) {
             Log.w("Ozero", "snoozed mail not woken", e)
             emptyList()
         }
-        try {
-            mail.refresh()
+        if (!app.inForeground) notifyMail(applicationContext, woken)
+        val ids = try {
+            app.mail.accounts().filter(due).map { it.id }.toSet()
         } catch (e: CoreException) {
-            // Other accounts may still have synced; the next run tries again.
-            Log.w("Ozero", "background sync failed", e)
-        }
-        // Once, when the server signs an account out; the inbox shows it from then on.
-        if (!app.inForeground) try {
-            notifySignIn(applicationContext, mail.accounts().filter { it.needsSignIn && it.id !in signedOut })
-        } catch (e: CoreException) {
+            // Mail still comes: every account is checked.
             Log.w("Ozero", "accounts not read", e)
+            null
         }
-        try {
-            // With the app open, the inbox shows the mail; a notification would only repeat it.
-            if (app.inForeground) mail.forgetNewMail() else notifyMail(applicationContext, woken + mail.newMail())
-        } catch (e: CoreException) {
-            Log.w("Ozero", "new mail not read", e)
+        if (ids?.isEmpty() == true) return Result.success()
+        // A failed sync leaves its accounts due, so the next run tries them again.
+        if (checkMail(app) { ids == null || it.id in ids } && ids != null) {
+            checked.edit().apply { ids.forEach { putLong(it.toString(), now) } }.apply()
         }
         return Result.success()
     }
 
     companion object {
         private const val NAME = "check-mail"
+        /** When each account was last checked here, by its id. */
+        private const val CHECKED = "checked"
+        private const val SLACK_MS = 3 * 60_000L
 
         /** Removes the notifications: the inbox on screen shows that mail now. */
         fun clearNotifications(context: Context) = NotificationManagerCompat.from(context).cancelAll()
@@ -79,6 +84,42 @@ class MailWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
     }
 }
 
+/**
+ * Syncs the inboxes of the accounts [which] picks and tells about new mail from people and about
+ * accounts the server signed out; false if a sync failed. With the app open the inbox shows it all.
+ */
+suspend fun checkMail(app: OzeroApp, which: (AccountItem) -> Boolean): Boolean {
+    val mail = app.mail
+    val signedOut = try {
+        mail.accounts().filter { it.needsSignIn }.map { it.id }
+    } catch (e: CoreException) {
+        // The mail still comes; only a sign-out may go unannounced.
+        Log.w("Ozero", "accounts not read", e)
+        emptyList()
+    }
+    val synced = try {
+        mail.refresh(which = which)
+        true
+    } catch (e: CoreException) {
+        // Other accounts may still have synced; the next run tries again.
+        Log.w("Ozero", "background sync failed", e)
+        false
+    }
+    // Once, when the server signs an account out; the inbox shows it from then on.
+    if (!app.inForeground) try {
+        notifySignIn(app, mail.accounts().filter { it.needsSignIn && it.id !in signedOut })
+    } catch (e: CoreException) {
+        Log.w("Ozero", "accounts not read", e)
+    }
+    try {
+        // With the app open, the inbox shows the mail; a notification would only repeat it.
+        if (app.inForeground) mail.forgetNewMail() else notifyMail(app, mail.newMail())
+    } catch (e: CoreException) {
+        Log.w("Ozero", "new mail not read", e)
+    }
+    return synced
+}
+
 private const val CHANNEL = "new_mail"
 private const val SIGN_IN_CHANNEL = "sign_in"
 private const val GROUP = "new_mail"
@@ -86,7 +127,7 @@ private const val SUMMARY_ID = 0
 /** More at once is noise; the summary still counts them all. */
 private const val MAX_SHOWN = 5
 
-private fun openInbox(context: Context) = PendingIntent.getActivity(
+internal fun openInbox(context: Context) = PendingIntent.getActivity(
     context,
     0,
     Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),

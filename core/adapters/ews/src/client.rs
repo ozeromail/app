@@ -1,13 +1,11 @@
 //! One HTTPS endpoint of an Exchange server, with the login it asks for: Basic, or NTLM bound
 //! to the connection and, for Extended Protection, to the server's certificate.
 
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ozero_domain::{ProviderError, base64, decode_base64};
-use ozero_http::{Body, HttpsClient, Response};
+use ozero_http::{Body, HttpsClient, Response, Tls};
 use ring::rand::{SecureRandom, SystemRandom};
-use tokio_rustls::rustls::ClientConfig;
 
 use crate::ntlm;
 
@@ -35,7 +33,7 @@ pub struct Client {
 
 impl Client {
     pub fn new(
-        tls: Arc<ClientConfig>,
+        tls: impl Into<Tls>,
         host: &str,
         port: u16,
         path: &str,
@@ -78,11 +76,13 @@ impl Client {
             content_type,
             body,
             repeatable,
+            Duration::ZERO,
         )
         .await
     }
 
-    /// Like `post`, to `path` on the same server, with these `headers` too.
+    /// Like `post`, to `path` on the same server, with these `headers` too. The server may
+    /// hold its answer up to `wait`, as for a long poll.
     pub async fn post_to(
         &mut self,
         path: &str,
@@ -90,6 +90,7 @@ impl Client {
         content_type: &str,
         body: &[u8],
         repeatable: bool,
+        wait: Duration,
     ) -> Result<Response, ProviderError> {
         // A known server gets Basic first: one without it refuses it unread, and says what it
         // takes instead.
@@ -115,9 +116,12 @@ impl Client {
                     auth.as_deref(),
                     path,
                     headers,
-                    content_type,
-                    body,
+                    Body {
+                        content_type,
+                        data: body,
+                    },
                     repeatable && !handshake,
+                    wait,
                 )
                 .await
             {
@@ -163,7 +167,17 @@ impl Client {
         let hello = format!("{name} {}", base64(&ntlm::negotiate()));
         // Empty, so the body goes only once.
         let response = self
-            .send(Some(&hello), path, headers, content_type, &[], true)
+            .send(
+                Some(&hello),
+                path,
+                headers,
+                Body {
+                    content_type,
+                    data: &[],
+                },
+                true,
+                Duration::ZERO,
+            )
             .await?;
         let token = response
             .authenticate
@@ -201,23 +215,18 @@ impl Client {
         auth: Option<&str>,
         path: &str,
         headers: &[(&str, &str)],
-        content_type: &str,
-        data: &[u8],
+        body: Body<'_>,
         repeatable: bool,
+        wait: Duration,
     ) -> Result<Response, ProviderError> {
         let headers: Vec<(&str, &str)> = auth
             .map(|a| ("Authorization", a))
             .into_iter()
             .chain(headers.iter().copied())
             .collect();
-        let body = Some(Body { content_type, data });
-        if repeatable {
-            self.http
-                .send_repeatable("POST", path, &headers, body)
-                .await
-        } else {
-            self.http.send("POST", path, &headers, body).await
-        }
+        self.http
+            .send_waiting("POST", path, &headers, Some(body), repeatable, wait)
+            .await
     }
 }
 

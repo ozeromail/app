@@ -13,9 +13,11 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.rule.GrantPermissionRule
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
+import uniffi.ozero_api.Category
 import uniffi.ozero_api.Endpoint
 
 /**
@@ -42,11 +44,15 @@ abstract class TestMail {
             if (!app.mail.hasAccounts()) {
                 app.mail.signIn(USER, PASSWORD, Endpoint("localhost", IMAP_PORT), Endpoint("localhost", SMTP_PORT))
             }
+            // The first sync, waited for here rather than through the screen: the list shows only
+            // what is saved, and a slow or failed sync then fails with its own reason.
+            withTimeout(SYNC_MS) { app.mail.refresh() }
+            check(app.mail.inbox(Category.PEOPLE, 1).isNotEmpty()) { "The first sync saved no mail" }
         }
         Settings(app).swipeTipSeen = true
         rule.mainClock.autoAdvance = false
         scenario = ActivityScenario.launch(MainActivity::class.java)
-        waitFor(timeoutMs = 90_000) { has(text(LETTER)) }
+        waitFor { has(text(LETTER)) }
         screen = rule.onRoot().fetchSemanticsNode().boundsInRoot
     }
 
@@ -101,6 +107,7 @@ abstract class TestMail {
         const val PASSWORD = "pass"
         val IMAP_PORT: UShort = 31993u
         val SMTP_PORT: UShort = 31587u
+        const val SYNC_MS = 90_000L
 
         /** What every letter in People says; tools/ui-test-mail.sh writes them. */
         const val LETTER = ": plans for the weekend"

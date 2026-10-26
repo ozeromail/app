@@ -2,8 +2,9 @@ import BackgroundTasks
 import UserNotifications
 import os
 
-/// Checks every account for new mail while the app is closed and tells about mail from people.
-/// iOS decides when it runs; asking for every 15 minutes is a wish, not a schedule.
+/// Checks the accounts that are due for new mail while the app is closed, each as often as it
+/// is set to, and tells about mail from people. iOS decides when it runs; asking for every 15
+/// minutes is a wish, not a schedule. Without a push server, Instantly means as often as iOS lets.
 enum BackgroundCheck {
     static let id = "com.ozeromail.app.refresh"
 
@@ -24,14 +25,29 @@ enum BackgroundCheck {
             let mail = try await Mail.shared()
             // Snoozed mail was announced on time; here it only comes back.
             _ = try? await mail.wake()
-            // Other accounts may still have synced; the next run tries again.
-            _ = try? await mail.refresh()
+            let now = Date.now
+            let due = try await mail.accounts().filter { account in
+                let last = Date(timeIntervalSince1970: Settings.checked[String(account.id)] ?? 0)
+                switch account.newMail {
+                case .push: return true
+                case .manually: return false
+                // A run a little early is due.
+                case .every(let minutes): return now.timeIntervalSince(last) >= Double(minutes) * 60 - slack
+                }
+            }.map(\.id)
+            guard !due.isEmpty else { return }
+            // A failed sync leaves its accounts due, so the next run tries them again.
+            if (try? await mail.refresh(which: { due.contains($0.id) })) != nil {
+                for id in due { Settings.checked[String(id)] = now.timeIntervalSince1970 }
+            }
             let new = try await mail.newMail()
             await notify(new)
         } catch {
             log.error("background check failed: \(String(describing: error), privacy: .public)")
         }
     }
+
+    private static let slack: Double = 3 * 60
 
     /// More at once is noise; the newest are shown.
     private static let maxShown = 5

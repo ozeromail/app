@@ -3,6 +3,18 @@ import UniformTypeIdentifiers
 import SwiftUI
 import os
 
+/// How one account's check went.
+private enum Checked: Sendable {
+    case done
+    case failed(String, any Error)
+}
+
+/// A check that failed for `accounts`, by name, while the others got through.
+struct PartlyFailed: Error {
+    let error: any Error
+    let accounts: [String]
+}
+
 /// What the screens need from the core. The async calls run off the main actor.
 final class Mail: Sendable {
     static let imapsPort: UInt16 = 993
@@ -91,6 +103,25 @@ final class Mail: Sendable {
     /// The person's own name for `account`; empty goes back to the usual one.
     func setAccountLabel(_ account: AccountItem, label: String) async throws {
         try core.setAccountLabel(account: account.id, label: label)
+    }
+
+    /// When the phone looks for `account`'s new mail with the app closed.
+    func setNewMail(_ account: AccountItem, _ check: NewMail) async throws {
+        try core.setAccountNewMail(account: account.id, when: check)
+    }
+
+    /// The signature of accounts without one of their own; empty for none.
+    func signature() async throws -> String {
+        try core.signature()
+    }
+
+    func setSignature(_ signature: String) async throws {
+        try core.setSignature(signature: signature)
+    }
+
+    /// Gives `account` a signature of its own; empty goes back to the default one.
+    func setAccountSignature(_ account: AccountItem, signature: String) async throws {
+        try core.setAccountSignature(account: account.id, signature: signature)
     }
 
     /// Keeps `account`'s mail of the last `days` days on the phone, or all of it with 0.
@@ -371,6 +402,11 @@ final class Mail: Sendable {
         try core.allowImages(message: message.id)
     }
 
+    /// A blank message from the first account, with its signature.
+    func newDraft() async throws -> DraftItem {
+        try core.newDraft()
+    }
+
     /// An answer to `message`: to its sender, or with `all` to everyone it went to as well.
     func reply(to message: MessageItem, all: Bool) async throws -> DraftItem {
         try core.reply(message: message, all: all)
@@ -470,11 +506,33 @@ final class Mail: Sendable {
 
     /// Syncs `mailbox` in all accounts at once; the first failure is thrown once every one has
     /// finished. A refused login is not one: it marks its account. True if an account needs
-    /// signing in again.
+    /// signing in again. Only the accounts `which` picks are synced.
     @discardableResult
-    func refresh(_ mailbox: Mailbox = Mail.inbox) async throws -> Bool {
-        _ = try await eachAccount(mailbox) { core, account, password in
-            try await core.syncMailbox(account: account.id, secret: password, mailbox: mailbox)
+    func refresh(
+        _ mailbox: Mailbox = Mail.inbox, which: (AccountItem) -> Bool = { _ in true }
+    ) async throws -> Bool {
+        let checked = try await eachAccount(mailbox, which) { core, account, password -> Checked in
+            do {
+                try await core.syncMailbox(account: account.id, secret: password, mailbox: mailbox)
+                return .done
+            } catch {
+                // A refused login marks its account, as `eachAccount` lets it; leaving the app
+                // ends the check quietly.
+                if error is CancellationError { throw error }
+                if case CoreError.Auth? = error as? CoreError { throw error }
+                return .failed(account.name, error)
+            }
+        }
+        let failed = checked.compactMap { checked -> (name: String, error: any Error)? in
+            guard case .failed(let name, let error) = checked else { return nil }
+            return (name, error)
+        }
+        if let first = failed.first {
+            // Named only while another account got through, and only those that failed the way
+            // the error shown says: else the whole phone is offline.
+            guard failed.count < checked.count else { throw first.error }
+            let key = first.error.textKey()
+            throw PartlyFailed(error: first.error, accounts: failed.filter { $0.error.textKey() == key }.map(\.name))
         }
         return try core.accounts().contains(where: \.needsSignIn)
     }
@@ -483,14 +541,15 @@ final class Mail: Sendable {
     /// in again, and returns what they gave; the first failure but a refused login is thrown once
     /// every one has finished.
     private func eachAccount<T: Sendable>(
-        _ mailbox: Mailbox, _ call: @escaping @Sendable (Core, AccountItem, String) async throws -> T
+        _ mailbox: Mailbox, _ which: (AccountItem) -> Bool = { _ in true },
+        _ call: @escaping @Sendable (Core, AccountItem, String) async throws -> T
     ) async throws -> [T] {
         // A folder is one account's, so only that account is asked.
         var owner: Int64?
         if case .folder(let id) = mailbox {
             owner = try core.folders().first { $0.id == id }?.accountId
         }
-        let signedIn = try core.accounts().filter { (owner == nil || $0.id == owner) && !$0.needsSignIn }
+        let signedIn = try core.accounts().filter { (owner == nil || $0.id == owner) && !$0.needsSignIn && which($0) }
             .compactMap { account in vault.passwordIfAny(email: account.email).map { (account, $0) } }
         let core = self.core
         let results = await withTaskGroup(of: Result<T, Error>.self) { group in

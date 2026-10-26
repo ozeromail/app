@@ -1124,6 +1124,7 @@ fn draft(account: AccountId) -> Draft {
         reply_to: None,
         quote: String::new(),
         forward: None,
+        signature: String::new(),
     }
 }
 
@@ -1135,6 +1136,7 @@ fn saved(draft: &Draft, now: i64) -> SavedDraft {
         to: draft.to.join(", "),
         subject: draft.subject.clone(),
         text: draft.text.clone(),
+        signature: draft.signature.clone(),
         reply_to: draft.reply_to,
         quote: draft.quote.clone(),
         forward: draft.forward,
@@ -1366,7 +1368,8 @@ fn accounts_keep_their_client_certificates() {
     let account = &store.accounts().unwrap()[0];
     assert_eq!(account.server, Some(server("mail.corp.ru", Some("T-Bank"))));
     assert_eq!(account.smtp, Some(server("smtp.corp.ru", Some("Other"))));
-    assert_eq!((account.color, account.label.as_str()), (0, ""));
+    // Named by its domain at first.
+    assert_eq!((account.color, account.label.as_str()), (0, "Corp"));
 }
 
 #[test]
@@ -1809,6 +1812,25 @@ fn names_an_account() {
 }
 
 #[test]
+fn keeps_when_an_account_looks_for_new_mail() {
+    let store = store();
+    let a = account(&store, "a@example.com");
+    assert_eq!(store.accounts().unwrap()[0].new_mail, NewMail::Push);
+    for when in [
+        NewMail::Every { minutes: 60 },
+        NewMail::Manually,
+        NewMail::Push,
+    ] {
+        store.set_account_new_mail(a, when).unwrap();
+        assert_eq!(store.accounts().unwrap()[0].new_mail, when);
+    }
+    assert_eq!(
+        store.set_account_new_mail(AccountId(99), NewMail::Manually),
+        Err(StoreError::NotFound)
+    );
+}
+
+#[test]
 fn prunes_mail_older_than_an_account_keeps() {
     let store = store();
     let a = account(&store, "a@example.com");
@@ -1983,6 +2005,7 @@ fn a_draft_is_kept_until_it_is_sent_or_thrown_away() {
         forward: None,
         saved: 100,
         files: vec![],
+        signature: String::new(),
     };
     let id = store.save_draft(&draft).unwrap();
     draft.id = Some(id);
@@ -2034,6 +2057,7 @@ fn a_draft_outlives_its_answered_message_but_not_its_account() {
         forward: Some(MessageId(999)),
         saved: 100,
         files: vec![],
+        signature: String::new(),
     };
     store.save_draft(&draft).unwrap();
     assert_eq!(store.drafts().unwrap()[0].reply_to, None);

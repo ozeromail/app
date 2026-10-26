@@ -5,7 +5,7 @@ use std::fmt;
 use std::hash::{BuildHasher, RandomState};
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ozero_app::ops::push_ops;
 use ozero_app::send::{SentCopy, forwarded_files, push_sends};
@@ -17,15 +17,17 @@ use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Attachment, Body, Category, Changes,
     Checkpoint, Draft, DraftFile, DraftId, FileId, Folder, FolderId, FolderRole, ListQuery,
     ListScope, MailProvider, MailSender, MailService, MessageId, MessageRow, Moved, NewAccount,
-    NewFolder, Older, OpId, OutboxId, Outgoing, OutgoingFile, ProviderError, ProviderState,
-    RawMessage, RecentFile, SavedDraft, Sender, Server, Store, StoreError, html, parse_recipients,
-    saves_sent_itself,
+    NewFolder, NewMail, Older, OpId, OutboxId, Outgoing, OutgoingFile, ProviderError,
+    ProviderState, RawMessage, RecentFile, SavedDraft, Sender, Server, Store, StoreError, html,
+    parse_recipients, saves_sent_itself,
 };
 use ozero_ews::{EasSession, EwsSession, discover};
 use ozero_gmail::{GmailSession, oauth};
+use ozero_http::Tls;
 use ozero_imap::rustls::ClientConfig;
 use ozero_imap::rustls::client::ResolvesClientCert;
-use ozero_imap::{ImapSession, RefusedCertificates};
+use ozero_imap::rustls::client::danger::ServerCertVerifier;
+use ozero_imap::{ImapSession, RefusedCertificates, Watch};
 use ozero_mime::{MimeBuilder, MimeParser};
 use ozero_smtp::SmtpSession;
 use ozero_store_sqlite::SqliteStore;
@@ -45,6 +47,10 @@ const DAY: i64 = 86_400;
 const PREFETCH: u32 = 20;
 /// Longest wait for new mail on one connection; a mobile network may drop a quiet one sooner.
 const MAIL_WAIT: Duration = Duration::from_secs(5 * 60);
+/// The shortest time, in minutes, between checks with the app closed that phones allow.
+const SOONEST_CHECK: u32 = 15;
+/// How long a Gmail account whose IMAP refused its token waits by asking the API.
+const IDLE_RETRY: Duration = Duration::from_secs(60 * 60);
 /// Mail older than this many seconds is not announced: a day.
 const NEWS_AGE: i64 = DAY;
 /// Milliseconds an archived or sent message waits before the server hears of it.
@@ -77,6 +83,8 @@ pub fn undo_seconds() -> u32 {
 /// The usual ports of IMAP and SMTP over TLS, which a found account is tried on.
 const IMAPS_PORT: u16 = 993;
 const SMTPS_PORT: u16 = 465;
+/// Gmail's IMAP, which only waits for mail here: the API syncs it.
+const GMAIL_IMAP: &str = "imap.gmail.com";
 
 /// How long a found account's IMAP server has to answer before Exchange is tried.
 const FIND_WAIT: Duration = Duration::from_secs(10);
@@ -153,6 +161,8 @@ pub struct Core {
     tls: OnceLock<Arc<ClientConfig>>,
     /// The platform's client certificates, once the app has given them.
     certificates: OnceLock<Arc<dyn ClientCertificates>>,
+    /// The platform's TLS, for Exchange with a client certificate, once the app has given it.
+    platform_tls: OnceLock<Arc<dyn PlatformTls>>,
     /// TLS settings by the client certificate they offer and the server certificate the
     /// person trusted, built on first use.
     certificate_tls: Mutex<HashMap<TlsKey, Arc<ClientConfig>>>,
@@ -166,6 +176,9 @@ pub struct Core {
     /// Gmail access tokens and until when they work, by the wall clock: a monotonic one stops
     /// while the phone sleeps, and the token would look fresh for too long.
     tokens: Mutex<HashMap<AccountId, (String, SystemTime)>>,
+    /// Gmail accounts whose IMAP refused the token, as an old sign-in without its scope: they
+    /// wait by asking the API.
+    no_idle: Mutex<HashMap<AccountId, Instant>>,
     /// The last pages read with all their images, newest last, so opening one again is
     /// instant; up to `PAGES_KEPT` times `IMAGES_SIZE` in memory.
     pages: Mutex<VecDeque<KeptPage>>,
@@ -222,11 +235,13 @@ impl Core {
             parser: MimeParser::default(),
             tls: OnceLock::new(),
             certificates: OnceLock::new(),
+            platform_tls: OnceLock::new(),
             certificate_tls: Mutex::default(),
             busy: Mutex::default(),
             waiting: Mutex::default(),
             named: Mutex::default(),
             tokens: Mutex::default(),
+            no_idle: Mutex::default(),
             pages: Mutex::default(),
             changes,
         }))
@@ -238,6 +253,12 @@ impl Core {
         let _ = self.certificates.set(certificates);
     }
 
+    /// Lets ActiveSync with a client certificate go through the platform's TLS, which
+    /// renegotiates when a server asks for the certificate late; the app calls it once, at start.
+    pub fn use_platform_tls(&self, tls: Arc<dyn PlatformTls>) {
+        let _ = self.platform_tls.set(tls);
+    }
+
     /// Whether actions the server refused were undone on the device since this was last
     /// called, so the app can say so.
     pub fn take_reverted(&self) -> Result<bool, CoreError> {
@@ -246,12 +267,43 @@ impl Core {
 
     /// The accounts in the order they were added.
     pub fn accounts(&self) -> Result<Vec<AccountItem>, CoreError> {
+        let signature = self.store.signature()?;
         Ok(self
             .store
             .accounts()?
             .into_iter()
-            .map(AccountItem::from)
+            .map(|a| {
+                let can_push = match a.kind {
+                    AccountKind::Imap | AccountKind::Gmail => true,
+                    // Unreadable, it is not offered Instantly, rather than losing the list.
+                    AccountKind::Exchange => self.speaks_active_sync(a.id).unwrap_or(false),
+                    AccountKind::Graph => false,
+                };
+                AccountItem::new(a, can_push, &signature)
+            })
             .collect())
+    }
+
+    /// Sets when the phone looks for the account's new mail with the app closed.
+    pub fn set_account_new_mail(&self, account: i64, when: NewMail) -> Result<(), CoreError> {
+        Ok(self.store.set_account_new_mail(AccountId(account), when)?)
+    }
+
+    /// The signature of accounts without one of their own; empty for none.
+    pub fn signature(&self) -> Result<String, CoreError> {
+        Ok(self.store.signature()?)
+    }
+
+    /// Sets the signature of accounts without one of their own; empty for none.
+    pub fn set_signature(&self, signature: String) -> Result<(), CoreError> {
+        Ok(self.store.set_signature(&signature)?)
+    }
+
+    /// Gives the account a signature of its own; empty goes back to the default one.
+    pub fn set_account_signature(&self, account: i64, signature: String) -> Result<(), CoreError> {
+        Ok(self
+            .store
+            .set_account_signature(AccountId(account), &signature)?)
     }
 
     /// Sets the account's colour to one of `account_colors`, by its place there.
@@ -463,6 +515,28 @@ impl Core {
         Ok(ids(ops))
     }
 
+    /// A blank message from the first account, signed as it signs. None picked: it goes
+    /// from the first account unless the person picks another.
+    pub fn new_draft(&self) -> Result<DraftItem, CoreError> {
+        let signature = match self.store.accounts()?.first() {
+            Some(first) => self.signs_with(first)?,
+            None => String::new(),
+        };
+        Ok(DraftItem {
+            id: 0,
+            account_id: 0,
+            to: String::new(),
+            subject: String::new(),
+            text: String::new(),
+            reply_to: None,
+            quote: String::new(),
+            saved: 0,
+            forward: None,
+            files: vec![],
+            signature,
+        })
+    }
+
     /// An answer to `message` from the account that got it, `Re: ` once: to its sender, or
     /// with `all` to everyone it went to as well.
     pub fn reply(&self, message: MessageItem, all: bool) -> Result<DraftItem, CoreError> {
@@ -479,6 +553,7 @@ impl Core {
             saved: 0,
             forward: None,
             files: vec![],
+            signature: self.signs_with(&account)?,
         })
     }
 
@@ -515,6 +590,7 @@ impl Core {
             reply_to,
             quote,
             forward,
+            signature,
             ..
         } = draft;
         let to = parse_recipients(&to).ok_or(CoreError::BadRecipients)?;
@@ -528,6 +604,7 @@ impl Core {
             to,
             subject,
             text,
+            signature,
             reply_to: reply_to.map(MessageId),
             quote,
             forward: forward.map(MessageId),
@@ -575,6 +652,7 @@ impl Core {
             to: draft.to,
             subject: draft.subject,
             text: draft.text,
+            signature: draft.signature,
             reply_to: draft.reply_to.map(MessageId),
             quote: draft.quote,
             forward: draft.forward.map(MessageId),
@@ -799,6 +877,9 @@ impl Core {
         let refused = Arc::new(RefusedCertificates::default());
         let client = self.client_certificate(certificate.as_deref())?;
         let tls = tls_config(client, trusted, Some(refused.clone()))?;
+        let active_sync = self
+            .tunnel(certificate.as_deref(), trusted, Some(refused.clone()))?
+            .unwrap_or_else(|| tls.clone().into());
         let added = self
             .add_exchange(
                 email,
@@ -806,7 +887,7 @@ impl Core {
                 server,
                 login,
                 certificate,
-                tls,
+                (tls, active_sync),
                 password,
             )
             .await;
@@ -1132,6 +1213,46 @@ impl Core {
     pub async fn wait_for_mail(&self, account: i64, secret: String) -> Result<bool, CoreError> {
         let account = self.account(AccountId(account))?;
         let mut slot = None;
+        let idles = self
+            .no_idle
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(&account.id)
+            .is_none_or(|refused| refused.elapsed() > IDLE_RETRY);
+        if account.kind == AccountKind::Gmail && idles {
+            let token = self.refused(&account, self.access_token(account.id, &secret).await)?;
+            match self.gmail_watch(&account, &token).await {
+                Ok((mut imap, watch)) => {
+                    // Mail since the last sync, asked once IDLE would hear of what comes after.
+                    let remote = self.remote(&mut slot, &account, &secret).await?;
+                    let waited =
+                        wait_for_mail(&*self.store, remote, account.id, Duration::ZERO).await;
+                    if let Some(remote) = slot.take() {
+                        remote.close().await;
+                    }
+                    let changed = match self.refused(&account, waited) {
+                        Ok(false) => imap.watch(watch, MAIL_WAIT).await.map_err(Into::into),
+                        done => done,
+                    };
+                    let _ = imap.logout().await;
+                    return changed;
+                }
+                // An old sign-in without IMAP's scope, or a token Google took back: the API
+                // gets a new one, and is asked now and then.
+                Err(CoreError::Auth) => {
+                    log::info!("Gmail IMAP refused the token; the API is asked instead");
+                    self.tokens
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .remove(&account.id);
+                    self.no_idle
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .insert(account.id, Instant::now());
+                }
+                Err(e) => return Err(e),
+            }
+        }
         let remote = self.remote(&mut slot, &account, &secret).await?;
         let waited = wait_for_mail(&*self.store, remote, account.id, MAIL_WAIT).await;
         if let Some(remote) = slot {
@@ -1187,6 +1308,11 @@ impl Core {
             saved: 0,
             forward: Some(message.id),
             files: vec![],
+            // Removed meanwhile: the send says so.
+            signature: self
+                .account(AccountId(message.account_id))
+                .and_then(|a| self.signs_with(&a))
+                .unwrap_or_default(),
         })
     }
 
@@ -1457,6 +1583,11 @@ impl Core {
             .collect())
     }
 
+    /// What goes under the mail of `account`.
+    fn signs_with(&self, account: &Account) -> Result<String, CoreError> {
+        Ok(account.signs_with(&self.store.signature()?).to_owned())
+    }
+
     /// `result`, or nothing done if it failed because the account was removed meanwhile.
     fn unless_removed<T: Default>(
         &self,
@@ -1516,7 +1647,7 @@ impl Core {
         }
         let opened = self.signed_in(account, async {
             Ok(match account.kind {
-                AccountKind::Imap => Remote::Imap(self.connect(account, secret).await?),
+                AccountKind::Imap => Remote::Imap(Box::new(self.connect(account, secret).await?)),
                 AccountKind::Gmail => {
                     let token = self.access_token(account.id, secret).await?;
                     Remote::Gmail(GmailSession::new(self.tls()?, &token))
@@ -1592,7 +1723,7 @@ impl Core {
         email: String,
         display_name: String,
         server: Server,
-        tls: Arc<ClientConfig>,
+        tls: Tls,
         password: String,
     ) -> Result<i64, CoreError> {
         let kept = Arc::new(Kept::default());
@@ -1637,7 +1768,7 @@ impl Core {
         server: Option<String>,
         login: Option<String>,
         certificate: Option<String>,
-        tls: Arc<ClientConfig>,
+        (tls, active_sync): (Arc<ClientConfig>, Tls),
         password: String,
     ) -> Result<i64, CoreError> {
         if self.exists(&email)? {
@@ -1668,7 +1799,13 @@ impl Core {
                             certificate,
                         };
                         return match self
-                            .add_active_sync_account(email, display_name, server, tls, password)
+                            .add_active_sync_account(
+                                email,
+                                display_name,
+                                server,
+                                active_sync,
+                                password,
+                            )
                             .await
                         {
                             Err(CoreError::Server { .. }) => Err(CoreError::NoEws),
@@ -1720,6 +1857,21 @@ impl Core {
         Ok(trusted.as_deref().and_then(unhex))
     }
 
+    /// A Gmail inbox opened to wait in IDLE, signed in to Gmail's IMAP with the account's API
+    /// `token`: the API has no push without a server of ours. Its failures leave the account
+    /// signed in.
+    async fn gmail_watch(
+        &self,
+        account: &Account,
+        token: &str,
+    ) -> Result<(ImapSession, Watch), CoreError> {
+        let mut imap =
+            ImapSession::connect_oauth(GMAIL_IMAP, IMAPS_PORT, self.tls()?, &account.email, token)
+                .await?;
+        let watch = imap.begin_watch("INBOX").await?;
+        Ok((imap, watch))
+    }
+
     /// Whether a saved Exchange account speaks ActiveSync rather than EWS.
     fn speaks_active_sync(&self, account: AccountId) -> Result<bool, CoreError> {
         let protocol = self.store.provider_state(account, PROTOCOL)?;
@@ -1732,7 +1884,11 @@ impl Core {
         let server = account.server.as_ref().ok_or_else(|| CoreError::Storage {
             detail: "no Exchange server".into(),
         })?;
-        let tls = self.tls_for(server.certificate.as_deref(), self.trusted(account.id)?)?;
+        let (certificate, trusted) = (server.certificate.as_deref(), self.trusted(account.id)?);
+        let tls = match self.tunnel(certificate, trusted, None)? {
+            Some(tunnel) => tunnel,
+            None => self.tls_for(certificate, trusted)?.into(),
+        };
         let state = Arc::new(AccountState {
             store: self.store.clone(),
             account: account.id,
@@ -1983,6 +2139,23 @@ impl Core {
         Ok(tls)
     }
 
+    /// The platform's TLS offering `certificate`, when there is one and the app gave it.
+    fn tunnel(
+        &self,
+        certificate: Option<&str>,
+        trusted: Option<[u8; 32]>,
+        refused: Option<Arc<RefusedCertificates>>,
+    ) -> Result<Option<Tls>, CoreError> {
+        let (Some(certificate), Some(tls)) = (certificate, self.platform_tls.get()) else {
+            return Ok(None);
+        };
+        Ok(Some(Tls::Tunnel(Arc::new(tunnel::Platform {
+            tls: tls.clone(),
+            certificate: certificate.to_owned(),
+            checks: server_checks(trusted, refused)?,
+        }))))
+    }
+
     /// Offers the platform's client certificate `certificate` to a server that asks.
     fn client_certificate(
         &self,
@@ -2077,7 +2250,7 @@ impl ProviderState for Kept {
 
 /// The open connection to an account's server.
 enum Remote {
-    Imap(ImapSession),
+    Imap(Box<ImapSession>),
     Gmail(GmailSession),
     Ews(EwsSession),
     Eas(EasSession),
@@ -2316,16 +2489,32 @@ fn tls_config(
     trusted: Option<[u8; 32]>,
     refused: Option<Arc<RefusedCertificates>>,
 ) -> Result<Arc<ClientConfig>, CoreError> {
-    // Without the JNI setup the Android verifier panics on first use; refuse cleanly instead.
+    ready()?;
+    ozero_imap::platform_tls(client, trusted, refused).map_err(|e| CoreError::Tls {
+        detail: e.to_string(),
+    })
+}
+
+/// The checks `tls_config` builds into its settings, for the platform's TLS to ask.
+fn server_checks(
+    trusted: Option<[u8; 32]>,
+    refused: Option<Arc<RefusedCertificates>>,
+) -> Result<Arc<dyn ServerCertVerifier>, CoreError> {
+    ready()?;
+    ozero_imap::platform_checks(trusted, refused).map_err(|e| CoreError::Tls {
+        detail: e.to_string(),
+    })
+}
+
+/// Without the JNI setup the Android verifier panics on first use; refuse cleanly instead.
+fn ready() -> Result<(), CoreError> {
     #[cfg(target_os = "android")]
     if !android::READY.load(std::sync::atomic::Ordering::Acquire) {
         return Err(CoreError::Tls {
             detail: "CoreNative.init was not called".into(),
         });
     }
-    ozero_imap::platform_tls(client, trusted, refused).map_err(|e| CoreError::Tls {
-        detail: e.to_string(),
-    })
+    Ok(())
 }
 
 #[cfg(target_os = "android")]
@@ -2436,6 +2625,14 @@ pub enum AccountKind {
     Exchange,
 }
 
+/// When the phone looks for an account's new mail while the app is closed.
+#[uniffi::remote(Enum)]
+pub enum NewMail {
+    Push,
+    Every { minutes: u32 },
+    Manually,
+}
+
 /// A mail service sign-in knows by the domain of an address.
 #[uniffi::remote(Enum)]
 pub enum MailService {
@@ -2475,14 +2672,32 @@ pub struct AccountItem {
     pub color_index: u32,
     /// How many days back its mail is kept on the device; 0 keeps all of it.
     pub keep_days: u32,
+    /// When the phone looks for its new mail with the app closed; never `Push` for an account
+    /// that cannot.
+    pub new_mail: NewMail,
+    /// Whether its server says when mail comes, so it can be `Push`.
+    pub can_push: bool,
     pub kind: AccountKind,
     /// The server refused the saved secret: mail stops until the person signs in again.
     pub needs_sign_in: bool,
+    /// Its own signature; empty when it uses the default one.
+    pub signature: String,
+    /// What goes under its mail: its own signature, else the default one.
+    pub signs_with: String,
 }
 
-impl From<Account> for AccountItem {
-    fn from(a: Account) -> Self {
+impl AccountItem {
+    /// `can_push` if its server says when mail comes; one that cannot is never `Push`.
+    /// `signature` is the default one, for accounts without their own.
+    fn new(a: Account, can_push: bool, signature: &str) -> Self {
+        let new_mail = match a.new_mail {
+            NewMail::Push if !can_push => NewMail::Every {
+                minutes: SOONEST_CHECK,
+            },
+            when => when,
+        };
         Self {
+            signs_with: a.signs_with(signature).to_owned(),
             id: a.id.0,
             color: rgb(a.color),
             color_index: a.color % ACCOUNT_COLORS.len() as u32,
@@ -2491,8 +2706,11 @@ impl From<Account> for AccountItem {
             display_name: a.display_name,
             label: a.label,
             keep_days: a.keep_days,
+            new_mail,
+            can_push,
             kind: a.kind,
             needs_sign_in: a.needs_sign_in,
+            signature: a.signature,
         }
     }
 }
@@ -2638,6 +2856,10 @@ pub struct DraftItem {
     /// or sending the draft leaves them be.
     #[uniffi(default = [])]
     pub files: Vec<DraftFileItem>,
+    /// Goes between the text and the quote; empty for none. A message started by the core
+    /// has its account's `signs_with`.
+    #[uniffi(default = "")]
+    pub signature: String,
 }
 
 /// A file of saved mail, offered to send on.
@@ -2723,6 +2945,7 @@ impl From<SavedDraft> for DraftItem {
             saved: d.saved / 1_000,
             forward: d.forward.map(|m| m.0),
             files: d.files.into_iter().map(DraftFileItem::from).collect(),
+            signature: d.signature,
         }
     }
 }
@@ -3091,6 +3314,10 @@ impl From<SyncError> for CoreError {
 mod certificate;
 
 pub use certificate::{ClientCertificates, Signing};
+
+mod tunnel;
+
+pub use tunnel::{PlatformSocket, PlatformTls, PlatformTlsError, ServerChecks};
 
 #[cfg(test)]
 mod tests;

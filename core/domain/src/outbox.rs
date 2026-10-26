@@ -16,6 +16,8 @@ pub struct Draft {
     pub text: String,
     /// The message this answers.
     pub reply_to: Option<MessageId>,
+    /// Goes under the text, above the quote; empty for none.
+    pub signature: String,
     /// The answered message, quoted under the text; empty for none.
     pub quote: String,
     /// The forwarded message, whose files go with it.
@@ -38,6 +40,7 @@ pub struct SavedDraft {
     pub to: String,
     pub subject: String,
     pub text: String,
+    pub signature: String,
     pub reply_to: Option<MessageId>,
     pub quote: String,
     pub forward: Option<MessageId>,
@@ -136,14 +139,14 @@ pub fn quote(header: String, text: &str) -> String {
     quote
 }
 
-/// What a message says: the text, then the quote, if any, after a blank line.
-pub fn with_quote(text: &str, quote: &str) -> String {
-    let text = text.trim_end();
-    match (text.is_empty(), quote.is_empty()) {
-        (_, true) => text.to_owned(),
-        (true, false) => quote.to_owned(),
-        (false, false) => format!("{text}\n\n{quote}"),
-    }
+/// What a message says: the text, the signature and the quote, those there are, with a
+/// blank line between them.
+pub fn full_text(text: &str, signature: &str, quote: &str) -> String {
+    [text.trim_end(), signature.trim_end(), quote]
+        .into_iter()
+        .filter(|part| !part.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 /// `Re: ` once, the way mail clients answer.
@@ -225,9 +228,17 @@ mod tests {
     fn quotes_line_by_line() {
         let quote = quote("Anna wrote:".into(), "Hi\n\nBye\n");
         assert_eq!(quote, "Anna wrote:\n> Hi\n>\n> Bye");
-        assert_eq!(with_quote("Hello\n", &quote), format!("Hello\n\n{quote}"));
-        assert_eq!(with_quote("Hello", ""), "Hello");
-        assert_eq!(with_quote(" \n", &quote), quote);
+        assert_eq!(
+            full_text("Hello\n", "", &quote),
+            format!("Hello\n\n{quote}")
+        );
+        assert_eq!(full_text("Hello", "", ""), "Hello");
+        assert_eq!(full_text(" \n", "", &quote), quote);
+        assert_eq!(
+            full_text("Hello\n", "--\nAnna\n", &quote),
+            format!("Hello\n\n--\nAnna\n\n{quote}")
+        );
+        assert_eq!(full_text("", "--\nAnna", ""), "--\nAnna");
     }
 
     #[test]

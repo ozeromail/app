@@ -507,6 +507,44 @@ async fn tells_a_device_the_company_has_not_let_in() {
     assert_eq!(eas.check().await, Err(ProviderError::Blocked));
 }
 
+#[tokio::test]
+async fn pings_until_the_inbox_changes() {
+    let (mut eas, _, took, _) = server(|cmd, request, _| {
+        let heartbeat = request.text_at(&["Ping:HeartbeatInterval"]);
+        let answer = match (cmd, heartbeat) {
+            // Longer than this server takes: it says how long it does.
+            ("Ping", "300") => vec![t("Ping:Status", "5"), t("Ping:HeartbeatInterval", "240")],
+            ("Ping", _) => vec![t("Ping:Status", "2")],
+            _ => vec![],
+        };
+        (200, Some(n("Ping:Ping", answer)))
+    })
+    .await;
+    let waited = eas
+        .wait("1", Checkpoint::default(), Duration::from_secs(300))
+        .await;
+    assert_eq!(waited, Ok(true));
+    let took = took.lock().unwrap();
+    let asked: Vec<_> = took
+        .iter()
+        .map(|(cmd, r)| {
+            let folder = r.text_at(&["Ping:Folders", "Ping:Folder", "Ping:Id"]);
+            (cmd.as_str(), r.text_at(&["Ping:HeartbeatInterval"]), folder)
+        })
+        .collect();
+    assert_eq!(asked, [("Ping", "300", "1"), ("Ping", "240", "1")]);
+}
+
+#[tokio::test]
+async fn looks_now_and_then_when_the_server_does_not_ping() {
+    let (mut eas, ..) =
+        server(|_, _, _| (200, Some(n("Ping:Ping", vec![t("Ping:Status", "8")])))).await;
+    let waited = eas
+        .wait("1", Checkpoint::default(), Duration::from_millis(10))
+        .await;
+    assert_eq!(waited, Ok(false));
+}
+
 #[test]
 fn reads_times_with_and_without_fractions() {
     assert_eq!(time("2026-10-26T09:00:00.000Z"), Some(1_793_005_200));

@@ -17,7 +17,7 @@ use ozero_domain::{
     Changes, Checkpoint, Flags, FolderRole, MailProvider, MailSender, Moved, NewFolder, Older,
     ProviderError, ProviderState, RawMessage, Server,
 };
-use tokio_rustls::rustls::ClientConfig;
+use ozero_http::Tls;
 
 use crate::client::Client;
 use crate::discover::ACTIVE_SYNC;
@@ -37,6 +37,9 @@ const MAX_WINDOW: u32 = 512;
 const MAX_IDS: usize = 100;
 /// Mail from the last month (FilterType 5), the longest span synced: older mail is not.
 const MONTH: &str = "5";
+/// The shortest and longest a Ping may wait, in seconds, as Exchange allows by default.
+const MIN_HEARTBEAT: u64 = 60;
+const MAX_HEARTBEAT: u64 = 3540;
 /// What Outlook calls the junk folder, which ActiveSync does not mark.
 const JUNK_NAMES: [&str; 3] = ["junk e-mail", "junk email", "нежелательная почта"];
 
@@ -86,7 +89,7 @@ impl EasSession {
     /// For the ActiveSync endpoint at `server`, signed in as `server.user`, keeping its sync
     /// keys in `state`.
     pub fn new(
-        tls: Arc<ClientConfig>,
+        tls: impl Into<Tls>,
         server: &Server,
         password: &str,
         state: Arc<dyn ProviderState>,
@@ -173,8 +176,20 @@ impl EasSession {
         request: &Node,
         repeatable: bool,
     ) -> Result<Node, ProviderError> {
+        self.command_waiting(cmd, request, repeatable, Duration::ZERO)
+            .await
+    }
+
+    /// Like `command`, for a long poll: the server may hold its answer up to `wait`.
+    async fn command_waiting(
+        &mut self,
+        cmd: &str,
+        request: &Node,
+        repeatable: bool,
+        wait: Duration,
+    ) -> Result<Node, ProviderError> {
         for provisioned in [false, true] {
-            let answer = self.request(cmd, request, repeatable).await?;
+            let answer = self.request(cmd, request, repeatable, wait).await?;
             let asks = answer
                 .as_ref()
                 .is_none_or(|a| matches!(status(a), 142..=144));
@@ -198,6 +213,7 @@ impl EasSession {
         cmd: &str,
         request: &Node,
         repeatable: bool,
+        wait: Duration,
     ) -> Result<Option<Node>, ProviderError> {
         let path = format!("{ACTIVE_SYNC}?Cmd={cmd}{}", self.query);
         let headers = [
@@ -206,7 +222,14 @@ impl EasSession {
         ];
         let response = self
             .client
-            .post_to(&path, &headers, CONTENT_TYPE, &encode(request), repeatable)
+            .post_to(
+                &path,
+                &headers,
+                CONTENT_TYPE,
+                &encode(request),
+                repeatable,
+                wait,
+            )
             .await?;
         match response.status {
             449 => Ok(None),
@@ -269,7 +292,7 @@ impl EasSession {
 
     async fn provisioning(&mut self, request: &Node) -> Result<Node, ProviderError> {
         let answer = self
-            .request("Provision", request, true)
+            .request("Provision", request, true, Duration::ZERO)
             .await?
             .ok_or_else(|| protocol("asked for the policy while taking it"))?;
         // A server that wants the phone wiped gets no answer to that.
@@ -919,11 +942,47 @@ impl MailProvider for EasSession {
 
     async fn wait(
         &mut self,
-        _folder: &str,
+        folder: &str,
         _since: Checkpoint,
         wait: Duration,
     ) -> Result<bool, ProviderError> {
-        // A sync with nothing new costs one small request.
+        // Ping answers once the folder has changed since its last sync, or when the heartbeat
+        // is over: mail comes the moment the server has it.
+        let mut heartbeat = wait.as_secs().clamp(MIN_HEARTBEAT, MAX_HEARTBEAT);
+        for _ in 0..2 {
+            let request = Node::new(
+                "Ping:Ping",
+                vec![
+                    Node::text("Ping:HeartbeatInterval", heartbeat.to_string()),
+                    Node::new(
+                        "Ping:Folders",
+                        vec![Node::new(
+                            "Ping:Folder",
+                            vec![
+                                Node::text("Ping:Id", folder),
+                                Node::text("Ping:Class", "Email"),
+                            ],
+                        )],
+                    ),
+                ],
+            );
+            let answer = self
+                .command_waiting("Ping", &request, true, Duration::from_secs(heartbeat))
+                .await?;
+            match status(&answer) {
+                1 => return Ok(false),
+                // The folder changed, or the folder list did: a sync finds out what.
+                2 | 7 => return Ok(true),
+                // Out of the server's range: it says the nearest it takes.
+                5 => match answer.text_at(&["Ping:HeartbeatInterval"]).trim().parse() {
+                    Ok(taken) if taken != heartbeat => heartbeat = taken,
+                    _ => break,
+                },
+                _ => break,
+            }
+        }
+        // A server that does not ping is looked at now and then; a sync with nothing new costs
+        // one small request.
         tokio::time::sleep(wait.min(POLL)).await;
         Ok(wait >= POLL)
     }

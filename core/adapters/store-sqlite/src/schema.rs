@@ -314,4 +314,17 @@ pub const MIGRATIONS: &[&str] = &[
     ) WITHOUT ROWID;
     CREATE INDEX snooze_due ON snooze(wake_at) WHERE woke = 0;
     ",
+    // 32: when the phone looks for an account's new mail with the app closed: 0 as soon as it
+    // comes, -1 only with the app open, else every so many minutes.
+    "
+    ALTER TABLE account ADD COLUMN new_mail INTEGER NOT NULL DEFAULT 0;
+    ",
+    // 33: signatures: an account's own, empty for the default one kept in `setting`, and
+    // the one of each message being written or sent.
+    "
+    ALTER TABLE account ADD COLUMN signature TEXT NOT NULL DEFAULT '';
+    ALTER TABLE draft ADD COLUMN signature TEXT NOT NULL DEFAULT '';
+    ALTER TABLE outbox ADD COLUMN signature TEXT NOT NULL DEFAULT '';
+    CREATE TABLE setting (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;
+    ",
 ];

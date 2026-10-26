@@ -40,6 +40,8 @@ final class InboxModel {
     var inboxEmpty = false
     var unsent: [UnsentItem] = []
     var accounts: [AccountItem] = []
+    /// The default signature, for accounts without their own.
+    var signature = ""
     var folders: [FolderItem] = []
     var drafts: [DraftItem] = []
     var syncing = false
@@ -56,7 +58,11 @@ final class InboxModel {
     /// the last message leaves, and not on opening the app or on picking an empty tab.
     var hadMail = false
     /// The key of the error to show, if any.
-    var error: String?
+    var error: String? {
+        didSet { failing = [] }
+    }
+    /// The accounts `error` is about, by name, when a check failed for some and not others.
+    var failing: [String] = []
     /// When the inbox last synced, to say how fresh it is.
     var checkedAt: Date?
     var toast: Toast?
@@ -73,6 +79,8 @@ final class InboxModel {
     /// The account being signed in to again.
     var signingIn: AccountItem?
     var accountsOpen = false
+    /// An account just added, whose settings the sheet opens on: its name, when its mail comes.
+    var added: Int64?
     /// Messages chosen to act on together.
     var chosen: Set<Int64> = []
     /// Messages waiting on the snooze sheet for a time.
@@ -207,6 +215,8 @@ final class InboxModel {
         do {
             let accounts = try await mail.accounts()
             if accounts != self.accounts { self.accounts = accounts }
+            let signature = try await mail.signature()
+            if signature != self.signature { self.signature = signature }
         } catch {
             self.error = error.textKey()
         }
@@ -297,6 +307,8 @@ final class InboxModel {
             finish(false)
             return false
         } catch {
+            let partly = error as? PartlyFailed
+            let error = partly?.error ?? error
             // Another error means the network is there.
             let since = error.isNetwork ? offlineSince ?? started : nil
             offlineSince = since
@@ -304,6 +316,7 @@ final class InboxModel {
                 _ = error.textKey()
             } else {
                 self.error = error.textKey()
+                failing = partly?.accounts ?? []
             }
             synced = false
         }
@@ -588,6 +601,15 @@ final class InboxModel {
 
     // MARK: Accounts
 
+    /// Opens a new message, signed; unsigned rather than not at all. A second tap meanwhile
+    /// opens nothing more.
+    func write() {
+        Task {
+            let draft = (try? await mail.newDraft()) ?? newDraft
+            if composing == nil { composing = Composing(draft: draft) }
+        }
+    }
+
     /// Saves a change to an account; the sheet and the rows show it once it is saved.
     func changeAccount(_ change: @escaping () async throws -> Void) {
         Task {
@@ -705,6 +727,10 @@ final class InboxModel {
         if new { everSynced = everSynced.filter { !$0.hasPrefix(Mailbox.unifiedKey) } }
         Task {
             await loadAccounts()
+            if new, let newest = accounts.map(\.id).max() {
+                added = newest
+                accountsOpen = true
+            }
             await sync()
         }
     }

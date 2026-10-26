@@ -52,10 +52,11 @@ struct InboxView: View {
                 Task { await model.snooze(snoozing.messages, until: until) }
             }
         }
-        .sheet(isPresented: $model.accountsOpen) {
+        .sheet(isPresented: $model.accountsOpen, onDismiss: { model.added = nil }) {
             AccountsSheet(
                 accounts: model.accounts, folders: model.folders, mailbox: model.mailbox, drafts: model.drafts.count,
-                swipes: $model.swipes, groups: $model.groups, actions: accountsActions)
+                signature: model.signature, swipes: $model.swipes, groups: $model.groups, actions: accountsActions,
+                startOn: model.added)
             .task { await model.loadFolders() }
         }
         .fullScreenCover(isPresented: $model.addingAccount) {
@@ -137,11 +138,16 @@ struct InboxView: View {
             },
             onColor: { account, color in model.changeAccount { try await model.mail.setAccountColor(account, color: color) } },
             onLabel: { account, label in model.changeAccount { try await model.mail.setAccountLabel(account, label: label) } },
+            onSignature: { text in model.changeAccount { try await model.mail.setSignature(text) } },
+            onAccountSignature: { account, text in
+                model.changeAccount { try await model.mail.setAccountSignature(account, signature: text) }
+            },
             onSignIn: { account in
                 model.accountsOpen = false
                 model.signingIn = account
             },
             onKeepDays: { account, days in model.changeAccount { try await model.mail.setKeepDays(account, days: days) } },
+            onNewMail: { account, check in model.changeAccount { try await model.mail.setNewMail(account, check) } },
             onRemove: { account in Task { await model.remove(account) } },
             onWrite: {
                 model.accountsOpen = false
@@ -205,16 +211,21 @@ private struct InboxList: View {
     }
 
     /// What the line over the dock says, and whether a new check may help.
-    private var status: (key: String, retry: Bool)? {
+    private var status: (text: String, retry: Bool)? {
         if let error = model.error {
-            if error == "error_network" { return ("status_offline", true) }
+            // Like Apple Mail, says which account it is when the others got through.
+            let accounts = model.failing.joined(separator: ", ")
+            if error == "error_network" {
+                return (accounts.isEmpty ? tr("status_offline") : tr("status_offline_account", accounts), true)
+            }
             // A sync's own failures; another error is not one a new check mends.
-            return (error, error == "error_server" || error == "error_tls")
+            let text = accounts.isEmpty ? tr(error) : tr("status_account_failed", accounts, tr(error))
+            return (text, error == "error_server" || error == "error_tls")
         }
-        if model.syncing && slow == 2 && !waiting { return ("status_background", false) }
+        if model.syncing && slow == 2 && !waiting { return (tr("status_background"), false) }
         // An empty list's words say it themselves.
-        if refreshing && !model.messages.isEmpty { return (slow > 0 ? "status_slow" : "status_checking", false) }
-        if upToDate { return ("status_up_to_date", false) }
+        if refreshing && !model.messages.isEmpty { return (tr(slow > 0 ? "status_slow" : "status_checking"), false) }
+        if upToDate { return (tr("status_up_to_date"), false) }
         return nil
     }
 
@@ -362,7 +373,7 @@ private struct InboxList: View {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button { model.path.append(.search) } label: { Image(systemName: "magnifyingglass") }
                         .accessibilityLabel(Text("search_prompt"))
-                    Button { model.composing = Composing(draft: newDraft) } label: { Image(systemName: "square.and.pencil") }
+                    Button { model.write() } label: { Image(systemName: "square.and.pencil") }
                         .accessibilityLabel(Text("compose_new"))
                 }
             }
@@ -376,7 +387,7 @@ private struct InboxList: View {
                 }
                 if let status {
                     HStack {
-                        Text(LocalizedStringKey(status.key))
+                        Text(verbatim: status.text)
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -393,7 +404,7 @@ private struct InboxList: View {
                 }
             }
             .animation(.smooth, value: model.toast)
-            .animation(.smooth, value: status?.key)
+            .animation(.smooth, value: status?.text)
         }
         .confirmationDialog("action_more", isPresented: $more) {
             Button("action_select_all") { model.chosen.formUnion(model.messages.map(\.id)) }
@@ -589,7 +600,7 @@ private struct ComposeButton: View {
 
     var body: some View {
         Button {
-            model.composing = Composing(draft: newDraft)
+            model.write()
         } label: {
             Image(systemName: "square.and.pencil")
                 .font(.title3.weight(.semibold))

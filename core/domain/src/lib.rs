@@ -12,8 +12,8 @@ mod sort;
 mod store;
 
 pub use account::{
-    Account, AccountId, AccountKind, MailService, NewAccount, Server, email_domain,
-    guess_imap_host, guess_smtp_host, mail_service, saves_sent_itself,
+    Account, AccountId, AccountKind, MailService, NewAccount, NewMail, Server, default_label,
+    email_domain, guess_imap_host, guess_smtp_host, mail_service, saves_sent_itself,
 };
 pub use encoding::{base64, decode_base64};
 pub use folder::{Folder, FolderId, FolderRole, NewFolder, SNOOZED};
@@ -24,7 +24,7 @@ pub use message::{
 pub use op::{Action, Op, OpId};
 pub use outbox::{
     Draft, DraftFile, DraftId, FileId, OutboxId, Outgoing, OutgoingFile, SavedDraft, Unsent,
-    forward_quote, forward_subject, is_address, parse_recipients, quote, reply_subject, with_quote,
+    forward_quote, forward_subject, full_text, is_address, parse_recipients, quote, reply_subject,
 };
 pub use provider::{
     Changes, Checkpoint, MailProvider, MailSender, MessageBuilder, MessageParser, Moved, Older,

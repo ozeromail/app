@@ -7,8 +7,11 @@ struct AccountsActions {
     let onAdd: () -> Void
     let onColor: (AccountItem, Int) -> Void
     let onLabel: (AccountItem, String) -> Void
+    let onSignature: (String) -> Void
+    let onAccountSignature: (AccountItem, String) -> Void
     let onSignIn: (AccountItem) -> Void
     let onKeepDays: (AccountItem, Int) -> Void
+    let onNewMail: (AccountItem, NewMail) -> Void
     let onRemove: (AccountItem) -> Void
     let onWrite: () -> Void
 }
@@ -20,14 +23,19 @@ struct AccountsSheet: View {
     let folders: [FolderItem]
     let mailbox: Mailbox
     let drafts: Int
+    /// The default one, for accounts without their own.
+    let signature: String
     @Binding var swipes: Swipes
     @Binding var groups: Groups
     let actions: AccountsActions
+    /// The account whose page it opens on, as after adding it.
+    var startOn: Int64?
 
     @Environment(\.dismiss) private var dismiss
+    @State private var path: [Page] = []
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             List {
                 MailboxRows(
                     accounts: accounts, folders: folders, mailbox: mailbox, drafts: drafts, groups: $groups,
@@ -41,6 +49,17 @@ struct AccountsSheet: View {
                             }
                         } icon: {
                             Image(systemName: "hand.draw").foregroundStyle(Color.ozeroAccent)
+                        }
+                    }
+                    NavigationLink(value: Page.signature) {
+                        Label {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("signature_title")
+                                Text(verbatim: signature.components(separatedBy: .newlines).first { !$0.isBlank } ?? tr("signature_none"))
+                                    .font(.footnote).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                        } icon: {
+                            Image(systemName: "signature").foregroundStyle(Color.ozeroAccent)
                         }
                     }
                     SheetAction(icon: "plus", text: "inbox_add_account", color: .ozeroAccent, action: actions.onAdd)
@@ -59,14 +78,21 @@ struct AccountsSheet: View {
                 switch page {
                 case .swipes:
                     SwipeSettings(swipes: $swipes)
+                case .signature:
+                    Form {
+                        SignatureSection(saved: signature, label: "signature_title", placeholder: "", hint: "signature_hint",
+                                         onSave: actions.onSignature)
+                    }
+                    .navigationTitle("signature_title")
                 case .account(let id):
                     // Gone, say removed meanwhile: nothing to show.
                     if let account = accounts.first(where: { $0.id == id }) {
-                        AccountSettings(account: account, actions: actions)
+                        AccountSettings(account: account, signature: signature, actions: actions)
                     }
                 }
             }
         }
+        .onAppear { if let startOn { path = [.account(startOn)] } }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
     }
@@ -131,6 +157,7 @@ struct MailboxRows: View {
 /// A page of the sheet past the list.
 private enum Page: Hashable {
     case swipes
+    case signature
     case account(Int64)
 }
 
@@ -239,10 +266,12 @@ private struct SwipeSettings: View {
     }
 }
 
-/// One account: its name and colour, how much of its mail the phone keeps, and a way to remove
-/// it. One the server signed out offers to sign in again first.
+/// One account: its name and colour, when new mail comes, how much of its mail the phone keeps,
+/// and a way to remove it. One the server signed out offers to sign in again first.
 private struct AccountSettings: View {
     let account: AccountItem
+    /// The default one, shown while the account has none.
+    let signature: String
     let actions: AccountsActions
 
     @State private var label: String
@@ -251,8 +280,9 @@ private struct AccountSettings: View {
     @State private var confirming = false
     @FocusState private var editing: Bool
 
-    init(account: AccountItem, actions: AccountsActions) {
+    init(account: AccountItem, signature: String, actions: AccountsActions) {
         self.account = account
+        self.signature = signature
         self.actions = actions
         _label = State(initialValue: account.label)
         _saved = State(initialValue: account.label)
@@ -270,11 +300,20 @@ private struct AccountSettings: View {
                 }
             }
             Section {
-                TextField(text: $label, prompt: Text(verbatim: account.email)) { Text("account_name") }
-                    .textInputAutocapitalization(.sentences)
-                    .submitLabel(.done)
-                    .focused($editing)
-                    .onSubmit(saveLabel)
+                HStack {
+                    TextField(text: $label, prompt: Text(verbatim: account.email)) { Text("account_name") }
+                        .textInputAutocapitalization(.sentences)
+                        .submitLabel(.done)
+                        .focused($editing)
+                        .onSubmit(saveLabel)
+                    if label.trimmingCharacters(in: .whitespaces) != saved {
+                        Button("action_save") {
+                            editing = false
+                            saveLabel()
+                        }
+                        .fontWeight(.medium)
+                    }
+                }
             } header: {
                 Text("account_name")
             } footer: {
@@ -283,8 +322,24 @@ private struct AccountSettings: View {
                 let hint = tr("account_name_hint")
                 Text(verbatim: sender.isEmpty || sender == account.email ? hint : tr("account_sender", hint, sender))
             }
+            SignatureSection(saved: account.signature, label: "account_signature", placeholder: signature,
+                             hint: "account_signature_hint") { actions.onAccountSignature(account, $0) }
             Section("account_color") {
                 Swatches(current: Int(account.colorIndex)) { actions.onColor(account, $0) }
+            }
+            Section {
+                Picker("account_new_mail", selection: Binding(get: { account.newMail }, set: { actions.onNewMail(account, $0) })) {
+                    ForEach(newMail, id: \.check) { Text($0.label).tag($0.check) }
+                }
+                .pickerStyle(.segmented)
+            } header: {
+                Text("account_new_mail")
+            } footer: {
+                switch account.newMail {
+                case .push: Text("account_new_mail_push_hint_ios")
+                case .manually: Text("account_new_mail_manually_hint")
+                case .every: Text("account_new_mail_every_hint")
+                }
             }
             Section {
                 Picker("account_keep", selection: Binding(get: { Int(account.keepDays) }, set: { actions.onKeepDays(account, $0) })) {
@@ -316,6 +371,63 @@ private struct AccountSettings: View {
         guard name != saved else { return }
         saved = name
         actions.onLabel(account, label)
+    }
+
+    /// The choices of when new mail comes; Instantly only where the server can.
+    private var newMail: [(check: NewMail, label: LocalizedStringKey)] {
+        allNewMail.filter { account.canPush || $0.check != .push }
+    }
+}
+
+/// When the phone looks for an account's new mail with the app closed, and what to call it.
+private let allNewMail: [(check: NewMail, label: LocalizedStringKey)] = [
+    (.push, "account_new_mail_push"), (.every(minutes: 15), "account_new_mail_quarter"),
+    (.every(minutes: 60), "account_new_mail_hourly"), (.manually, "account_new_mail_manually"),
+]
+
+/// A signature of a few lines under `label`, `placeholder` while empty; saved when it loses focus
+/// and when the page closes.
+private struct SignatureSection: View {
+    let label: LocalizedStringKey
+    let placeholder: String
+    let hint: LocalizedStringKey
+    let onSave: (String) -> Void
+
+    @State private var text: String
+    /// What was last sent, so leaving after a save does not send it again.
+    @State private var sent: String
+    @FocusState private var editing: Bool
+
+    init(saved: String, label: LocalizedStringKey, placeholder: String, hint: LocalizedStringKey,
+         onSave: @escaping (String) -> Void) {
+        self.label = label
+        self.placeholder = placeholder
+        self.hint = hint
+        self.onSave = onSave
+        _text = State(initialValue: saved)
+        _sent = State(initialValue: saved)
+    }
+
+    var body: some View {
+        Section {
+            TextField(text: $text, prompt: Text(verbatim: placeholder), axis: .vertical) { Text(label) }
+                .lineLimit(3...8)
+                .focused($editing)
+        } header: {
+            Text(label)
+        } footer: {
+            Text(hint)
+        }
+        .onDisappear(perform: save)
+        .onChange(of: editing) { _, now in if !now { save() } }
+    }
+
+    private func save() {
+        // Trimmed at the end only, as it is kept.
+        let trimmed = text.replacingOccurrences(of: "\\s+$", with: "", options: .regularExpression)
+        guard trimmed != sent else { return }
+        sent = trimmed
+        onSave(text)
     }
 }
 
