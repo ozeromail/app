@@ -40,6 +40,8 @@ final class InboxModel {
     var inboxEmpty = false
     var unsent: [UnsentItem] = []
     var accounts: [AccountItem] = []
+    /// The default signature, for accounts without their own.
+    var signature = ""
     var folders: [FolderItem] = []
     var drafts: [DraftItem] = []
     var syncing = false
@@ -213,6 +215,8 @@ final class InboxModel {
         do {
             let accounts = try await mail.accounts()
             if accounts != self.accounts { self.accounts = accounts }
+            let signature = try await mail.signature()
+            if signature != self.signature { self.signature = signature }
         } catch {
             self.error = error.textKey()
         }
@@ -596,6 +600,15 @@ final class InboxModel {
     }
 
     // MARK: Accounts
+
+    /// Opens a new message, signed; unsigned rather than not at all. A second tap meanwhile
+    /// opens nothing more.
+    func write() {
+        Task {
+            let draft = (try? await mail.newDraft()) ?? newDraft
+            if composing == nil { composing = Composing(draft: draft) }
+        }
+    }
 
     /// Saves a change to an account; the sheet and the rows show it once it is saved.
     func changeAccount(_ change: @escaping () async throws -> Void) {

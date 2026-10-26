@@ -55,7 +55,8 @@ struct InboxView: View {
         .sheet(isPresented: $model.accountsOpen, onDismiss: { model.added = nil }) {
             AccountsSheet(
                 accounts: model.accounts, folders: model.folders, mailbox: model.mailbox, drafts: model.drafts.count,
-                swipes: $model.swipes, groups: $model.groups, actions: accountsActions, startOn: model.added)
+                signature: model.signature, swipes: $model.swipes, groups: $model.groups, actions: accountsActions,
+                startOn: model.added)
             .task { await model.loadFolders() }
         }
         .fullScreenCover(isPresented: $model.addingAccount) {
@@ -137,6 +138,10 @@ struct InboxView: View {
             },
             onColor: { account, color in model.changeAccount { try await model.mail.setAccountColor(account, color: color) } },
             onLabel: { account, label in model.changeAccount { try await model.mail.setAccountLabel(account, label: label) } },
+            onSignature: { text in model.changeAccount { try await model.mail.setSignature(text) } },
+            onAccountSignature: { account, text in
+                model.changeAccount { try await model.mail.setAccountSignature(account, signature: text) }
+            },
             onSignIn: { account in
                 model.accountsOpen = false
                 model.signingIn = account
@@ -368,7 +373,7 @@ private struct InboxList: View {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button { model.path.append(.search) } label: { Image(systemName: "magnifyingglass") }
                         .accessibilityLabel(Text("search_prompt"))
-                    Button { model.composing = Composing(draft: newDraft) } label: { Image(systemName: "square.and.pencil") }
+                    Button { model.write() } label: { Image(systemName: "square.and.pencil") }
                         .accessibilityLabel(Text("compose_new"))
                 }
             }
@@ -595,7 +600,7 @@ private struct ComposeButton: View {
 
     var body: some View {
         Button {
-            model.composing = Composing(draft: newDraft)
+            model.write()
         } label: {
             Image(systemName: "square.and.pencil")
                 .font(.title3.weight(.semibold))
