@@ -698,20 +698,22 @@ impl Core {
                     {
                         return Err(CoreError::CertificateNeeded);
                     }
-                    // Something answers there with an HTTP error, but not EWS.
+                    // Something answers there with an HTTP error, but not EWS. Try ActiveSync
+                    // with the login: a front server may refuse anyone who has not signed in.
                     Err(ProviderError::Rejected(_)) => {
-                        if !discover::active_sync(tls.clone(), &endpoint).await {
-                            return Err(CoreError::NoEws);
-                        }
                         let server = Server {
                             host: endpoint.host,
                             port: endpoint.port,
                             user: login,
                             certificate,
                         };
-                        return self
+                        return match self
                             .add_active_sync_account(email, display_name, server, tls, password)
-                            .await;
+                            .await
+                        {
+                            Err(CoreError::Server { .. }) => Err(CoreError::NoEws),
+                            added => added,
+                        };
                     }
                     found => found?,
                 };
