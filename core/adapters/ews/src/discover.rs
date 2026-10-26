@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use ozero_domain::{ProviderError, email_domain};
-use ozero_http::split;
+use ozero_http::{HttpsClient, split};
 use tokio_rustls::rustls::ClientConfig;
 
 use crate::client::Client;
@@ -12,6 +12,7 @@ use crate::xml::{self, escape};
 use crate::{EwsSession, PATH};
 
 const AUTODISCOVER: &str = "/autodiscover/autodiscover.xml";
+const ACTIVE_SYNC: &str = "/Microsoft-Server-ActiveSync";
 /// Hosts that often serve EWS, tried after Autodiscover, each before the domain.
 const GUESSES: [&str; 3] = ["mail", "owa", "exchange"];
 
@@ -79,6 +80,18 @@ pub async fn check(
     let mut session = EwsSession::over(client);
     session.check().await?;
     Ok(session)
+}
+
+/// Whether `endpoint` serves Exchange ActiveSync, asked without a login: a server that opens
+/// only it answers there and not at the EWS path.
+pub async fn active_sync(tls: Arc<ClientConfig>, endpoint: &Endpoint) -> bool {
+    answers_active_sync(HttpsClient::new(&endpoint.host, endpoint.port, tls)).await
+}
+
+pub(crate) async fn answers_active_sync(mut http: HttpsClient) -> bool {
+    http.send("OPTIONS", ACTIVE_SYNC, &[], None)
+        .await
+        .is_ok_and(|r| r.ok() || r.status == 401)
 }
 
 /// The EWS URL Autodiscover at `host` gives for `email`, following one redirect to another

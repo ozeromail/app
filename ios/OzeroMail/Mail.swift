@@ -578,6 +578,8 @@ extension Error {
         case .BadRecipients?: return "error_bad_recipients"
         case .NoSmtp?: return "error_no_smtp"
         case .NoServer?: return "error_no_server"
+        case .NoEws?: return "error_no_ews"
+        case .OnlyActiveSync?: return "error_only_active_sync"
         default: return "error_storage"
         }
     }
