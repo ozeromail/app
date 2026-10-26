@@ -99,7 +99,7 @@ async fn serve(listener: TcpListener, routes: Routes, seen: Seen) {
             let n = tls.read(&mut chunk).await.unwrap();
             buf.extend_from_slice(&chunk[..n]);
         }
-        let body = String::from_utf8(buf.drain(..length).collect()).unwrap();
+        let body = String::from_utf8_lossy(&buf.drain(..length).collect::<Vec<_>>()).into_owned();
         let mut words = head.split(' ');
         let method = words.next().unwrap().to_owned();
         let path = words.next().unwrap().to_owned();
@@ -135,6 +135,7 @@ async fn serve(listener: TcpListener, routes: Routes, seen: Seen) {
                 parts.len()
             )
         } else {
+            let path = path.strip_prefix("/upload").unwrap_or(&path);
             let path = path.strip_prefix(BASE).unwrap().to_owned();
             let (status, json) = route(&routes, &path);
             seen.lock().unwrap().push((method, path, body));
@@ -484,8 +485,9 @@ async fn sends_and_reads_raw_messages() {
         .await
         .unwrap();
     assert_eq!(gmail.body("INBOX", 0, "x").await.unwrap(), raw);
-    let sent: Value = serde_json::from_str(&seen.lock().unwrap()[0].2).unwrap();
-    assert_eq!(sent, json!({"raw": base64url(raw)}));
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen[0].1, "/messages/send?uploadType=media");
+    assert_eq!(seen[0].2, String::from_utf8_lossy(raw));
 }
 
 #[tokio::test]

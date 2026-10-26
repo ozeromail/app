@@ -8,10 +8,10 @@ use std::time::Duration;
 
 use ozero_domain::{
     Account, AccountId, Action, Address, Body, Category, Changes, Checkpoint, Correspondents,
-    Draft, DraftId, Flags, Folder, FolderId, ListQuery, MailProvider, MailSender, MessageBuilder,
-    MessageId, MessageLocation, MessageParser, MessageRow, Moved, NewAccount, NewFolder,
-    NewMessage, Older, Op, OpId, OutboxId, Outgoing, ProviderError, RawMessage, SavedDraft, Store,
-    StoreError, Unsent,
+    Draft, DraftFile, DraftId, FileId, Flags, Folder, FolderId, ListQuery, MailProvider,
+    MailSender, MessageBuilder, MessageId, MessageLocation, MessageParser, MessageRow, Moved,
+    NewAccount, NewFolder, NewMessage, Older, Op, OpId, OutboxId, Outgoing, OutgoingFile,
+    ProviderError, RawMessage, SavedDraft, Store, StoreError, Unsent,
 };
 
 /// Fakes answer at once, so one poll finishes the future.
@@ -552,8 +552,29 @@ impl Store for Memory {
         Ok(vec![])
     }
 
-    fn delete_draft(&self, _: DraftId) -> Result<(), StoreError> {
+    fn delete_draft(&self, _: DraftId, _: i64, _: i64) -> Result<(), StoreError> {
         Ok(())
+    }
+
+    fn restore_draft(&self, _: DraftId, _: i64) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    fn attach(
+        &self,
+        _: DraftId,
+        _: &OutgoingFile,
+        _: u64,
+    ) -> Result<Option<DraftFile>, StoreError> {
+        Err(StoreError::NotFound)
+    }
+
+    fn detach(&self, _: FileId) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn outbox_files(&self, _: OutboxId) -> Result<Vec<OutgoingFile>, StoreError> {
+        Ok(vec![])
     }
 
     fn unsent(&self) -> Result<Vec<Unsent>, StoreError> {

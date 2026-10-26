@@ -106,10 +106,19 @@ impl GmailSession {
             content_type: "application/json",
             data: d.as_bytes(),
         });
-        let path = format!("{BASE}{path}");
+        self.request(method, &format!("{BASE}{path}"), body).await
+    }
+
+    /// Sends `body` to the whole `path`, signed in.
+    async fn request(
+        &mut self,
+        method: &str,
+        path: &str,
+        body: Option<Body<'_>>,
+    ) -> Result<Value, ProviderError> {
         let response = self
             .http
-            .send(method, &path, &[("Authorization", &self.auth)], body)
+            .send(method, path, &[("Authorization", &self.auth)], body)
             .await?;
         answer(&response)
     }
@@ -623,9 +632,14 @@ impl MailSender for GmailSession {
         _to: &[String],
         message: &[u8],
     ) -> Result<(), ProviderError> {
-        // Gmail reads the recipients from the message and keeps a copy in Sent.
-        let body = json!({"raw": base64url(message)});
-        self.post("/messages/send", &body).await.map(|_| ())
+        // Gmail reads the recipients from the message and keeps a copy in Sent. Uploaded as
+        // it is, as JSON takes only a few megabytes and files would not fit.
+        let body = Body {
+            content_type: "message/rfc822",
+            data: message,
+        };
+        let path = format!("/upload{BASE}/messages/send?uploadType=media");
+        self.request("POST", &path, Some(body)).await.map(|_| ())
     }
 }
 

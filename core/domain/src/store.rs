@@ -2,8 +2,9 @@ use std::fmt;
 
 use crate::{
     Account, AccountId, Action, Body, Category, Changes, Checkpoint, Correspondents, Draft,
-    DraftId, Folder, FolderId, ListQuery, MessageId, MessageLocation, MessageRow, Moved,
-    NewAccount, NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing, SavedDraft, Unsent,
+    DraftFile, DraftId, FileId, Folder, FolderId, ListQuery, MessageId, MessageLocation,
+    MessageRow, Moved, NewAccount, NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing,
+    OutgoingFile, SavedDraft, Unsent,
 };
 
 /// Local database port. The UI reads only from here; sync writes here.
@@ -159,7 +160,7 @@ pub trait Store: Send + Sync {
     /// actions on them can be sent.
     fn unclaimed(&self, account: AccountId) -> Result<Vec<Folder>, StoreError>;
     /// Queues a message to be sent from `not_before`, and forgets the saved draft it was
-    /// written in, if any. Fails with `NotFound` if the account or the message it answers is
+    /// written in, if any; that draft's files go with the message. Fails with `NotFound` if the account or the message it answers is
     /// gone.
     fn queue_send(
         &self,
@@ -170,16 +171,32 @@ pub trait Store: Send + Sync {
         not_before: i64,
     ) -> Result<OutboxId, StoreError>;
     /// Takes back a message that is still held or was refused, so it can be edited: it becomes
-    /// a saved draft, saved at `now`. None once it may be on its way.
+    /// a saved draft, saved at `now`, with its files. None once it may be on its way.
     fn undo_send(&self, id: OutboxId, now: i64) -> Result<Option<SavedDraft>, StoreError>;
 
     /// Saves a message being written: a new one if it has no id, else over the saved one.
     /// Fails with `NotFound` if that one is gone, sent or thrown away, so it never comes back.
     fn save_draft(&self, draft: &SavedDraft) -> Result<DraftId, StoreError>;
-    /// The saved drafts, last saved first.
+    /// The saved drafts with their files, last saved first.
     fn drafts(&self) -> Result<Vec<SavedDraft>, StoreError>;
-    /// Throws a saved draft away; one already gone is fine.
-    fn delete_draft(&self, id: DraftId) -> Result<(), StoreError>;
+    /// Throws a saved draft away, with its files, at `until`; till then `restore_draft` brings
+    /// it back, and it is gone everywhere else. Drafts whose time came by `now` go for good.
+    /// One already gone is fine.
+    fn delete_draft(&self, id: DraftId, now: i64, until: i64) -> Result<(), StoreError>;
+    /// Brings back a draft thrown away whose time has not come at `now`. False if it is gone.
+    fn restore_draft(&self, id: DraftId, now: i64) -> Result<bool, StoreError>;
+    /// Adds a file to a saved draft, unless its files, the forwarded message's among them, would
+    /// then take more than `limit` bytes: None then. Fails with `NotFound` if the draft is gone.
+    fn attach(
+        &self,
+        draft: DraftId,
+        file: &OutgoingFile,
+        limit: u64,
+    ) -> Result<Option<DraftFile>, StoreError>;
+    /// Takes a file off its draft; one already gone, or sent with its message, is left be.
+    fn detach(&self, file: FileId) -> Result<(), StoreError>;
+    /// The files added to a queued message, whole, in the order they were added.
+    fn outbox_files(&self, id: OutboxId) -> Result<Vec<OutgoingFile>, StoreError>;
     /// The messages the server refused, newest first.
     fn unsent(&self) -> Result<Vec<Unsent>, StoreError>;
     /// The account's messages that may be sent at `now`, oldest first; refused ones stay out.

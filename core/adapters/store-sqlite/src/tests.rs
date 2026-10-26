@@ -1139,6 +1139,7 @@ fn saved(draft: &Draft, now: i64) -> SavedDraft {
         quote: draft.quote.clone(),
         forward: draft.forward,
         saved: now,
+        files: vec![],
     }
 }
 
@@ -1981,6 +1982,7 @@ fn a_draft_is_kept_until_it_is_sent_or_thrown_away() {
         quote: String::new(),
         forward: None,
         saved: 100,
+        files: vec![],
     };
     let id = store.save_draft(&draft).unwrap();
     draft.id = Some(id);
@@ -2006,8 +2008,8 @@ fn a_draft_is_kept_until_it_is_sent_or_thrown_away() {
     );
     assert_eq!(store.drafts().unwrap()[0], draft);
 
-    store.delete_draft(other).unwrap();
-    store.delete_draft(other).unwrap();
+    store.delete_draft(other, 0, 0).unwrap();
+    store.delete_draft(other, 0, 0).unwrap();
     store
         .queue_send(&self::draft(a), Some(id), "1@x", 0, 100)
         .unwrap();
@@ -2031,6 +2033,7 @@ fn a_draft_outlives_its_answered_message_but_not_its_account() {
         quote: String::new(),
         forward: Some(MessageId(999)),
         saved: 100,
+        files: vec![],
     };
     store.save_draft(&draft).unwrap();
     assert_eq!(store.drafts().unwrap()[0].reply_to, None);
@@ -2045,4 +2048,114 @@ fn a_draft_outlives_its_answered_message_but_not_its_account() {
     let left = store.drafts().unwrap();
     assert_eq!(left.len(), 1);
     assert_eq!(left[0].account_id, None);
+}
+
+fn file(name: &str, data: &[u8]) -> OutgoingFile {
+    OutgoingFile {
+        name: name.into(),
+        mime: "application/pdf".into(),
+        data: data.to_vec(),
+    }
+}
+
+#[test]
+fn files_go_with_a_draft_to_the_outbox_and_back() {
+    let store = store();
+    let a = account(&store, "a@example.com");
+    let id = store.save_draft(&saved(&draft(a), 100)).unwrap();
+    let bill = store
+        .attach(id, &file("bill.pdf", b"pdf"), 100)
+        .unwrap()
+        .unwrap();
+    let notes = store
+        .attach(id, &file("notes.pdf", b"notes"), 8)
+        .unwrap()
+        .unwrap();
+    assert_eq!(store.attach(id, &file("more.pdf", b"m"), 8), Ok(None));
+    assert_eq!((bill.name.as_str(), bill.size), ("bill.pdf", 3));
+    store.detach(notes.id).unwrap();
+    store.detach(notes.id).unwrap();
+    assert_eq!(
+        store.drafts().unwrap()[0].files,
+        std::slice::from_ref(&bill)
+    );
+    // Saving the text leaves the files as they are.
+    let again = SavedDraft {
+        id: Some(id),
+        ..saved(&draft(a), 200)
+    };
+    store.save_draft(&again).unwrap();
+    assert_eq!(
+        store.drafts().unwrap()[0].files,
+        std::slice::from_ref(&bill)
+    );
+
+    let sent = store
+        .queue_send(&draft(a), Some(id), "1@example.com", 100, 105)
+        .unwrap();
+    assert_eq!(
+        store.outbox_files(sent).unwrap(),
+        [file("bill.pdf", b"pdf")]
+    );
+    // A late tap on the chip cannot take it off the message on its way.
+    store.detach(bill.id).unwrap();
+    assert_eq!(store.outbox_files(sent).unwrap().len(), 1);
+    let back = store.undo_send(sent, 104).unwrap().unwrap();
+    assert_eq!(back.files.len(), 1);
+    assert_eq!(back.files[0].name, "bill.pdf");
+    assert!(store.outbox_files(sent).unwrap().is_empty());
+
+    let id = back.id.unwrap();
+    let sent = store
+        .queue_send(&draft(a), Some(id), "2@example.com", 100, 100)
+        .unwrap();
+    store.sent(sent).unwrap();
+    assert!(store.outbox_files(sent).unwrap().is_empty());
+    assert_eq!(
+        store.attach(id, &file("late.pdf", b""), 8),
+        Err(StoreError::NotFound)
+    );
+}
+
+#[test]
+fn a_thrown_away_draft_comes_back_until_its_time() {
+    let store = store();
+    let a = account(&store, "a@example.com");
+    let id = store.save_draft(&saved(&draft(a), 100)).unwrap();
+    store
+        .attach(id, &file("bill.pdf", b"pdf"), 100)
+        .unwrap()
+        .unwrap();
+    store.delete_draft(id, 100, 105).unwrap();
+    assert!(store.drafts().unwrap().is_empty());
+    let again = SavedDraft {
+        id: Some(id),
+        ..saved(&draft(a), 101)
+    };
+    assert_eq!(store.save_draft(&again), Err(StoreError::NotFound));
+    assert_eq!(
+        store.attach(id, &file("x", b""), 8),
+        Err(StoreError::NotFound)
+    );
+
+    assert!(store.restore_draft(id, 104).unwrap());
+    assert!(!store.restore_draft(id, 104).unwrap(), "not thrown away");
+    assert_eq!(store.drafts().unwrap()[0].files.len(), 1);
+
+    store.delete_draft(id, 110, 115).unwrap();
+    assert!(!store.restore_draft(id, 115).unwrap(), "too late");
+    // The next one thrown away takes it for good, files and all.
+    let other = store.save_draft(&saved(&draft(a), 120)).unwrap();
+    store.delete_draft(other, 120, 125).unwrap();
+    assert!(!store.restore_draft(id, 0).unwrap());
+    assert!(store.restore_draft(other, 120).unwrap());
+    let files: i64 = store
+        .conn()
+        .query_row(
+            "SELECT (SELECT count(*) FROM draft_file) + (SELECT count(*) FROM file_data)",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(files, 0);
 }

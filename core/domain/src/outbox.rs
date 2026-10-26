@@ -43,6 +43,23 @@ pub struct SavedDraft {
     pub forward: Option<MessageId>,
     /// Milliseconds since the Unix epoch of the last save.
     pub saved: i64,
+    /// The files added to it. Saving a draft leaves them as they are: `Store::attach` and
+    /// `Store::detach` change them.
+    pub files: Vec<DraftFile>,
+}
+
+/// Local id of a file added to a message being written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FileId(pub i64);
+
+/// A file added to a message being written, kept on the device with it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DraftFile {
+    pub id: FileId,
+    pub name: String,
+    pub mime: String,
+    /// Bytes.
+    pub size: u64,
 }
 
 /// A message the server refused, kept for the user to fix.
@@ -70,7 +87,8 @@ pub struct Outgoing {
     pub date: i64,
     /// The forwarded message, whose files go with it.
     pub forward: Option<MessageId>,
-    /// The files sent with it, read from `forward` when it is sent.
+    /// The files sent with it: those added to it, then those of `forward`, read when it is
+    /// sent.
     pub files: Vec<OutgoingFile>,
 }
 

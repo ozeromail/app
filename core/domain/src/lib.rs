@@ -23,8 +23,8 @@ pub use message::{
 };
 pub use op::{Action, Op, OpId};
 pub use outbox::{
-    Draft, DraftId, OutboxId, Outgoing, OutgoingFile, SavedDraft, Unsent, forward_quote,
-    forward_subject, is_address, parse_recipients, quote, reply_subject, with_quote,
+    Draft, DraftFile, DraftId, FileId, OutboxId, Outgoing, OutgoingFile, SavedDraft, Unsent,
+    forward_quote, forward_subject, is_address, parse_recipients, quote, reply_subject, with_quote,
 };
 pub use provider::{
     Changes, Checkpoint, MailProvider, MailSender, MessageBuilder, MessageParser, Moved, Older,

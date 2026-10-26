@@ -282,4 +282,24 @@ pub const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (account_id, key)
     ) WITHOUT ROWID;
     ",
+    // 30: files the user added to a message, with a draft while it is written and with the
+    // outbox once it is sent; their bytes apart, so moving a file never writes them again. And
+    // when a thrown-away draft goes for good, in milliseconds, so it can come back till then.
+    "
+    CREATE TABLE draft_file (
+        id     INTEGER PRIMARY KEY,
+        draft  INTEGER REFERENCES draft(id) ON DELETE CASCADE,
+        outbox INTEGER REFERENCES outbox(id) ON DELETE CASCADE,
+        name   TEXT NOT NULL,
+        mime   TEXT NOT NULL,
+        size   INTEGER NOT NULL
+    );
+    CREATE TABLE file_data (
+        file INTEGER PRIMARY KEY REFERENCES draft_file(id) ON DELETE CASCADE,
+        data BLOB NOT NULL
+    );
+    CREATE INDEX draft_file_draft ON draft_file(draft) WHERE draft IS NOT NULL;
+    CREATE INDEX draft_file_outbox ON draft_file(outbox) WHERE outbox IS NOT NULL;
+    ALTER TABLE draft ADD COLUMN gone INTEGER;
+    ",
 ];
