@@ -80,6 +80,12 @@ abstract class TestMail {
         scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
     }
 
+    fun screenTexts(): String = rule.onAllNodes(androidx.compose.ui.test.isRoot()).fetchSemanticsNodes().joinToString(" | ") { root ->
+        fun walk(n: androidx.compose.ui.semantics.SemanticsNode): List<String> =
+            (n.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.Text)?.map { it.text + "@" + n.boundsInRoot.top.toInt() } ?: emptyList()) + n.children.flatMap { walk(it) }
+        walk(root).joinToString(", ")
+    }
+
     fun has(matcher: SemanticsMatcher) = rule.onAllNodes(matcher).fetchSemanticsNodes().isNotEmpty()
 
     fun bounds(matcher: SemanticsMatcher): Rect = rule.onAllNodes(matcher).fetchSemanticsNodes().first().boundsInRoot

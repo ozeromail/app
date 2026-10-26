@@ -518,6 +518,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         if (!addingAccount) loadAccounts()
     }
     LaunchedEffect(tab, mailbox) {
+        Log.i("OzeroDiag", "mailbox now $mailbox")
         chosen = emptySet()
         open = null
         listSize = PAGE
@@ -1084,6 +1085,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             },
             swipes = swipes,
             onMailbox = {
+                Log.i("OzeroDiag", "onMailbox $it")
                 accountsOpen = false
                 mailbox = it
             },

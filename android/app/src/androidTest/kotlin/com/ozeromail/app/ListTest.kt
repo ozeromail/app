@@ -41,7 +41,12 @@ class ListTest : TestMail() {
     fun onlyAPullDropsADrop() {
         rule.onNode(hasContentDescription("Accounts")).performClick()
         waitFor { has(hasText("Empty")) }
-        rule.onNode(hasText("Empty")).apply { runCatching { performScrollTo() } }.performClick()
+        android.util.Log.i("OzeroDiag", "sheet: " + screenTexts())
+        rule.onNode(hasText("Empty")).apply { android.util.Log.i("OzeroDiag", "scroll: " + runCatching { performScrollTo() }.exceptionOrNull()) }
+        android.util.Log.i("OzeroDiag", "scrolled: " + screenTexts())
+        rule.onNode(hasText("Empty")).performClick()
+        repeat(30) { rule.mainClock.advanceTimeByFrame(); Thread.sleep(16) }
+        android.util.Log.i("OzeroDiag", "clicked: " + screenTexts())
         waitFor { has(hasText("Nothing here")) }
         film("drops", every = 4) {
             track("words", hasText("Nothing here"))
