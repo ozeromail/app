@@ -175,5 +175,11 @@
   "attachment_save_files": "Save to Files",
   "attachment_saved_files": "Saved to Files",
   "crash_text_ios": "Send the report to the author? The letter opens first, so you can read it. It holds where the app failed, the app and iOS versions and the phone model. No mail.",
-  "split_nothing_open": "Pick a message to read it here."
+  "split_nothing_open": "Pick a message to read it here.",
+  "signin_exchange": "Exchange",
+  "signin_exchange_text": "Work mail on the Exchange server your company runs. The server is found from your address; if it is not, enter it yourself.",
+  "signin_exchange_manual": "Enter the server yourself",
+  "signin_exchange_server": "Server, such as mail.company.com",
+  "signin_exchange_login": "Login, if not your email",
+  "error_no_server": "No Exchange server found for this address. Enter it below: it is in your work mail settings, or your IT team knows it."
 }

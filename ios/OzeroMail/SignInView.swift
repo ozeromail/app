@@ -54,15 +54,17 @@ private enum Provider: String, CaseIterable, Identifiable {
     }
 }
 
-/// Where the person is, once past the list: a known service, or any IMAP server.
+/// Where the person is, once past the list: a known service, Exchange, or any IMAP server.
 private enum Step: Hashable {
     case provider(Provider)
+    case exchange
     case other
 }
 
 /// Adds an account in two steps: first where the mail lives, then the sign-in for it. Google
-/// goes straight to the browser; known services need only an email and an app password; any
-/// other server shows its IMAP and SMTP fields. Everything to tap sits in the lower half.
+/// goes straight to the browser; known services need only an email and an app password;
+/// Exchange finds its server from the email; any other server shows its IMAP and SMTP fields.
+/// Everything to tap sits in the lower half.
 /// With `onCancel`, for a further account, the back arrow leaves it.
 /// With `again`, it signs in to that saved account again instead, keeping its mail.
 struct SignInView: View {
@@ -85,6 +87,15 @@ struct SignInView: View {
                     Again(account: again, busy: busy, onCancel: onCancel, onGoogle: google) { password in
                         attempt { try await mail.signInAgain(again, password: password) }
                     }
+                } else if step == .exchange {
+                    // The server was not found: the fields to type it come out.
+                    Exchange(busy: busy, manual: error == "error_no_server", onBack: { go(nil) }) {
+                        email, password, server, login in
+                        attempt {
+                            try await mail.signInExchange(email: email, password: password, server: server, login: login)
+                        }
+                    }
+                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)).combined(with: .opacity))
                 } else if let step {
                     Credentials(step: step, busy: busy, onBack: { go(nil) }, onAppPasswords: { openURL($0) }) {
                         email, password, imap, smtp in
@@ -178,6 +189,8 @@ private struct Choose: View {
             Spacer()
             VStack(spacing: 0) {
                 Choice(label: "signin_google", enabled: !busy, waiting: busy, action: onGoogle)
+                Divider().padding(.leading, 16)
+                Choice(label: "signin_exchange", enabled: !busy) { onPick(.exchange) }
                 // Any other server last.
                 ForEach(Provider.allCases) { provider in
                     Divider().padding(.leading, 16)
@@ -325,6 +338,76 @@ private struct Credentials: View {
     private func submit() {
         guard ready, let imap, let smtp else { return }
         onSubmit(email.trimmingCharacters(in: .whitespaces), password, imap, smtp)
+    }
+}
+
+/// Exchange: an email and a password, the server found from the email. The server and a login
+/// other than the email can be typed too, and come out on their own when no server is found.
+private struct Exchange: View {
+    let busy: Bool
+    let manual: Bool
+    let onBack: () -> Void
+    let onSubmit: (String, String, String?, String?) -> Void
+
+    @State private var email = ""
+    @State private var password = ""
+    @State private var server = ""
+    @State private var login = ""
+    @State private var typing = false
+    /// Once no server was found, it has to be typed, also after the error is gone.
+    @State private var needed = false
+
+    private var shown: Bool { typing || manual || needed }
+    private var ready: Bool {
+        !busy && suggestedImapHost(email: email) != nil && !password.isEmpty
+            && (!(manual || needed) || !server.trimmingCharacters(in: .whitespaces).isEmpty)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            StepBack(label: "signin_title", onBack: onBack, busy: busy)
+            Text("signin_exchange").font(.largeTitle.bold())
+            Text("signin_exchange_text").foregroundStyle(.secondary)
+            if !shown {
+                Button("signin_exchange_manual") { typing = true }
+                    .disabled(busy)
+            }
+            Spacer()
+            TextField("signin_email", text: $email)
+                .textContentType(.emailAddress)
+                .keyboardType(.emailAddress)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            SecureField("signin_password", text: $password)
+                .textContentType(.password)
+            if shown {
+                Group {
+                    TextField("signin_exchange_server", text: $server)
+                        .keyboardType(.URL)
+                    TextField("signin_exchange_login", text: $login)
+                        .textContentType(.username)
+                }
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+            SubmitButton(label: "signin_action", busy: busy, ready: ready, action: submit)
+        }
+        .textFieldStyle(.roundedBorder)
+        .onSubmit(submit)
+        .animation(.smooth(duration: 0.3), value: shown)
+        .onChange(of: manual) { _, manual in
+            if manual { needed = true }
+        }
+    }
+
+    private func submit() {
+        guard ready else { return }
+        func typed(_ text: String) -> String? {
+            let text = text.trimmingCharacters(in: .whitespaces)
+            return shown && !text.isEmpty ? text : nil
+        }
+        onSubmit(email.trimmingCharacters(in: .whitespaces), password, typed(server), typed(login))
     }
 }
 
