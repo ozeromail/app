@@ -120,21 +120,7 @@ struct MessageView: View {
     /// Reply, Reply all and Forward over Delete, More and Done, along the bottom.
     private func bars(answer: MessageItem, newest: MessageItem) -> some View {
         VStack(spacing: 8) {
-            HStack(spacing: 8) {
-                Button {
-                    reply(answer, all: false)
-                } label: {
-                    Text("message_reply_prompt")
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
-                        .padding(.horizontal, 16)
-                        .background(Color.ozeroCard, in: .capsule)
-                }
-                .buttonStyle(.plain)
-                RoundButton(icon: "arrowshape.turn.up.left.2", label: "message_reply_all") { reply(answer, all: true) }
-                // The newest message, the user's own too.
-                RoundButton(icon: "arrowshape.turn.up.right", label: "message_forward") { forward(newest) }
-            }
+            HStack(spacing: 8) { answers(answer: answer, newest: newest) }
             HStack(spacing: 8) {
                 BarAction(icon: "trash", label: message.canTrash ? "action_delete" : "action_delete_forever", action: delete)
                 BarAction(icon: "ellipsis", label: "action_more") { more = true }
@@ -152,20 +138,7 @@ struct MessageView: View {
     /// Beside the list, where the height is short: the answers and the actions in one row.
     private func row(answer: MessageItem, newest: MessageItem) -> some View {
         HStack(spacing: 8) {
-            Button {
-                reply(answer, all: false)
-            } label: {
-                Text("message_reply_prompt")
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .background(Color.ozeroCard, in: .capsule)
-            }
-            .buttonStyle(.plain)
-            RoundButton(icon: "arrowshape.turn.up.left.2", label: "message_reply_all") { reply(answer, all: true) }
-            // The newest message, the user's own too.
-            RoundButton(icon: "arrowshape.turn.up.right", label: "message_forward") { forward(newest) }
+            answers(answer: answer, newest: newest)
             RoundButton(icon: "trash", label: message.canTrash ? "action_delete" : "action_delete_forever", action: delete)
             RoundButton(icon: "ellipsis", label: "action_more") { more = true }
             if message.canArchive {
@@ -175,6 +148,24 @@ struct MessageView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.bar)
+    }
+
+    /// Reply, Reply all and Forward; the newest message is forwarded, the user's own too.
+    @ViewBuilder
+    private func answers(answer: MessageItem, newest: MessageItem) -> some View {
+        Button {
+            reply(answer, all: false)
+        } label: {
+            Text("message_reply_prompt")
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
+                .padding(.horizontal, 16)
+                .background(Color.ozeroCard, in: .capsule)
+        }
+        .buttonStyle(.plain)
+        RoundButton(icon: "arrowshape.turn.up.left.2", label: "message_reply_all") { reply(answer, all: true) }
+        RoundButton(icon: "arrowshape.turn.up.right", label: "message_forward") { forward(newest) }
     }
 
     private func reply(_ answer: MessageItem, all: Bool) {

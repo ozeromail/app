@@ -202,7 +202,8 @@ final class InboxModel {
 
     func loadFolders() async {
         do {
-            folders = try await mail.folders()
+            let folders = try await mail.folders()
+            if folders != self.folders { self.folders = folders }
         } catch {
             self.error = error.textKey()
         }
@@ -406,8 +407,9 @@ final class InboxModel {
 
     /// Turning the phone keeps the message open: beside the list, or on its own screen.
     private func turned() {
-        if sideways, case .message(let message)? = path.last, path.count == 1 {
-            path.removeLast()
+        if sideways, case .message(let message)? = path.last, path.allSatisfy({ $0 == .search || $0 == path.last }) {
+            // From search too: beside the list, as when it is opened there.
+            path.removeAll()
             pane = message
         } else if !sideways, let pane {
             self.pane = nil

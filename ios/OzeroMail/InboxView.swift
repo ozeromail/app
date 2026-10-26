@@ -19,7 +19,7 @@ struct InboxView: View {
             // On its side the mailboxes are beside the list, and make room for a message opened
             // beside it.
             HStack(spacing: 0) {
-                if sideways && model.pane == nil {
+                if model.sideways && model.pane == nil {
                     Mailboxes(model: model)
                         .transition(.move(edge: .leading).combined(with: .opacity))
                     Divider()
@@ -474,7 +474,8 @@ private struct Mailboxes: View {
         }
         .listStyle(.sidebar)
         .frame(width: Room.mailboxes)
-        .task { await model.loadFolders() }
+        // Read once here; a sync reads them again.
+        .task { if model.folders.isEmpty { await model.loadFolders() } }
     }
 }
 

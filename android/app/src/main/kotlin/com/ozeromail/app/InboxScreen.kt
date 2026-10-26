@@ -356,6 +356,14 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         loadOthers()
     }
 
+    suspend fun loadFolders() {
+        try {
+            folders = mail.folders()
+        } catch (e: CoreException) {
+            error = e.text()
+        }
+    }
+
     /**
      * The list is scrolled near its end: more of the saved mail, or once that ends, older mail
      * from the servers of a mailbox synced since the app opened.
@@ -439,6 +447,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             // The first read may have failed; and an account may need signing in again now, or no more.
             if (accounts.isEmpty() || refused) loadAccounts()
             load()
+            if (wide) loadFolders()
         } finally {
             syncing = false
         }
@@ -480,14 +489,11 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     LaunchedEffect(mailbox) {
         if (mailbox != Mail.INBOX) sync(mailbox)
     }
-    // Folders show once a sync has listed them, so they are read each time the sheet opens.
+    // Folders show once a sync has listed them, so they are read each time the sheet opens, and
+    // after each sync while the mailboxes are beside the list.
     LaunchedEffect(accountsOpen) {
         if (!accountsOpen && folders.isNotEmpty()) return@LaunchedEffect
-        try {
-            folders = mail.folders()
-        } catch (e: CoreException) {
-            error = e.text()
-        }
+        loadFolders()
     }
     val askToNotify = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     LaunchedEffect(Unit) {
@@ -781,10 +787,20 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     // Back from another mailbox leads to the inbox.
     BackHandler(enabled = screen == Screen.Inbox && mailbox != Mail.INBOX && !accountsOpen) { mailbox = Mail.INBOX }
     // Before that, back closes the message beside the list.
+    /** The message read beside the list leaves it; its row now has a snippet. */
+    suspend fun reloadList() {
+        loadList()
+        counts()
+    }
+
+    fun keepGroups(next: Groups) {
+        groups = next
+        settings.groups = next
+    }
+
     fun closePane() {
         open = null
-        // The list now has the message's snippet.
-        scope.launch { load() }
+        scope.launch { reloadList() }
     }
     BackHandler(enabled = screen == Screen.Inbox && open != null && !accountsOpen, onBack = ::closePane)
 
@@ -894,10 +910,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                     drafts = drafts.size,
                                     onDrafts = { draftsOpen = true },
                                     groups = groups,
-                                    onGroups = {
-                                        groups = it
-                                        settings.groups = it
-                                    },
+                                    onGroups = ::keepGroups,
                                     onMailbox = { mailbox = it },
                                     onMore = { accountsOpen = true },
                                     modifier = Modifier.width(MAILBOXES).fillMaxHeight(),
@@ -906,7 +919,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                             }
                         }
                         Middle(
-                            if (wide && reading == null) LIST_MAX else Dp.Unspecified,
+                            LIST_MAX,
                             if (reading != null) Modifier.width(LIST_PANE).fillMaxHeight() else Modifier.weight(1f),
                         ) {
                             InboxList(
@@ -951,8 +964,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                     }
                                 },
                                 onOpen = {
-                                    // The one left beside the list now has a snippet.
-                                    if (open != null) scope.launch { load() }
+                                    if (open != null) scope.launch { reloadList() }
                                     open = it
                                 },
                                 onSwipe = ::swiped,
@@ -980,7 +992,6 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                 onDelete = { choice { delete(it) } },
                                 onDone = { choice { rows -> archive(rows.filter { it.canArchive }) } },
                                 wide = wide,
-                                pane = reading != null,
                                 showing = reading?.id,
                             )
                         }
@@ -1014,10 +1025,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 settings.swipes = it
             },
             groups = groups,
-            onGroups = {
-                groups = it
-                settings.groups = it
-            },
+            onGroups = ::keepGroups,
             onAdd = {
                 accountsOpen = false
                 addingAccount = true
@@ -1193,9 +1201,7 @@ private fun InboxList(
     onDone: () -> Unit,
     /** Beside the mailboxes: the dock is one row. */
     wide: Boolean = false,
-    /** Beside an open message, the row is only the tabs where there are tabs. */
-    pane: Boolean = false,
-    /** The message open beside the list. */
+    /** The message open beside the list, which leaves the dock only the tabs where there are tabs. */
     showing: Long? = null,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -1518,7 +1524,7 @@ private fun InboxList(
                     )
                 },
                 wide = wide,
-                pane = pane,
+                pane = showing != null,
             )
         }
         // The rarer ways to choose, in a sheet like every menu.
@@ -1693,17 +1699,17 @@ private fun FolderRole.emptyLabel(): Int? = when (this) {
     else -> null
 }
 
-/** Search as a button of its own, on a rail. */
+/** Search as a button of its own, beside the tabs. */
 @Composable
-private fun SearchTile(onClick: () -> Unit, size: Dp = 48.dp) {
-    IconTile(R.drawable.ic_search, stringResource(R.string.search_prompt), onClick, background = MaterialTheme.colorScheme.surfaceVariant, size = size)
+private fun SearchTile(onClick: () -> Unit) {
+    IconTile(R.drawable.ic_search, stringResource(R.string.search_prompt), onClick, background = MaterialTheme.colorScheme.surfaceVariant)
 }
 
 /** A new message, in the accent. */
 @Composable
-private fun ComposeTile(onClick: () -> Unit, size: Dp = 48.dp) {
+private fun ComposeTile(onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
-    IconTile(R.drawable.ic_compose, stringResource(R.string.compose_new), onClick, background = colors.accent, tint = colors.onAccent, size = size)
+    IconTile(R.drawable.ic_compose, stringResource(R.string.compose_new), onClick, background = colors.accent, tint = colors.onAccent)
 }
 
 /** The accounts' colours, overlapping; opens the accounts. */

@@ -123,17 +123,7 @@ fun AccountsSheet(
                     )
                     else -> {
                         SheetTitle(stringResource(R.string.folders_title))
-                        if (drafts > 0) FolderRow(R.drawable.ic_compose, stringResource(R.string.folder_drafts), open = false, count = drafts, onClick = onDrafts)
-                        Folders(
-                            accounts,
-                            folders,
-                            mailbox,
-                            groups,
-                            onMailbox,
-                            onToggle = { group -> onGroups(groups.toggle(group, accounts.size > 1)) },
-                            onAccount = { page = it.id },
-                        )
-                        HorizontalDivider(Modifier.padding(vertical = 6.dp), color = colors.outlineVariant)
+                        MailboxList(accounts, folders, mailbox, drafts, onDrafts, groups, onGroups, onMailbox, onAccount = { page = it.id })
                         SheetRow(onClick = { page = SWIPES }, lead = { Glyph(R.drawable.ic_swipe, null, colors.primary) }) {
                             Column(Modifier.weight(1f)) {
                                 Text(stringResource(R.string.swipes_title), style = Type.Row)
@@ -174,19 +164,35 @@ fun Mailboxes(
             .verticalScroll(rememberScrollState())
             .padding(vertical = 8.dp),
     ) {
-        if (drafts > 0) FolderRow(R.drawable.ic_compose, stringResource(R.string.folder_drafts), open = false, count = drafts, onClick = onDrafts)
-        Folders(
-            accounts,
-            folders,
-            mailbox,
-            groups,
-            onMailbox,
-            onToggle = { group -> onGroups(groups.toggle(group, accounts.size > 1)) },
-            onAccount = { onMore() },
-        )
-        HorizontalDivider(Modifier.padding(vertical = 6.dp), color = colors.outlineVariant)
+        MailboxList(accounts, folders, mailbox, drafts, onDrafts, groups, onGroups, onMailbox, onAccount = { onMore() })
         SheetAction(R.drawable.ic_more, stringResource(R.string.mailboxes_more), colors.onSurface, onMore)
     }
+}
+
+/** The drafts, if any, and the mailboxes of all accounts and of each, with a line under them. */
+@Composable
+private fun MailboxList(
+    accounts: List<AccountItem>,
+    folders: List<FolderItem>,
+    mailbox: Mailbox,
+    drafts: Int,
+    onDrafts: () -> Unit,
+    groups: Groups,
+    onGroups: (Groups) -> Unit,
+    onMailbox: (Mailbox) -> Unit,
+    onAccount: (AccountItem) -> Unit,
+) {
+    if (drafts > 0) FolderRow(R.drawable.ic_compose, stringResource(R.string.folder_drafts), open = false, count = drafts, onClick = onDrafts)
+    Folders(
+        accounts,
+        folders,
+        mailbox,
+        groups,
+        onMailbox,
+        onToggle = { group -> onGroups(groups.toggle(group, accounts.size > 1)) },
+        onAccount = onAccount,
+    )
+    HorizontalDivider(Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.outlineVariant)
 }
 
 /** The page of the sheet with the swipes; account pages are named by their ids, which are positive. */

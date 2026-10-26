@@ -168,15 +168,10 @@ fun MessageScreen(
                         LetterBody(mail, files, filesAt, message, bodies, if (sideways) Modifier.fillMaxWidth() else Modifier.weight(1f), fill = !sideways)
                     }
                 }
+                // The newest message is forwarded, the user's own too.
+                val answers = @Composable { row: RowScope -> row.Answers({ onReply(answer, it) }, { onForward(thread.lastOrNull() ?: message) }) }
                 if (pane) {
-                    PaneActions(
-                        onReply = { onReply(answer, it) },
-                        onForward = { onForward(thread.lastOrNull() ?: message) },
-                        onDelete = onDelete,
-                        forever = !message.canTrash,
-                        onMore = { more = true },
-                        onDone = onDone,
-                    )
+                    PaneActions(answers, onDelete = onDelete, forever = !message.canTrash, onMore = { more = true }, onDone = onDone)
                 } else {
                     Column(
                         Modifier.fillMaxWidth().navigationBarsPadding().padding(top = Gap.barTop, bottom = Gap.barBottom),
@@ -186,29 +181,7 @@ fun MessageScreen(
                             Modifier.fillMaxWidth().padding(horizontal = Gap.bar),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
-                        ) {
-                            Pill(
-                                stringResource(R.string.message_reply_prompt),
-                                onClick = { onReply(answer, false) },
-                                modifier = Modifier.weight(1f),
-                                height = 46.dp,
-                            )
-                            IconTile(
-                                R.drawable.ic_reply_all,
-                                stringResource(R.string.message_reply_all),
-                                { onReply(answer, true) },
-                                shape = CircleShape,
-                                size = 46.dp,
-                            )
-                            // The newest message, the user's own too.
-                            IconTile(
-                                R.drawable.ic_forward,
-                                stringResource(R.string.message_forward),
-                                { onForward(thread.lastOrNull() ?: message) },
-                                shape = CircleShape,
-                                size = 46.dp,
-                            )
-                        }
+                        ) { answers(this) }
                         Actions(onDelete = onDelete, forever = !message.canTrash, onMore = { more = true }, onDone = onDone)
                     }
                 }
@@ -624,11 +597,18 @@ private val TOAST_ABOVE_BARS = 128.dp
 /** Over the one row of them beside the list. */
 private val TOAST_ABOVE_ROW = 72.dp
 
+/** Reply, Reply all and Forward. */
+@Composable
+private fun RowScope.Answers(onReply: (all: Boolean) -> Unit, onForward: () -> Unit) {
+    Pill(stringResource(R.string.message_reply_prompt), onClick = { onReply(false) }, modifier = Modifier.weight(1f), height = 46.dp)
+    IconTile(R.drawable.ic_reply_all, stringResource(R.string.message_reply_all), { onReply(true) }, shape = CircleShape, size = 46.dp)
+    IconTile(R.drawable.ic_forward, stringResource(R.string.message_forward), onForward, shape = CircleShape, size = 46.dp)
+}
+
 /** Beside the list, where the height is short: the answers and the actions in one row. */
 @Composable
 private fun PaneActions(
-    onReply: (all: Boolean) -> Unit,
-    onForward: () -> Unit,
+    answers: @Composable (RowScope) -> Unit,
     onDelete: () -> Unit,
     forever: Boolean,
     onMore: () -> Unit,
@@ -645,10 +625,7 @@ private fun PaneActions(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
     ) {
-        Pill(stringResource(R.string.message_reply_prompt), onClick = { onReply(false) }, modifier = Modifier.weight(1f), height = 46.dp)
-        IconTile(R.drawable.ic_reply_all, stringResource(R.string.message_reply_all), { onReply(true) }, shape = CircleShape, size = 46.dp)
-        // The newest message, the user's own too.
-        IconTile(R.drawable.ic_forward, stringResource(R.string.message_forward), onForward, shape = CircleShape, size = 46.dp)
+        answers(this)
         IconTile(
             R.drawable.ic_delete,
             stringResource(if (forever) R.string.action_delete_forever else R.string.action_delete),
