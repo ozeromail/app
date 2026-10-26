@@ -76,6 +76,7 @@
   "signin_manual": "Настроить вручную",
   "signin_trust": "Почта остаётся на телефоне. Без слежки.",
   "signin_found_text": "Введите пароль от этой почты.",
+  "signin_finding": "Поиск сервера…",
   "signin_imap": "IMAP",
   "error_server_not_found": "Сервер для этого адреса не нашёлся. Укажите его ниже.",
   "signin_gmail": "Gmail по паролю приложения",

@@ -514,6 +514,10 @@ private struct Credentials: View {
                 }
                 SecureField(provider == nil ? "signin_password" : "signin_app_password", text: $password)
                     .textContentType(.password)
+                // Finding the servers can take a while: say what is going on.
+                if provider == nil && !servers && busy {
+                    Text("signin_finding").foregroundStyle(.secondary)
+                }
                 if servers {
                     ServerFields(label: "signin_server", host: Binding(get: { host }, set: { server = $0 }), port: $port)
                     ServerFields(

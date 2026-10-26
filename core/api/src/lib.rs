@@ -78,6 +78,17 @@ pub fn undo_seconds() -> u32 {
 const IMAPS_PORT: u16 = 993;
 const SMTPS_PORT: u16 = 465;
 
+/// How long a found account's IMAP server has to answer before Exchange is tried.
+const FIND_WAIT: Duration = Duration::from_secs(10);
+
+/// Whether a host name resolves, to tell a domain without mail servers from a device
+/// without a connection.
+async fn resolves(host: &str) -> bool {
+    tokio::time::timeout(FIND_WAIT, tokio::net::lookup_host((host, 443)))
+        .await
+        .is_ok_and(|found| found.is_ok())
+}
+
 /// How many files of saved mail compose offers to send on.
 const RECENT_FILES: usize = 6;
 /// The most bytes the files a person adds to one message may take together: what Gmail takes.
@@ -699,8 +710,17 @@ impl Core {
         if self.exists(&email)? {
             return Err(CoreError::AccountExists);
         }
-        // IMAP alone first, so a slow or missing SMTP server does not hide one that answers.
-        match self.login(&imap.clone().server(&email), &password).await {
+        // IMAP alone first, so a slow or missing SMTP server does not hide one that answers;
+        // briefly, as a host that never answers would hold back the Exchange try.
+        let server = imap.clone().server(&email);
+        let probe = tokio::time::timeout(FIND_WAIT, self.login(&server, &password))
+            .await
+            .unwrap_or_else(|_| {
+                Err(CoreError::Network {
+                    detail: "timed out".into(),
+                })
+            });
+        match probe {
             Ok(_) => {
                 return match self
                     .add_imap_account(email.clone(), email, imap, smtp, password)
@@ -718,10 +738,15 @@ impl Core {
             Err(e) => return Err(e),
         }
         // No name: the server is asked for the owner's.
+        let domain = ozero_domain::email_domain(&email).unwrap_or_default();
         match self
             .add_exchange_account(email, String::new(), None, None, None, password)
             .await
         {
+            // Without even the domain's own address, the device is most likely offline.
+            Err(CoreError::NoServer) if !resolves(&domain).await => Err(CoreError::Network {
+                detail: format!("no address for {domain}"),
+            }),
             Err(CoreError::NoServer) => Err(CoreError::NotFound),
             added => added,
         }

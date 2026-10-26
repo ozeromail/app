@@ -590,6 +590,12 @@ private fun Credentials(
                 KeyboardType.Password,
                 onDone = if (servers) null else ::submit,
             )
+            // Finding the servers can take a while: say what is going on.
+            if (provider == null && !servers) {
+                Reveal(busy.takeIf { it }) {
+                    Text(stringResource(R.string.signin_finding), color = colors.onSurfaceVariant)
+                }
+            }
             if (servers) {
                 Server(host, { server = it }, R.string.signin_server, port, { port = it })
                 Server(smtpHost, { smtpServer = it }, R.string.signin_smtp_server, smtpPort, { smtpPort = it }, onDone = ::submit)
