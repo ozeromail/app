@@ -25,7 +25,7 @@ use imap_codec::imap_types::sequence::{SeqOrUid, Sequence, SequenceSet};
 use imap_codec::{CommandCodec, GreetingCodec, ResponseCodec};
 use ozero_domain::{
     Changes, Checkpoint, Flags, FolderRole, MailProvider, Moved, NewFolder, Older, ProviderError,
-    RawMessage,
+    RawMessage, base64,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -144,6 +144,54 @@ impl ImapSession {
         user: &str,
         password: &str,
     ) -> Result<Self, ProviderError> {
+        let (mut session, signed_in) = Self::open_tls(host, port, tls).await?;
+        if signed_in {
+            return Ok(session);
+        }
+        let login = CommandBody::login(user, password).map_err(|_| ProviderError::Auth)?;
+        let reply = session.send(login).await?;
+        session.logged_in(reply, "LOGIN")
+    }
+
+    /// Like `connect`, signed in with an OAuth access token (XOAUTH2), as Gmail takes it.
+    pub async fn connect_oauth(
+        host: &str,
+        port: u16,
+        tls: Arc<ClientConfig>,
+        user: &str,
+        token: &str,
+    ) -> Result<Self, ProviderError> {
+        let (mut session, signed_in) = Self::open_tls(host, port, tls).await?;
+        if signed_in {
+            return Ok(session);
+        }
+        let tag = session.tag();
+        let response = base64(format!("user={user}\x01auth=Bearer {token}\x01\x01").as_bytes());
+        session
+            .write(format!("{tag} AUTHENTICATE XOAUTH2 {response}\r\n").as_bytes())
+            .await?;
+        timed(session.stream.flush()).await?;
+        let reply = match session.collect(&tag, true).await? {
+            Some(reply) => reply,
+            // A refusal: the server says why in a challenge and waits for an empty answer.
+            None => {
+                session.write(b"\r\n").await?;
+                timed(session.stream.flush()).await?;
+                session
+                    .collect(&tag, false)
+                    .await?
+                    .ok_or_else(|| protocol("unexpected continuation request"))?
+            }
+        };
+        session.logged_in(reply, "AUTHENTICATE")
+    }
+
+    /// A new connection after its greeting, and whether the server signed it in already.
+    async fn open_tls(
+        host: &str,
+        port: u16,
+        tls: Arc<ClientConfig>,
+    ) -> Result<(Self, bool), ProviderError> {
         let name = ServerName::try_from(host.to_owned())
             .map_err(|_| ProviderError::Network(format!("bad host name {host}")))?;
         let tcp = timed(TcpStream::connect((host, port))).await?;
@@ -154,12 +202,12 @@ impl ImapSession {
             next_tag: 1,
             capabilities: None,
         };
-        if session.greeting().await? == GreetingKind::PreAuth {
-            return Ok(session);
-        }
+        let signed_in = session.greeting().await? == GreetingKind::PreAuth;
+        Ok((session, signed_in))
+    }
 
-        let login = CommandBody::login(user, password).map_err(|_| ProviderError::Auth)?;
-        let reply = session.send(login).await?;
+    /// The session once the server answered the login `command`.
+    fn logged_in(mut self, reply: Reply, command: &str) -> Result<Self, ProviderError> {
         match (reply.kind, &reply.code) {
             (StatusKind::Ok, code) => {
                 // In the reply's code or an untagged CAPABILITY, as Gmail sends it.
@@ -171,16 +219,16 @@ impl ImapSession {
                     Some(Code::Capability(caps)) => Some(caps),
                     _ => None,
                 }) {
-                    session.capabilities = Some(caps.as_ref().to_vec());
+                    self.capabilities = Some(caps.as_ref().to_vec());
                 }
-                Ok(session)
+                Ok(self)
             }
             // RFC 5530: the server is down or busy, the password may be right.
             (StatusKind::No, Some(code)) if is_temporary(code) => {
-                Err(ProviderError::Network(format!("LOGIN: {}", reply.text)))
+                Err(ProviderError::Network(format!("{command}: {}", reply.text)))
             }
             (StatusKind::No, _) => Err(ProviderError::Auth),
-            (StatusKind::Bad, _) => Err(protocol(format!("LOGIN: {}", reply.text))),
+            (StatusKind::Bad, _) => Err(protocol(format!("{command}: {}", reply.text))),
         }
     }
 
@@ -964,6 +1012,26 @@ impl MailProvider for ImapSession {
         if opened.validity != since.validity || u64::from(opened.next) > since.next {
             return Ok(true);
         }
+        self.watch_opened(folder, idles, opened, wait).await
+    }
+}
+
+impl ImapSession {
+    /// Waits until `folder` changes, at most `wait`: true if it did. For a mailbox synced by
+    /// other means, such as Gmail's API, whose checkpoints are not IMAP's.
+    pub async fn watch(&mut self, folder: &str, wait: Duration) -> Result<bool, ProviderError> {
+        let idles = self.can_idle().await?;
+        let opened = self.open(folder, false).await?;
+        self.watch_opened(folder, idles, opened, wait).await
+    }
+
+    async fn watch_opened(
+        &mut self,
+        folder: &str,
+        idles: bool,
+        opened: Opened,
+        wait: Duration,
+    ) -> Result<bool, ProviderError> {
         if idles {
             return self.idle(wait).await;
         }

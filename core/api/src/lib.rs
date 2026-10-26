@@ -17,9 +17,9 @@ use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Attachment, Body, Category, Changes,
     Checkpoint, Draft, DraftFile, DraftId, FileId, Folder, FolderId, FolderRole, ListQuery,
     ListScope, MailProvider, MailSender, MailService, MessageId, MessageRow, Moved, NewAccount,
-    NewFolder, Older, OpId, OutboxId, Outgoing, OutgoingFile, ProviderError, ProviderState,
-    RawMessage, RecentFile, SavedDraft, Sender, Server, Store, StoreError, html, parse_recipients,
-    saves_sent_itself,
+    NewFolder, NewMail, Older, OpId, OutboxId, Outgoing, OutgoingFile, ProviderError,
+    ProviderState, RawMessage, RecentFile, SavedDraft, Sender, Server, Store, StoreError, html,
+    parse_recipients, saves_sent_itself,
 };
 use ozero_ews::{EasSession, EwsSession, discover};
 use ozero_gmail::{GmailSession, oauth};
@@ -47,6 +47,8 @@ const DAY: i64 = 86_400;
 const PREFETCH: u32 = 20;
 /// Longest wait for new mail on one connection; a mobile network may drop a quiet one sooner.
 const MAIL_WAIT: Duration = Duration::from_secs(5 * 60);
+/// The shortest time, in minutes, between checks with the app closed that phones allow.
+const SOONEST_CHECK: u32 = 15;
 /// Mail older than this many seconds is not announced: a day.
 const NEWS_AGE: i64 = DAY;
 /// Milliseconds an archived or sent message waits before the server hears of it.
@@ -79,6 +81,8 @@ pub fn undo_seconds() -> u32 {
 /// The usual ports of IMAP and SMTP over TLS, which a found account is tried on.
 const IMAPS_PORT: u16 = 993;
 const SMTPS_PORT: u16 = 465;
+/// Gmail's IMAP, which only waits for mail here: the API syncs it.
+const GMAIL_IMAP: &str = "imap.gmail.com";
 
 /// How long a found account's IMAP server has to answer before Exchange is tried.
 const FIND_WAIT: Duration = Duration::from_secs(10);
@@ -257,12 +261,30 @@ impl Core {
 
     /// The accounts in the order they were added.
     pub fn accounts(&self) -> Result<Vec<AccountItem>, CoreError> {
-        Ok(self
-            .store
+        self.store
             .accounts()?
             .into_iter()
-            .map(AccountItem::from)
-            .collect())
+            .map(|a| {
+                let can_push = match a.kind {
+                    AccountKind::Imap | AccountKind::Gmail => true,
+                    AccountKind::Exchange => self.speaks_active_sync(a.id)?,
+                    AccountKind::Graph => false,
+                };
+                let mut item = AccountItem::from(a);
+                item.can_push = can_push;
+                if !can_push && item.new_mail == NewMail::Push {
+                    item.new_mail = NewMail::Every {
+                        minutes: SOONEST_CHECK,
+                    };
+                }
+                Ok(item)
+            })
+            .collect()
+    }
+
+    /// Sets when the phone looks for the account's new mail with the app closed.
+    pub fn set_account_new_mail(&self, account: i64, when: NewMail) -> Result<(), CoreError> {
+        Ok(self.store.set_account_new_mail(AccountId(account), when)?)
     }
 
     /// Sets the account's colour to one of `account_colors`, by its place there.
@@ -1147,6 +1169,18 @@ impl Core {
         let account = self.account(AccountId(account))?;
         let mut slot = None;
         let remote = self.remote(&mut slot, &account, &secret).await?;
+        if account.kind == AccountKind::Gmail {
+            // Mail since the last sync first: the IMAP wait cannot tell it.
+            let waited = wait_for_mail(&*self.store, remote, account.id, Duration::ZERO).await;
+            if self.refused(&account, waited)? {
+                return Ok(true);
+            }
+            match self.gmail_idle(&account, &secret).await {
+                Ok(changed) => return Ok(changed),
+                // An old sign-in without IMAP's scope, say: the API is asked now and then.
+                Err(e) => log::info!("Gmail IDLE not open: {e}"),
+            }
+        }
         let waited = wait_for_mail(&*self.store, remote, account.id, MAIL_WAIT).await;
         if let Some(remote) = slot {
             remote.close().await;
@@ -1741,6 +1775,18 @@ impl Core {
     }
 
     /// Whether a saved Exchange account speaks ActiveSync rather than EWS.
+    /// Waits in IDLE on a Gmail inbox, signed in to Gmail's IMAP with the account's API token:
+    /// the API has no push without a server of ours. Its failures leave the account signed in.
+    async fn gmail_idle(&self, account: &Account, secret: &str) -> Result<bool, CoreError> {
+        let token = self.access_token(account.id, secret).await?;
+        let mut imap =
+            ImapSession::connect_oauth(GMAIL_IMAP, IMAPS_PORT, self.tls()?, &account.email, &token)
+                .await?;
+        let changed = imap.watch("INBOX", MAIL_WAIT).await;
+        let _ = imap.logout().await;
+        Ok(changed?)
+    }
+
     fn speaks_active_sync(&self, account: AccountId) -> Result<bool, CoreError> {
         let protocol = self.store.provider_state(account, PROTOCOL)?;
         Ok(protocol.as_deref() == Some(ACTIVE_SYNC))
@@ -2493,6 +2539,14 @@ pub enum AccountKind {
     Exchange,
 }
 
+/// When the phone looks for an account's new mail while the app is closed.
+#[uniffi::remote(Enum)]
+pub enum NewMail {
+    Push,
+    Every { minutes: u32 },
+    Manually,
+}
+
 /// A mail service sign-in knows by the domain of an address.
 #[uniffi::remote(Enum)]
 pub enum MailService {
@@ -2532,6 +2586,11 @@ pub struct AccountItem {
     pub color_index: u32,
     /// How many days back its mail is kept on the device; 0 keeps all of it.
     pub keep_days: u32,
+    /// When the phone looks for its new mail with the app closed; never `Push` for an account
+    /// that cannot.
+    pub new_mail: NewMail,
+    /// Whether its server says when mail comes, so it can be `Push`.
+    pub can_push: bool,
     pub kind: AccountKind,
     /// The server refused the saved secret: mail stops until the person signs in again.
     pub needs_sign_in: bool,
@@ -2548,6 +2607,8 @@ impl From<Account> for AccountItem {
             display_name: a.display_name,
             label: a.label,
             keep_days: a.keep_days,
+            new_mail: a.new_mail,
+            can_push: false,
             kind: a.kind,
             needs_sign_in: a.needs_sign_in,
         }

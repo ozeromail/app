@@ -531,8 +531,9 @@ fn rows_are_marked_only_with_several_accounts() {
     assert_eq!(
         marks,
         [
+            // Named by the domain when added; the second has the same domain, so its address.
             AccountMark {
-                name: "a@example.com".into(),
+                name: "Example".into(),
                 color: ACCOUNT_COLORS[0],
             },
             AccountMark {

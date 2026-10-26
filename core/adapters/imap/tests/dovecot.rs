@@ -384,6 +384,8 @@ async fn waits_in_idle_until_mail_arrives() {
             .await
             .unwrap()
     );
+    // Unless the wait knows nothing of syncs.
+    assert!(!imap.watch("Waits", quiet).await.unwrap());
     imap.logout().await.unwrap();
     other.logout().await.unwrap();
 }

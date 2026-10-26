@@ -10,8 +10,8 @@ use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Attachment, Body, Category, Changes,
     Checkpoint, Correspondents, Draft, DraftFile, DraftId, FileId, Flags, Folder, FolderId,
     FolderRole, ListQuery, ListScope, MessageId, MessageLocation, MessageRow, Moved, NewAccount,
-    NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile, RecentFile, SavedDraft,
-    Sender, Server, Store, StoreError, Unsent, with_quote,
+    NewFolder, NewMail, NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile, RecentFile,
+    SavedDraft, Sender, Server, Store, StoreError, Unsent, default_label, with_quote,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{
@@ -145,11 +145,14 @@ impl Store for SqliteStore {
             .query_row(
                 "INSERT INTO account (id, kind, email, display_name, server_host, server_port,
                                       server_user, server_certificate, smtp_host, smtp_port,
-                                      smtp_user, smtp_certificate, color)
+                                      smtp_user, smtp_certificate, color, label)
                  VALUES ((SELECT last + 1 FROM account_seq), ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
                          ?10, ?11,
                          (SELECT min(c) FROM (SELECT 0 AS c UNION SELECT color + 1 FROM account)
-                          WHERE c NOT IN (SELECT color FROM account)))
+                          WHERE c NOT IN (SELECT color FROM account)),
+                         -- A second Gmail goes by its address rather than the same name.
+                         CASE WHEN EXISTS (SELECT 1 FROM account WHERE label = ?12)
+                              THEN '' ELSE ?12 END)
                  RETURNING id",
                 params![
                     kind_str(account.kind),
@@ -163,6 +166,7 @@ impl Store for SqliteStore {
                     smtp.map(|s| s.port),
                     smtp.map(|s| &s.user),
                     smtp.and_then(|s| s.certificate.as_ref()),
+                    default_label(&account.email),
                 ],
                 |r| r.get(0),
             )
@@ -179,7 +183,7 @@ impl Store for SqliteStore {
             .prepare_cached(
                 "SELECT id, kind, email, display_name, server_host, server_port, server_user,
                         server_certificate, smtp_host, smtp_port, smtp_user, smtp_certificate,
-                        color, label, keep_days, needs_sign_in
+                        color, label, keep_days, needs_sign_in, new_mail
                  FROM account ORDER BY id",
             )
             .map_err(storage)?;
@@ -206,6 +210,13 @@ impl Store for SqliteStore {
                 label: r.get(13)?,
                 keep_days: r.get(14)?,
                 needs_sign_in: r.get(15)?,
+                new_mail: match r.get::<_, i64>(16)? {
+                    0 => NewMail::Push,
+                    m if m > 0 => NewMail::Every {
+                        minutes: u32::try_from(m).unwrap_or(u32::MAX),
+                    },
+                    _ => NewMail::Manually,
+                },
             })
         });
         rows.and_then(|rows| rows.collect()).map_err(storage)
@@ -247,6 +258,22 @@ impl Store for SqliteStore {
             .execute(
                 "UPDATE account SET label = ?2 WHERE id = ?1",
                 params![account.0, label.trim()],
+            )
+            .map_err(storage)?;
+        found(changed)
+    }
+
+    fn set_account_new_mail(&self, account: AccountId, when: NewMail) -> Result<(), StoreError> {
+        let value = match when {
+            NewMail::Push => 0,
+            NewMail::Every { minutes } => i64::from(minutes.max(1)),
+            NewMail::Manually => -1,
+        };
+        let changed = self
+            .conn()
+            .execute(
+                "UPDATE account SET new_mail = ?2 WHERE id = ?1",
+                params![account.0, value],
             )
             .map_err(storage)?;
         found(changed)

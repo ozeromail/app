@@ -10,7 +10,7 @@ use ozero_domain::{
     Account, AccountId, Action, Address, Body, Category, Changes, Checkpoint, Correspondents,
     Draft, DraftFile, DraftId, FileId, Flags, Folder, FolderId, FolderRole, ListQuery,
     MailProvider, MailSender, MessageBuilder, MessageId, MessageLocation, MessageParser,
-    MessageRow, Moved, NewAccount, NewFolder, NewMessage, Older, Op, OpId, OutboxId, Outgoing,
+    MessageRow, Moved, NewAccount, NewFolder, NewMail, NewMessage, Older, Op, OpId, OutboxId, Outgoing,
     OutgoingFile, ProviderError, RawMessage, RecentFile, SavedDraft, Store, StoreError, Unsent,
 };
 
@@ -384,6 +384,10 @@ impl Store for Memory {
     }
 
     fn set_account_keep(&self, _: AccountId, _: u32) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn set_account_new_mail(&self, _: AccountId, _: NewMail) -> Result<(), StoreError> {
         Ok(())
     }
 
