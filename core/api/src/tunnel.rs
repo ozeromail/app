@@ -41,8 +41,8 @@ pub trait PlatformSocket: Send + Sync {
     /// Up to `max` bytes; empty at the end of the stream.
     fn read(&self, max: u32) -> Result<Vec<u8>, PlatformTlsError>;
     fn write(&self, data: Vec<u8>) -> Result<(), PlatformTlsError>;
-    /// Ends the connection; a blocked `read` returns.
-    fn close(&self);
+    /// Ends the connection; a blocked `read` returns. Not `close`: that name is taken in Kotlin.
+    fn end(&self);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Error)]
@@ -141,7 +141,7 @@ impl Tunnel for Platform {
             let socket = blocking(move || {
                 let socket = tls.connect(host, port, certificate, asked)?;
                 if late.load(Ordering::Acquire) {
-                    socket.close();
+                    socket.end();
                 }
                 Ok(socket)
             })
@@ -152,7 +152,7 @@ impl Tunnel for Platform {
                 .unwrap_or_else(|p| p.into_inner())
                 .take();
             let Some(certificate) = passed else {
-                socket.close();
+                socket.end();
                 return Err(ProviderError::Network("no server certificate".into()));
             };
             Ok((Box::new(pump(socket)) as Box<dyn Stream>, certificate))
@@ -194,7 +194,7 @@ fn pump(socket: Arc<dyn PlatformSocket>) -> Pumped {
                 break;
             }
         }
-        reader.close();
+        reader.end();
     });
     let (outgoing, mut sent) = tokio::io::duplex(4 * CHUNK);
     let runtime = tokio::runtime::Handle::current();
@@ -205,7 +205,7 @@ fn pump(socket: Arc<dyn PlatformSocket>) -> Pumped {
                 break;
             }
         }
-        socket.close();
+        socket.end();
     });
     Pumped {
         received,
@@ -371,7 +371,7 @@ mod tests {
             Ok(())
         }
 
-        fn close(&self) {
+        fn end(&self) {
             self.state.lock().unwrap().1 = true;
             self.changed.notify_all();
         }
@@ -431,7 +431,7 @@ mod tests {
             Ok(())
         }
 
-        fn close(&self) {}
+        fn end(&self) {}
     }
 
     #[tokio::test]
