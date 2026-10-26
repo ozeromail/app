@@ -612,7 +612,17 @@ impl Core {
         let (endpoint, mut ews) = match server.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             Some(typed) => {
                 let endpoint = discover::endpoint(typed).ok_or(CoreError::NoServer)?;
-                let ews = discover::check(tls, &endpoint, &login, &password).await?;
+                let ews = match discover::check(tls.clone(), &endpoint, &login, &password).await {
+                    // Something answers there with an HTTP error, but not EWS.
+                    Err(ProviderError::Rejected(_)) => {
+                        return Err(if discover::active_sync(tls, &endpoint).await {
+                            CoreError::OnlyActiveSync
+                        } else {
+                            CoreError::NoEws
+                        });
+                    }
+                    found => found?,
+                };
                 (endpoint, ews)
             }
             None => match discover::discover(tls, &email, &login, &password).await {
@@ -2397,6 +2407,10 @@ pub enum CoreError {
     NoSmtp,
     /// No Exchange server was found for the address, or the one typed is no server address.
     NoServer,
+    /// The Exchange server typed answers, but not as EWS.
+    NoEws,
+    /// The Exchange server typed opens only ActiveSync, which the core does not speak.
+    OnlyActiveSync,
     Storage {
         detail: String,
     },
@@ -2419,6 +2433,8 @@ impl fmt::Display for CoreError {
             Self::BadRecipients => write!(f, "a recipient is not an email address"),
             Self::NoSmtp => write!(f, "the account has no SMTP server"),
             Self::NoServer => write!(f, "no Exchange server found"),
+            Self::NoEws => write!(f, "the server does not answer as EWS"),
+            Self::OnlyActiveSync => write!(f, "the server opens only ActiveSync"),
             Self::Storage { detail } => write!(f, "storage error: {detail}"),
         }
     }

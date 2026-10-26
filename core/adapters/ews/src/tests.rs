@@ -20,6 +20,8 @@ const KEY: &[u8] = include_bytes!("../../imap/tests/dovecot/tls.key");
 #[derive(Debug, Clone)]
 struct Seen {
     conn: usize,
+    /// The method and path.
+    line: String,
     auth: Option<String>,
     body: String,
 }
@@ -66,7 +68,13 @@ async fn serving(handler: Handler) -> (HttpsClient, Arc<Mutex<Vec<Seen>>>) {
                         .lines()
                         .find_map(|l| l.strip_prefix("Authorization: "))
                         .map(str::to_owned);
-                    let request = Seen { conn, auth, body };
+                    let line = head.lines().next().unwrap_or_default().to_owned();
+                    let request = Seen {
+                        conn,
+                        line,
+                        auth,
+                        body,
+                    };
                     let (status, headers, reply) = handler(&request);
                     log.lock().unwrap().push(request);
                     let mut response =
@@ -543,6 +551,25 @@ async fn a_refused_password_is_tried_once() {
         .filter(|s| s.auth.is_some())
         .count();
     assert_eq!(signed, 1);
+}
+
+#[tokio::test]
+async fn tells_a_server_with_only_active_sync() {
+    let handler: Handler = Arc::new(|r: &Seen| {
+        let status = if r.line.starts_with("OPTIONS /Microsoft-Server-ActiveSync ") {
+            401
+        } else {
+            404
+        };
+        (status, vec![], String::new())
+    });
+    let (http, _) = serving(handler.clone()).await;
+    let mut ews = EwsSession::over(Client::over(http, PATH, "anna", "pw").probing());
+    assert!(matches!(ews.check().await, Err(ProviderError::Rejected(_))));
+    let (http, _) = serving(handler).await;
+    assert!(discover::answers_active_sync(http).await);
+    let (http, _) = serving(Arc::new(|_: &Seen| (404, vec![], String::new()))).await;
+    assert!(!discover::answers_active_sync(http).await);
 }
 
 fn inbox() -> String {

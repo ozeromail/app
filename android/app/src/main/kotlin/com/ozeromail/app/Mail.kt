@@ -489,6 +489,8 @@ fun CoreException.text(): Int {
         is CoreException.BadRecipients -> R.string.error_bad_recipients
         is CoreException.NoSmtp -> R.string.error_no_smtp
         is CoreException.NoServer -> R.string.error_no_server
+        is CoreException.NoEws -> R.string.error_no_ews
+        is CoreException.OnlyActiveSync -> R.string.error_only_active_sync
         else -> R.string.error_storage
     }
 }
