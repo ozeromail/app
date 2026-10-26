@@ -18,6 +18,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -93,7 +94,10 @@ fun MessageScreen(
     onUnread: () -> Unit,
     onMoveToInbox: (() -> Unit)?,
     onDone: (() -> Unit)?,
-    onBack: () -> Unit,
+    /** Null beside the list, where the message has no screen to go back from. */
+    onBack: (() -> Unit)?,
+    /** Beside the list, with every action on the right rail. */
+    pane: Boolean = false,
 ) {
     var more by remember(message.id) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -128,9 +132,11 @@ fun MessageScreen(
     // The newest message not from the user.
     val answer = thread.lastOrNull { !it.sent } ?: message
 
-    Box(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
-            BackArrow(onBack, Modifier.padding(top = 4.dp))
+    val sideways = LocalRoom.current.rails || pane
+    // The conversation, or the message on its own. On its side the whole page scrolls, title
+    // and all, as the height is short; upright a message alone takes the screen below its title.
+    val letters = @Composable { column: ColumnScope ->
+        with(column) {
             if (thread.size > 1 || message.threadCount > 1u) {
                 Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
                     Title(message)
@@ -153,6 +159,14 @@ fun MessageScreen(
                     Reveal(error) { Text(stringResource(it), color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(Gap.screen)) }
                     Spacer(Modifier.height(12.dp))
                 }
+            } else if (sideways) {
+                val filesAt = remember { BringIntoViewRequester() }
+                Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
+                    Title(message)
+                    From(message, open = true, fileCount(message, bodies), filesAt)
+                    HorizontalDivider(Modifier.padding(top = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                    LetterBody(mail, files, filesAt, message, bodies, Modifier.fillMaxWidth(), fill = false)
+                }
             } else {
                 val filesAt = remember { BringIntoViewRequester() }
                 Title(message)
@@ -160,38 +174,73 @@ fun MessageScreen(
                 HorizontalDivider(Modifier.padding(top = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
                 LetterBody(mail, files, filesAt, message, bodies, Modifier.weight(1f), fill = true)
             }
-            Column(
-                Modifier.fillMaxWidth().navigationBarsPadding().padding(top = Gap.barTop, bottom = Gap.barBottom),
-                verticalArrangement = Arrangement.spacedBy(Gap.inBar),
-            ) {
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = Gap.bar),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
-                ) {
-                    Pill(
-                        stringResource(R.string.message_reply_prompt),
-                        onClick = { onReply(answer, false) },
-                        modifier = Modifier.weight(1f),
-                        height = 46.dp,
-                    )
-                    IconTile(
-                        R.drawable.ic_reply_all,
-                        stringResource(R.string.message_reply_all),
-                        { onReply(answer, true) },
-                        shape = CircleShape,
-                        size = 46.dp,
-                    )
-                    // The newest message, the user's own too.
-                    IconTile(
-                        R.drawable.ic_forward,
-                        stringResource(R.string.message_forward),
-                        { onForward(thread.lastOrNull() ?: message) },
-                        shape = CircleShape,
-                        size = 46.dp,
-                    )
+        }
+    }
+    val colors = MaterialTheme.colorScheme
+    val delete = if (message.canTrash) R.string.action_delete else R.string.action_delete_forever
+
+    Box(Modifier.fillMaxSize()) {
+        if (sideways) {
+            // The actions move to the edges, under the thumbs: the rarer ones left, the answers and Done right.
+            // Beside the list all of them go right, as the list has the left.
+            Row(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
+                val rarer = @Composable {
+                    RailAction(R.drawable.ic_delete, stringResource(delete), colors.onSurface, onClick = onDelete)
+                    RailAction(R.drawable.ic_more, stringResource(R.string.action_more), colors.onSurface, onClick = { more = true })
                 }
-                Actions(onDelete = onDelete, forever = !message.canTrash, onMore = { more = true }, onDone = onDone)
+                if (!pane) Rail(start = true) { rarer() }
+                Middle(LETTER_MAX, Modifier.weight(1f)) {
+                    Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))) {
+                        if (onBack != null) BackArrow(onBack, Modifier.padding(top = 4.dp)) else Spacer(Modifier.height(12.dp))
+                        letters(this)
+                    }
+                }
+                Rail(start = false) {
+                    if (pane) rarer()
+                    RailAction(R.drawable.ic_reply, stringResource(R.string.message_reply), colors.onSurface, onClick = { onReply(answer, false) })
+                    RailAction(R.drawable.ic_reply_all, stringResource(R.string.message_reply_all), colors.onSurface, onClick = { onReply(answer, true) })
+                    // The newest message, the user's own too.
+                    RailAction(R.drawable.ic_forward, stringResource(R.string.message_forward), colors.onSurface, onClick = { onForward(thread.lastOrNull() ?: message) })
+                    onDone?.let { RailAction(R.drawable.ic_done, stringResource(R.string.action_done), colors.onAccent, colors.accent, it) }
+                }
+            }
+        } else {
+            Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
+                onBack?.let { BackArrow(it, Modifier.padding(top = 4.dp)) }
+                letters(this)
+                Column(
+                    Modifier.fillMaxWidth().navigationBarsPadding().padding(top = Gap.barTop, bottom = Gap.barBottom),
+                    verticalArrangement = Arrangement.spacedBy(Gap.inBar),
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = Gap.bar),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
+                    ) {
+                        Pill(
+                            stringResource(R.string.message_reply_prompt),
+                            onClick = { onReply(answer, false) },
+                            modifier = Modifier.weight(1f),
+                            height = 46.dp,
+                        )
+                        IconTile(
+                            R.drawable.ic_reply_all,
+                            stringResource(R.string.message_reply_all),
+                            { onReply(answer, true) },
+                            shape = CircleShape,
+                            size = 46.dp,
+                        )
+                        // The newest message, the user's own too.
+                        IconTile(
+                            R.drawable.ic_forward,
+                            stringResource(R.string.message_forward),
+                            { onForward(thread.lastOrNull() ?: message) },
+                            shape = CircleShape,
+                            size = 46.dp,
+                        )
+                    }
+                    Actions(onDelete = onDelete, forever = !message.canTrash, onMore = { more = true }, onDone = onDone)
+                }
             }
         }
         // Like every menu, the rarer actions open in a sheet, low in reach of the thumb.
@@ -212,7 +261,7 @@ fun MessageScreen(
         Toast(
             snackbar,
             onGo = {},
-            modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = TOAST_ABOVE_BARS),
+            modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = if (sideways) 16.dp else TOAST_ABOVE_BARS),
         )
     }
 }
