@@ -3,7 +3,7 @@ use std::fmt;
 use crate::{
     Account, AccountId, Action, Body, Category, Changes, Checkpoint, Correspondents, Draft,
     DraftFile, DraftId, FileId, Folder, FolderId, ListQuery, MessageId, MessageLocation,
-    MessageRow, Moved, NewAccount, NewFolder, NewMessage, Op, OpId, OutboxId, Outgoing,
+    MessageRow, Moved, NewAccount, NewFolder, NewMail, NewMessage, Op, OpId, OutboxId, Outgoing,
     OutgoingFile, RecentFile, SavedDraft, Unsent,
 };
 
@@ -21,6 +21,8 @@ pub trait Store: Send + Sync {
     fn set_account_label(&self, account: AccountId, label: &str) -> Result<(), StoreError>;
     /// Sets how many days back the account's mail is kept; 0 keeps all of it.
     fn set_account_keep(&self, account: AccountId, days: u32) -> Result<(), StoreError>;
+    /// Sets when the phone looks for the account's new mail with the app closed.
+    fn set_account_new_mail(&self, account: AccountId, when: NewMail) -> Result<(), StoreError>;
     /// Forgets the account's mail received before `before` (seconds), but for mail a queued
     /// action or message needs.
     fn prune(&self, account: AccountId, before: i64) -> Result<(), StoreError>;

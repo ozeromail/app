@@ -12,8 +12,8 @@ mod sort;
 mod store;
 
 pub use account::{
-    Account, AccountId, AccountKind, MailService, NewAccount, Server, email_domain,
-    guess_imap_host, guess_smtp_host, mail_service, saves_sent_itself,
+    Account, AccountId, AccountKind, MailService, NewAccount, NewMail, Server, default_label,
+    email_domain, guess_imap_host, guess_smtp_host, mail_service, saves_sent_itself,
 };
 pub use encoding::{base64, decode_base64};
 pub use folder::{Folder, FolderId, FolderRole, NewFolder, SNOOZED};

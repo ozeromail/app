@@ -314,4 +314,9 @@ pub const MIGRATIONS: &[&str] = &[
     ) WITHOUT ROWID;
     CREATE INDEX snooze_due ON snooze(wake_at) WHERE woke = 0;
     ",
+    // 32: when the phone looks for an account's new mail with the app closed: 0 as soon as it
+    // comes, -1 only with the app open, else every so many minutes.
+    "
+    ALTER TABLE account ADD COLUMN new_mail INTEGER NOT NULL DEFAULT 0;
+    ",
 ];
