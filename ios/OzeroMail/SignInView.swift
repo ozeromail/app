@@ -78,6 +78,8 @@ struct SignInView: View {
     @State private var step: Step?
     @State private var busy = false
     @State private var error: LocalizedStringKey?
+    // What the server or the connection said, for the person's IT team.
+    @State private var detail: String?
     @Environment(\.webAuthenticationSession) private var webAuthentication
     @Environment(\.openURL) private var openURL
 
@@ -113,7 +115,13 @@ struct SignInView: View {
             }
             .frame(maxHeight: .infinity)
             if let error {
-                Text(error).foregroundStyle(Color.ozeroError).padding(.top, 12)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(error).foregroundStyle(Color.ozeroError)
+                    if let detail {
+                        Text(verbatim: detail).font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.top, 12)
             }
         }
         .padding(.horizontal, 20)
@@ -127,6 +135,7 @@ struct SignInView: View {
     private func go(_ to: Step?) {
         step = to
         error = nil
+        detail = nil
     }
 
     /// Runs a sign-in, busy meanwhile; on success leaves the screen.
@@ -135,6 +144,7 @@ struct SignInView: View {
         guard !busy else { return }
         busy = true
         error = nil
+        detail = nil
         Task {
             defer { busy = false }
             do {
@@ -142,6 +152,7 @@ struct SignInView: View {
                 onSignedIn()
             } catch {
                 self.error = error.text()
+                detail = error.detail
             }
         }
     }
@@ -150,6 +161,7 @@ struct SignInView: View {
     private func google() {
         guard !busy else { return }
         error = nil
+        detail = nil
         busy = true
         Task {
             defer { busy = false }

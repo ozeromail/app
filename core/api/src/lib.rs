@@ -712,6 +712,10 @@ impl Core {
                             .await
                         {
                             Err(CoreError::Server { .. }) => Err(CoreError::NoEws),
+                            // Said under the error, so the person's IT team sees which part.
+                            Err(CoreError::Network { detail }) => Err(CoreError::Network {
+                                detail: format!("ActiveSync: {detail}"),
+                            }),
                             added => added,
                         };
                     }
