@@ -41,6 +41,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,6 +64,7 @@ import uniffi.ozero_api.AccountItem
 import uniffi.ozero_api.FolderItem
 import uniffi.ozero_api.FolderRole
 import uniffi.ozero_api.Mailbox
+import uniffi.ozero_api.NewMail
 import uniffi.ozero_api.accountColors
 
 /**
@@ -88,6 +90,9 @@ fun AccountsSheet(
     onLabel: (AccountItem, String) -> Unit,
     onSignIn: (AccountItem) -> Unit,
     onKeepDays: (AccountItem, Int) -> Unit,
+    /** The account whose page the sheet opens on, as after adding it. */
+    startOn: Long?,
+    onNewMail: (AccountItem, NewMail) -> Unit,
     onRemove: (AccountItem) -> Unit,
     onWrite: () -> Unit,
     onClose: () -> Unit,
@@ -97,6 +102,7 @@ fun AccountsSheet(
         // Inside the sheet, so it opens on the list again next time: an account's id, or
         // SWIPES.
         var page by rememberSaveable { mutableStateOf<Long?>(null) }
+        LaunchedEffect(startOn) { if (startOn != null) page = startOn }
         AnimatedContent(
             page.takeIf { it == SWIPES || accounts.any { a -> a.id == it } },
             transitionSpec = {
@@ -119,6 +125,7 @@ fun AccountsSheet(
                         onLabel = { onLabel(account, it) },
                         onSignIn = { onSignIn(account) },
                         onKeepDays = { onKeepDays(account, it) },
+                        onNewMail = { onNewMail(account, it) },
                         onRemove = { onRemove(account) },
                     )
                     else -> {
@@ -398,10 +405,9 @@ private fun SubPage(title: String, onBack: () -> Unit) {
 }
 
 /**
- * One account: its name and colour, and a way to remove it from the phone. One the server
- * signed out offers to sign in again first.
+ * One account: its name and colour, when new mail comes, how much of its mail the phone keeps,
+ * and a way to remove it. One the server signed out offers to sign in again first.
  */
-/** One account: its name and colour, how much of its mail the phone keeps, and a way to remove it. */
 @Composable
 private fun AccountSettings(
     account: AccountItem,
@@ -410,6 +416,7 @@ private fun AccountSettings(
     onLabel: (String) -> Unit,
     onSignIn: () -> Unit,
     onKeepDays: (Int) -> Unit,
+    onNewMail: (NewMail) -> Unit,
     onRemove: () -> Unit,
 ) {
     var confirming by rememberSaveable { mutableStateOf(false) }
@@ -432,6 +439,28 @@ private fun AccountSettings(
         modifier = Modifier.padding(start = Gap.sheet, end = Gap.sheet, top = 8.dp, bottom = 12.dp),
     )
     Swatches(account.colorIndex.toInt(), onColor)
+    val checks = NEW_MAIL.keys.filter { account.canPush || it != NewMail.Push }
+    Choices(R.string.account_new_mail, checks, account.newMail, onNewMail) { option, on ->
+        Text(
+            stringResource(NEW_MAIL[option] ?: R.string.account_new_mail_manually),
+            color = if (on) colors.primary else colors.onSurface,
+            style = Type.Text,
+            fontWeight = Weight.Medium,
+            maxLines = 1,
+        )
+    }
+    Text(
+        stringResource(
+            when (account.newMail) {
+                NewMail.Push -> R.string.account_new_mail_push_hint
+                NewMail.Manually -> R.string.account_new_mail_manually_hint
+                is NewMail.Every -> R.string.account_new_mail_every_hint
+            },
+        ),
+        color = colors.onSurfaceVariant,
+        style = Type.Caption,
+        modifier = Modifier.padding(start = Gap.sheet, end = Gap.sheet, bottom = 12.dp),
+    )
     Choices(R.string.account_keep, KEEP_DAYS.keys.toList(), account.keepDays.toInt(), onKeepDays) { days, on ->
         Text(
             stringResource(KEEP_DAYS.getValue(days)),
@@ -470,6 +499,14 @@ private fun AccountSettings(
     }
 }
 
+/** When the phone looks for an account's new mail with the app closed, and what to call it. */
+private val NEW_MAIL = linkedMapOf(
+    NewMail.Push to R.string.account_new_mail_push,
+    NewMail.Every(15u) to R.string.account_new_mail_quarter,
+    NewMail.Every(60u) to R.string.account_new_mail_hourly,
+    NewMail.Manually to R.string.account_new_mail_manually,
+)
+
 /** How many days back an account's mail stays on the phone, 0 for all of it, and what to call it. */
 private val KEEP_DAYS = linkedMapOf(
     30 to R.string.account_keep_month,
@@ -478,7 +515,7 @@ private val KEEP_DAYS = linkedMapOf(
     0 to R.string.account_keep_all,
 )
 
-/** The person's own name for the account, saved on Done and when the page closes. */
+/** The person's own name for the account, saved with Save, on Done and when the page closes. */
 @Composable
 private fun LabelField(account: AccountItem, onLabel: (String) -> Unit) {
     var label by rememberSaveable(account.id) { mutableStateOf(account.label) }
@@ -500,6 +537,16 @@ private fun LabelField(account: AccountItem, onLabel: (String) -> Unit) {
             val hint = stringResource(R.string.account_name_hint)
             // The sender name is not what the list shows, so it is said here.
             Text(if (sender.isEmpty() || sender == account.email) hint else stringResource(R.string.account_sender, hint, sender))
+        },
+        trailingIcon = if (label.trim() != account.label) {
+            {
+                TextButton(onClick = {
+                    focus.clearFocus()
+                    onLabel(label)
+                }) { Text(stringResource(R.string.action_save)) }
+            }
+        } else {
+            null
         },
         shape = RoundedCornerShape(Radius.medium),
         singleLine = true,
