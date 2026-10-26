@@ -40,7 +40,12 @@ class ListTest : TestMail() {
     @Test
     fun onlyAPullDropsADrop() {
         rule.onNode(hasContentDescription("Accounts")).performClick()
-        waitFor { has(hasText("Empty")) }
+        // The folders may be there before the sheet is laid out: wait until it has come up.
+        var at = -1f
+        waitFor {
+            val top = if (has(hasText("Empty"))) bounds(hasText("Empty")).top else 0f
+            (top > 0f && top == at).also { at = top }
+        }
         rule.onNode(hasText("Empty")).apply { runCatching { performScrollTo() } }.performClick()
         waitFor { has(hasText("Nothing here")) }
         film("drops", every = 4) {
