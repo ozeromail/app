@@ -48,6 +48,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -962,11 +963,6 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                     onGroups = ::keepGroups,
                                     onMailbox = { mailbox = it },
                                     onMore = { accountsOpen = true },
-                                    actions = {
-                                        val tile = if (LocalRoom.current.short) 40.dp else 48.dp
-                                        SearchTile({ searching = true }, Modifier.weight(1f), tile)
-                                        ComposeTile({ composing = Composing(NEW_DRAFT) }, tile)
-                                    },
                                     modifier = Modifier.width(MAILBOXES).fillMaxHeight(),
                                 )
                                 VerticalDivider(color = colors.outlineVariant)
@@ -1391,6 +1387,16 @@ private fun InboxList(
     // The list leaves to the side the thumb moves away from, and the next one comes in from the other.
     val slide = Modifier.glided { thumb() - page }
     val mini by animateFloatAsState(if (scrolled) 1f else 0f, Motion.calm(Motion.SMALL), label = "title")
+    // On a wide screen without tabs, search and a new message go beside the title, not in a row of their own.
+    val titleActions: (@Composable RowScope.() -> Unit)? = if (wide && !inbox && !choosing) {
+        {
+            val tile = if (LocalRoom.current.short) 40.dp else 48.dp
+            SearchTile(onSearch, tile)
+            ComposeTile(onCompose, tile)
+        }
+    } else {
+        null
+    }
     Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
         // The other tabs' pages, under the list: the one left goes on from where the finger let it
         // go, and the next shows under the finger before it is picked.
@@ -1453,7 +1459,7 @@ private fun InboxList(
                 state = listState,
                 contentPadding = PaddingValues(top = top, bottom = dockHeight + 16.dp),
             ) {
-                item(key = "title") { Hero(shownTitle, shownOwner, onBack) }
+                item(key = "title") { Hero(shownTitle, shownOwner, onBack, titleActions) }
                 items(signedOut, key = { "signed-out-${it.id}" }) { account ->
                     Afloat(thumb, page, depth = { 0 }, modifier = rowMove().then(sink)) { SignedOutRow(account, onClick = { onSignIn(account) }) }
                 }
@@ -1565,6 +1571,7 @@ private fun InboxList(
             ) {
                 Text(shownTitle, style = Type.Row, fontWeight = Weight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 onBack?.let { BackArrow(it, Modifier.align(Alignment.CenterStart)) }
+                titleActions?.let { Row(Modifier.align(Alignment.CenterEnd).padding(end = Gap.bar), horizontalArrangement = Arrangement.spacedBy(Gap.inBar), content = it) }
             }
         }
         Column(Modifier.align(Alignment.BottomCenter)) {
@@ -1609,6 +1616,7 @@ private fun InboxList(
                     )
                 },
                 wide = wide,
+                pane = showing != null,
             )
         }
         // The rarer ways to choose, in a sheet like every menu.
@@ -1653,21 +1661,29 @@ private fun mailboxOwner(mailbox: Mailbox, folder: FolderItem?, accounts: List<A
 
 /** The large title at the top of the list, where it does not need the thumb. */
 @Composable
-internal fun Hero(title: String, subtitle: String?, onBack: (() -> Unit)?) {
+internal fun Hero(title: String, subtitle: String?, onBack: (() -> Unit)?, actions: (@Composable RowScope.() -> Unit)? = null) {
     if (LocalRoom.current.short) {
         // On its side the arrow goes beside the title, and the title is smaller: the height is for the mail.
-        Row(Modifier.padding(top = 4.dp, bottom = 8.dp).heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp, end = Gap.bar).heightIn(min = 44.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             onBack?.let { BackArrow(it) }
-            Column(Modifier.padding(start = if (onBack == null) Gap.screen else 4.dp, end = Gap.screen)) {
+            Column(Modifier.weight(1f).padding(start = if (onBack == null) Gap.screen else 4.dp, end = 8.dp)) {
                 Text(title, style = Type.Title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (subtitle != null) Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, style = Type.Caption)
             }
+            actions?.let { Row(horizontalArrangement = Arrangement.spacedBy(Gap.inBar), content = it) }
         }
         return
     }
     Column {
         // The arrow's row is there even without it, so every title sits at the same height.
-        Box(Modifier.padding(top = 4.dp).height(44.dp)) { onBack?.let { BackArrow(it) } }
+        Row(Modifier.fillMaxWidth().padding(top = 4.dp, end = Gap.bar).height(44.dp), verticalAlignment = Alignment.CenterVertically) {
+            onBack?.let { BackArrow(it) }
+            Spacer(Modifier.weight(1f))
+            actions?.let { Row(horizontalArrangement = Arrangement.spacedBy(Gap.inBar), content = it) }
+        }
         Column(Modifier.padding(start = Gap.screen, end = Gap.screen, top = 2.dp, bottom = 14.dp)) {
             LargeTitle(title)
             if (subtitle != null) {
@@ -1685,8 +1701,9 @@ internal fun Hero(title: String, subtitle: String?, onBack: (() -> Unit)?) {
 /**
  * Everything the thumb needs, along the bottom: the inbox's tabs (null elsewhere), then the
  * accounts button, search and a new message. On a [wide] screen the mailboxes are beside the
- * list with search and a new message under them, so the dock is only the tabs, or the button
- * that empties the folder, or nothing: the short height is for the mail.
+ * list, so the rest fits one row, beside a message ([pane]) only the tabs. Without tabs search
+ * and a new message go beside the title, so the dock is the button that empties the folder, or
+ * nothing: the short height is for the mail.
  */
 @Composable
 private fun Dock(
@@ -1706,12 +1723,15 @@ private fun Dock(
     choosing: Float,
     choiceBar: @Composable () -> Unit,
     wide: Boolean,
+    /** Beside an open message the row is only the tabs. */
+    pane: Boolean,
 ) {
     val colors = MaterialTheme.colorScheme
     val rise = with(LocalDensity.current) { 16.dp.toPx() }
     // On its side the dock is as low as its controls allow.
     val short = LocalRoom.current.short
-    // Search and a new message are beside the mailboxes: with no tabs, nothing is left for a row.
+    val tile = if (short) 40.dp else 48.dp
+    // Without tabs, search and a new message are beside the title: nothing is left for a row.
     if (wide && tabs == null && empty == null && choosing == 0f) {
         Spacer(modifier.fillMaxWidth().navigationBarsPadding())
         return
@@ -1751,6 +1771,10 @@ private fun Dock(
                             tabs != null -> Tabs(tab, tabs, glide, thumb, onTab, fill)
                             empty != null -> EmptyButton(stringResource(empty.first), empty.second, fill)
                             else -> Spacer(fill)
+                        }
+                        if (tabs != null && !pane) {
+                            SearchTile(onSearch, tile)
+                            ComposeTile(onCompose, tile)
                         }
                     } else {
                         AccountsButton(accounts, onAccounts)
@@ -1796,10 +1820,10 @@ private fun FolderRole.emptyLabel(): Int? = when (this) {
     else -> null
 }
 
-/** Search under the mailboxes. */
+/** Search as a button of its own, beside the tabs or the title. */
 @Composable
-private fun SearchTile(onClick: () -> Unit, modifier: Modifier, height: Dp) {
-    Pill(stringResource(R.string.search_prompt), onClick, modifier, icon = R.drawable.ic_search, height = height)
+private fun SearchTile(onClick: () -> Unit, size: Dp = 48.dp) {
+    IconTile(R.drawable.ic_search, stringResource(R.string.search_prompt), onClick, background = MaterialTheme.colorScheme.surfaceVariant, size = size)
 }
 
 /** A new message, in the accent. */
