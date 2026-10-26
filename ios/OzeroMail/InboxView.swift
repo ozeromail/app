@@ -52,10 +52,10 @@ struct InboxView: View {
                 Task { await model.snooze(snoozing.messages, until: until) }
             }
         }
-        .sheet(isPresented: $model.accountsOpen) {
+        .sheet(isPresented: $model.accountsOpen, onDismiss: { model.added = nil }) {
             AccountsSheet(
                 accounts: model.accounts, folders: model.folders, mailbox: model.mailbox, drafts: model.drafts.count,
-                swipes: $model.swipes, groups: $model.groups, actions: accountsActions)
+                swipes: $model.swipes, groups: $model.groups, actions: accountsActions, startOn: model.added)
             .task { await model.loadFolders() }
         }
         .fullScreenCover(isPresented: $model.addingAccount) {
@@ -142,6 +142,7 @@ struct InboxView: View {
                 model.signingIn = account
             },
             onKeepDays: { account, days in model.changeAccount { try await model.mail.setKeepDays(account, days: days) } },
+            onNewMail: { account, check in model.changeAccount { try await model.mail.setNewMail(account, check) } },
             onRemove: { account in Task { await model.remove(account) } },
             onWrite: {
                 model.accountsOpen = false

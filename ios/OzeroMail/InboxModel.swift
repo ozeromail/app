@@ -77,6 +77,8 @@ final class InboxModel {
     /// The account being signed in to again.
     var signingIn: AccountItem?
     var accountsOpen = false
+    /// An account just added, whose settings the sheet opens on: its name, when its mail comes.
+    var added: Int64?
     /// Messages chosen to act on together.
     var chosen: Set<Int64> = []
     /// Messages waiting on the snooze sheet for a time.
@@ -712,6 +714,10 @@ final class InboxModel {
         if new { everSynced = everSynced.filter { !$0.hasPrefix(Mailbox.unifiedKey) } }
         Task {
             await loadAccounts()
+            if new, let newest = accounts.map(\.id).max() {
+                added = newest
+                accountsOpen = true
+            }
             await sync()
         }
     }

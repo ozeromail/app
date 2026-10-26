@@ -2,8 +2,9 @@ import BackgroundTasks
 import UserNotifications
 import os
 
-/// Checks every account for new mail while the app is closed and tells about mail from people.
-/// iOS decides when it runs; asking for every 15 minutes is a wish, not a schedule.
+/// Checks the accounts that are due for new mail while the app is closed, each as often as it
+/// is set to, and tells about mail from people. iOS decides when it runs; asking for every 15
+/// minutes is a wish, not a schedule. Without a push server, Instantly means as often as iOS lets.
 enum BackgroundCheck {
     static let id = "com.ozeromail.app.refresh"
 
@@ -24,14 +25,36 @@ enum BackgroundCheck {
             let mail = try await Mail.shared()
             // Snoozed mail was announced on time; here it only comes back.
             _ = try? await mail.wake()
+            let now = Date.now
+            let due = try await mail.accounts().filter { account in
+                let last = Date(timeIntervalSince1970: checked[String(account.id)] ?? 0)
+                switch account.newMail {
+                case .push: return true
+                case .manually: return false
+                // A run a little early is due.
+                case .every(let minutes): return now.timeIntervalSince(last) >= Double(minutes) * 60 - slack
+                }
+            }.map(\.id)
+            guard !due.isEmpty else { return }
             // Other accounts may still have synced; the next run tries again.
-            _ = try? await mail.refresh()
+            _ = try? await mail.refresh(which: { due.contains($0.id) })
+            var times = checked
+            for id in due { times[String(id)] = now.timeIntervalSince1970 }
+            checked = times
             let new = try await mail.newMail()
             await notify(new)
         } catch {
             log.error("background check failed: \(String(describing: error), privacy: .public)")
         }
     }
+
+    /// When each account was last checked here, by its id, in seconds.
+    private static var checked: [String: Double] {
+        get { UserDefaults.standard.dictionary(forKey: "checked") as? [String: Double] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: "checked") }
+    }
+
+    private static let slack: Double = 3 * 60
 
     /// More at once is noise; the newest are shown.
     private static let maxShown = 5
