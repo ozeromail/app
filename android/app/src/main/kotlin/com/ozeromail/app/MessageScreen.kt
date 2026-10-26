@@ -175,7 +175,9 @@ fun MessageScreen(
         if (sideways) {
             // The actions move to the edges, under the thumbs: the rarer ones left, the answers and Done right.
             // Beside the list all of them go right, as the list has the left.
-            Row(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
+            // Beside the list, the list keeps the start edge clear.
+            val edges = if (pane) WindowInsetsSides.End else WindowInsetsSides.Horizontal
+            Row(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(edges))) {
                 val rarer: @Composable ColumnScope.() -> Unit = {
                     BarAction(R.drawable.ic_delete, stringResource(delete), colors.onSurface, onClick = onDelete)
                     BarAction(R.drawable.ic_more, stringResource(R.string.action_more), colors.onSurface, onClick = { more = true })

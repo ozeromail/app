@@ -314,7 +314,8 @@ private struct InboxList: View {
         // On its side the dock's controls move to the edges, under the thumbs.
         .safeAreaInset(edge: .leading, spacing: 0) {
             if sideways {
-                Rail(width: model.isInbox ? Room.tabsRail : Room.rail) {
+                // Wide enough for the tabs, or for the words of Empty Trash.
+                Rail(width: model.isInbox || model.emptyLabel != nil ? Room.tabsRail : Room.rail) {
                     if model.isInbox { RailTabs(model: model) }
                     if !choosing { EmptyFolderButton(model: model) }
                     AccountsButton(accounts: model.accounts) { model.accountsOpen = true }
