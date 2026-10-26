@@ -46,6 +46,7 @@ import uniffi.ozero_api.InboxTab
 import uniffi.ozero_api.Mailbox
 import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
+import uniffi.ozero_api.NewMail
 import uniffi.ozero_api.RecentFileItem
 import uniffi.ozero_api.UnsentItem
 import uniffi.ozero_api.googleSignIn
@@ -140,6 +141,9 @@ class Mail(private val context: Context) {
 
     /** Keeps [account]'s mail of the last [days] days on the phone, or all of it with 0. */
     suspend fun setKeepDays(account: AccountItem, days: Int) = io { core.setAccountKeep(account.id, days.toUInt()) }
+
+    /** Sets when the phone looks for the account's new mail with the app closed. */
+    suspend fun setNewMail(account: AccountItem, check: NewMail) = io { core.setAccountNewMail(account.id, check) }
 
     /** Every account's folders; they show once the account's first sync has listed them. */
     suspend fun folders(): List<FolderItem> = io { core.folders() }
@@ -430,13 +434,18 @@ class Mail(private val context: Context) {
      * Syncs [mailbox] in all accounts at once; the first failure is thrown once every one has
      * finished. A refused login is not one: it marks its account. True if an account needs
      * signing in again. Before a failure is thrown, [onFailing] gets the names of the accounts
-     * it is about if another account got through; else the whole phone is offline.
+     * it is about if another account got through; else the whole phone is offline. Only the
+     * accounts [which] picks are synced.
      */
-    suspend fun refresh(mailbox: Mailbox = INBOX, onFailing: (List<String>) -> Unit = {}): Boolean {
+    suspend fun refresh(
+        mailbox: Mailbox = INBOX,
+        which: (AccountItem) -> Boolean = { true },
+        onFailing: (List<String>) -> Unit = {},
+    ): Boolean {
         val failed = ConcurrentLinkedQueue<Pair<String, CoreException>>()
         val done = AtomicInteger()
         try {
-            eachAccount(mailbox) { account, password ->
+            eachAccount(mailbox, which) { account, password ->
                 try {
                     core.syncMailbox(account.id, password, mailbox)
                     done.incrementAndGet()
@@ -458,10 +467,14 @@ class Mail(private val context: Context) {
      * in again, and returns what they gave; the first failure but a refused login is thrown once
      * every one has finished.
      */
-    private suspend fun <T> eachAccount(mailbox: Mailbox, call: suspend (AccountItem, String) -> T): List<T> = io {
+    private suspend fun <T> eachAccount(
+        mailbox: Mailbox,
+        which: (AccountItem) -> Boolean = { true },
+        call: suspend (AccountItem, String) -> T,
+    ): List<T> = io {
         // A folder is one account's, so only that account is asked.
         val owner = (mailbox as? Mailbox.Folder)?.let { box -> core.folders().find { it.id == box.id }?.accountId }
-        val signedIn = core.accounts().filter { (owner == null || it.id == owner) && !it.needsSignIn }.mapNotNull { account ->
+        val signedIn = core.accounts().filter { (owner == null || it.id == owner) && !it.needsSignIn && which(it) }.mapNotNull { account ->
             vault.password(account.email)?.let { account to it }
         }
         val results: List<Result<T>> = coroutineScope {
@@ -501,9 +514,10 @@ class Mail(private val context: Context) {
 
     /**
      * Calls [onMail] each time an account's inbox may have changed, until cancelled: for the
-     * app on screen. [onMail] says whether its sync went through.
+     * app on screen, and for [WatchService] with it closed. [onMail] says whether its sync went
+     * through.
      */
-    suspend fun watch(accounts: List<AccountItem>, onMail: suspend () -> Boolean) = coroutineScope {
+    suspend fun watch(accounts: List<AccountItem>, onMail: suspend (AccountItem) -> Boolean) = coroutineScope {
         // One signed out would only be refused again and again.
         for (account in accounts.filterNot { it.needsSignIn }) {
             launch {
@@ -513,10 +527,10 @@ class Mail(private val context: Context) {
                 while (true) {
                     // After a failed wait a sync comes first, until one goes through: mail may
                     // have come meanwhile, and the error on screen goes.
-                    if (failed) failed = !onMail()
+                    if (failed) failed = !onMail(account)
                     val started = SystemClock.elapsedRealtime()
                     val fine = try {
-                        !io { core.waitForMail(account.id, password) } || onMail()
+                        !io { core.waitForMail(account.id, password) } || onMail(account)
                     } catch (e: CoreException) {
                         Log.w("Ozero", "wait for mail failed", e)
                         failed = true

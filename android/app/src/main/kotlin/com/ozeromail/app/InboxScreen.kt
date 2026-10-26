@@ -287,6 +287,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     // The account being signed in to again, by id.
     var signingIn by rememberSaveable { mutableStateOf<Long?>(null) }
     var accountsOpen by rememberSaveable { mutableStateOf(false) }
+    // An account just added, whose settings the sheet opens on: its name, when its mail comes.
+    var added by rememberSaveable { mutableStateOf<Long?>(null) }
     var accounts by remember { mutableStateOf(emptyList<AccountItem>()) }
     var folders by remember { mutableStateOf(emptyList<FolderItem>()) }
     val context = LocalContext.current
@@ -569,9 +571,12 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         if (context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             askToNotify.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        // Only once there is an account: without one a check has nothing to do.
-        MailWorker.schedule(context)
         counts()
+    }
+    // Only once there is an account: without one a check has nothing to do. Again when one is
+    // added or set to look for its mail otherwise.
+    LaunchedEffect(accounts.map { Triple(it.id, it.newMail, it.needsSignIn) }) {
+        if (accounts.isNotEmpty()) MailWorker.schedule(context, accounts)
     }
     // On opening and on every return to the app: mail that came meanwhile shows without a pull.
     // Not again right after one, as when back from the file picker or a link.
@@ -946,6 +951,14 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                 // Its mail is all still to come in the mailboxes together.
                                 keepSynced(everSynced.filterTo(mutableSetOf()) { it >= 0 })
                                 scope.launch { sync() }
+                                scope.launch {
+                                    added = try {
+                                        mail.accounts().maxOfOrNull { it.id }
+                                    } catch (e: CoreException) {
+                                        null
+                                    }
+                                    accountsOpen = added != null
+                                }
                             },
                             onCancel = ::back,
                         )
@@ -1145,6 +1158,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             onKeepDays = { account, days ->
                 changeAccount { mail.setKeepDays(account, days) }
             },
+            startOn = added,
+            onNewMail = { account, check ->
+                changeAccount { mail.setNewMail(account, check) }
+            },
             onRemove = { account ->
                 accountsOpen = false
                 scope.launch {
@@ -1162,6 +1179,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                     mailbox = Mail.INBOX
                     loadAccounts()
                     if (accounts.isEmpty()) {
+                        WatchService.update(context, accounts)
                         keepSynced(emptySet())
                         onNoAccounts()
                     } else {
@@ -1173,7 +1191,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 accountsOpen = false
                 composing = Composing(authorDraft(context))
             },
-            onClose = { accountsOpen = false },
+            onClose = {
+                accountsOpen = false
+                added = null
+            },
         )
         SnoozeSheet(
             visible = snoozing != null,
