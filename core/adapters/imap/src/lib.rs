@@ -88,12 +88,12 @@ pub use verify::{Refused, RefusedCertificates, fingerprint};
 /// TLS settings that trust the same root certificates as the OS.
 /// On Android the verifier must be initialized from Kotlin first. `client` offers a client
 /// certificate to a server that asks for one. `trusted` is the SHA-256 of a server
-/// certificate the person chose to trust although the checks refuse it; the refused ones
-/// go to `refused`.
+/// certificate the person chose to trust although the checks refuse it; refused ones go to
+/// `refused`, for a sign-in.
 pub fn platform_tls(
     client: Option<Arc<dyn rustls::client::ResolvesClientCert>>,
     trusted: Option<[u8; 32]>,
-    refused: Arc<RefusedCertificates>,
+    refused: Option<Arc<RefusedCertificates>>,
 ) -> Result<Arc<ClientConfig>, ProviderError> {
     use tokio_rustls::rustls::client::danger::ServerCertVerifier;
 

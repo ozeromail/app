@@ -169,7 +169,7 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
     // What the server or the connection said, for the person's IT team.
     var detail by remember { mutableStateOf<String?>(null) }
     // A server certificate the checks refused, and the sign-in to run again trusting it.
-    var untrusted by remember { mutableStateOf<Pair<CoreException.UntrustedCertificate, suspend (String) -> Unit>?>(null) }
+    var untrusted by remember { mutableStateOf<Pair<CoreException.UntrustedCertificate, (String) -> Unit>?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     // A password typed for one way in is not sent to another.
@@ -194,7 +194,7 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
      * Runs a sign-in, busy meanwhile; on success leaves the screen. With [trusting], the
      * person may trust a server certificate the checks refused and run it again with it.
      */
-    suspend fun attempt(trusting: (suspend (String) -> Unit)? = null, signIn: suspend () -> Unit) {
+    suspend fun attempt(trusting: ((String) -> Unit)? = null, signIn: suspend () -> Unit) {
         busy = true
         error = null
         detail = null
@@ -317,10 +317,17 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
                         ),
                         onBack = ::back,
                         onSubmit = { server, login, certificate ->
-                            busy = true
-                            suspend fun signIn(trusted: String?) =
-                                mail.signInExchange(email.trim(), password, server, login, certificate, trusted)
-                            scope.launch { attempt({ trusted -> attempt { signIn(trusted) } }) { signIn(null) } }
+                            // Trusting a refused certificate runs it again with it, and asks
+                            // again if the server then shows another.
+                            fun signIn(trusted: String?) {
+                                busy = true
+                                scope.launch {
+                                    attempt(::signIn) {
+                                        mail.signInExchange(email.trim(), password, server, login, certificate, trusted)
+                                    }
+                                }
+                            }
+                            signIn(null)
                         },
                     )
                     else -> Credentials(
@@ -371,10 +378,7 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
                 }
                 untrusted?.let { (refused, trust) ->
                     TextButton(
-                        onClick = {
-                            busy = true
-                            scope.launch { trust(refused.fingerprint) }
-                        },
+                        onClick = { trust(refused.fingerprint) },
                         enabled = !busy,
                         contentPadding = PaddingValues(0.dp),
                     ) { Text(stringResource(R.string.signin_trust_certificate)) }
