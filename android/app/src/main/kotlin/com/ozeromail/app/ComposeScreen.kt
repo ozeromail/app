@@ -191,7 +191,7 @@ fun ComposeScreen(
     val density = LocalDensity.current
     // Only whether it shows: the inset itself changes on every frame of the keyboard sliding.
     val keyboard by remember { derivedStateOf { ime.getBottom(density) > 0 } }
-    val sideways = LocalRoom.current.rails
+    val sideways = LocalRoom.current.sideways
     // On its side, while the text is typed, To and Subject fold into one line, so the text has
     // the little height the keyboard leaves; a tap on the line brings them back.
     var writingText by remember { mutableStateOf(false) }

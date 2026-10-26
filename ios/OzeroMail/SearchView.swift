@@ -24,7 +24,7 @@ struct SearchView: View {
             // No motion in this list: when the servers' answer joins it, rows sliding to their new
             // places would pass over the rows that appear at once.
             ForEach(messages, id: \.id) { message in
-                NavigationLink(value: Route.message(message)) { MessageRow(message: message) }
+                OpenRow(model: model, message: message)
             }
             if asking {
                 Text("search_server")

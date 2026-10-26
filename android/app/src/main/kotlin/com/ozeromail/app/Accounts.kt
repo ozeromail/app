@@ -16,16 +16,23 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -139,6 +146,46 @@ fun AccountsSheet(
                 }
             }
         }
+    }
+}
+
+/**
+ * The mailboxes down the side of a wide screen: the sheet's list of them, always there. The
+ * rest of the sheet, the accounts' and the swipes' settings, opens with [onMore].
+ */
+@Composable
+fun Mailboxes(
+    accounts: List<AccountItem>,
+    folders: List<FolderItem>,
+    mailbox: Mailbox,
+    drafts: Int,
+    onDrafts: () -> Unit,
+    groups: Groups,
+    onGroups: (Groups) -> Unit,
+    onMailbox: (Mailbox) -> Unit,
+    onMore: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    Column(
+        modifier
+            .background(colors.bar)
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Vertical))
+            .verticalScroll(rememberScrollState())
+            .padding(vertical = 8.dp),
+    ) {
+        if (drafts > 0) FolderRow(R.drawable.ic_compose, stringResource(R.string.folder_drafts), open = false, count = drafts, onClick = onDrafts)
+        Folders(
+            accounts,
+            folders,
+            mailbox,
+            groups,
+            onMailbox,
+            onToggle = { group -> onGroups(groups.toggle(group, accounts.size > 1)) },
+            onAccount = { onMore() },
+        )
+        HorizontalDivider(Modifier.padding(vertical = 6.dp), color = colors.outlineVariant)
+        SheetAction(R.drawable.ic_more, stringResource(R.string.mailboxes_more), colors.onSurface, onMore)
     }
 }
 

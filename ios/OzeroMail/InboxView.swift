@@ -7,6 +7,7 @@ import UserNotifications
 struct InboxView: View {
     @State private var model: InboxModel
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.sideways) private var sideways
 
     init(mail: Mail, onNoAccounts: @escaping () -> Void) {
         _model = State(initialValue: InboxModel(mail: mail, onNoAccounts: onNoAccounts))
@@ -15,17 +16,34 @@ struct InboxView: View {
     var body: some View {
         @Bindable var model = model
         NavigationStack(path: $model.path) {
-            InboxList(model: model)
-                .navigationDestination(for: Route.self) { route in
-                    switch route {
-                    case .message(let message):
-                        MessageView(model: model, message: message)
-                    case .search:
-                        SearchView(model: model)
-                    case .drafts:
-                        DraftsView(model: model)
-                    }
+            // On its side the mailboxes are beside the list, and make room for a message opened
+            // beside it.
+            HStack(spacing: 0) {
+                if sideways && model.pane == nil {
+                    Mailboxes(model: model)
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                    Divider()
                 }
+                InboxList(model: model)
+                    .frame(maxWidth: model.pane == nil ? .infinity : Room.listPane)
+                if let pane = model.pane {
+                    Divider()
+                    MessageView(model: model, message: pane, pane: true)
+                        .id(pane.id)
+                }
+            }
+            .animation(.smooth, value: model.pane == nil)
+            .navigationDestination(for: Route.self) { route in
+                switch route {
+                case .message(let message):
+                    MessageView(model: model, message: message)
+                        .navigationBarTitleDisplayMode(.inline)
+                case .search:
+                    SearchView(model: model)
+                case .drafts:
+                    DraftsView(model: model)
+                }
+            }
         }
         .sheet(isPresented: $model.accountsOpen) {
             AccountsSheet(
@@ -80,6 +98,7 @@ struct InboxView: View {
                 await model.backOnline()
             }
         }
+        .onChange(of: sideways, initial: true) { _, now in model.sideways = now }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await model.returned() } }
         }
@@ -160,7 +179,6 @@ private struct InboxList: View {
     @State private var waterCalm = true
     /// How much of the gap is held open, from 0 to 1.
     @State private var held: CGFloat = 0
-    @Environment(\.sideways) private var sideways
 
     private var picked: [MessageItem] {
         // Only what the list still shows: a sync may take a chosen message away.
@@ -211,9 +229,7 @@ private struct InboxList: View {
                     .selectionDisabled()
             }
             ForEach(Array(model.messages.enumerated()), id: \.element.id) { index, message in
-                NavigationLink(value: Route.message(message)) {
-                    MessageRow(message: message)
-                }
+                OpenRow(model: model, message: message)
                 .tag(message.id)
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                     swipe(model.swipes.left, message)
@@ -297,38 +313,9 @@ private struct InboxList: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 20)
                 }
-                if !sideways {
-                    Dock(model: model, choosing: choosing, picked: picked, onMore: { more = true })
-                } else if choosing {
-                    // The rails stay; what to do with the chosen messages rises under the list.
-                    ChoiceBar(model: model, picked: picked, onMore: { more = true })
-                        .frame(height: 52)
-                        .padding(.horizontal, 12)
-                        .padding(.top, 10)
-                        .padding(.bottom, 4)
-                        .background(.bar)
-                }
+                Dock(model: model, choosing: choosing, picked: picked, onMore: { more = true })
             }
             .animation(.smooth, value: model.toast)
-        }
-        // On its side the dock's controls move to the edges, under the thumbs.
-        .safeAreaInset(edge: .leading, spacing: 0) {
-            if sideways {
-                // Wide enough for the tabs, or for the words of Empty Trash.
-                Rail(width: model.isInbox || model.emptyLabel != nil ? Room.tabsRail : Room.rail) {
-                    if model.isInbox { RailTabs(model: model) }
-                    if !choosing { EmptyFolderButton(model: model) }
-                    AccountsButton(accounts: model.accounts) { model.accountsOpen = true }
-                }
-            }
-        }
-        .safeAreaInset(edge: .trailing, spacing: 0) {
-            if sideways {
-                Rail {
-                    SearchButton(model: model)
-                    ComposeButton(model: model)
-                }
-            }
         }
         .confirmationDialog("action_more", isPresented: $more) {
             Button("action_select_all") { model.chosen.formUnion(model.messages.map(\.id)) }
@@ -381,7 +368,9 @@ private struct InboxList: View {
 }
 
 /// Everything the thumb needs, along the bottom: the inbox's tabs (none elsewhere), then the
-/// accounts button, search and a new message; while choosing, what to do with the chosen.
+/// accounts button, search and a new message; while choosing, what to do with the chosen. On its
+/// side the mailboxes are beside the list, so the rest fits one row, which leaves the short height
+/// to the mail; beside a message that row is only the tabs, where there are tabs.
 private struct Dock: View {
     @Bindable var model: InboxModel
     let choosing: Bool
@@ -390,19 +379,26 @@ private struct Dock: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            if model.isInbox {
-                Picker("inbox_title", selection: $model.tab) {
-                    ForEach(Category.all, id: \.self) { category in
-                        let unread = model.tabs.first { $0.category == category }?.unread ?? 0
-                        (Text(category.label) + Text(verbatim: unread > 0 ? " \(unread)" : "")).tag(category)
-                    }
-                }
-                .pickerStyle(.segmented)
+            if !model.sideways {
+                if model.isInbox { tabs }
+                if !choosing { EmptyFolderButton(model: model) }
             }
-            if !choosing { EmptyFolderButton(model: model) }
             Group {
                 if choosing {
                     ChoiceBar(model: model, picked: picked, onMore: onMore)
+                } else if model.sideways {
+                    HStack(spacing: 8) {
+                        if model.isInbox {
+                            tabs
+                        } else {
+                            EmptyFolderButton(model: model)
+                            Spacer(minLength: 0)
+                        }
+                        if model.pane == nil || !model.isInbox {
+                            SearchButton(model: model)
+                            ComposeButton(model: model)
+                        }
+                    }
                 } else {
                     HStack(spacing: 8) {
                         AccountsButton(accounts: model.accounts) { model.accountsOpen = true }
@@ -427,6 +423,58 @@ private struct Dock: View {
         .padding(.top, 10)
         .padding(.bottom, 4)
         .background(.bar)
+    }
+
+    private var tabs: some View {
+        Picker("inbox_title", selection: $model.tab) {
+            ForEach(Category.all, id: \.self) { category in
+                let unread = model.tabs.first { $0.category == category }?.unread ?? 0
+                (Text(category.label) + Text(verbatim: unread > 0 ? " \(unread)" : "")).tag(category)
+            }
+        }
+        .pickerStyle(.segmented)
+    }
+}
+
+/// A row of the list that opens its message: beside the list on its side, on its own screen
+/// upright.
+struct OpenRow: View {
+    let model: InboxModel
+    let message: MessageItem
+
+    var body: some View {
+        if model.sideways {
+            Button {
+                model.open(message)
+            } label: {
+                MessageRow(message: message).contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .listRowBackground(model.pane?.id == message.id ? Color.ozeroCard : nil)
+        } else {
+            NavigationLink(value: Route.message(message)) { MessageRow(message: message) }
+        }
+    }
+}
+
+/// The mailboxes down the left on its side, always there; the rest of the accounts sheet opens
+/// from the last row.
+private struct Mailboxes: View {
+    @Bindable var model: InboxModel
+
+    var body: some View {
+        List {
+            MailboxRows(
+                accounts: model.accounts, folders: model.folders, mailbox: model.mailbox, drafts: model.drafts.count,
+                groups: $model.groups, settings: false,
+                onMailbox: { model.mailbox = $0 }, onDrafts: { model.path.append(.drafts) })
+            Section {
+                SheetAction(icon: "ellipsis.circle", text: "mailboxes_more", color: .primary) { model.accountsOpen = true }
+            }
+        }
+        .listStyle(.sidebar)
+        .frame(width: Room.mailboxes)
+        .task { await model.loadFolders() }
     }
 }
 
@@ -464,7 +512,7 @@ private struct ComposeButton: View {
     }
 }
 
-/// Search as a button of its own, on a rail.
+/// Search as a button of its own, beside the tabs.
 private struct SearchButton: View {
     let model: InboxModel
 
@@ -480,53 +528,6 @@ private struct SearchButton: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(Text("search_prompt"))
-    }
-}
-
-/// The inbox tabs down a rail, a row each with its unread count; the thumb glides between them.
-private struct RailTabs: View {
-    @Bindable var model: InboxModel
-    @Namespace private var thumb
-
-    var body: some View {
-        VStack(spacing: 2) {
-            ForEach(Category.all, id: \.self) { category in
-                let on = model.tab == category
-                let unread = model.tabs.first { $0.category == category }?.unread ?? 0
-                Button {
-                    withAnimation(.spring(duration: 0.4, bounce: 0)) { model.tab = category }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(category.label)
-                            .fontWeight(on ? .semibold : .medium)
-                            .foregroundStyle(on ? .primary : .secondary)
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
-                        if unread > 0 {
-                            Text(verbatim: "\(unread)")
-                                .font(.footnote.weight(.bold).monospacedDigit())
-                                .foregroundStyle(Color.ozeroAccent)
-                        }
-                    }
-                    .font(.subheadline)
-                    .padding(.horizontal, 10)
-                    .frame(height: 38)
-                    .background {
-                        if on {
-                            RoundedRectangle(cornerRadius: 11)
-                                .fill(Color(.systemBackground))
-                                .shadow(color: .black.opacity(0.12), radius: 1.5, y: 1)
-                                .matchedGeometryEffect(id: "thumb", in: thumb)
-                        }
-                    }
-                    .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(on ? .isSelected : [])
-            }
-        }
-        .padding(3)
-        .background(Color.ozeroCard, in: .rect(cornerRadius: 14))
     }
 }
 

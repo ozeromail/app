@@ -15,6 +15,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.EnterExitState
@@ -27,8 +28,10 @@ import androidx.compose.animation.core.SeekableTransitionState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.rememberTransition
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -53,7 +56,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.offset
@@ -98,8 +100,6 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
@@ -246,7 +246,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var error by remember { mutableStateOf<Int?>(null) }
     // The message read: on its own screen, or beside the list on a screen large enough for both.
     var open by remember { mutableStateOf<MessageItem?>(null) }
-    val wide by rememberUpdatedState(LocalRoom.current.split)
+    // Read by the loads too, which outlive a turn of the screen.
+    val wide by rememberUpdatedState(LocalRoom.current.wide)
     var composing by remember { mutableStateOf<Composing?>(null) }
     // One answer or forward at a time: a second tap would replace the one being written.
     var writing by remember { mutableStateOf(false) }
@@ -724,16 +725,15 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     }
 
     val again = accounts.find { it.id == signingIn }
-    // The list and the message side by side; an empty list keeps the whole width for its water.
-    // Turning the screen keeps the message open: beside the list, or on its own screen.
-    val split = LocalRoom.current.split && messages.isNotEmpty()
-    val screen = screenOf(composing, open, split, addingAccount, again, searching, draftsOpen)
+    // The list and the message side by side on a wide screen. Turning the screen keeps the
+    // message open: beside the list, or on its own screen.
+    val screen = screenOf(composing, open, wide, addingAccount, again, searching, draftsOpen)
     // Where back leads: the same screens with the top one gone.
     val behind: Screen? = when (screen) {
         Screen.Inbox -> null
         Screen.Search, Screen.AddAccount, is Screen.SignInAgain, Screen.Drafts -> Screen.Inbox
-        is Screen.Read -> screenOf(null, null, split, addingAccount, again, searching, draftsOpen)
-        is Screen.Write -> screenOf(null, open, split, addingAccount, again, searching, draftsOpen)
+        is Screen.Read -> screenOf(null, null, wide, addingAccount, again, searching, draftsOpen)
+        is Screen.Write -> screenOf(null, open, wide, addingAccount, again, searching, draftsOpen)
     }
 
     fun closeSearch() {
@@ -781,10 +781,12 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     // Back from another mailbox leads to the inbox.
     BackHandler(enabled = screen == Screen.Inbox && mailbox != Mail.INBOX && !accountsOpen) { mailbox = Mail.INBOX }
     // Before that, back closes the message beside the list.
-    BackHandler(enabled = screen == Screen.Inbox && open != null && !accountsOpen) {
+    fun closePane() {
         open = null
+        // The list now has the message's snippet.
         scope.launch { load() }
     }
+    BackHandler(enabled = screen == Screen.Inbox && open != null && !accountsOpen, onBack = ::closePane)
 
     /** A message on its own screen, or beside the list in a [pane]; done with it, it closes. */
     @Composable
@@ -822,7 +824,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 closeSearch()
                 archive(listOf(message))
             }.takeIf { message.canArchive },
-            onBack = if (pane) null else ::back,
+            onBack = if (pane) ::closePane else ::back,
             pane = pane,
         )
     }
@@ -871,13 +873,42 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                             onOpen = {
                                 open = it
                                 // Beside the list, the message opens in the inbox's pane.
-                                if (split) closeSearch()
+                                if (wide) closeSearch()
                             },
                             onBack = ::back,
                         )
                     }
-                    Screen.Inbox -> Row(Modifier.fillMaxSize()) {
-                        Box(if (split) Modifier.width(TABS_RAIL + LIST_PANE).fillMaxHeight() else Modifier.weight(1f)) {
+                    Screen.Inbox -> Row(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
+                        val reading = open.takeIf { wide }
+                        // The mailboxes make room for the list as a message opens beside it.
+                        AnimatedVisibility(
+                            wide && reading == null,
+                            enter = expandHorizontally(Motion.settle()) + fadeIn(Motion.calm(Motion.SMALL)),
+                            exit = shrinkHorizontally(Motion.settle()) + fadeOut(Motion.calm(Motion.SMALL)),
+                        ) {
+                            Row {
+                                Mailboxes(
+                                    accounts = accounts,
+                                    folders = folders,
+                                    mailbox = mailbox,
+                                    drafts = drafts.size,
+                                    onDrafts = { draftsOpen = true },
+                                    groups = groups,
+                                    onGroups = {
+                                        groups = it
+                                        settings.groups = it
+                                    },
+                                    onMailbox = { mailbox = it },
+                                    onMore = { accountsOpen = true },
+                                    modifier = Modifier.width(MAILBOXES).fillMaxHeight(),
+                                )
+                                VerticalDivider(color = colors.outlineVariant)
+                            }
+                        }
+                        Middle(
+                            if (wide && reading == null) LIST_MAX else Dp.Unspecified,
+                            if (reading != null) Modifier.width(LIST_PANE).fillMaxHeight() else Modifier.weight(1f),
+                        ) {
                             InboxList(
                                 listState = listState,
                                 syncing = syncing,
@@ -948,18 +979,14 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                 onRead = { read -> choice { setRead(it, read) } },
                                 onDelete = { choice { delete(it) } },
                                 onDone = { choice { rows -> archive(rows.filter { it.canArchive }) } },
-                                pane = split,
-                                showing = open?.id,
+                                wide = wide,
+                                pane = reading != null,
+                                showing = reading?.id,
                             )
                         }
-                        if (split) {
+                        if (reading != null) {
                             VerticalDivider(color = colors.outlineVariant)
-                            Box(Modifier.weight(1f).fillMaxHeight()) {
-                                when (val reading = open) {
-                                    null -> NothingOpen()
-                                    else -> key(reading.id) { Reader(reading, pane = true) }
-                                }
-                            }
+                            Box(Modifier.weight(1f).fillMaxHeight()) { key(reading.id) { Reader(reading, pane = true) } }
                         }
                     }
                 }
@@ -1164,15 +1191,15 @@ private fun InboxList(
     onRead: (read: Boolean) -> Unit,
     onDelete: () -> Unit,
     onDone: () -> Unit,
-    /** Beside an open message: search and a new message join the tabs on the left rail. */
+    /** Beside the mailboxes: the dock is one row. */
+    wide: Boolean = false,
+    /** Beside an open message, the row is only the tabs where there are tabs. */
     pane: Boolean = false,
     /** The message open beside the list. */
     showing: Long? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     val density = LocalDensity.current
-    // On its side the dock's controls move to the edges; beside a message, all to the left one.
-    val sideways = LocalRoom.current.rails || pane
     val haptics = LocalHapticFeedback.current
     // Only what the list still shows: a sync may take a chosen message away.
     val picked = messages.filter { it.id in chosen }
@@ -1276,270 +1303,223 @@ private fun InboxList(
     // The list leaves to the side the thumb moves away from, and the next one comes in from the other.
     val slide = Modifier.glided { thumb() - page }
     val mini by animateFloatAsState(if (scrolled) 1f else 0f, Motion.calm(Motion.SMALL), label = "title")
-    val choiceBar = @Composable {
-        ChoiceBar(
-            done = picked.count { it.canArchive },
-            unread = picked.any { it.threadUnread > 0u },
-            forever = picked.isNotEmpty() && picked.none { it.canTrash },
-            onCancel = { onChoose(emptySet()) },
-            onRead = { onRead(picked.any { it.threadUnread > 0u }) },
-            onDelete = onDelete,
-            onMore = { more = true },
-            onDone = onDone.takeIf { picked.any { it.canArchive } },
-        )
-    }
-    val emptyAction = empty.takeIf { messages.isNotEmpty() && !choosing }
-    // With the dock gone, only the system's own bar is under the list.
-    val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-    val underList = if (sideways && mode == 0f) navBottom else dockHeight
-    Box(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
-            if (sideways) {
-                Rail(start = true, width = if (inbox || pane || emptyAction != null) TABS_RAIL else RAIL) {
-                    if (inbox) Tabs(tab, tabs, glide, thumb, pick, vertical = true)
-                    emptyAction?.let { (label, onClick) -> EmptyButton(stringResource(label), onClick) }
-                    if (pane) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(Gap.inBar)) {
-                            AccountsButton(accounts, onAccounts)
-                            SearchTile(onSearch, size = 44.dp)
-                            ComposeTile(onCompose, size = 44.dp)
-                        }
-                    } else {
-                        AccountsButton(accounts, onAccounts)
-                    }
+    Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
+        // The other tabs' pages, under the list: the one left goes on from where the finger let it
+        // go, and the next shows under the finger before it is picked.
+        if (inbox && !allEmpty) {
+            Category.entries.forEachIndexed { at, category ->
+                if (category == tab) return@forEachIndexed
+                val from = leaving?.takeIf { it.tab == category }
+                key(category) {
+                    Page(
+                        at = at,
+                        afloats = afloats,
+                        rows = from?.rows ?: others[category].orEmpty(),
+                        words = emptyWords(inbox = true, allEmpty = false, category),
+                        water = !lake,
+                        thumb = thumb,
+                        top = { from?.top ?: underTitle() ?: with(density) { (top + 48.dp).toPx() } },
+                        onGone = { if (leaving?.tab == category) leaving = null },
+                    )
                 }
             }
-            Middle(LIST_MAX, Modifier.weight(1f)) {
-                Box(Modifier.fillMaxSize()) {
-                    // The other tabs' pages, under the list: the one left goes on from where the finger let it
-                    // go, and the next shows under the finger before it is picked.
-                    if (inbox && !allEmpty) {
-                        Category.entries.forEachIndexed { at, category ->
-                            if (category == tab) return@forEachIndexed
-                            val from = leaving?.takeIf { it.tab == category }
-                            key(category) {
-                                Page(
-                                    at = at,
-                                    afloats = afloats,
-                                    rows = from?.rows ?: others[category].orEmpty(),
-                                    words = emptyWords(inbox = true, allEmpty = false, category),
-                                    water = !lake,
-                                    thumb = thumb,
-                                    top = { from?.top ?: underTitle() ?: with(density) { (top + 48.dp).toPx() } },
-                                    onGone = { if (leaving?.tab == category) leaving = null },
+        }
+        // The list is never held by the pull itself, so a finger can pull again at any time:
+        // every pull drops a drop, and one that goes all the way syncs, unless one runs.
+        Box(
+            Modifier.fillMaxSize().whilePressed { down ->
+                if (down) {
+                    pressing = true
+                    pull.touched()
+                    return@whilePressed
+                }
+                // Only a finger that pulled: a tap or a scroll up while the list goes back up drops nothing.
+                val f = pull.fraction
+                if (pull.drawn && f >= TUG) drops.tryEmit(f)
+                // After the list has had its own say on this release.
+                glideScope.launch {
+                    withFrameNanos {}
+                    settlePull()
+                }
+                // The list stays where the finger left it, and is held or let go from there.
+                val at = opened()
+                pressing = false
+                if (!lakeNow && at > held.value) {
+                    glideScope.launch {
+                        held.snapTo(at)
+                        held.animateTo(holdNow, Motion.settle())
+                    }
+                }
+            }.nestedScroll(pull),
+        ) {
+            LazyColumn(
+                Modifier
+                    .fillMaxSize()
+                    .chooseRows(
+                        listState,
+                        rows = { rowsNow.map { it.id } },
+                        chosen = { chosenNow.filterTo(LinkedHashSet()) { id -> rowsNow.any { it.id == id } } },
+                        onChoose = { chooseNow(it) },
+                        onHold = { haptics.performHapticFeedback(HapticFeedbackType.LongPress) },
+                    ),
+                state = listState,
+                contentPadding = PaddingValues(top = top, bottom = dockHeight + 16.dp),
+            ) {
+                item(key = "title") { Hero(shownTitle, shownOwner, onBack) }
+                items(signedOut, key = { "signed-out-${it.id}" }) { account ->
+                    Afloat(thumb, page, depth = { 0 }, modifier = rowMove().then(sink)) { SignedOutRow(account, onClick = { onSignIn(account) }) }
+                }
+                items(unsent, key = { "unsent-${it.id}" }) { failed ->
+                    Afloat(thumb, page, depth = { 0 }, modifier = rowMove().then(sink)) { UnsentRow(failed, onClick = { onUnsent(failed) }) }
+                }
+                if (swipeTip && messages.isNotEmpty()) {
+                    item(key = "tip") { Afloat(thumb, page, depth = { 0 }, modifier = rowMove().then(sink)) { SwipeTip(swipes, onSwipeTip) } }
+                }
+                if (lake) {
+                    item(key = "empty") {
+                        // New mail covers the water rather than cutting it off.
+                        // One water for every tab: only the words go with the tabs. It fades in, without
+                        // moving, when the tabs come from a list with mail.
+                        var fresh by remember { mutableStateOf(glide.isRunning || glide.value != 0f) }
+                        LaunchedEffect(fresh) {
+                            if (!fresh) return@LaunchedEffect
+                            snapshotFlow { glide.isRunning || glide.value != 0f }.first { !it }
+                            fresh = false
+                        }
+                        val fade = if (fresh) Modifier.graphicsLayer { alpha = glidedAlpha(thumb() - page) } else Modifier
+                        Box(Modifier.animateItem(fadeInSpec = null, placementSpec = null, fadeOutSpec = Motion.calm(Motion.SMALL)).then(fade)) {
+                            key(mailbox) {
+                                val (title, text) = emptyWords(inbox, allEmpty, tab)
+                                StillNote(
+                                    stringResource(title),
+                                    stringResource(text),
+                                    drawIn = hadMail && inbox,
+                                    grey = !inbox,
+                                    waiting = waiting,
+                                    refreshing = refreshing,
+                                    pulled = { pull.fraction },
+                                    drops = drops,
+                                    glide = thumb,
+                                    wordsModifier = if (allEmpty) Modifier else slide,
                                 )
                             }
                         }
                     }
-                    // The list is never held by the pull itself, so a finger can pull again at any time:
-                    // every pull drops a drop, and one that goes all the way syncs, unless one runs.
-                    Box(
-                        Modifier.fillMaxSize().whilePressed { down ->
-                            if (down) {
-                                pressing = true
-                                pull.touched()
-                                return@whilePressed
-                            }
-                            // Only a finger that pulled: a tap or a scroll up while the list goes back up drops nothing.
-                            val f = pull.fraction
-                            if (pull.drawn && f >= TUG) drops.tryEmit(f)
-                            // After the list has had its own say on this release.
-                            glideScope.launch {
-                                withFrameNanos {}
-                                settlePull()
-                            }
-                            // The list stays where the finger left it, and is held or let go from there.
-                            val at = opened()
-                            pressing = false
-                            if (!lakeNow && at > held.value) {
-                                glideScope.launch {
-                                    held.snapTo(at)
-                                    held.animateTo(holdNow, Motion.settle())
-                                }
-                            }
-                        }.nestedScroll(pull),
+                }
+                itemsIndexed(messages, key = { _, it -> it.id }) { index, message ->
+                    // Rows below one that left close up after it, each a little later than the one above.
+                    val behind = if (index >= closedAt) index - closedAt + 1 else 0
+                    Afloat(
+                        thumb,
+                        page,
+                        afloats = afloats,
+                        id = message.id,
+                        depth = { (index - firstRow).coerceIn(0, 8) },
+                        modifier = rowMove(Motion.behind(behind.coerceAtMost(6), Motion.CLOSE, IntOffset.VisibilityThreshold)).then(sink),
+                        pull = rowPull,
+                        index = index,
                     ) {
-                        LazyColumn(
-                            Modifier
-                                .fillMaxSize()
-                                .chooseRows(
-                                    listState,
-                                    rows = { rowsNow.map { it.id } },
-                                    chosen = { chosenNow.filterTo(LinkedHashSet()) { id -> rowsNow.any { it.id == id } } },
-                                    onChoose = { chooseNow(it) },
-                                    onHold = { haptics.performHapticFeedback(HapticFeedbackType.LongPress) },
-                                ),
-                            state = listState,
-                            contentPadding = PaddingValues(top = top, bottom = underList + 16.dp),
+                        if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.row), color = colors.outlineVariant)
+                        SwipeRow(
+                            message,
+                            swipes,
+                            enabled = !choosing,
+                            onSwipe = { action, reset ->
+                                // Read leaves the row where it is: nothing below has a gap to close.
+                                if (action != SwipeAction.READ) closedAt = index
+                                onSwipe(message, action, reset)
+                            },
+                            onPull = { rowPull.hold(message.id, index, it) },
                         ) {
-                            item(key = "title") { Hero(shownTitle, shownOwner, onBack) }
-                            items(signedOut, key = { "signed-out-${it.id}" }) { account ->
-                                Afloat(thumb, page, depth = { 0 }, modifier = rowMove().then(sink)) { SignedOutRow(account, onClick = { onSignIn(account) }) }
-                            }
-                            items(unsent, key = { "unsent-${it.id}" }) { failed ->
-                                Afloat(thumb, page, depth = { 0 }, modifier = rowMove().then(sink)) { UnsentRow(failed, onClick = { onUnsent(failed) }) }
-                            }
-                            if (swipeTip && messages.isNotEmpty()) {
-                                item(key = "tip") { Afloat(thumb, page, depth = { 0 }, modifier = rowMove().then(sink)) { SwipeTip(swipes, onSwipeTip) } }
-                            }
-                            if (lake) {
-                                item(key = "empty") {
-                                    // New mail covers the water rather than cutting it off.
-                                    // One water for every tab: only the words go with the tabs. It fades in, without
-                                    // moving, when the tabs come from a list with mail.
-                                    var fresh by remember { mutableStateOf(glide.isRunning || glide.value != 0f) }
-                                    LaunchedEffect(fresh) {
-                                        if (!fresh) return@LaunchedEffect
-                                        snapshotFlow { glide.isRunning || glide.value != 0f }.first { !it }
-                                        fresh = false
-                                    }
-                                    val fade = if (fresh) Modifier.graphicsLayer { alpha = glidedAlpha(thumb() - page) } else Modifier
-                                    Box(Modifier.animateItem(fadeInSpec = null, placementSpec = null, fadeOutSpec = Motion.calm(Motion.SMALL)).then(fade)) {
-                                        key(mailbox) {
-                                            val (title, text) = emptyWords(inbox, allEmpty, tab)
-                                            StillNote(
-                                                stringResource(title),
-                                                stringResource(text),
-                                                drawIn = hadMail && inbox,
-                                                grey = !inbox,
-                                                waiting = waiting,
-                                                refreshing = refreshing,
-                                                pulled = { pull.fraction },
-                                                drops = drops,
-                                                glide = thumb,
-                                                wordsModifier = if (allEmpty) Modifier else slide,
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                            itemsIndexed(messages, key = { _, it -> it.id }) { index, message ->
-                                // Rows below one that left close up after it, each a little later than the one above.
-                                val behind = if (index >= closedAt) index - closedAt + 1 else 0
-                                Afloat(
-                                    thumb,
-                                    page,
-                                    afloats = afloats,
-                                    id = message.id,
-                                    depth = { (index - firstRow).coerceIn(0, 8) },
-                                    modifier = rowMove(Motion.behind(behind.coerceAtMost(6), Motion.CLOSE, IntOffset.VisibilityThreshold)).then(sink),
-                                    pull = rowPull,
-                                    index = index,
-                                ) {
-                                    if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.row), color = colors.outlineVariant)
-                                    SwipeRow(
-                                        message,
-                                        swipes,
-                                        enabled = !choosing,
-                                        onSwipe = { action, reset ->
-                                            // Read leaves the row where it is: nothing below has a gap to close.
-                                            if (action != SwipeAction.READ) closedAt = index
-                                            onSwipe(message, action, reset)
-                                        },
-                                        onPull = { rowPull.hold(message.id, index, it) },
-                                    ) {
-                                        MessageRow(
-                                            message,
-                                            choosing = mode,
-                                            chosen = message.id in chosen,
-                                            showing = message.id == showing,
-                                            onClick = {
-                                                when {
-                                                    !choosing -> onOpen(message)
-                                                    message.id in chosen -> onChoose(chosen - message.id)
-                                                    else -> onChoose(chosen + message.id)
-                                                }
-                                            },
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                        // The rows move down with the finger and still water shows in the gap they leave.
-                        if (!lake) {
-                            PullWater(
-                                grey = !inbox,
-                                fraction = { pull.fraction },
-                                depth = { with(density) { pullGap(opened()) } },
-                                refreshing = refreshing,
-                                top = underTitle,
-                                drops = drops,
-                                onCalm = { waterCalm = it },
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        }
-                    }
-                    // The compact title, over the list once it scrolls.
-                    if (mini > 0f) {
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .graphicsLayer { alpha = mini }
-                                .background(colors.bar)
-                                .padding(top = top)
-                                .height(48.dp)
-                                .hairline(colors.outlineVariant, top = false),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(shownTitle, style = Type.Row, fontWeight = Weight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            onBack?.let { BackArrow(it, Modifier.align(Alignment.CenterStart)) }
-                        }
-                    }
-                    Column(Modifier.align(Alignment.BottomCenter)) {
-                        // Low on the screen, in reach of the thumb that swiped.
-                        Toast(snackbar, onGo = onGo, modifier = Modifier.padding(bottom = 8.dp))
-                        Reveal(error) {
-                            Text(
-                                stringResource(it),
-                                color = colors.onSurfaceVariant,
-                                style = Type.Caption,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(colors.bar)
-                                    .padding(horizontal = Gap.screen, vertical = 8.dp),
-                            )
-                        }
-                        if (!sideways) {
-                            Dock(
-                                modifier = Modifier.onSizeChanged { dockHeight = with(density) { it.height.toDp() } },
-                                tab = tab,
-                                tabs = tabs.takeIf { inbox },
-                                glide = glide,
-                                thumb = thumb,
-                                accounts = accounts,
-                                onTab = pick,
-                                onAccounts = onAccounts,
-                                onSearch = onSearch,
-                                onCompose = onCompose,
-                                empty = emptyAction,
+                            MessageRow(
+                                message,
                                 choosing = mode,
-                                choiceBar = choiceBar,
+                                chosen = message.id in chosen,
+                                showing = message.id == showing,
+                                onClick = {
+                                    when {
+                                        !choosing -> onOpen(message)
+                                        message.id in chosen -> onChoose(chosen - message.id)
+                                        else -> onChoose(chosen + message.id)
+                                    }
+                                },
                             )
-                        } else if (mode > 0f) {
-                            // The rails stay; what to do with the chosen messages rises under the list.
-                            Box(
-                                Modifier
-                                    .onSizeChanged { dockHeight = with(density) { it.height.toDp() } }
-                                    .fillMaxWidth()
-                                    .graphicsLayer { alpha = mode }
-                                    .then(if (mode < 0.5f) Modifier.blockTouches() else Modifier)
-                                    .background(colors.bar)
-                                    .hairline(colors.outlineVariant, top = true)
-                                    .navigationBarsPadding()
-                                    .padding(top = Gap.barTop, bottom = Gap.barBottom),
-                            ) { choiceBar() }
-                        } else {
-                            Spacer(Modifier.navigationBarsPadding())
                         }
                     }
                 }
             }
-            if (sideways && !pane) {
-                Rail(start = false) {
-                    SearchTile(onSearch)
-                    ComposeTile(onCompose)
-                }
+            // The rows move down with the finger and still water shows in the gap they leave.
+            if (!lake) {
+                PullWater(
+                    grey = !inbox,
+                    fraction = { pull.fraction },
+                    depth = { with(density) { pullGap(opened()) } },
+                    refreshing = refreshing,
+                    top = underTitle,
+                    drops = drops,
+                    onCalm = { waterCalm = it },
+                    modifier = Modifier.fillMaxSize(),
+                )
             }
+        }
+        // The compact title, over the list once it scrolls.
+        if (mini > 0f) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .graphicsLayer { alpha = mini }
+                    .background(colors.bar)
+                    .padding(top = top)
+                    .height(48.dp)
+                    .hairline(colors.outlineVariant, top = false),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(shownTitle, style = Type.Row, fontWeight = Weight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                onBack?.let { BackArrow(it, Modifier.align(Alignment.CenterStart)) }
+            }
+        }
+        Column(Modifier.align(Alignment.BottomCenter)) {
+            // Low on the screen, in reach of the thumb that swiped.
+            Toast(snackbar, onGo = onGo, modifier = Modifier.padding(bottom = 8.dp))
+            Reveal(error) {
+                Text(
+                    stringResource(it),
+                    color = colors.onSurfaceVariant,
+                    style = Type.Caption,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(colors.bar)
+                        .padding(horizontal = Gap.screen, vertical = 8.dp),
+                )
+            }
+            Dock(
+                modifier = Modifier.onSizeChanged { dockHeight = with(density) { it.height.toDp() } },
+                tab = tab,
+                tabs = tabs.takeIf { inbox },
+                glide = glide,
+                thumb = thumb,
+                accounts = accounts,
+                onTab = pick,
+                onAccounts = onAccounts,
+                onSearch = onSearch,
+                onCompose = onCompose,
+                empty = empty.takeIf { messages.isNotEmpty() && !choosing },
+                choosing = mode,
+                choiceBar = {
+                    ChoiceBar(
+                        done = picked.count { it.canArchive },
+                        unread = picked.any { it.threadUnread > 0u },
+                        forever = picked.isNotEmpty() && picked.none { it.canTrash },
+                        onCancel = { onChoose(emptySet()) },
+                        onRead = { onRead(picked.any { it.threadUnread > 0u }) },
+                        onDelete = onDelete,
+                        onMore = { more = true },
+                        onDone = onDone.takeIf { picked.any { it.canArchive } },
+                    )
+                },
+                wide = wide,
+                pane = pane,
+            )
         }
         // The rarer ways to choose, in a sheet like every menu.
         Sheet(visible = more, onClose = { more = false }) {
@@ -1581,14 +1561,6 @@ private fun mailboxOwner(mailbox: Mailbox, folder: FolderItem?, accounts: List<A
     }
 }
 
-/** The room beside the list before a message is picked, with a word on what goes there. */
-@Composable
-private fun NothingOpen() {
-    Box(Modifier.fillMaxSize().padding(Gap.screen), contentAlignment = Alignment.Center) {
-        Text(stringResource(R.string.split_nothing_open), color = MaterialTheme.colorScheme.onSurfaceVariant, style = Type.Text)
-    }
-}
-
 /** The large title at the top of the list, where it does not need the thumb. */
 @Composable
 internal fun Hero(title: String, subtitle: String?, onBack: (() -> Unit)?) {
@@ -1611,7 +1583,9 @@ internal fun Hero(title: String, subtitle: String?, onBack: (() -> Unit)?) {
 
 /**
  * Everything the thumb needs, along the bottom: the inbox's tabs (null elsewhere), then the
- * accounts button, search and a new message.
+ * accounts button, search and a new message. On a [wide] screen the mailboxes are beside the
+ * list, so the rest fits one row, which leaves the short height to the mail; beside a message
+ * ([pane]) that row is only the tabs, where there are tabs.
  */
 @Composable
 private fun Dock(
@@ -1630,6 +1604,8 @@ private fun Dock(
     /** From 0 to 1 as choosing begins: [choiceBar] takes the place of search. */
     choosing: Float,
     choiceBar: @Composable () -> Unit,
+    wide: Boolean,
+    pane: Boolean,
 ) {
     val colors = MaterialTheme.colorScheme
     val rise = with(LocalDensity.current) { 16.dp.toPx() }
@@ -1642,8 +1618,10 @@ private fun Dock(
             .padding(top = Gap.barTop, bottom = Gap.barBottom),
         verticalArrangement = Arrangement.spacedBy(Gap.inBar),
     ) {
-        tabs?.let { Tabs(tab, it, glide, thumb, onTab) }
-        empty?.let { (label, onClick) -> EmptyButton(stringResource(label), onClick) }
+        if (!wide) {
+            tabs?.let { Tabs(tab, it, glide, thumb, onTab) }
+            empty?.let { (label, onClick) -> EmptyButton(stringResource(label), onClick) }
+        }
         // As tall as the taller of the two, so the dock keeps its height as they change.
         Box(Modifier.height(52.dp), contentAlignment = Alignment.Center) {
             if (choosing < 1f) {
@@ -1660,9 +1638,22 @@ private fun Dock(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
                 ) {
-                    AccountsButton(accounts, onAccounts)
-                    Pill(stringResource(R.string.search_prompt), onSearch, Modifier.weight(1f), icon = R.drawable.ic_search)
-                    ComposeTile(onCompose)
+                    if (wide) {
+                        val fill = Modifier.weight(1f)
+                        when {
+                            tabs != null -> Tabs(tab, tabs, glide, thumb, onTab, fill)
+                            empty != null -> EmptyButton(stringResource(empty.first), empty.second, fill)
+                            else -> Spacer(fill)
+                        }
+                        if (!pane || tabs == null) {
+                            SearchTile(onSearch)
+                            ComposeTile(onCompose)
+                        }
+                    } else {
+                        AccountsButton(accounts, onAccounts)
+                        Pill(stringResource(R.string.search_prompt), onSearch, Modifier.weight(1f), icon = R.drawable.ic_search)
+                        ComposeTile(onCompose)
+                    }
                 }
             }
             if (choosing > 0f) {
@@ -1681,12 +1672,10 @@ private fun Dock(
 
 /** Empties the open trash or spam for good, where the inbox has its tabs. */
 @Composable
-private fun EmptyButton(label: String, onClick: () -> Unit) {
+private fun EmptyButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier.fillMaxWidth().padding(horizontal = Gap.bar)) {
     val colors = MaterialTheme.colorScheme
     Box(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = Gap.bar)
+        modifier
             .height(40.dp)
             .clip(RoundedCornerShape(Radius.medium))
             .background(colors.surfaceVariant)
@@ -1750,7 +1739,6 @@ private fun AccountsButton(accounts: List<AccountItem>, onClick: () -> Unit) {
  * The inbox tabs as one segmented control, each with its unread count. The thumb follows a
  * finger dragged across them and settles on the nearest tab, or the next one on a flick; a tap
  * glides it there. [onPick] gets the tab, where the thumb is from it and how fast it goes, in tabs.
- * [vertical] runs them down a rail, one row each.
  */
 @Composable
 private fun Tabs(
@@ -1759,7 +1747,7 @@ private fun Tabs(
     glide: Animatable<Float, AnimationVector1D>,
     thumbAt: () -> Float,
     onPick: (Category, from: Float, velocity: Float) -> Unit,
-    vertical: Boolean = false,
+    modifier: Modifier = Modifier.fillMaxWidth().padding(horizontal = Gap.bar),
 ) {
     val colors = MaterialTheme.colorScheme
     val thumb = RoundedCornerShape(Radius.thumb)
@@ -1780,9 +1768,7 @@ private fun Tabs(
     var pressed by remember { mutableStateOf(false) }
     val press by animateFloatAsState(if (pressed) 1f else 0f, Motion.settle(), label = "press")
     BoxWithConstraints(
-        Modifier
-            .fillMaxWidth()
-            .then(if (vertical) Modifier else Modifier.padding(horizontal = Gap.bar))
+        modifier
             .clip(RoundedCornerShape(Radius.medium))
             .background(colors.surfaceVariant)
             .whilePressed { pressed = it }
@@ -1790,153 +1776,112 @@ private fun Tabs(
     ) {
         val count = Category.entries.size
         val gap = 2.dp
-        // Across the dock the tabs share its width; down a rail each has a row.
-        val width = if (vertical) maxWidth else (maxWidth - gap * (count - 1)) / count
-        val height = if (vertical) TAB_ROW else 34.dp
-        val along = if (vertical) height else width
-        val step = along + gap
+        val width = (maxWidth - gap * (count - 1)) / count
+        val step = width + gap
         // How long the thumb is drawn out between its edges.
-        val long: Density.() -> Float = { along.toPx() + abs(rightEdge.value - leftEdge.value) * step.toPx() }
+        val long: Density.() -> Float = { width.toPx() + abs(rightEdge.value - leftEdge.value) * step.toPx() }
         Box(
             Modifier
                 .layout { measurable, _ ->
-                    val from = (min(leftEdge.value, rightEdge.value) * step.toPx()).roundToInt()
-                    val size = if (vertical) {
-                        Constraints.fixed(width.roundToPx(), long().roundToInt())
-                    } else {
-                        Constraints.fixed(long().roundToInt(), height.roundToPx())
-                    }
-                    val placeable = measurable.measure(size)
-                    layout(placeable.width, placeable.height) {
-                        if (vertical) placeable.placeRelative(0, from) else placeable.placeRelative(from, 0)
-                    }
+                    val from = min(leftEdge.value, rightEdge.value)
+                    val placeable = measurable.measure(Constraints.fixed(long().roundToInt(), 34.dp.roundToPx()))
+                    layout(placeable.width, placeable.height) { placeable.placeRelative((from * step.toPx()).roundToInt(), 0) }
                 }
                 .graphicsLayer {
                     // It keeps its area, so it thins as it draws out; under a finger it dips a little.
-                    val thin = sqrt(along.toPx() / long())
-                    scaleX = if (vertical) thin * (1f - 0.06f * press) else 1f - 0.03f * press
-                    scaleY = if (vertical) 1f - 0.03f * press else thin * (1f - 0.06f * press)
+                    scaleX = 1f - 0.03f * press
+                    scaleY = sqrt(width.toPx() / long()) * (1f - 0.06f * press)
                 }
                 .shadow(1.dp, thumb)
                 .background(colors.background, thumb),
         )
-        val group = Modifier
-            .selectableGroup()
-            .pointerInput(index, step, vertical) {
-                val stepPx = step.toPx()
-                val velocity = VelocityTracker()
-                var at = 0f
-                val start: (Offset) -> Unit = {
-                    velocity.resetTracking()
-                    at = glide.value
+        Row(
+            Modifier
+                .selectableGroup()
+                .pointerInput(index, step) {
+                    val stepPx = step.toPx()
+                    val velocity = VelocityTracker()
+                    var at = 0f
+                    detectHorizontalDragGestures(
+                        onDragStart = {
+                            velocity.resetTracking()
+                            at = glide.value
+                        },
+                        onDragEnd = {
+                            val flick = velocity.calculateVelocity().x / stepPx
+                            val pos = index + at
+                            // Where the thumb would coast to decides the tab, so a flick carries on.
+                            val coast = exponentialDecay<Float>().calculateTargetValue(pos, flick).roundToInt()
+                            val target = coast.coerceIn(0, last)
+                            // Flung past the first or last tab, the edge takes the speed.
+                            val speed = if (coast == target) flick else 0f
+                            if (target == index) {
+                                scope.launch { glide.animateTo(0f, thumbSpring(speed), speed) }
+                            } else {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onPick(Category.entries[target], pos - target, speed)
+                            }
+                        },
+                        onDragCancel = { scope.launch { glide.animateTo(0f, Motion.settle()) } },
+                    ) { change, dx ->
+                        change.consume()
+                        velocity.addPointerInputChange(change)
+                        // A little past the first and last tab, then no further.
+                        at = (at + dx / stepPx).coerceIn(-index - 0.15f, last - index + 0.15f)
+                        scope.launch { glide.snapTo(at) }
+                    }
+                },
+            horizontalArrangement = Arrangement.spacedBy(gap),
+        ) {
+            // Every tab shows at once; the counts come when the core has them.
+            Category.entries.forEachIndexed { at, category ->
+                val on = category == tab
+                val unread = tabs.find { it.category == category }?.unread ?: 0u
+                // The label darkens as the thumb comes over it, not all at once; read while drawing,
+                // so the glide does not recompose the tabs on every frame.
+                val label = ColorProducer { lerp(colors.onSurfaceVariant, colors.onSurface, (1f - abs(at - thumbAt())).coerceIn(0f, 1f)) }
+                // A count that changes gives a small nudge, as a float does when something touches it.
+                // Not when the counts first come in from the core.
+                val nudge = remember { Animatable(0f) }
+                val known = tabs.any { it.category == category }
+                var counted by remember { mutableStateOf<UInt?>(null) }
+                LaunchedEffect(unread, known) {
+                    if (!known) return@LaunchedEffect
+                    val before = counted
+                    counted = unread
+                    if (before != null && before != unread) nudge.animateTo(0f, Motion.nudge(), initialVelocity = 9f)
                 }
-                val end: () -> Unit = {
-                    val flick = velocity.calculateVelocity().let { if (vertical) it.y else it.x } / stepPx
-                    val pos = index + at
-                    // Where the thumb would coast to decides the tab, so a flick carries on.
-                    val coast = exponentialDecay<Float>().calculateTargetValue(pos, flick).roundToInt()
-                    val target = coast.coerceIn(0, last)
-                    // Flung past the first or last tab, the edge takes the speed.
-                    val speed = if (coast == target) flick else 0f
-                    if (target == index) {
-                        scope.launch { glide.animateTo(0f, thumbSpring(speed), speed) }
-                    } else {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onPick(Category.entries[target], pos - target, speed)
+                Row(
+                    Modifier
+                        .weight(1f)
+                        .height(34.dp)
+                        .clip(thumb)
+                        .selectable(selected = on, role = Role.Tab, onClick = { if (!on) onPick(category, (index - at).toFloat(), 0f) }),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    BasicText(
+                        stringResource(category.label()),
+                        color = label,
+                        style = Type.Text.copy(fontWeight = if (on) Weight.SemiBold else Weight.Medium),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    if (unread > 0u) {
+                        Text(
+                            unread.toString(),
+                            color = colors.primary,
+                            style = Type.Badge,
+                            fontWeight = Weight.Bold,
+                            modifier = Modifier.padding(start = 6.dp).graphicsLayer {
+                                scaleX = 1f + 0.18f * nudge.value
+                                scaleY = scaleX
+                            },
+                        )
                     }
                 }
-                val cancel: () -> Unit = { scope.launch { glide.animateTo(0f, Motion.settle()) } }
-                val drag: (PointerInputChange, Float) -> Unit = { change, delta ->
-                    change.consume()
-                    velocity.addPointerInputChange(change)
-                    // A little past the first and last tab, then no further.
-                    at = (at + delta / stepPx).coerceIn(-index - 0.15f, last - index + 0.15f)
-                    scope.launch { glide.snapTo(at) }
-                }
-                if (vertical) {
-                    detectVerticalDragGestures(start, end, cancel, drag)
-                } else {
-                    detectHorizontalDragGestures(start, end, cancel, drag)
-                }
             }
-        // Every tab shows at once; the counts come when the core has them.
-        val label = @Composable { at: Int, category: Category, modifier: Modifier ->
-            TabLabel(category, tabs, on = category == tab, vertical, { thumbAt() - at }, modifier) {
-                onPick(category, (index - at).toFloat(), 0f)
-            }
-        }
-        if (vertical) {
-            Column(group, verticalArrangement = Arrangement.spacedBy(gap)) {
-                Category.entries.forEachIndexed { at, category -> label(at, category, Modifier.fillMaxWidth().height(height)) }
-            }
-        } else {
-            Row(group, horizontalArrangement = Arrangement.spacedBy(gap)) {
-                Category.entries.forEachIndexed { at, category -> label(at, category, Modifier.weight(1f).height(height)) }
-            }
-        }
-    }
-}
-
-/** How tall a tab is down a rail. */
-private val TAB_ROW = 40.dp
-
-/**
- * One tab's name and unread count; [off] is how far the thumb is from it, in tabs. Across the
- * dock they sit in the middle, down a rail the name leads and the count ends the row.
- */
-@Composable
-private fun TabLabel(
-    category: Category,
-    tabs: List<InboxTab>,
-    on: Boolean,
-    vertical: Boolean,
-    off: () -> Float,
-    modifier: Modifier,
-    onClick: () -> Unit,
-) {
-    val colors = MaterialTheme.colorScheme
-    val unread = tabs.find { it.category == category }?.unread ?: 0u
-    // The label darkens as the thumb comes over it, not all at once; read while drawing,
-    // so the glide does not recompose the tabs on every frame.
-    val label = ColorProducer { lerp(colors.onSurfaceVariant, colors.onSurface, (1f - abs(off())).coerceIn(0f, 1f)) }
-    // A count that changes gives a small nudge, as a float does when something touches it.
-    // Not when the counts first come in from the core.
-    val nudge = remember { Animatable(0f) }
-    val known = tabs.any { it.category == category }
-    var counted by remember { mutableStateOf<UInt?>(null) }
-    LaunchedEffect(unread, known) {
-        if (!known) return@LaunchedEffect
-        val before = counted
-        counted = unread
-        if (before != null && before != unread) nudge.animateTo(0f, Motion.nudge(), initialVelocity = 9f)
-    }
-    Row(
-        modifier
-            .clip(RoundedCornerShape(Radius.thumb))
-            .selectable(selected = on, role = Role.Tab, onClick = { if (!on) onClick() })
-            .then(if (vertical) Modifier.padding(horizontal = 12.dp) else Modifier),
-        horizontalArrangement = if (vertical) Arrangement.SpaceBetween else Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        BasicText(
-            stringResource(category.label()),
-            color = label,
-            style = Type.Text.copy(fontWeight = if (on) Weight.SemiBold else Weight.Medium),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f, fill = vertical),
-        )
-        if (unread > 0u) {
-            Text(
-                unread.toString(),
-                color = colors.primary,
-                style = Type.Badge,
-                fontWeight = Weight.Bold,
-                modifier = Modifier.padding(start = 6.dp).graphicsLayer {
-                    scaleX = 1f + 0.18f * nudge.value
-                    scaleY = scaleX
-                },
-            )
         }
     }
 }

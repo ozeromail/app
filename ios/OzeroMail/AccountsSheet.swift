@@ -13,10 +13,8 @@ struct AccountsActions {
     let onWrite: () -> Void
 }
 
-/// The drafts on the phone, if there are any, the mailboxes of all accounts together, then each
-/// account's folders, and below them the swipes and a way to add an account. A tap on a group's
-/// name hides or shows its folders; its More button, or Swipes, opens the settings in the same
-/// sheet.
+/// The mailboxes, and below them the swipes and a way to add an account. A group's More button,
+/// or Swipes, opens the settings in the same sheet.
 struct AccountsSheet: View {
     let accounts: [AccountItem]
     let folders: [FolderItem]
@@ -28,37 +26,12 @@ struct AccountsSheet: View {
 
     @Environment(\.dismiss) private var dismiss
 
-    private var many: Bool { accounts.count > 1 }
-
     var body: some View {
         NavigationStack {
             List {
-                if drafts > 0 {
-                    FolderRow(icon: "square.and.pencil", title: tr("folder_drafts"), open: false, count: drafts) {
-                        actions.onDrafts()
-                    }
-                }
-                if many {
-                    FolderGroup(title: tr("inbox_all_accounts"), open: groups.open(Settings.allAccounts, many: true), lead: {
-                        StackedDots(accounts: accounts)
-                    }, onToggle: { toggle(Settings.allAccounts) }) {
-                        ForEach(unifiedRoles.filter { role in role == .inbox || folders.contains { $0.role == role } }, id: \.self) { role in
-                            let box = Mailbox.unified(role: role)
-                            FolderRow(icon: role.icon, title: role.allTitle, open: box == mailbox) { actions.onMailbox(box) }
-                        }
-                    }
-                }
-                ForEach(accounts, id: \.id) { account in
-                    FolderGroup(title: account.name, open: groups.open(account.id, many: many), lead: {
-                        AccountDot(color: account.tint, size: 12)
-                    }, onToggle: { toggle(account.id) }, settings: account) {
-                        ForEach(accountFolders(account), id: \.id) { folder in
-                            // With one account its inbox is the unified one, which keeps the tabs.
-                            let box = folder.role == .inbox && !many ? Mail.inbox : Mailbox.folder(id: folder.id)
-                            FolderRow(icon: folder.role.icon, title: folder.title, open: box == mailbox) { actions.onMailbox(box) }
-                        }
-                    }
-                }
+                MailboxRows(
+                    accounts: accounts, folders: folders, mailbox: mailbox, drafts: drafts, groups: $groups,
+                    settings: true, onMailbox: actions.onMailbox, onDrafts: actions.onDrafts)
                 Section {
                     NavigationLink(value: Page.swipes) {
                         Label {
@@ -96,6 +69,53 @@ struct AccountsSheet: View {
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+    }
+
+}
+
+/// The drafts on the phone, if there are any, the mailboxes of all accounts together, then each
+/// account's folders: rows of a list, in the accounts sheet and beside the inbox on its side.
+/// A tap on a group's name hides or shows its folders; with `settings` its More button opens the
+/// account's settings in the sheet.
+struct MailboxRows: View {
+    let accounts: [AccountItem]
+    let folders: [FolderItem]
+    let mailbox: Mailbox
+    let drafts: Int
+    @Binding var groups: Groups
+    let settings: Bool
+    let onMailbox: (Mailbox) -> Void
+    let onDrafts: () -> Void
+
+    private var many: Bool { accounts.count > 1 }
+
+    var body: some View {
+        if drafts > 0 {
+            FolderRow(icon: "square.and.pencil", title: tr("folder_drafts"), open: false, count: drafts) {
+                onDrafts()
+            }
+        }
+        if many {
+            FolderGroup(title: tr("inbox_all_accounts"), open: groups.open(Settings.allAccounts, many: true), lead: {
+                StackedDots(accounts: accounts)
+            }, onToggle: { toggle(Settings.allAccounts) }) {
+                ForEach(unifiedRoles.filter { role in role == .inbox || folders.contains { $0.role == role } }, id: \.self) { role in
+                    let box = Mailbox.unified(role: role)
+                    FolderRow(icon: role.icon, title: role.allTitle, open: box == mailbox) { onMailbox(box) }
+                }
+            }
+        }
+        ForEach(accounts, id: \.id) { account in
+            FolderGroup(title: account.name, open: groups.open(account.id, many: many), lead: {
+                AccountDot(color: account.tint, size: 12)
+            }, onToggle: { toggle(account.id) }, settings: settings ? account : nil) {
+                ForEach(accountFolders(account), id: \.id) { folder in
+                    // With one account its inbox is the unified one, which keeps the tabs.
+                    let box = folder.role == .inbox && !many ? Mail.inbox : Mailbox.folder(id: folder.id)
+                    FolderRow(icon: folder.role.icon, title: folder.title, open: box == mailbox) { onMailbox(box) }
+                }
+            }
+        }
     }
 
     private func toggle(_ group: Int64) {
