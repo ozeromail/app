@@ -164,6 +164,16 @@ class Mail(private val context: Context) {
     }
 
     /**
+     * Like [signIn], with the servers found from the email: IMAP at its domain's usual hosts,
+     * else Exchange. Fails with `NotFound` when neither answers.
+     */
+    suspend fun signInFound(email: String, password: String) = io {
+        if (core.accounts().any { it.email.equals(email, ignoreCase = true) }) throw CoreException.AccountExists()
+        vault.setPassword(email, password)
+        core.addFoundAccount(email, password)
+    }
+
+    /**
      * Like [signIn], for Exchange: the core finds the server from the email unless [server]
      * is given, and signs in as the email unless [login] is.
      */
@@ -179,11 +189,11 @@ class Mail(private val context: Context) {
 
     /**
      * Starts Google sign-in and returns the page to open in the browser; [again] signs in to
-     * that saved account, which Google then offers. A second tap opens the same sign-in, so
+     * that saved account, which Google then offers, as it does a typed [email]. A second tap opens the same sign-in, so
      * whichever browser tab finishes it, the answer is one we expect.
      */
-    suspend fun startGoogle(again: AccountItem? = null): String = io {
-        val hint = again?.email
+    suspend fun startGoogle(again: AccountItem? = null, email: String? = null): String = io {
+        val hint = again?.email ?: email
         val waiting = vault.googleSignIn()?.takeIf { Uri.parse(it.url).getQueryParameter("login_hint") == hint }
         (waiting ?: googleSignIn(hint).also { vault.setGoogleSignIn(it) }).url
     }
@@ -508,6 +518,7 @@ fun CoreException.text(): Int {
         is CoreException.BadRecipients -> R.string.error_bad_recipients
         is CoreException.NoSmtp -> R.string.error_no_smtp
         is CoreException.NoServer -> R.string.error_no_server
+        is CoreException.NotFound -> R.string.error_server_not_found
         is CoreException.NoEws -> R.string.error_no_ews
         is CoreException.CertificateNeeded -> R.string.error_certificate_needed
         is CoreException.DeviceBlocked -> R.string.error_device_blocked
