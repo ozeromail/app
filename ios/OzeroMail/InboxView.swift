@@ -828,7 +828,7 @@ struct AttachmentChips: View {
         HStack(spacing: 6) {
             ForEach(Array(names.prefix(2).enumerated()), id: \.offset) { _, name in
                 Label {
-                    Text(verbatim: name.isEmpty ? tr("attachment_untitled") : name).lineLimit(1).truncationMode(.middle)
+                    Text(verbatim: attachmentTitle(name)).lineLimit(1).truncationMode(.middle)
                 } icon: {
                     Image(systemName: "paperclip")
                 }

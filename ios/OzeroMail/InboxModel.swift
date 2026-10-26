@@ -622,7 +622,7 @@ final class InboxModel {
         note(tr("draft_saved"))
     }
 
-    /// Thrown away: the toast can bring it back, saved again, to go on writing.
+    /// Thrown away: the toast can bring it back, with its files, saved again to go on writing.
     func discarded(_ draft: DraftItem, original: MessageItem?) {
         composing = nil
         Task {
@@ -630,8 +630,7 @@ final class InboxModel {
             if draft.isBlank { return note(tr("draft_deleted")) }
             guard await offerUndo(tr("draft_deleted")) else { return }
             do {
-                var saved = draft
-                saved.id = try await mail.saveDraft(draft)
+                let saved = try await mail.restoreDraft(draft)
                 composing = Composing(draft: saved, original: original)
             } catch {
                 self.error = error.textKey()
@@ -683,9 +682,10 @@ extension Optional {
 }
 
 extension DraftItem {
-    /// Nothing worth keeping: no text, and for a new message no recipients or subject either.
+    /// Nothing worth keeping: no text or files, and for a new message no recipients or subject
+    /// either.
     var isBlank: Bool {
-        text.isBlank && (replyTo != nil || (to.isBlank && subject.isBlank))
+        text.isBlank && files.isEmpty && (replyTo != nil || (to.isBlank && subject.isBlank))
     }
 }
 

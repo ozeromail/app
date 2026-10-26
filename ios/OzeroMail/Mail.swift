@@ -383,6 +383,22 @@ final class Mail: Sendable {
         try core.deleteDraft(id: id)
     }
 
+    /// Brings back `draft` as it was thrown away, saved: with its files if `deleteDraft` was a
+    /// moment ago.
+    func restoreDraft(_ draft: DraftItem) async throws -> DraftItem {
+        try core.restoreDraft(draft: draft)
+    }
+
+    /// Adds a file to the saved draft `draft`; it goes with the message.
+    func attachFile(draft: Int64, _ file: PickedFile) async throws -> DraftFileItem {
+        try core.attachFile(draft: draft, name: file.name, mime: file.mime, data: file.data)
+    }
+
+    /// Takes a file off its draft.
+    func detachFile(_ file: Int64) async throws {
+        try core.detachFile(file: file)
+    }
+
     /// The messages the server refused, newest first; `undoSend` takes one back to fix it.
     func unsent() async throws -> [UnsentItem] {
         try core.unsent()
@@ -580,6 +596,7 @@ extension Error {
         case .NoServer?: return "error_no_server"
         case .NoEws?: return "error_no_ews"
         case .DeviceBlocked?: return "error_device_blocked"
+        case .TooLarge?: return "compose_files_too_large"
         default: return "error_storage"
         }
     }
