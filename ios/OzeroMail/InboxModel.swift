@@ -75,6 +75,8 @@ final class InboxModel {
     var accountsOpen = false
     /// Messages chosen to act on together.
     var chosen: Set<Int64> = []
+    /// Messages waiting on the snooze sheet for a time.
+    var snoozing: Snoozing?
     var swipes = Settings.swipes {
         didSet { Settings.swipes = swipes }
     }
@@ -102,6 +104,8 @@ final class InboxModel {
     private var waiting: CheckedContinuation<Bool, Never>?
     /// One answer or forward at a time: a second tap would replace the one being written.
     private var writing = false
+    /// Brings snoozed mail back on time while the app is open.
+    private var waking: Task<Void, Never>?
 
     init(mail: Mail, onNoAccounts: @escaping () -> Void) {
         self.mail = mail
@@ -273,6 +277,11 @@ final class InboxModel {
         var refused = false
         var synced: Bool
         do {
+            if box == Mail.inbox {
+                // Snoozed mail due by now is on top before the new mail comes.
+                _ = try await mail.wake()
+                wakeOnTime()
+            }
             refused = try await mail.refresh(box)
             if box == Mail.inbox {
                 lastSync = started
@@ -456,7 +465,9 @@ final class InboxModel {
 
     /// The messages leave the list at once, for their account's folder of `role` if they go to
     /// one; the toast can take them all back for a moment, or show that folder.
-    private func remove(_ gone: [MessageItem], toast text: String, role: FolderRole?, move: ([MessageItem]) async throws -> [Int64]) async {
+    /// True if they were taken back.
+    @discardableResult
+    private func remove(_ gone: [MessageItem], toast text: String, role: FolderRole?, move: ([MessageItem]) async throws -> [Int64]) async -> Bool {
         let accounts = Set(gone.map(\.accountId))
         let go = accounts.count == 1
             ? folders.first { $0.accountId == accounts.first && $0.role == role }.map { Mailbox.folder(id: $0.id) }
@@ -466,13 +477,15 @@ final class InboxModel {
             actions = try await move(gone)
         } catch {
             self.error = error.textKey()
-            return
+            return false
         }
         let moved = Set(gone.map(\.id))
         withAnimation(.smooth) { messages.removeAll { moved.contains($0.id) } }
         // Beside the list, the message goes with its row.
         if let pane, moved.contains(pane.id) { self.pane = nil }
-        if await offerUndo(text, go: go == mailbox ? nil : go) { await takeBack(actions) }
+        guard await offerUndo(text, go: go == mailbox ? nil : go) else { return false }
+        await takeBack(actions)
+        return true
     }
 
     /// Done: into the archive.
@@ -484,6 +497,32 @@ final class InboxModel {
     func delete(_ gone: [MessageItem]) async {
         let forever = !gone.contains(where: \.canTrash)
         await remove(gone, toast: tr(forever ? "inbox_deleted" : "inbox_trashed"), role: forever ? nil : .trash, move: mail.delete)
+    }
+
+    /// Snooze: into the snoozed folder, back on top of the inbox at `until`, with a notification
+    /// then, should the app be closed.
+    func snooze(_ gone: [MessageItem], until: Date) async {
+        let undone = await remove(gone, toast: tr("inbox_snoozed", snoozeTime(until)), role: .snoozed) {
+            let actions = try await mail.snooze($0, until: until)
+            wakeOnTime()
+            await BackgroundCheck.remind(about: $0, at: until)
+            return actions
+        }
+        if undone { BackgroundCheck.forgetReminders(about: gone) }
+    }
+
+    /// While the app is open, wakes the next snoozed mail when its time comes, then waits for
+    /// the one after.
+    func wakeOnTime() {
+        waking?.cancel()
+        // Weak: the wait may be days long.
+        waking = Task { [weak self, mail] in
+            guard let next = try? await mail.nextWake() else { return }
+            try? await Task.sleep(for: .seconds(max(0, next.timeIntervalSinceNow)))
+            guard !Task.isCancelled else { return }
+            _ = try? await mail.wake()
+            self?.wakeOnTime()
+        }
     }
 
     /// Back into the inbox, out of the archive, trash or spam.
@@ -516,6 +555,8 @@ final class InboxModel {
             case .delete: await delete([message])
             // Read if it is unread, unread if it is read.
             case .read: await setRead([message], read: message.threadUnread > 0)
+            // The sheet asks until when.
+            case .snooze: snoozing = Snoozing(messages: [message])
             }
         }
     }

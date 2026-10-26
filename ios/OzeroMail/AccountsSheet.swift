@@ -135,7 +135,7 @@ private enum Page: Hashable {
 }
 
 /// The mailboxes shared by all accounts, in order.
-private let unifiedRoles: [FolderRole] = [.inbox, .flagged, .sent, .archive, .trash]
+private let unifiedRoles: [FolderRole] = [.inbox, .snoozed, .flagged, .sent, .archive, .trash]
 
 /// A group's name, which hides or shows its folders, and with `settings` a way to that
 /// account's settings.
@@ -369,19 +369,21 @@ extension FolderRole {
     var rank: Int {
         switch self {
         case .inbox: 0
-        case .flagged: 1
-        case .sent: 2
-        case .drafts: 3
-        case .archive: 4
-        case .junk: 5
-        case .trash: 6
-        case .custom: 7
+        case .snoozed: 1
+        case .flagged: 2
+        case .sent: 3
+        case .drafts: 4
+        case .archive: 5
+        case .junk: 6
+        case .trash: 7
+        case .custom: 8
         }
     }
 
     var icon: String {
         switch self {
         case .inbox: "tray"
+        case .snoozed: "clock"
         case .flagged: "flag"
         case .sent: "paperplane"
         case .drafts: "square.and.pencil"
@@ -396,6 +398,7 @@ extension FolderRole {
     func title(_ name: String) -> String {
         switch self {
         case .inbox: tr("inbox_title")
+        case .snoozed: tr("folder_snoozed")
         case .flagged: tr("folder_flagged")
         case .sent: tr("folder_sent")
         case .drafts: tr("folder_drafts")
@@ -409,6 +412,7 @@ extension FolderRole {
     /// A mailbox of all accounts together, told apart from one account's folder.
     var allTitle: String {
         switch self {
+        case .snoozed: tr("folder_all_snoozed")
         case .flagged: tr("folder_all_flagged")
         case .sent: tr("folder_all_sent")
         case .archive: tr("folder_all_archive")

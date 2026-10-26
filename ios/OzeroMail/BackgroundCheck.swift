@@ -22,6 +22,8 @@ enum BackgroundCheck {
         schedule()
         do {
             let mail = try await Mail.shared()
+            // Snoozed mail was announced on time; here it only comes back.
+            _ = try? await mail.wake()
             // Other accounts may still have synced; the next run tries again.
             _ = try? await mail.refresh()
             let new = try await mail.newMail()
@@ -45,18 +47,41 @@ enum BackgroundCheck {
             try? await center.add(UNNotificationRequest(identifier: "more", content: content, trigger: nil))
         }
         for message in messages.prefix(maxShown) {
-            let content = UNMutableNotificationContent()
-            content.title = message.sender
-            content.subtitle =
-                message.subject.isEmpty ? String(localized: "inbox_no_subject") : message.subject
-            content.body = message.snippet
-            content.sound = .default
-            content.threadIdentifier = "new_mail"
             let request = UNNotificationRequest(
-                identifier: "message-\(message.id)", content: content, trigger: nil)
+                identifier: "message-\(message.id)", content: content(message), trigger: nil)
             // Without permission this fails quietly, which is what the person chose.
             try? await center.add(request)
         }
+    }
+
+    /// Tells about snoozed `messages` at `date`, when they come back, as about new mail. iOS may
+    /// not wake the app then, so the notification is set now; the mail itself comes back once
+    /// the app runs.
+    static func remind(about messages: [MessageItem], at date: Date) async {
+        let when = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
+        for message in messages {
+            let request = UNNotificationRequest(
+                identifier: reminder(message), content: content(message),
+                trigger: UNCalendarNotificationTrigger(dateMatching: when, repeats: false))
+            try? await UNUserNotificationCenter.current().add(request)
+        }
+    }
+
+    /// Takes back the reminders of a snooze that was undone.
+    static func forgetReminders(about messages: [MessageItem]) {
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: messages.map(reminder))
+    }
+
+    private static func reminder(_ message: MessageItem) -> String { "snoozed-\(message.id)" }
+
+    private static func content(_ message: MessageItem) -> UNMutableNotificationContent {
+        let content = UNMutableNotificationContent()
+        content.title = message.sender
+        content.subtitle = message.subject.isEmpty ? String(localized: "inbox_no_subject") : message.subject
+        content.body = message.snippet
+        content.sound = .default
+        content.threadIdentifier = "new_mail"
+        return content
     }
 }
 

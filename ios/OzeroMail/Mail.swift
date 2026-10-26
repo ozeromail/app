@@ -312,6 +312,25 @@ final class Mail: Sendable {
         try move(messages) { try core.moveToInbox(messages: $0) }
     }
 
+    /// As `archive`, into the account's snoozed folder; the conversations come back to the top of
+    /// the inbox, unread, at `until`.
+    func snooze(_ messages: [MessageItem], until: Date) async throws -> [Int64] {
+        try move(messages) { try core.snooze(messages: $0, until: Int64(until.timeIntervalSince1970)) }
+    }
+
+    /// Brings back the snoozed mail whose time has come and returns it, to tell about; the server
+    /// hears about it in the background.
+    func wake() async throws -> [MessageItem] {
+        let woken = try core.wake()
+        push(woken)
+        return woken
+    }
+
+    /// When the next snoozed message comes back; nil if none waits.
+    func nextWake() async throws -> Date? {
+        try core.nextWake().map { Date(timeIntervalSince1970: TimeInterval($0)) }
+    }
+
     /// As `archive`, into the trash, or gone from the server for good for mail already there.
     func delete(_ messages: [MessageItem]) async throws -> [Int64] {
         let toTrash = messages.filter(\.canTrash).map(\.id)
@@ -613,6 +632,7 @@ extension Error {
         case .Gone?: return "error_gone"
         case .NoArchive?: return "error_no_archive"
         case .NoTrash?: return "error_no_trash"
+        case .NoSnoozed?: return "error_no_snoozed"
         case .BadRecipients?: return "error_bad_recipients"
         case .NoSmtp?: return "error_no_smtp"
         case .NoServer?: return "error_no_server"
