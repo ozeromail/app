@@ -203,6 +203,8 @@
   "error_no_server": "No Exchange server found for this address. Enter it below: it is in your work mail settings, or your IT team knows it.",
   "error_no_ews": "This server does not answer as Exchange. Check the address: it is in your work mail settings, or your IT team knows it.",
   "error_certificate_needed": "This server asks for a certificate from this device. Tap Add a certificate under the fields and pick your company's one.",
+  "error_untrusted_certificate": "This server's certificate did not pass the checks. Trust it only if your IT team confirms the fingerprint below.",
+  "signin_trust_certificate": "Trust this certificate",
   "error_device_blocked": "Your company's server has not let this phone in yet. Ask your IT team to allow Ozero Mail in Exchange ActiveSync, then try again.",
   "mailboxes_more": "Accounts and settings",
   "compose_attach": "Attach",

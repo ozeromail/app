@@ -23,9 +23,9 @@ use ozero_domain::{
 };
 use ozero_ews::{EasSession, EwsSession, discover};
 use ozero_gmail::{GmailSession, oauth};
-use ozero_imap::ImapSession;
 use ozero_imap::rustls::ClientConfig;
 use ozero_imap::rustls::client::ResolvesClientCert;
+use ozero_imap::{ImapSession, RefusedCertificates};
 use ozero_mime::{MimeBuilder, MimeParser};
 use ozero_smtp::SmtpSession;
 use ozero_store_sqlite::SqliteStore;
@@ -142,6 +142,9 @@ async fn sender_name(gmail: &mut GmailSession) -> Option<String> {
     })
 }
 
+/// A client certificate's name and a trusted server certificate's SHA-256.
+type TlsKey = (Option<String>, Option<[u8; 32]>);
+
 /// The mail core of one app install: the encrypted database and the network.
 #[derive(uniffi::Object)]
 pub struct Core {
@@ -150,8 +153,11 @@ pub struct Core {
     tls: OnceLock<Arc<ClientConfig>>,
     /// The platform's client certificates, once the app has given them.
     certificates: OnceLock<Arc<dyn ClientCertificates>>,
-    /// TLS settings offering each client certificate, by its name, built on first use.
-    certificate_tls: Mutex<HashMap<String, Arc<ClientConfig>>>,
+    /// TLS settings by the client certificate they offer and the server certificate the
+    /// person trusted, built on first use.
+    certificate_tls: Mutex<HashMap<TlsKey, Arc<ClientConfig>>>,
+    /// Server certificates the checks refused, for a sign-in to offer to trust.
+    refused: Arc<RefusedCertificates>,
     /// One push or sync per account at a time, so a sync never saves flags from before a push.
     busy: Mutex<HashMap<AccountId, Arc<tokio::sync::Mutex<()>>>>,
     /// Accounts with a push waiting for held actions to come due.
@@ -219,6 +225,7 @@ impl Core {
             tls: OnceLock::new(),
             certificates: OnceLock::new(),
             certificate_tls: Mutex::default(),
+            refused: Arc::default(),
             busy: Mutex::default(),
             waiting: Mutex::default(),
             named: Mutex::default(),
@@ -740,7 +747,7 @@ impl Core {
         // No name: the server is asked for the owner's.
         let domain = ozero_domain::email_domain(&email).unwrap_or_default();
         match self
-            .add_exchange_account(email, String::new(), None, None, None, password)
+            .add_exchange_account(email, String::new(), None, None, None, None, password)
             .await
         {
             // Without even the domain's own address, the device is most likely offline.
@@ -755,8 +762,11 @@ impl Core {
     /// Saves an Exchange account once its server has taken the login. Without `server` the
     /// server is found from the address; with it, it is a host or a URL the person typed.
     /// `login` is the address unless given, such as `DOMAIN\user`. `certificate` names a
-    /// client certificate the platform keeps, for a server that asks for one. Fails with
-    /// `NoServer` when no server is found, so the app asks for one.
+    /// client certificate the platform keeps, for a server that asks for one. `trusted` is the
+    /// fingerprint of a server certificate the person chose to trust although the checks
+    /// refused it, as `UntrustedCertificate` gave it. Fails with `NoServer` when no server is
+    /// found, so the app asks for one.
+    #[allow(clippy::too_many_arguments)]
     pub async fn add_exchange_account(
         &self,
         email: String,
@@ -764,82 +774,57 @@ impl Core {
         server: Option<String>,
         login: Option<String>,
         certificate: Option<String>,
+        trusted: Option<String>,
         password: String,
     ) -> Result<i64, CoreError> {
-        if self.exists(&email)? {
-            return Err(CoreError::AccountExists);
+        let host = server
+            .as_deref()
+            .and_then(|s| discover::endpoint(s.trim()))
+            .map(|e| e.host);
+        let trusted = trusted.as_deref().and_then(unhex);
+        if let Some(host) = &host {
+            self.refused.take(host);
         }
-        let login = login
-            .map(|l| l.trim().to_owned())
-            .filter(|l| !l.is_empty())
-            .unwrap_or_else(|| email.clone());
-        let certificate = certificate.filter(|c| !c.is_empty());
-        let tls = self.tls_for(certificate.as_deref())?;
-        let (endpoint, mut ews) = match server.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            Some(typed) => {
-                let endpoint = discover::endpoint(typed).ok_or(CoreError::NoServer)?;
-                let ews = match discover::check(tls.clone(), &endpoint, &login, &password).await {
-                    // Refused, or the connection broke off: maybe for want of a certificate.
-                    Err(ProviderError::Rejected(_) | ProviderError::Network(_))
-                        if certificate.is_none()
-                            && discover::asks_for_certificate(tls.clone(), &endpoint).await =>
-                    {
-                        return Err(CoreError::CertificateNeeded);
-                    }
-                    // Something answers there with an HTTP error, but not EWS. Try ActiveSync
-                    // with the login: a front server may refuse anyone who has not signed in.
-                    Err(ProviderError::Rejected(_)) => {
-                        let server = Server {
-                            host: endpoint.host,
-                            port: endpoint.port,
-                            user: login,
-                            certificate,
-                        };
-                        return match self
-                            .add_active_sync_account(email, display_name, server, tls, password)
-                            .await
-                        {
-                            Err(CoreError::Server { .. }) => Err(CoreError::NoEws),
-                            // Said under the error, so the person's IT team sees which part.
-                            Err(CoreError::Network { detail }) => Err(CoreError::Network {
-                                detail: format!("ActiveSync: {detail}"),
-                            }),
-                            added => added,
-                        };
-                    }
-                    found => found?,
-                };
-                (endpoint, ews)
+        let added = self
+            .add_exchange(
+                email,
+                display_name,
+                server,
+                login,
+                certificate,
+                trusted,
+                password,
+            )
+            .await;
+        match added {
+            Err(CoreError::Network { .. } | CoreError::Tls { .. }) => {
+                let refused = host.and_then(|host| Some((self.refused.take(&host)?, host)));
+                match (refused, added) {
+                    (Some((refused, host)), _) => Err(CoreError::UntrustedCertificate {
+                        host,
+                        fingerprint: hex(&refused.fingerprint),
+                        reason: refused.reason,
+                    }),
+                    (None, added) => added,
+                }
             }
-            None => match discover::discover(tls, &email, &login, &password).await {
-                Err(ProviderError::Gone) => return Err(CoreError::NoServer),
-                found => found?,
-            },
-        };
-        let display_name = match display_name.trim() {
-            // Without it the mail goes out under the address alone.
-            "" => ews
-                .name(&email)
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| email.clone()),
-            name => name.to_owned(),
-        };
-        let server = Server {
-            host: endpoint.host,
-            port: endpoint.port,
-            user: login,
-            certificate,
-        };
-        let account = NewAccount {
-            kind: AccountKind::Exchange,
-            email,
-            display_name,
-            server: Some(server),
-            smtp: None,
-        };
-        Ok(self.store.add_account(&account)?.0)
+            Ok(id) => {
+                let Some(trusted) = trusted else {
+                    return Ok(id);
+                };
+                let account = AccountId(id);
+                // Without it the account cannot reach its server.
+                if let Err(e) =
+                    self.store
+                        .set_provider_state(account, TRUSTED, Some(&hex(&trusted)))
+                {
+                    let _ = self.store.remove_account(account);
+                    return Err(e.into());
+                }
+                Ok(id)
+            }
+            added => added,
+        }
     }
 
     /// Checks a new password of a saved IMAP or Exchange account on its servers, for signing
@@ -1630,6 +1615,99 @@ impl Core {
         Ok(id.0)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    async fn add_exchange(
+        &self,
+        email: String,
+        display_name: String,
+        server: Option<String>,
+        login: Option<String>,
+        certificate: Option<String>,
+        trusted: Option<[u8; 32]>,
+        password: String,
+    ) -> Result<i64, CoreError> {
+        if self.exists(&email)? {
+            return Err(CoreError::AccountExists);
+        }
+        let login = login
+            .map(|l| l.trim().to_owned())
+            .filter(|l| !l.is_empty())
+            .unwrap_or_else(|| email.clone());
+        let certificate = certificate.filter(|c| !c.is_empty());
+        let tls = self.tls_for(certificate.as_deref(), trusted)?;
+        let (endpoint, mut ews) = match server.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(typed) => {
+                let endpoint = discover::endpoint(typed).ok_or(CoreError::NoServer)?;
+                let ews = match discover::check(tls.clone(), &endpoint, &login, &password).await {
+                    // Refused, or the connection broke off: maybe for want of a certificate.
+                    Err(ProviderError::Rejected(_) | ProviderError::Network(_))
+                        if certificate.is_none()
+                            && discover::asks_for_certificate(tls.clone(), &endpoint).await =>
+                    {
+                        return Err(CoreError::CertificateNeeded);
+                    }
+                    // Something answers there with an HTTP error, but not EWS. Try ActiveSync
+                    // with the login: a front server may refuse anyone who has not signed in.
+                    Err(ProviderError::Rejected(_)) => {
+                        let server = Server {
+                            host: endpoint.host,
+                            port: endpoint.port,
+                            user: login,
+                            certificate,
+                        };
+                        return match self
+                            .add_active_sync_account(email, display_name, server, tls, password)
+                            .await
+                        {
+                            Err(CoreError::Server { .. }) => Err(CoreError::NoEws),
+                            // Said under the error, so the person's IT team sees which part.
+                            Err(CoreError::Network { detail }) => Err(CoreError::Network {
+                                detail: format!("ActiveSync: {detail}"),
+                            }),
+                            added => added,
+                        };
+                    }
+                    found => found?,
+                };
+                (endpoint, ews)
+            }
+            None => match discover::discover(tls, &email, &login, &password).await {
+                Err(ProviderError::Gone) => return Err(CoreError::NoServer),
+                found => found?,
+            },
+        };
+        let display_name = match display_name.trim() {
+            // Without it the mail goes out under the address alone.
+            "" => ews
+                .name(&email)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| email.clone()),
+            name => name.to_owned(),
+        };
+        let server = Server {
+            host: endpoint.host,
+            port: endpoint.port,
+            user: login,
+            certificate,
+        };
+        let account = NewAccount {
+            kind: AccountKind::Exchange,
+            email,
+            display_name,
+            server: Some(server),
+            smtp: None,
+        };
+        Ok(self.store.add_account(&account)?.0)
+    }
+
+    /// The server certificate the person chose to trust for a saved account, if any.
+    fn trusted(&self, account: AccountId) -> Result<Option<[u8; 32]>, CoreError> {
+        let trusted = self.store.provider_state(account, TRUSTED)?;
+        Ok(trusted.as_deref().and_then(unhex))
+    }
+
     /// Whether a saved Exchange account speaks ActiveSync rather than EWS.
     fn speaks_active_sync(&self, account: AccountId) -> Result<bool, CoreError> {
         let protocol = self.store.provider_state(account, PROTOCOL)?;
@@ -1642,7 +1720,7 @@ impl Core {
         let server = account.server.as_ref().ok_or_else(|| CoreError::Storage {
             detail: "no Exchange server".into(),
         })?;
-        let tls = self.tls_for(server.certificate.as_deref())?;
+        let tls = self.tls_for(server.certificate.as_deref(), self.trusted(account.id)?)?;
         let state = Arc::new(AccountState {
             store: self.store.clone(),
             account: account.id,
@@ -1656,7 +1734,7 @@ impl Core {
         let server = account.server.as_ref().ok_or_else(|| CoreError::Storage {
             detail: "no Exchange server".into(),
         })?;
-        let tls = self.tls_for(server.certificate.as_deref())?;
+        let tls = self.tls_for(server.certificate.as_deref(), self.trusted(account.id)?)?;
         let mut ews = EwsSession::new(tls, server, password);
         ews.check().await?;
         Ok(ews)
@@ -1842,7 +1920,7 @@ impl Core {
         Ok(SmtpSession::connect(
             &server.host,
             server.port,
-            self.tls_for(server.certificate.as_deref())?,
+            self.tls_for(server.certificate.as_deref(), None)?,
             &server.user,
             password,
         )
@@ -1853,7 +1931,7 @@ impl Core {
         Ok(ImapSession::connect(
             &server.host,
             server.port,
-            self.tls_for(server.certificate.as_deref())?,
+            self.tls_for(server.certificate.as_deref(), None)?,
             &server.user,
             password,
         )
@@ -1865,28 +1943,40 @@ impl Core {
         if let Some(tls) = self.tls.get() {
             return Ok(tls.clone());
         }
-        let tls = tls_config(None)?;
+        let tls = tls_config(None, None, self.refused.clone())?;
         Ok(self.tls.get_or_init(|| tls).clone())
     }
 
-    /// TLS settings that offer the platform's client certificate `certificate`, if any.
-    fn tls_for(&self, certificate: Option<&str>) -> Result<Arc<ClientConfig>, CoreError> {
-        let Some(name) = certificate else {
+    /// TLS settings that offer the platform's client certificate `certificate`, if any, and
+    /// take the server certificate `trusted`, the SHA-256 of one the person chose to trust.
+    fn tls_for(
+        &self,
+        certificate: Option<&str>,
+        trusted: Option<[u8; 32]>,
+    ) -> Result<Arc<ClientConfig>, CoreError> {
+        if certificate.is_none() && trusted.is_none() {
             return self.tls();
-        };
+        }
+        let key = (certificate.map(str::to_owned), trusted);
         let mut built = self
             .certificate_tls
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        if let Some(tls) = built.get(name) {
+        if let Some(tls) = built.get(&key) {
             return Ok(tls.clone());
         }
-        let certificates = self.certificates.get().ok_or_else(|| CoreError::Tls {
-            detail: "the app gave no client certificates".into(),
-        })?;
-        let resolver = certificate::Resolver::new(certificates.clone(), name);
-        let tls = tls_config(Some(Arc::new(resolver)))?;
-        built.insert(name.to_owned(), tls.clone());
+        let resolver = match certificate {
+            Some(name) => {
+                let certificates = self.certificates.get().ok_or_else(|| CoreError::Tls {
+                    detail: "the app gave no client certificates".into(),
+                })?;
+                let resolver = certificate::Resolver::new(certificates.clone(), name);
+                Some(Arc::new(resolver) as Arc<dyn ResolvesClientCert>)
+            }
+            None => None,
+        };
+        let tls = tls_config(resolver, trusted, self.refused.clone())?;
+        built.insert(key, tls.clone());
         Ok(tls)
     }
 }
@@ -1894,6 +1984,27 @@ impl Core {
 /// The provider state key that says which protocol an Exchange account speaks.
 const PROTOCOL: &str = "protocol";
 const ACTIVE_SYNC: &str = "activesync";
+/// The provider state key of the server certificate the person chose to trust, as `hex`.
+const TRUSTED: &str = "trusted_certificate";
+
+/// A fingerprint as the apps show it: upper-case hex pairs split by colons.
+fn hex(fingerprint: &[u8; 32]) -> String {
+    let pairs: Vec<String> = fingerprint.iter().map(|b| format!("{b:02X}")).collect();
+    pairs.join(":")
+}
+
+/// A fingerprint from `hex`; None for anything else.
+fn unhex(text: &str) -> Option<[u8; 32]> {
+    let bytes: Vec<u8> = text
+        .split(':')
+        .map(|pair| {
+            u8::from_str_radix(pair, 16)
+                .ok()
+                .filter(|_| pair.len() == 2)
+        })
+        .collect::<Option<_>>()?;
+    bytes.try_into().ok()
+}
 
 /// An account's provider state in the store. A failed write is logged: the provider then
 /// starts over where it needed the value.
@@ -2171,7 +2282,11 @@ fn now() -> i64 {
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
-fn tls_config(client: Option<Arc<dyn ResolvesClientCert>>) -> Result<Arc<ClientConfig>, CoreError> {
+fn tls_config(
+    client: Option<Arc<dyn ResolvesClientCert>>,
+    trusted: Option<[u8; 32]>,
+    refused: Arc<RefusedCertificates>,
+) -> Result<Arc<ClientConfig>, CoreError> {
     // Without the JNI setup the Android verifier panics on first use; refuse cleanly instead.
     #[cfg(target_os = "android")]
     if !android::READY.load(std::sync::atomic::Ordering::Acquire) {
@@ -2179,7 +2294,7 @@ fn tls_config(client: Option<Arc<dyn ResolvesClientCert>>) -> Result<Arc<ClientC
             detail: "CoreNative.init was not called".into(),
         });
     }
-    ozero_imap::platform_tls(client).map_err(|e| CoreError::Tls {
+    ozero_imap::platform_tls(client, trusted, refused).map_err(|e| CoreError::Tls {
         detail: e.to_string(),
     })
 }
@@ -2845,6 +2960,13 @@ pub enum CoreError {
     NoEws,
     /// The Exchange server typed asks for a client certificate, and none was picked.
     CertificateNeeded,
+    /// The server's certificate did not pass the checks; the person may choose to trust it,
+    /// and sign in again with its `fingerprint`.
+    UntrustedCertificate {
+        host: String,
+        fingerprint: String,
+        reason: String,
+    },
     /// The company's Exchange server has not let this device in over ActiveSync, or blocked it.
     DeviceBlocked,
     /// The files added to a message would take more than `file_limit`.
@@ -2874,6 +2996,12 @@ impl fmt::Display for CoreError {
             Self::NotFound => write!(f, "no server found for the address"),
             Self::NoEws => write!(f, "the server does not answer as EWS"),
             Self::CertificateNeeded => write!(f, "the server asks for a client certificate"),
+            Self::UntrustedCertificate { host, reason, .. } => {
+                write!(
+                    f,
+                    "the certificate of {host} did not pass the checks: {reason}"
+                )
+            }
             Self::DeviceBlocked => write!(f, "the server has not let this device in"),
             Self::TooLarge => write!(f, "the files are too large for one message"),
             Self::Storage { detail } => write!(f, "storage error: {detail}"),

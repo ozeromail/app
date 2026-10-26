@@ -106,6 +106,9 @@ struct SignInView: View {
     @State private var error: LocalizedStringKey?
     // What the server or the connection said, for the person's IT team.
     @State private var detail: String?
+    // The fingerprint of a server certificate the checks refused, and the sign-in to run
+    // again trusting it.
+    @State private var untrusted: (fingerprint: String, trust: (String) -> Void)?
     @Environment(\.webAuthenticationSession) private var webAuthentication
     @Environment(\.openURL) private var openURL
 
@@ -133,6 +136,11 @@ struct SignInView: View {
                     if let detail {
                         Text(verbatim: detail).font(.footnote).foregroundStyle(.secondary)
                     }
+                    if let untrusted {
+                        Button("signin_trust_certificate") { untrusted.trust(untrusted.fingerprint) }
+                            .disabled(busy)
+                            .padding(.top, 4)
+                    }
                 }
                 .padding(.top, 12)
             }
@@ -159,13 +167,16 @@ struct SignInView: View {
             // The server was not found: the fields to type it come out.
             Exchange(
                 email: $email, password: $password, typed: !lost, onKind: onKind, busy: busy,
-                manual: lost || error == "error_no_server" || error == "error_certificate_needed", onBack: back
+                manual: lost || error == "error_no_server" || error == "error_certificate_needed"
+                    || error == "error_untrusted_certificate",
+                onBack: back
             ) { server, login, certificate in
-                attempt {
+                let signIn = { (trusted: String?) in
                     try await mail.signInExchange(
                         email: address, password: password, server: server, login: login,
-                        certificate: certificate)
+                        certificate: certificate, trusted: trusted)
                 }
+                attempt(trusting: { trusted in attempt { try await signIn(trusted) } }) { try await signIn(nil) }
             }
         case .known(let provider):
             credentials(provider: provider, typed: provider == .gmail, servers: false, onKind: nil)
@@ -206,6 +217,7 @@ struct SignInView: View {
         step = to
         error = nil
         detail = nil
+        untrusted = nil
     }
 
     private func back() {
@@ -225,13 +237,17 @@ struct SignInView: View {
         }
     }
 
-    /// Runs a sign-in, busy meanwhile; on success leaves the screen.
-    private func attempt(_ signIn: @escaping () async throws -> Void) {
+    /// Runs a sign-in, busy meanwhile; on success leaves the screen. With `trusting`, the
+    /// person may trust a server certificate the checks refused and run it again with it.
+    private func attempt(
+        trusting: ((String) -> Void)? = nil, _ signIn: @escaping () async throws -> Void
+    ) {
         // Set before the task starts, so a second tap does nothing.
         guard !busy else { return }
         busy = true
         error = nil
         detail = nil
+        untrusted = nil
         Task {
             defer { busy = false }
             do {
@@ -240,6 +256,9 @@ struct SignInView: View {
             } catch {
                 self.error = error.text()
                 detail = error.detail
+                if case .UntrustedCertificate(_, let fingerprint, _)? = error as? CoreError, let trusting {
+                    untrusted = (fingerprint, trusting)
+                }
             }
         }
     }
