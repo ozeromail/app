@@ -216,7 +216,13 @@ private fun Folders(
 ) {
     fun open(group: Long) = groups.open(group, accounts.size > 1)
     if (accounts.size > 1) {
-        Group(stringResource(R.string.inbox_all_accounts), open(Settings.ALL_ACCOUNTS), { StackedDots(accounts) }, { onToggle(Settings.ALL_ACCOUNTS) }) {
+        Group(
+            stringResource(R.string.inbox_all_accounts),
+            open(Settings.ALL_ACCOUNTS),
+            lead = { StackedDots(accounts) },
+            onToggle = { onToggle(Settings.ALL_ACCOUNTS) },
+            settings = onAccount != null,
+        ) {
             UNIFIED.filter { role -> role == FolderRole.INBOX || folders.any { it.role == role } }.forEach { role ->
                 val box = Mailbox.Unified(role)
                 FolderRow(role.icon(), role.allTitle(), box == mailbox) { onMailbox(box) }
@@ -230,6 +236,7 @@ private fun Folders(
             lead = { AccountDot(account.tint, size = 12.dp) },
             onToggle = { onToggle(account.id) },
             onSettings = onAccount?.let { { it(account) } },
+            settings = onAccount != null,
         ) {
             folders.filter { it.accountId == account.id && it.role != FolderRole.DRAFTS }.sortedWith(FOLDER_ORDER).forEach { folder ->
                 // With one account its inbox is the unified one, which keeps the tabs.
@@ -295,7 +302,10 @@ private fun FolderRole.allTitle(): String = when (this) {
     else -> stringResource(R.string.folder_all_inbox)
 }
 
-/** A group's name, which hides or shows its folders, and with [onSettings] a way to its settings. */
+/**
+ * A group's name, which hides or shows its folders, and with [onSettings] a way to its settings.
+ * Where groups have [settings], one without keeps the room, so the names line up.
+ */
 @Composable
 private fun Group(
     text: String,
@@ -303,6 +313,7 @@ private fun Group(
     lead: @Composable () -> Unit,
     onToggle: () -> Unit,
     onSettings: (() -> Unit)? = null,
+    settings: Boolean = true,
     folders: @Composable () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -329,7 +340,7 @@ private fun Group(
         }
         if (onSettings != null) {
             IconTile(R.drawable.ic_more, stringResource(R.string.account_settings), onSettings, tint = colors.onSurfaceVariant, size = 40.dp)
-        } else {
+        } else if (settings) {
             Box(Modifier.size(40.dp))
         }
     }

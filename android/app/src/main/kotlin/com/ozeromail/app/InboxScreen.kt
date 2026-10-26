@@ -1387,16 +1387,17 @@ private fun InboxList(
     // The list leaves to the side the thumb moves away from, and the next one comes in from the other.
     val slide = Modifier.glided { thumb() - page }
     val mini by animateFloatAsState(if (scrolled) 1f else 0f, Motion.calm(Motion.SMALL), label = "title")
-    // On a wide screen without tabs, search and a new message go beside the title, not in a row of their own.
-    val titleActions: (@Composable RowScope.() -> Unit)? = if (wide && !inbox && !choosing) {
-        {
-            val tile = if (LocalRoom.current.short) 40.dp else 48.dp
-            SearchTile(onSearch, tile)
-            ComposeTile(onCompose, tile)
+    // On a wide screen search and a new message are always beside the title, so the dock is only the tabs.
+    val titleActions: (@Composable RowScope.(size: Dp) -> Unit)? = if (wide && !choosing) {
+        { size ->
+            SearchTile(onSearch, size)
+            ComposeTile(onCompose, size)
         }
     } else {
         null
     }
+    val short = LocalRoom.current.short
+    val heroActions: (@Composable RowScope.() -> Unit)? = titleActions?.let { actions -> { actions(this, if (short) 40.dp else 48.dp) } }
     Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
         // The other tabs' pages, under the list: the one left goes on from where the finger let it
         // go, and the next shows under the finger before it is picked.
@@ -1459,7 +1460,7 @@ private fun InboxList(
                 state = listState,
                 contentPadding = PaddingValues(top = top, bottom = dockHeight + 16.dp),
             ) {
-                item(key = "title") { Hero(shownTitle, shownOwner, onBack, titleActions) }
+                item(key = "title") { Hero(shownTitle, shownOwner, onBack, heroActions) }
                 items(signedOut, key = { "signed-out-${it.id}" }) { account ->
                     Afloat(thumb, page, depth = { 0 }, modifier = rowMove().then(sink)) { SignedOutRow(account, onClick = { onSignIn(account) }) }
                 }
@@ -1565,13 +1566,15 @@ private fun InboxList(
                     .graphicsLayer { alpha = mini }
                     .background(colors.bar)
                     .padding(top = top)
-                    .height(if (LocalRoom.current.short) 40.dp else 48.dp)
+                    .height(if (short) 44.dp else 48.dp)
                     .hairline(colors.outlineVariant, top = false),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(shownTitle, style = Type.Row, fontWeight = Weight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 onBack?.let { BackArrow(it, Modifier.align(Alignment.CenterStart)) }
-                titleActions?.let { Row(Modifier.align(Alignment.CenterEnd).padding(end = Gap.bar), horizontalArrangement = Arrangement.spacedBy(Gap.inBar), content = it) }
+                titleActions?.let { actions ->
+                    Row(Modifier.align(Alignment.CenterEnd).padding(end = Gap.bar), horizontalArrangement = Arrangement.spacedBy(Gap.inBar)) { actions(this, 36.dp) }
+                }
             }
         }
         Column(Modifier.align(Alignment.BottomCenter)) {
@@ -1616,7 +1619,6 @@ private fun InboxList(
                     )
                 },
                 wide = wide,
-                pane = showing != null,
             )
         }
         // The rarer ways to choose, in a sheet like every menu.
@@ -1701,9 +1703,8 @@ internal fun Hero(title: String, subtitle: String?, onBack: (() -> Unit)?, actio
 /**
  * Everything the thumb needs, along the bottom: the inbox's tabs (null elsewhere), then the
  * accounts button, search and a new message. On a [wide] screen the mailboxes are beside the
- * list, so the rest fits one row, beside a message ([pane]) only the tabs. Without tabs search
- * and a new message go beside the title, so the dock is the button that empties the folder, or
- * nothing: the short height is for the mail.
+ * list and search and a new message beside the title, so the dock is only the tabs, or the
+ * button that empties the folder, or nothing: the short height is for the mail.
  */
 @Composable
 private fun Dock(
@@ -1723,15 +1724,12 @@ private fun Dock(
     choosing: Float,
     choiceBar: @Composable () -> Unit,
     wide: Boolean,
-    /** Beside an open message the row is only the tabs. */
-    pane: Boolean,
 ) {
     val colors = MaterialTheme.colorScheme
     val rise = with(LocalDensity.current) { 16.dp.toPx() }
     // On its side the dock is as low as its controls allow.
     val short = LocalRoom.current.short
-    val tile = if (short) 40.dp else 48.dp
-    // Without tabs, search and a new message are beside the title: nothing is left for a row.
+    // Search and a new message are beside the title: without tabs nothing is left for a row.
     if (wide && tabs == null && empty == null && choosing == 0f) {
         Spacer(modifier.fillMaxWidth().navigationBarsPadding())
         return
@@ -1771,10 +1769,6 @@ private fun Dock(
                             tabs != null -> Tabs(tab, tabs, glide, thumb, onTab, fill)
                             empty != null -> EmptyButton(stringResource(empty.first), empty.second, fill)
                             else -> Spacer(fill)
-                        }
-                        if (tabs != null && !pane) {
-                            SearchTile(onSearch, tile)
-                            ComposeTile(onCompose, tile)
                         }
                     } else {
                         AccountsButton(accounts, onAccounts)
