@@ -572,6 +572,7 @@ impl MailProvider for EasSession {
                     junked = true;
                     FolderRole::Junk
                 }
+                FolderRole::Custom if top => FolderRole::from_name(&e.name),
                 role => role,
             };
             folders.push(NewFolder {
@@ -844,6 +845,49 @@ impl MailProvider for EasSession {
             (s, e) => Err(ProviderError::Rejected(format!(
                 "EmptyFolderContents status {s}, {e}"
             ))),
+        }
+    }
+
+    async fn create_snoozed(&mut self, name: &str) -> Result<NewFolder, ProviderError> {
+        // FolderCreate takes the key of a list that is up to date.
+        let mut list = self.folder_list().await?;
+        let key = self.state.get("folders.key").unwrap_or_else(|| "0".into());
+        let request = Node::new(
+            "FolderHierarchy:FolderCreate",
+            vec![
+                Node::text("FolderHierarchy:SyncKey", key),
+                Node::text("FolderHierarchy:ParentId", "0"),
+                Node::text("FolderHierarchy:DisplayName", name),
+                Node::text("FolderHierarchy:Type", "12"),
+            ],
+        );
+        let answer = self.command("FolderCreate", &request, false).await?;
+        match status(&answer) {
+            1 => {
+                let id = answer.text_at(&["FolderHierarchy:ServerId"]).to_owned();
+                list.push(Entry {
+                    id: id.clone(),
+                    parent: "0".into(),
+                    kind: "12".into(),
+                    name: name.to_owned(),
+                });
+                self.state.set("folders", Some(&write_folders(&list)));
+                let new_key = answer.text_at(&["FolderHierarchy:SyncKey"]);
+                self.state.set("folders.key", Some(new_key));
+                Ok(NewFolder {
+                    remote_id: id,
+                    name: name.to_owned(),
+                    role: FolderRole::Snoozed,
+                })
+            }
+            // There already, made meanwhile by another device.
+            2 => self
+                .folders()
+                .await?
+                .into_iter()
+                .find(|f| f.role == FolderRole::Snoozed)
+                .ok_or_else(|| ProviderError::Rejected(format!("{name} is taken"))),
+            s => Err(ProviderError::Rejected(format!("FolderCreate status {s}"))),
         }
     }
 

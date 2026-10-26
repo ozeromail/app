@@ -513,3 +513,56 @@ fn reads_times_with_and_without_fractions() {
     assert_eq!(time("2026-10-26T09:00:00Z"), Some(1_793_005_200));
     assert_eq!(time("soon"), None);
 }
+
+#[tokio::test]
+async fn makes_the_snoozed_folder_at_the_top() {
+    let (mut eas, state, took, _) = server(|cmd, _, _| match cmd {
+        "FolderSync" => (
+            200,
+            Some(n(
+                "FolderHierarchy:FolderSync",
+                vec![
+                    t("FolderHierarchy:Status", "1"),
+                    t("FolderHierarchy:SyncKey", "F1"),
+                    n(
+                        "FolderHierarchy:Changes",
+                        vec![folder("1", "0", "Inbox", "2")],
+                    ),
+                ],
+            )),
+        ),
+        "FolderCreate" => (
+            200,
+            Some(n(
+                "FolderHierarchy:FolderCreate",
+                vec![
+                    t("FolderHierarchy:Status", "1"),
+                    t("FolderHierarchy:SyncKey", "F2"),
+                    t("FolderHierarchy:ServerId", "9"),
+                ],
+            )),
+        ),
+        _ => (500, None),
+    })
+    .await;
+    let made = eas.create_snoozed("Snoozed").await.unwrap();
+    assert_eq!(
+        made,
+        NewFolder {
+            remote_id: "9".into(),
+            name: "Snoozed".into(),
+            role: FolderRole::Snoozed,
+        }
+    );
+    let create = took.lock().unwrap().last().unwrap().1.clone();
+    assert_eq!(create.text_at(&["FolderHierarchy:SyncKey"]), "F1");
+    assert_eq!(create.text_at(&["FolderHierarchy:ParentId"]), "0");
+    assert_eq!(state.get("folders.key").as_deref(), Some("F2"));
+    // The saved list has it, so the next listing finds it by its name.
+    let folders = eas.folders().await.unwrap();
+    assert!(
+        folders
+            .iter()
+            .any(|f| f.remote_id == "9" && f.role == FolderRole::Snoozed)
+    );
+}

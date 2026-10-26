@@ -410,6 +410,25 @@ impl Core {
         self.hold_move(messages, Action::Inbox)
     }
 
+    /// As `archive`, into the account's snoozed folder until `until` (seconds), when `wake`
+    /// brings the messages back. Fails with `NoSnoozed` if an account has none yet.
+    pub fn snooze(&self, messages: Vec<i64>, until: i64) -> Result<Vec<i64>, CoreError> {
+        let messages: Vec<MessageId> = messages.into_iter().map(MessageId).collect();
+        Ok(ids(self.store.snooze(&messages, until, now() + HOLD)?))
+    }
+
+    /// Brings the snoozed mail whose time has come back into the inbox, on top and unread,
+    /// and returns it, for a notification; `push_actions` tells the server.
+    pub fn wake(&self) -> Result<Vec<MessageItem>, CoreError> {
+        let rows = self.store.wake(now() / 1_000, now())?;
+        self.items(rows)
+    }
+
+    /// When `wake` next has mail to bring back (seconds), if any is snoozed.
+    pub fn next_wake(&self) -> Result<Option<i64>, CoreError> {
+        Ok(self.store.next_wake()?)
+    }
+
     /// As `archive`, `messages` into the trash and `forever`, mail in the trash, gone from the
     /// server for good. Fails with `NoTrash` if an account has no trash folder.
     pub fn delete(&self, messages: Vec<i64>, forever: Vec<i64>) -> Result<Vec<i64>, CoreError> {
@@ -2121,6 +2140,15 @@ impl MailProvider for Remote {
         }
     }
 
+    async fn create_snoozed(&mut self, name: &str) -> Result<NewFolder, ProviderError> {
+        match self {
+            Self::Imap(p) => p.create_snoozed(name).await,
+            Self::Gmail(p) => p.create_snoozed(name).await,
+            Self::Ews(p) => p.create_snoozed(name).await,
+            Self::Eas(p) => p.create_snoozed(name).await,
+        }
+    }
+
     async fn append(&mut self, folder: &str, message: &[u8]) -> Result<(), ProviderError> {
         match self {
             Self::Imap(p) => p.append(folder, message).await,
@@ -2226,6 +2254,7 @@ pub enum FolderRole {
     Trash,
     Junk,
     Flagged,
+    Snoozed,
     Custom,
 }
 
@@ -2767,8 +2796,10 @@ pub struct MessageItem {
     pub can_archive: bool,
     /// It can go to the trash: it is not there already; delete there is for good.
     pub can_trash: bool,
-    /// It can go back to the inbox: it is in the archive, trash or spam.
+    /// It can go back to the inbox: it is in the archive, trash, spam or snoozed folder.
     pub can_move_to_inbox: bool,
+    /// It can be snoozed: its folder holds mail not filed yet.
+    pub can_snooze: bool,
     /// In mixed lists (the unified inbox, search), set when there is more than one account.
     pub account: Option<AccountMark>,
     /// The names of its attachments, once its body is downloaded; a name may be empty.
@@ -2797,6 +2828,7 @@ impl From<MessageRow> for MessageItem {
             can_archive: allows(Action::Archive),
             can_trash: allows(Action::Trash),
             can_move_to_inbox: allows(Action::Inbox),
+            can_snooze: allows(Action::Snooze),
             account: None,
             attachments: row.attachments,
             sending: row.sending,
@@ -2833,6 +2865,8 @@ pub enum CoreError {
     NoArchive,
     /// The account has no folder marked as its trash.
     NoTrash,
+    /// The account has no snoozed folder yet; its next sync makes one.
+    NoSnoozed,
     /// A recipient is not an email address, or there is none.
     BadRecipients,
     /// The account has no SMTP server to send through.
@@ -2868,6 +2902,7 @@ impl fmt::Display for CoreError {
             Self::Gone => write!(f, "the message is gone from the server"),
             Self::NoArchive => write!(f, "the account has no archive folder"),
             Self::NoTrash => write!(f, "the account has no trash folder"),
+            Self::NoSnoozed => write!(f, "the account has no snoozed folder"),
             Self::BadRecipients => write!(f, "a recipient is not an email address"),
             Self::NoSmtp => write!(f, "the account has no SMTP server"),
             Self::NoServer => write!(f, "no Exchange server found"),
@@ -2890,6 +2925,7 @@ impl From<StoreError> for CoreError {
             StoreError::TooNew { .. } => Self::TooNew,
             StoreError::NoArchive => Self::NoArchive,
             StoreError::NoTrash => Self::NoTrash,
+            StoreError::NoSnoozed => Self::NoSnoozed,
             other => Self::Storage {
                 detail: other.to_string(),
             },

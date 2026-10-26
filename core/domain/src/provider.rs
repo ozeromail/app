@@ -166,6 +166,13 @@ pub trait MailProvider: Send {
         keep: &[String],
     ) -> impl Future<Output = Result<(), ProviderError>> + Send;
 
+    /// Makes the folder snoozed mail waits in, named `name`, at the top level or where the
+    /// server keeps the user's folders, and returns it; or the one there already.
+    fn create_snoozed(
+        &mut self,
+        name: &str,
+    ) -> impl Future<Output = Result<NewFolder, ProviderError>> + Send;
+
     /// Saves a message into a folder, marked read: a sent copy into Sent.
     fn append(
         &mut self,

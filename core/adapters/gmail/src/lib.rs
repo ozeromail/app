@@ -87,6 +87,24 @@ impl GmailSession {
             .map(str::to_owned))
     }
 
+    /// The user's label snoozed mail waits under, if there is one.
+    async fn snoozed_label(&mut self) -> Result<Option<NewFolder>, ProviderError> {
+        let labels = self.get("/labels?fields=labels(id,name,type)").await?;
+        Ok(labels["labels"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|l| l["type"] == "user")
+            .find_map(|l| {
+                let (id, name) = (l["id"].as_str()?, l["name"].as_str()?);
+                (FolderRole::from_name(name) == FolderRole::Snoozed).then(|| NewFolder {
+                    remote_id: id.to_owned(),
+                    name: name.to_owned(),
+                    role: FolderRole::Snoozed,
+                })
+            }))
+    }
+
     async fn get(&mut self, path: &str) -> Result<Value, ProviderError> {
         self.call("GET", path, None).await
     }
@@ -360,7 +378,7 @@ impl MailProvider for GmailSession {
             name: name.to_owned(),
             role,
         };
-        Ok(vec![
+        let mut folders = vec![
             folder("INBOX", "Inbox", FolderRole::Inbox),
             folder("SENT", "Sent", FolderRole::Sent),
             folder("DRAFT", "Drafts", FolderRole::Drafts),
@@ -368,7 +386,10 @@ impl MailProvider for GmailSession {
             folder("STARRED", "Starred", FolderRole::Flagged),
             folder("SPAM", "Spam", FolderRole::Junk),
             folder("TRASH", "Trash", FolderRole::Trash),
-        ])
+        ];
+        // Optional: without it the inbox still syncs, and the next sync looks again.
+        folders.extend(self.snoozed_label().await.ok().flatten());
+        Ok(folders)
     }
 
     async fn changes(
@@ -556,6 +577,27 @@ impl MailProvider for GmailSession {
         ids.sort();
         self.each_batch("/messages/batchDelete", &ids, |chunk| json!({"ids": chunk}))
             .await
+    }
+
+    async fn create_snoozed(&mut self, name: &str) -> Result<NewFolder, ProviderError> {
+        let body = json!({
+            "name": name,
+            "labelListVisibility": "labelShow",
+            "messageListVisibility": "show",
+        });
+        match self.post("/labels", &body).await {
+            Ok(label) => Ok(NewFolder {
+                remote_id: label["id"]
+                    .as_str()
+                    .ok_or_else(|| protocol("label without an id"))?
+                    .to_owned(),
+                name: name.to_owned(),
+                role: FolderRole::Snoozed,
+            }),
+            // There already, or a name Gmail keeps for itself.
+            Err(e @ ProviderError::Rejected(_)) => self.snoozed_label().await?.ok_or(e),
+            Err(e) => Err(e),
+        }
     }
 
     async fn append(&mut self, folder: &str, message: &[u8]) -> Result<(), ProviderError> {

@@ -314,6 +314,8 @@ async fn lists_the_mail_folders() {
                 folder("hidden", "root", "Hidden", "IPF.Note", true),
                 folder("arch", "root", "Архив", "IPF.Note", false),
                 folder("proj", "id-inbox", "Projects", "IPF.Note", false),
+                folder("snz", "root", "Snoozed", "IPF.Note", false),
+                folder("deep", "proj", "Snoozed", "IPF.Note", false),
             ];
             response(
                 "FindFolder",
@@ -336,12 +338,41 @@ async fn lists_the_mail_folders() {
             ("id-deleteditems", "Deleted Items", FolderRole::Trash),
             ("arch", "Архив", FolderRole::Archive),
             ("proj", "Входящие/Projects", FolderRole::Custom),
+            ("snz", "Snoozed", FolderRole::Snoozed),
+            ("deep", "Входящие/Projects/Snoozed", FolderRole::Custom),
         ]
     );
     // Basic from the start, without asking first.
     let seen = seen.lock().unwrap();
     assert_eq!(seen.len(), 2);
     assert!(seen.iter().all(|s| s.auth.as_deref() == Some(BASIC)));
+}
+
+#[tokio::test]
+async fn makes_the_snoozed_folder_at_the_top() {
+    let (mut ews, seen) = session(|body| match op(body) {
+        "CreateFolder" => response(
+            "CreateFolder",
+            &[ok(
+                "CreateFolder",
+                "<m:Folders><t:Folder><t:FolderId Id=\"snz\"/></t:Folder></m:Folders>",
+            )],
+        ),
+        other => panic!("{other}"),
+    })
+    .await;
+    let made = ews.create_snoozed("Snoozed").await.unwrap();
+    assert_eq!(
+        (made.remote_id.as_str(), made.role),
+        ("snz", FolderRole::Snoozed)
+    );
+    let seen = seen.lock().unwrap();
+    assert!(seen[0].body.contains("msgfolderroot"));
+    assert!(
+        seen[0]
+            .body
+            .contains("<t:DisplayName>Snoozed</t:DisplayName>")
+    );
 }
 
 #[tokio::test]

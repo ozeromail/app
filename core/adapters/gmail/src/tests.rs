@@ -431,6 +431,47 @@ async fn archives_by_taking_the_inbox_label_off() {
 }
 
 #[tokio::test]
+async fn the_snoozed_folder_is_a_label_of_the_user() {
+    let labels = json!({"labels": [
+        {"id": "INBOX", "name": "INBOX", "type": "system"},
+        {"id": "Label_7", "name": "Snoozed", "type": "user"},
+    ]});
+    let (mut gmail, _) = session(vec![("/labels?", 200, labels)]).await;
+    let folders = gmail.folders().await.unwrap();
+    let snoozed = folders.last().unwrap();
+    assert_eq!(
+        (snoozed.remote_id.as_str(), snoozed.role),
+        ("Label_7", FolderRole::Snoozed)
+    );
+}
+
+#[tokio::test]
+async fn makes_the_snoozed_label_or_finds_it() {
+    let (mut gmail, seen) = session(vec![(
+        "/labels",
+        200,
+        json!({"id": "Label_9", "name": "Snoozed"}),
+    )])
+    .await;
+    let made = gmail.create_snoozed("Snoozed").await.unwrap();
+    assert_eq!(made.remote_id, "Label_9");
+    assert!(seen.lock().unwrap()[0].2.contains("\"labelShow\""));
+
+    // A name Gmail keeps for itself, and no label of the user's by it.
+    let (mut gmail, _) = session(vec![
+        ("/labels?", 200, json!({"labels": []})),
+        (
+            "/labels",
+            400,
+            json!({"error": {"message": "Invalid label name"}}),
+        ),
+    ])
+    .await;
+    let refused = gmail.create_snoozed("Snoozed").await.unwrap_err();
+    assert!(matches!(refused, ProviderError::Rejected(_)));
+}
+
+#[tokio::test]
 async fn deletes_for_good_only_what_is_still_in_the_folder() {
     let (mut gmail, seen) = session(vec![
         (

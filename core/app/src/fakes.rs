@@ -8,10 +8,10 @@ use std::time::Duration;
 
 use ozero_domain::{
     Account, AccountId, Action, Address, Body, Category, Changes, Checkpoint, Correspondents,
-    Draft, DraftFile, DraftId, FileId, Flags, Folder, FolderId, ListQuery, MailProvider,
-    MailSender, MessageBuilder, MessageId, MessageLocation, MessageParser, MessageRow, Moved,
-    NewAccount, NewFolder, NewMessage, Older, Op, OpId, OutboxId, Outgoing, OutgoingFile,
-    ProviderError, RawMessage, RecentFile, SavedDraft, Store, StoreError, Unsent,
+    Draft, DraftFile, DraftId, FileId, Flags, Folder, FolderId, FolderRole, ListQuery,
+    MailProvider, MailSender, MessageBuilder, MessageId, MessageLocation, MessageParser,
+    MessageRow, Moved, NewAccount, NewFolder, NewMessage, Older, Op, OpId, OutboxId, Outgoing,
+    OutgoingFile, ProviderError, RawMessage, RecentFile, SavedDraft, Store, StoreError, Unsent,
 };
 
 /// Fakes answer at once, so one poll finishes the future.
@@ -33,6 +33,9 @@ pub struct Server {
     pub refuse: Vec<ProviderError>,
     pub moved_to: Vec<String>,
     pub appended: Vec<(String, Vec<u8>)>,
+    /// Each `create_snoozed` call's name; names in `refuse_names` fail.
+    pub created: Vec<String>,
+    pub refuse_names: Vec<String>,
     /// Each `wait` call: the folder, checkpoint and how long.
     pub waited: Vec<(String, Checkpoint, Duration)>,
     /// Each `older` call: the folder, validity, known ids, oldest date and limit.
@@ -176,6 +179,21 @@ impl MailProvider for Server {
         ready(self.apply(folder, validity, keep, Action::Empty))
     }
 
+    fn create_snoozed(
+        &mut self,
+        name: &str,
+    ) -> impl Future<Output = Result<NewFolder, ProviderError>> + Send {
+        self.created.push(name.into());
+        if self.refuse_names.iter().any(|n| n == name) {
+            return ready(Err(ProviderError::Rejected("taken".into())));
+        }
+        ready(Ok(NewFolder {
+            remote_id: name.into(),
+            name: name.into(),
+            role: FolderRole::from_name(name),
+        }))
+    }
+
     fn append(
         &mut self,
         folder: &str,
@@ -295,6 +313,8 @@ pub struct Memory {
     pub checkpoint: (Checkpoint, Vec<String>),
     /// What `oldest` returns, and each `prune`.
     pub oldest: Option<i64>,
+    /// What `next_wake` returns: when snoozed mail waits.
+    pub next_wake: Option<i64>,
     pub pruned: Mutex<Vec<(AccountId, i64)>>,
     /// Folders `set_older_done` marked.
     pub older_done: Mutex<Vec<(FolderId, bool)>>,
@@ -374,6 +394,18 @@ impl Store for Memory {
 
     fn set_needs_sign_in(&self, _: AccountId, _: bool) -> Result<(), StoreError> {
         Ok(())
+    }
+
+    fn snooze(&self, _: &[MessageId], _: i64, _: i64) -> Result<Vec<OpId>, StoreError> {
+        Ok(vec![])
+    }
+
+    fn wake(&self, _: i64, _: i64) -> Result<Vec<MessageRow>, StoreError> {
+        Ok(vec![])
+    }
+
+    fn next_wake(&self) -> Result<Option<i64>, StoreError> {
+        Ok(self.next_wake)
     }
 
     fn save_folders(

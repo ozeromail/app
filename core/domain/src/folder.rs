@@ -17,11 +17,28 @@ pub enum FolderRole {
     Trash,
     Junk,
     Flagged,
+    /// Where snoozed mail waits until it comes back to the inbox: a folder the app makes,
+    /// named `SNOOZED`.
+    Snoozed,
     /// A user-created folder or label.
     Custom,
 }
 
+/// The names of the folder the app keeps snoozed mail in, the second for a server that takes
+/// "Snoozed" for its own, as Gmail does.
+pub const SNOOZED: [&str; 2] = ["Snoozed", "Ozero/Snoozed"];
+
 impl FolderRole {
+    /// The role of a folder that has no special use, by its full name: one of `SNOOZED`, in
+    /// any case, is the snoozed folder.
+    pub fn from_name(name: &str) -> Self {
+        if SNOOZED.iter().any(|s| name.eq_ignore_ascii_case(s)) {
+            Self::Snoozed
+        } else {
+            Self::Custom
+        }
+    }
+
     /// Maps an IMAP special-use attribute (RFC 6154) to a role.
     pub fn from_special_use(attr: &str) -> Option<Self> {
         let role = match attr.to_ascii_lowercase().as_str() {
@@ -37,17 +54,22 @@ impl FolderRole {
     }
 
     /// Whether `action` applies to a message in a folder with this role: Done archives only
-    /// mail that is not filed yet, nothing goes to the trash from the trash, a delete in the
-    /// trash is for good, only the trash and spam are emptied, and mail goes back to the inbox
-    /// from the archive, trash or spam.
+    /// mail that is not filed yet and so does Snooze, nothing goes to the trash from the trash,
+    /// a delete in the trash is for good, only the trash and spam are emptied, and mail goes
+    /// back to the inbox from the archive, trash, spam or snoozed folder.
     pub fn allows(self, action: Action) -> bool {
         match action {
             Action::Seen(_) => true,
-            Action::Archive => matches!(self, Self::Inbox | Self::Custom),
+            Action::Archive | Action::Snooze => matches!(self, Self::Inbox | Self::Custom),
             Action::Trash => self != Self::Trash,
             Action::Delete => self == Self::Trash,
             Action::Empty => matches!(self, Self::Trash | Self::Junk),
-            Action::Inbox => matches!(self, Self::Archive | Self::Trash | Self::Junk),
+            Action::Inbox => {
+                matches!(
+                    self,
+                    Self::Archive | Self::Trash | Self::Junk | Self::Snoozed
+                )
+            }
         }
     }
 
@@ -105,7 +127,15 @@ mod tests {
         assert!(FolderRole::Junk.allows(Action::Empty));
         assert!(!FolderRole::Inbox.allows(Action::Empty));
         assert!(!FolderRole::Sent.allows(Action::Archive));
-        for role in [FolderRole::Archive, FolderRole::Trash, FolderRole::Junk] {
+        assert!(FolderRole::Inbox.allows(Action::Snooze));
+        assert!(!FolderRole::Snoozed.allows(Action::Snooze));
+        assert!(!FolderRole::Sent.allows(Action::Snooze));
+        for role in [
+            FolderRole::Archive,
+            FolderRole::Trash,
+            FolderRole::Junk,
+            FolderRole::Snoozed,
+        ] {
             assert!(role.allows(Action::Inbox));
         }
         for role in [
@@ -117,5 +147,14 @@ mod tests {
             assert!(!role.allows(Action::Inbox));
         }
         assert!(FolderRole::Sent.allows(Action::Seen(true)));
+    }
+
+    #[test]
+    fn the_snoozed_folder_is_found_by_name() {
+        assert_eq!(FolderRole::from_name("Snoozed"), FolderRole::Snoozed);
+        assert_eq!(FolderRole::from_name("SNOOZED"), FolderRole::Snoozed);
+        assert_eq!(FolderRole::from_name("Ozero/Snoozed"), FolderRole::Snoozed);
+        assert_eq!(FolderRole::from_name("Work/Snoozed"), FolderRole::Custom);
+        assert_eq!(FolderRole::from_name("Snoozed mail"), FolderRole::Custom);
     }
 }

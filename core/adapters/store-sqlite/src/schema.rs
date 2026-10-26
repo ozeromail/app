@@ -302,4 +302,16 @@ pub const MIGRATIONS: &[&str] = &[
     CREATE INDEX draft_file_outbox ON draft_file(outbox) WHERE outbox IS NOT NULL;
     ALTER TABLE draft ADD COLUMN gone INTEGER;
     ",
+    // 31: when snoozed mail comes back, by the message's key (its Message-ID). A row that
+    // `woke` keeps the time it came back: the inbox shows the message on top, dated then.
+    "
+    CREATE TABLE snooze (
+        account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+        message_id TEXT NOT NULL,
+        wake_at    INTEGER NOT NULL,
+        woke       INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (account_id, message_id)
+    ) WITHOUT ROWID;
+    CREATE INDEX snooze_due ON snooze(wake_at) WHERE woke = 0;
+    ",
 ];

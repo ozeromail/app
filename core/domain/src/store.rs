@@ -134,6 +134,22 @@ pub trait Store: Send + Sync {
         actions: &[(MessageId, Action)],
         not_before: i64,
     ) -> Result<Vec<OpId>, StoreError>;
+    /// Snoozes the messages' conversations, as `queue_all` with `Action::Snooze`, until `until`
+    /// (seconds): each message comes back then, wherever its server put it in the snoozed
+    /// folder.
+    fn snooze(
+        &self,
+        messages: &[MessageId],
+        until: i64,
+        not_before: i64,
+    ) -> Result<Vec<OpId>, StoreError>;
+    /// Brings back the snoozed mail whose time came by `now` (seconds): queues it into the
+    /// inbox from `not_before`, unread and dated `now`, so it shows on top. Returns the
+    /// messages as the inbox shows them. Mail moved out of the snoozed folder meanwhile, or
+    /// whose snooze was undone, stays where it is.
+    fn wake(&self, now: i64, not_before: i64) -> Result<Vec<MessageRow>, StoreError>;
+    /// When the next snoozed message comes back (seconds), if one is snoozed.
+    fn next_wake(&self) -> Result<Option<i64>, StoreError>;
     /// Queues `Action::Empty` on every message of a folder, as `queue` would one by one, and
     /// `Action::Delete` on copies of mail moved there. Fails with `NotAllowed` for any folder
     /// but the trash or spam.
@@ -228,6 +244,8 @@ pub enum StoreError {
     NoArchive,
     /// The message's account has no folder with the trash role.
     NoTrash,
+    /// The message's account has no snoozed folder yet.
+    NoSnoozed,
     /// The action does not apply in the message's folder, like archiving from the archive.
     NotAllowed,
     /// Anything else from the storage engine, without message contents.
@@ -244,6 +262,7 @@ impl fmt::Display for StoreError {
             Self::NotFound => write!(f, "not found"),
             Self::NoArchive => write!(f, "the account has no archive folder"),
             Self::NoTrash => write!(f, "the account has no trash folder"),
+            Self::NoSnoozed => write!(f, "the account has no snoozed folder"),
             Self::NotAllowed => write!(f, "the action does not apply in this folder"),
             Self::Storage(e) => write!(f, "storage error: {e}"),
         }
