@@ -460,7 +460,7 @@ async fn marks_moves_reads_and_sends() {
         "1"
     );
     // The key after it, under the count the folder's checkpoint has.
-    assert_eq!(state.get("sync.1").as_deref(), Some("0\tS2\t"));
+    assert_eq!(state.get("sync.1").as_deref(), Some("0\tS2\t\t5"));
 
     let moved = eas
         .move_to("1", 0, &["1:1".to_owned(), "1:2".to_owned()], "2")
@@ -603,4 +603,42 @@ async fn makes_the_snoozed_folder_at_the_top() {
             .iter()
             .any(|f| f.remote_id == "9" && f.role == FolderRole::Snoozed)
     );
+}
+
+#[tokio::test]
+async fn starts_a_folder_over_when_it_keeps_another_span() {
+    let (eas, _, took, _) = server(|cmd, request, _| match (cmd, sync_key(request)) {
+        ("Sync", "0") => (200, collection("S1", "1", vec![])),
+        ("Sync", "S1") => (200, collection("S2", "1", vec![])),
+        _ => (500, None),
+    })
+    .await;
+    let filters = || -> Vec<(String, String)> {
+        let took = took.lock().unwrap();
+        let syncs = took.iter().filter(|(c, _)| c == "Sync");
+        let path = [
+            "AirSync:Collections",
+            "AirSync:Collection",
+            "AirSync:Options",
+            "AirSync:FilterType",
+        ];
+        syncs
+            .map(|(_, r)| (sync_key(r).to_owned(), r.text_at(&path).to_owned()))
+            .filter(|(_, filter)| !filter.is_empty())
+            .collect()
+    };
+    let mut eas = eas;
+    let month = eas
+        .changes("1", Checkpoint::default(), &[], i64::MAX, 50)
+        .await
+        .unwrap();
+    assert_eq!(filters(), [("S1".to_owned(), "5".to_owned())]);
+
+    let mut eas = eas.keeping(3);
+    let days = eas
+        .changes("1", month.checkpoint, &[], i64::MAX, 50)
+        .await
+        .unwrap();
+    assert_eq!(days.checkpoint.validity, month.checkpoint.validity + 1);
+    assert_eq!(filters()[1], ("S1".to_owned(), "2".to_owned()));
 }

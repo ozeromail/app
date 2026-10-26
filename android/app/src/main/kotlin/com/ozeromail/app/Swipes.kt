@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -364,25 +365,33 @@ fun <T> Choices(
         style = Type.Caption,
         modifier = Modifier.padding(start = Gap.sheet, end = Gap.sheet, top = 8.dp, bottom = 8.dp),
     )
-    Row(
+    // More than four take two rows, so each keeps room for its words.
+    val perRow = (if (options.size > 4) (options.size + 1) / 2 else options.size).coerceAtLeast(1)
+    Column(
         Modifier.fillMaxWidth().padding(horizontal = Gap.sheet).padding(bottom = 8.dp).selectableGroup(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        options.forEach { option ->
-            val on = option == picked
-            val shape = RoundedCornerShape(Radius.medium)
-            Row(
-                Modifier
-                    .weight(1f)
-                    .height(height)
-                    .clip(shape)
-                    .background(if (on) colors.primary.copy(alpha = 0.1f) else colors.surfaceVariant)
-                    .then(if (on) Modifier.border(1.5.dp, colors.primary, shape) else Modifier)
-                    .selectable(selected = on, role = Role.RadioButton, onClick = { onPick(option) }),
-                horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                content(option, on)
+        options.chunked(perRow).forEach { row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                row.forEach { option ->
+                    val on = option == picked
+                    val shape = RoundedCornerShape(Radius.medium)
+                    Row(
+                        Modifier
+                            .weight(1f)
+                            .height(height)
+                            .clip(shape)
+                            .background(if (on) colors.primary.copy(alpha = 0.1f) else colors.surfaceVariant)
+                            .then(if (on) Modifier.border(1.5.dp, colors.primary, shape) else Modifier)
+                            .selectable(selected = on, role = Role.RadioButton, onClick = { onPick(option) }),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        content(option, on)
+                    }
+                }
+                // A short last row keeps the widths of the first.
+                repeat(perRow - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }

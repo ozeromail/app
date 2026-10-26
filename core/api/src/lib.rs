@@ -1893,7 +1893,7 @@ impl Core {
             store: self.store.clone(),
             account: account.id,
         });
-        Ok(EasSession::new(tls, server, password, state)?)
+        Ok(EasSession::new(tls, server, password, state)?.keeping(account.keep_days))
     }
 
     /// Signs in to a saved Exchange account: one call, so a wrong password is found before

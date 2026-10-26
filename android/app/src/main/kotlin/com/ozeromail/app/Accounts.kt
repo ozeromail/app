@@ -536,6 +536,8 @@ private val NEW_MAIL = linkedMapOf(
 
 /** How many days back an account's mail stays on the phone, 0 for all of it, and what to call it. */
 private val KEEP_DAYS = linkedMapOf(
+    3 to R.string.account_keep_three_days,
+    7 to R.string.account_keep_week,
     30 to R.string.account_keep_month,
     90 to R.string.account_keep_quarter,
     365 to R.string.account_keep_year,
