@@ -104,6 +104,7 @@ struct SignInView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 24)
+        .middle(Room.list)
         .animation(.smooth(duration: 0.42), value: step)
         // Not while signing in: leaving would cut it off halfway.
         .interactiveDismissDisabled(busy)

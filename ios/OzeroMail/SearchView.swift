@@ -35,6 +35,7 @@ struct SearchView: View {
             }
         }
         .listStyle(.plain)
+        .middle(Room.list)
         .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 8) {

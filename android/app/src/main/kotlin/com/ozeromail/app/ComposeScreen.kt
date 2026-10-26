@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -43,11 +44,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -188,91 +191,164 @@ fun ComposeScreen(
     val density = LocalDensity.current
     // Only whether it shows: the inset itself changes on every frame of the keyboard sliding.
     val keyboard by remember { derivedStateOf { ime.getBottom(density) > 0 } }
+    val sideways = LocalRoom.current.rails
+    // On its side, while the text is typed, To and Subject fold into one line, so the text has
+    // the little height the keyboard leaves; a tap on the line brings them back.
+    var writingText by remember { mutableStateOf(false) }
+    var unfolded by remember { mutableStateOf(false) }
+    LaunchedEffect(keyboard) { if (!keyboard) unfolded = false }
+    val folded = sideways && keyboard && writingText && !unfolded
+    val original = composing.original
+    val fields = @Composable {
+        if (!folded) {
+            Plain(
+                to,
+                { to = it },
+                R.string.compose_to,
+                Type.Body,
+                KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next, autoCorrectEnabled = false),
+            )
+            HorizontalDivider(color = colors.outlineVariant)
+            Plain(
+                subject,
+                { subject = it },
+                R.string.compose_subject,
+                Type.Title,
+                KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Next),
+            )
+        }
+        Plain(
+            text,
+            { text = it },
+            R.string.compose_text,
+            Type.Writing,
+            KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+            singleLine = false,
+            modifier = Modifier
+                .onFocusChanged { writingText = it.isFocused }
+                .then(
+                    if (sideways) {
+                        Modifier.heightIn(min = 72.dp)
+                    } else {
+                        // Room for a few lines from the start, less while the keyboard takes the screen.
+                        Modifier.heightIn(min = if (keyboard) 72.dp else 168.dp, max = if (keyboard) 168.dp else 320.dp)
+                    },
+                ),
+        )
+        // A forward is its quote, so it stays.
+        val forwarding = start.forward != null
+        val files = forwarded?.takeIf { it.accountId == from?.id }?.attachments.orEmpty()
+        if (files.isNotEmpty()) AttachmentChips(files)
+        if (quote.isNotEmpty()) {
+            Quote(quote.takeIf { original == null }, forwarding, onRemove = { quote = "" }.takeUnless { forwarding })
+        } else if (original != null && quotable) {
+            Pill(stringResource(R.string.compose_add_quote), height = 32.dp, onClick = {
+                val header = context.getString(R.string.compose_quote_header, longDate(context, original.date), original.sender)
+                scope.launch {
+                    try {
+                        quote = mail.quote(original, header)
+                        // Nothing to quote.
+                        quotable = quote.isNotEmpty()
+                    } catch (e: CoreException) {
+                        error = e.text()
+                    }
+                }
+            })
+        }
+    }
+    val errorLine = @Composable {
+        Reveal(error) {
+            Text(stringResource(it), color = colors.error, modifier = Modifier.padding(horizontal = Gap.screen, vertical = 8.dp))
+        }
+    }
+    val ready = !busy && from != null
+    val sendTile = @Composable {
+        IconTile(
+            R.drawable.ic_send,
+            stringResource(R.string.compose_send),
+            ::send,
+            Modifier.width(56.dp),
+            background = colors.accent,
+            tint = colors.onAccent,
+            shape = CircleShape,
+            enabled = ready,
+        )
+    }
     Box(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
-            // The message being answered takes the room the fields leave; alone, the fields sit low.
-            val original = composing.original
-            // With the keyboard up the card may close to nothing, so Send always stays in sight.
-            if (original != null) Original(mail, original, Modifier.weight(1f).heightIn(min = if (keyboard) 0.dp else 112.dp))
-            Column(
-                (if (original == null) Modifier.weight(1f) else Modifier).padding(horizontal = Gap.screen),
-                verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
-            ) {
-                Plain(
-                    to,
-                    { to = it },
-                    R.string.compose_to,
-                    Type.Body,
-                    KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next, autoCorrectEnabled = false),
-                )
-                HorizontalDivider(color = colors.outlineVariant)
-                Plain(
-                    subject,
-                    { subject = it },
-                    R.string.compose_subject,
-                    Type.Title,
-                    KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Next),
-                )
-                Plain(
-                    text,
-                    { text = it },
-                    R.string.compose_text,
-                    Type.Writing,
-                    KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                    singleLine = false,
-                    // Room for a few lines from the start, less while the keyboard takes the screen.
-                    modifier = Modifier.heightIn(min = if (keyboard) 72.dp else 168.dp, max = if (keyboard) 168.dp else 320.dp),
-                )
-                // A forward is its quote, so it stays.
-                val forwarding = start.forward != null
-                val files = forwarded?.takeIf { it.accountId == from?.id }?.attachments.orEmpty()
-                if (files.isNotEmpty()) AttachmentChips(files)
-                if (quote.isNotEmpty()) {
-                    Quote(quote.takeIf { original == null }, forwarding, onRemove = { quote = "" }.takeUnless { forwarding })
-                } else if (original != null && quotable) {
-                    Pill(stringResource(R.string.compose_add_quote), height = 32.dp, onClick = {
-                        val header = context.getString(R.string.compose_quote_header, longDate(context, original.date), original.sender)
-                        scope.launch {
-                            try {
-                                quote = mail.quote(original, header)
-                                // Nothing to quote.
-                                quotable = quote.isNotEmpty()
-                            } catch (e: CoreException) {
-                                error = e.text()
+        if (sideways) {
+            // Close and the sender at the top left, Send at the right edge by the keyboard.
+            Row(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
+                Middle(COMPOSE_MAX, Modifier.weight(1f)) {
+                    Column(Modifier.fillMaxSize()) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = Gap.bar, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
+                        ) {
+                            IconTile(R.drawable.ic_close, stringResource(R.string.action_close), onCancel, shape = CircleShape)
+                            if (folded) {
+                                Text(
+                                    listOf(to.ifBlank { stringResource(R.string.compose_to) }, subject.ifBlank { stringResource(R.string.compose_subject) }).joinToString(" · "),
+                                    color = colors.onSurfaceVariant,
+                                    style = Type.Text,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(CircleShape)
+                                        .clickable(role = Role.Button) { unfolded = true }
+                                        .padding(horizontal = 8.dp, vertical = 12.dp),
+                                )
+                            } else {
+                                if (hasDraft) {
+                                    IconTile(R.drawable.ic_delete, stringResource(R.string.action_delete_draft), ::discard, shape = CircleShape)
+                                }
+                                Box(Modifier.weight(1f)) {
+                                    if (from != null) Sender(from, enabled = accounts.size > 1, onClick = { picking = true })
+                                }
                             }
                         }
-                    })
+                        // With the keyboard down there is room for the message being answered.
+                        if (original != null) Original(mail, original, if (keyboard) Modifier.height(0.dp) else Modifier.weight(1f))
+                        Column(
+                            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = Gap.screen, vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) { fields() }
+                        errorLine()
+                    }
                 }
+                Column(
+                    Modifier.fillMaxHeight().padding(Gap.bar),
+                    verticalArrangement = Arrangement.Bottom,
+                ) { sendTile() }
             }
-            Reveal(error) {
-                Text(stringResource(it), color = colors.error, modifier = Modifier.padding(horizontal = Gap.screen, vertical = 8.dp))
-            }
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .hairline(colors.outlineVariant, top = true)
-                    .padding(start = Gap.bar, end = Gap.bar, top = Gap.barTop, bottom = Gap.barBottom),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
-            ) {
-                IconTile(R.drawable.ic_close, stringResource(R.string.action_close), onCancel, shape = CircleShape)
-                if (hasDraft) {
-                    IconTile(R.drawable.ic_delete, stringResource(R.string.action_delete_draft), ::discard, shape = CircleShape)
+        } else {
+            Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
+                // The message being answered takes the room the fields leave; alone, the fields sit low.
+                // With the keyboard up the card may close to nothing, so Send always stays in sight.
+                if (original != null) Original(mail, original, Modifier.weight(1f).heightIn(min = if (keyboard) 0.dp else 112.dp))
+                Column(
+                    (if (original == null) Modifier.weight(1f) else Modifier).padding(horizontal = Gap.screen),
+                    verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
+                ) { fields() }
+                errorLine()
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .hairline(colors.outlineVariant, top = true)
+                        .padding(start = Gap.bar, end = Gap.bar, top = Gap.barTop, bottom = Gap.barBottom),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
+                ) {
+                    IconTile(R.drawable.ic_close, stringResource(R.string.action_close), onCancel, shape = CircleShape)
+                    if (hasDraft) {
+                        IconTile(R.drawable.ic_delete, stringResource(R.string.action_delete_draft), ::discard, shape = CircleShape)
+                    }
+                    Box(Modifier.weight(1f)) {
+                        if (from != null) Sender(from, enabled = accounts.size > 1, onClick = { picking = true })
+                    }
+                    sendTile()
                 }
-                Box(Modifier.weight(1f)) {
-                    if (from != null) Sender(from, enabled = accounts.size > 1, onClick = { picking = true })
-                }
-                val ready = !busy && from != null
-                IconTile(
-                    R.drawable.ic_send,
-                    stringResource(R.string.compose_send),
-                    ::send,
-                    Modifier.width(56.dp),
-                    background = colors.accent,
-                    tint = colors.onAccent,
-                    shape = CircleShape,
-                    enabled = ready,
-                )
             }
         }
         // Like every menu, the other accounts open in a sheet, low in reach of the thumb.

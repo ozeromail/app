@@ -16,6 +16,7 @@ struct MessageView: View {
     @State private var files = Files()
     /// Loaded bodies, so a message opened again shows at once.
     @State private var bodies = Bodies()
+    @Environment(\.sideways) private var sideways
 
     private var mail: Mail { model.mail }
 
@@ -48,57 +49,39 @@ struct MessageView: View {
                         }
                     }
                 }
+            } else if sideways {
+                // The height is short: the whole page scrolls, title and all.
+                ScrollView { alone(fill: false) }
             } else {
-                VStack(alignment: .leading, spacing: 0) {
-                    Title(message: message)
-                    From(message: message, open: true, files: fileCount(message))
-                    Divider().padding(.top, 4)
-                    LetterBody(mail: mail, files: files, bodies: bodies, message: message, fill: true)
+                alone(fill: true)
+            }
+        }
+        .middle(Room.letter)
+        .navigationBarTitleDisplayMode(.inline)
+        // On its side the actions move to the edges, under the thumbs: the rarer ones left, the
+        // answers and Done right.
+        .safeAreaInset(edge: .leading, spacing: 0) {
+            if sideways {
+                Rail {
+                    BarAction(icon: "trash", label: message.canTrash ? "action_delete" : "action_delete_forever", action: delete)
+                    BarAction(icon: "ellipsis", label: "action_more") { more = true }
                 }
             }
         }
-        .navigationBarTitleDisplayMode(.inline)
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(spacing: 8) {
-                HStack(spacing: 8) {
-                    Button {
-                        model.write(answer) { try await mail.reply(to: answer, all: false) }
-                    } label: {
-                        Text("message_reply_prompt")
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
-                            .padding(.horizontal, 16)
-                            .background(Color.ozeroCard, in: .capsule)
-                    }
-                    .buttonStyle(.plain)
-                    RoundButton(icon: "arrowshape.turn.up.left.2", label: "message_reply_all") {
-                        model.write(answer) { try await mail.reply(to: answer, all: true) }
-                    }
-                    // The newest message, the user's own too.
-                    RoundButton(icon: "arrowshape.turn.up.right", label: "message_forward") {
-                        let newest = shown.last ?? message
-                        model.write(newest) {
-                            try await mail.forward(newest, labels: forwardLabels, date: longDate(newest.date))
-                        }
-                    }
-                }
-                HStack(spacing: 8) {
-                    BarAction(icon: "trash", label: message.canTrash ? "action_delete" : "action_delete_forever") {
-                        leave { await model.delete([message]) }
-                    }
-                    BarAction(icon: "ellipsis", label: "action_more") { more = true }
+        .safeAreaInset(edge: .trailing, spacing: 0) {
+            if sideways {
+                Rail {
+                    BarAction(icon: "arrowshape.turn.up.left", label: "message_reply") { reply(answer, all: false) }
+                    BarAction(icon: "arrowshape.turn.up.left.2", label: "message_reply_all") { reply(answer, all: true) }
+                    BarAction(icon: "arrowshape.turn.up.right", label: "message_forward") { forward(shown.last ?? message) }
                     if message.canArchive {
-                        BarAction(icon: "checkmark", label: "action_done", tint: .white, background: .ozeroFill) {
-                            // Back to the list, where the toast can undo it.
-                            leave { await model.archive([message]) }
-                        }
+                        BarAction(icon: "checkmark", label: "action_done", tint: .white, background: .ozeroFill, action: done)
                     }
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 10)
-            .padding(.bottom, 4)
-            .background(.bar)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if !sideways { bars(answer: answer, newest: shown.last ?? message) }
         }
         .confirmationDialog("action_more", isPresented: $more) {
             Button("action_mark_unread") {
@@ -128,6 +111,67 @@ struct MessageView: View {
                 }
             }
         }
+    }
+
+    /// The message on its own, under its title.
+    private func alone(fill: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Title(message: message)
+            From(message: message, open: true, files: fileCount(message))
+            Divider().padding(.top, 4)
+            LetterBody(mail: mail, files: files, bodies: bodies, message: message, fill: fill)
+        }
+    }
+
+    /// Reply, Reply all and Forward over Delete, More and Done, along the bottom.
+    private func bars(answer: MessageItem, newest: MessageItem) -> some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Button {
+                    reply(answer, all: false)
+                } label: {
+                    Text("message_reply_prompt")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .background(Color.ozeroCard, in: .capsule)
+                }
+                .buttonStyle(.plain)
+                RoundButton(icon: "arrowshape.turn.up.left.2", label: "message_reply_all") { reply(answer, all: true) }
+                // The newest message, the user's own too.
+                RoundButton(icon: "arrowshape.turn.up.right", label: "message_forward") { forward(newest) }
+            }
+            HStack(spacing: 8) {
+                BarAction(icon: "trash", label: message.canTrash ? "action_delete" : "action_delete_forever", action: delete)
+                BarAction(icon: "ellipsis", label: "action_more") { more = true }
+                if message.canArchive {
+                    BarAction(icon: "checkmark", label: "action_done", tint: .white, background: .ozeroFill, action: done)
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 4)
+        .background(.bar)
+    }
+
+    private func reply(_ answer: MessageItem, all: Bool) {
+        model.write(answer) { try await mail.reply(to: answer, all: all) }
+    }
+
+    private func forward(_ newest: MessageItem) {
+        model.write(newest) {
+            try await mail.forward(newest, labels: forwardLabels, date: longDate(newest.date))
+        }
+    }
+
+    private func delete() {
+        leave { await model.delete([message]) }
+    }
+
+    /// Back to the list, where the toast can undo it.
+    private func done() {
+        leave { await model.archive([message]) }
     }
 
     /// Back to the list, then `act`, so the list shows the toast.
