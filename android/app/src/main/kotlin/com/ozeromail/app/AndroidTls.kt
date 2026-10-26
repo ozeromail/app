@@ -3,7 +3,6 @@ package com.ozeromail.app
 import android.content.Context
 import android.security.KeyChain
 import android.util.Log
-import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.security.Principal
@@ -39,13 +38,15 @@ class AndroidTls(private val context: Context) : PlatformTls {
             connect(InetSocketAddress(host, port.toInt()), TIMEOUT_MS)
             soTimeout = TIMEOUT_MS
         }
-        val socket = tls.socketFactory.createSocket(tcp, host, port.toInt(), true) as SSLSocket
-        try {
-            socket.sslParameters = socket.sslParameters.apply { serverNames = listOf(SNIHostName(host)) }
-            socket.startHandshake()
-            socket.soTimeout = 0
-        } catch (e: IOException) {
-            socket.close()
+        val socket = try {
+            (tls.socketFactory.createSocket(tcp, host, port.toInt(), true) as SSLSocket).apply {
+                sslParameters = sslParameters.apply { serverNames = listOf(SNIHostName(host)) }
+                startHandshake()
+                soTimeout = 0
+            }
+        } catch (e: Exception) {
+            // Closing the TCP socket closes a TLS one on top of it too.
+            tcp.close()
             throw e
         }
         AndroidSocket(socket)
@@ -115,6 +116,8 @@ private class CoreChecks(private val checks: ServerChecks) : X509TrustManager {
 
 private inline fun <T> failing(block: () -> T): T = try {
     block()
-} catch (e: IOException) {
+} catch (e: PlatformTlsException) {
+    throw e
+} catch (e: Exception) {
     throw PlatformTlsException.Failed(e.message ?: e.javaClass.simpleName)
 }

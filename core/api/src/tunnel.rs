@@ -11,7 +11,12 @@ use ozero_domain::ProviderError;
 use ozero_http::{Opened, Stream, Tunnel};
 use ozero_imap::rustls::client::danger::ServerCertVerifier;
 use ozero_imap::rustls::pki_types::{CertificateDer, ServerName, UnixTime};
-use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
+use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::task::{Context, Poll, ready};
+
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, DuplexStream, ReadBuf};
+use tokio::sync::mpsc;
 
 /// Bytes moved between the platform and the core at a time.
 const CHUNK: usize = 16 * 1024;
@@ -130,7 +135,17 @@ impl Tunnel for Platform {
             let (tls, host, certificate) =
                 (self.tls.clone(), host.to_owned(), self.certificate.clone());
             let asked = checks.clone();
-            let socket = blocking(move || tls.connect(host, port, certificate, asked)).await?;
+            // A connection that opens after the core gave up on it is closed at once.
+            let gone = Gone::default();
+            let late = gone.0.clone();
+            let socket = blocking(move || {
+                let socket = tls.connect(host, port, certificate, asked)?;
+                if late.load(Ordering::Acquire) {
+                    socket.close();
+                }
+                Ok(socket)
+            })
+            .await?;
             let passed = checks
                 .passed
                 .lock()
@@ -145,6 +160,16 @@ impl Tunnel for Platform {
     }
 }
 
+/// Set once dropped: the future that waited for a connection is gone.
+#[derive(Default)]
+struct Gone(Arc<AtomicBool>);
+
+impl Drop for Gone {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
 /// Runs a blocking call of the platform off the async threads.
 async fn blocking<T: Send + 'static>(
     call: impl FnOnce() -> Result<T, PlatformTlsError> + Send + 'static,
@@ -155,39 +180,93 @@ async fn blocking<T: Send + 'static>(
     }
 }
 
-/// The socket as an async stream: one blocking thread moves what it reads in, another what is
-/// written out. Dropping the stream closes the socket.
-fn pump(socket: Arc<dyn PlatformSocket>) -> DuplexStream {
-    let (ours, theirs) = tokio::io::duplex(4 * CHUNK);
-    let (mut from_core, mut to_core) = tokio::io::split(theirs);
-    let runtime = tokio::runtime::Handle::current();
+/// The socket as an async stream, read and written each on a blocking thread. Dropping the
+/// stream closes the socket.
+fn pump(socket: Arc<dyn PlatformSocket>) -> Pumped {
+    let (incoming, received) = mpsc::channel(4);
     let reader = socket.clone();
-    let reading = runtime.clone();
     tokio::task::spawn_blocking(move || {
-        while let Ok(data) = reader.read(CHUNK as u32) {
-            if data.is_empty() || reading.block_on(to_core.write_all(&data)).is_err() {
+        loop {
+            let read = reader.read(CHUNK as u32);
+            let end = !matches!(&read, Ok(data) if !data.is_empty());
+            let read = read.map_err(|e| io::Error::other(e.to_string()));
+            if incoming.blocking_send(read).is_err() || end {
                 break;
             }
         }
-        // The core reads the end of the stream.
-        let _ = reading.block_on(to_core.shutdown());
+        reader.close();
     });
+    let (outgoing, mut sent) = tokio::io::duplex(4 * CHUNK);
+    let runtime = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(move || {
         let mut chunk = vec![0; CHUNK];
-        while let Ok(n @ 1..) = runtime.block_on(from_core.read(&mut chunk)) {
+        while let Ok(n @ 1..) = runtime.block_on(sent.read(&mut chunk)) {
             if socket.write(chunk[..n].to_vec()).is_err() {
                 break;
             }
         }
         socket.close();
     });
-    ours
+    Pumped {
+        received,
+        unread: Vec::new(),
+        outgoing,
+    }
+}
+
+/// What `pump` gives the core: the socket's reads, errors too, and a pipe to its writes.
+struct Pumped {
+    received: mpsc::Receiver<io::Result<Vec<u8>>>,
+    /// Received but not yet read.
+    unread: Vec<u8>,
+    outgoing: DuplexStream,
+}
+
+impl AsyncRead for Pumped {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        if self.unread.is_empty() {
+            match ready!(self.received.poll_recv(cx)) {
+                Some(Ok(data)) => self.unread = data,
+                Some(Err(e)) => return Poll::Ready(Err(e)),
+                // The end of the stream.
+                None => return Poll::Ready(Ok(())),
+            }
+        }
+        let n = self.unread.len().min(buf.remaining());
+        buf.put_slice(&self.unread[..n]);
+        self.unread.drain(..n);
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl AsyncWrite for Pumped {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        data: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.outgoing).poll_write(cx, data)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.outgoing).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.outgoing).poll_shutdown(cx)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
     use std::sync::Condvar;
+
+    use tokio::io::AsyncWriteExt;
 
     use ozero_imap::rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified};
     use ozero_imap::rustls::{CertificateError, DigitallySignedStruct, Error, SignatureScheme};
@@ -336,5 +415,30 @@ mod tests {
         let (platform, _) = platform(b"revoked");
         let opened = platform.open("mail.example.com", 443).await;
         assert!(matches!(opened, Err(ProviderError::Network(d)) if d == "handshake failed"));
+    }
+
+    /// Fails every read, as a handshake the server broke off.
+    struct Broken;
+
+    impl PlatformSocket for Broken {
+        fn read(&self, _: u32) -> Result<Vec<u8>, PlatformTlsError> {
+            Err(PlatformTlsError::Failed {
+                detail: "handshake_failure".into(),
+            })
+        }
+
+        fn write(&self, _: Vec<u8>) -> Result<(), PlatformTlsError> {
+            Ok(())
+        }
+
+        fn close(&self) {}
+    }
+
+    #[tokio::test]
+    async fn tells_the_core_why_a_read_failed() {
+        let mut stream = pump(Arc::new(Broken));
+        let mut chunk = [0; 4];
+        let e = stream.read(&mut chunk).await.unwrap_err();
+        assert_eq!(e.to_string(), "handshake_failure");
     }
 }
