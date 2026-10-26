@@ -70,7 +70,7 @@ private class AndroidSocket(private val socket: SSLSocket) : PlatformSocket {
         output.flush()
     }
 
-    override fun close() {
+    override fun end() {
         runCatching { socket.close() }
     }
 }
