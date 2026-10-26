@@ -45,6 +45,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
@@ -245,6 +246,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var error by remember { mutableStateOf<Int?>(null) }
     // The message read: on its own screen, or beside the list on a screen large enough for both.
     var open by remember { mutableStateOf<MessageItem?>(null) }
+    val wide by rememberUpdatedState(LocalRoom.current.split)
     var composing by remember { mutableStateOf<Composing?>(null) }
     // One answer or forward at a time: a second tap would replace the one being written.
     var writing by remember { mutableStateOf(false) }
@@ -301,6 +303,9 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             val found = if (mailbox == Mail.INBOX) mail.inbox(tab, size) else mail.mailbox(mailbox, size)
             // A tab or mailbox picked meanwhile loads its own list.
             if (tab to mailbox == shown) {
+                // Beside the list, the message goes when its row does, as when it moved on another device.
+                val reading = open?.id
+                if (wide && messages.any { it.id == reading } && found.none { it.id == reading }) open = null
                 messages = found
                 preview = false
                 savedEnds = found.size < size
@@ -648,6 +653,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             }
             val moved = gone.map { it.id }.toSet()
             messages = messages.filterNot { it.id in moved }
+            // Beside the list, the message goes with its row.
+            if (open?.id in moved) open = null
             // Also after success: a list read before the archive may bring the row back.
             reset()
             if (offerUndo(toast, go.takeIf { it != mailbox })) takeBack(actions)
@@ -670,7 +677,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 error = e.text()
                 return@launch
             }
-            if (mailbox == from) messages = emptyList()
+            if (mailbox == from) {
+                messages = emptyList()
+                open = null
+            }
             if (offerUndo(emptied)) takeBack(actions)
         }
     }
@@ -771,7 +781,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     // Back from another mailbox leads to the inbox.
     BackHandler(enabled = screen == Screen.Inbox && mailbox != Mail.INBOX && !accountsOpen) { mailbox = Mail.INBOX }
     // Before that, back closes the message beside the list.
-    BackHandler(enabled = screen == Screen.Inbox && open != null && !accountsOpen) { open = null }
+    BackHandler(enabled = screen == Screen.Inbox && open != null && !accountsOpen) {
+        open = null
+        scope.launch { load() }
+    }
 
     /** A message on its own screen, or beside the list in a [pane]; done with it, it closes. */
     @Composable
@@ -858,7 +871,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                             onOpen = {
                                 open = it
                                 // Beside the list, the message opens in the inbox's pane.
-                                if (split) searching = false
+                                if (split) closeSearch()
                             },
                             onBack = ::back,
                         )
@@ -906,12 +919,18 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                         counts()
                                     }
                                 },
-                                onOpen = { open = it },
+                                onOpen = {
+                                    // The one left beside the list now has a snippet.
+                                    if (open != null) scope.launch { load() }
+                                    open = it
+                                },
                                 onSwipe = ::swiped,
                                 onTab = { next ->
                                     // The next tab's rows are there at once, so its page comes in with them;
                                     // the saved list follows. The one left keeps its rows to leave with.
                                     others = others + (tab to messages)
+                                    // The message beside the list stays with its tab.
+                                    open = null
                                     others[next]?.let {
                                         messages = it
                                         preview = true
@@ -1276,7 +1295,7 @@ private fun InboxList(
     Box(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
             if (sideways) {
-                Rail(start = true, width = if (inbox || pane) TABS_RAIL else RAIL) {
+                Rail(start = true, width = if (inbox || pane || emptyAction != null) TABS_RAIL else RAIL) {
                     if (inbox) Tabs(tab, tabs, glide, thumb, pick, vertical = true)
                     emptyAction?.let { (label, onClick) -> EmptyButton(stringResource(label), onClick) }
                     if (pane) {
@@ -1290,7 +1309,7 @@ private fun InboxList(
                     }
                 }
             }
-            Middle(if (sideways && !pane) LIST_MAX else Dp.Unspecified, Modifier.weight(1f)) {
+            Middle(LIST_MAX, Modifier.weight(1f)) {
                 Box(Modifier.fillMaxSize()) {
                     // The other tabs' pages, under the list: the one left goes on from where the finger let it
                     // go, and the next shows under the finger before it is picked.
@@ -1509,6 +1528,8 @@ private fun InboxList(
                                     .navigationBarsPadding()
                                     .padding(top = Gap.barTop, bottom = Gap.barBottom),
                             ) { choiceBar() }
+                        } else {
+                            Spacer(Modifier.navigationBarsPadding())
                         }
                     }
                 }
