@@ -156,8 +156,6 @@ pub struct Core {
     /// TLS settings by the client certificate they offer and the server certificate the
     /// person trusted, built on first use.
     certificate_tls: Mutex<HashMap<TlsKey, Arc<ClientConfig>>>,
-    /// Server certificates the checks refused, for a sign-in to offer to trust.
-    refused: Arc<RefusedCertificates>,
     /// One push or sync per account at a time, so a sync never saves flags from before a push.
     busy: Mutex<HashMap<AccountId, Arc<tokio::sync::Mutex<()>>>>,
     /// Accounts with a push waiting for held actions to come due.
@@ -225,7 +223,6 @@ impl Core {
             tls: OnceLock::new(),
             certificates: OnceLock::new(),
             certificate_tls: Mutex::default(),
-            refused: Arc::default(),
             busy: Mutex::default(),
             waiting: Mutex::default(),
             named: Mutex::default(),
@@ -777,14 +774,12 @@ impl Core {
         trusted: Option<String>,
         password: String,
     ) -> Result<i64, CoreError> {
-        let host = server
-            .as_deref()
-            .and_then(|s| discover::endpoint(s.trim()))
-            .map(|e| e.host);
         let trusted = trusted.as_deref().and_then(unhex);
-        if let Some(host) = &host {
-            self.refused.take(host);
-        }
+        let certificate = certificate.filter(|c| !c.is_empty());
+        // Its own, so a refused certificate it finds is this sign-in's.
+        let refused = Arc::new(RefusedCertificates::default());
+        let client = self.client_certificate(certificate.as_deref())?;
+        let tls = tls_config(client, trusted, Some(refused.clone()))?;
         let added = self
             .add_exchange(
                 email,
@@ -792,22 +787,22 @@ impl Core {
                 server,
                 login,
                 certificate,
-                trusted,
+                tls,
                 password,
             )
             .await;
         match added {
-            Err(CoreError::Network { .. } | CoreError::Tls { .. }) => {
-                let refused = host.and_then(|host| Some((self.refused.take(&host)?, host)));
-                match (refused, added) {
-                    (Some((refused, host)), _) => Err(CoreError::UntrustedCertificate {
-                        host,
-                        fingerprint: hex(&refused.fingerprint),
-                        reason: refused.reason,
-                    }),
-                    (None, added) => added,
-                }
-            }
+            // A refused server certificate breaks the handshake before any of these.
+            Err(
+                CoreError::Network { .. } | CoreError::Tls { .. } | CoreError::CertificateNeeded,
+            ) => match refused.any() {
+                Some((host, refused)) => Err(CoreError::UntrustedCertificate {
+                    host,
+                    fingerprint: hex(&refused.fingerprint),
+                    reason: refused.reason,
+                }),
+                None => added,
+            },
             Ok(id) => {
                 let Some(trusted) = trusted else {
                     return Ok(id);
@@ -1623,7 +1618,7 @@ impl Core {
         server: Option<String>,
         login: Option<String>,
         certificate: Option<String>,
-        trusted: Option<[u8; 32]>,
+        tls: Arc<ClientConfig>,
         password: String,
     ) -> Result<i64, CoreError> {
         if self.exists(&email)? {
@@ -1633,8 +1628,6 @@ impl Core {
             .map(|l| l.trim().to_owned())
             .filter(|l| !l.is_empty())
             .unwrap_or_else(|| email.clone());
-        let certificate = certificate.filter(|c| !c.is_empty());
-        let tls = self.tls_for(certificate.as_deref(), trusted)?;
         let (endpoint, mut ews) = match server.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             Some(typed) => {
                 let endpoint = discover::endpoint(typed).ok_or(CoreError::NoServer)?;
@@ -1943,7 +1936,7 @@ impl Core {
         if let Some(tls) = self.tls.get() {
             return Ok(tls.clone());
         }
-        let tls = tls_config(None, None, self.refused.clone())?;
+        let tls = tls_config(None, None, None)?;
         Ok(self.tls.get_or_init(|| tls).clone())
     }
 
@@ -1965,19 +1958,27 @@ impl Core {
         if let Some(tls) = built.get(&key) {
             return Ok(tls.clone());
         }
-        let resolver = match certificate {
-            Some(name) => {
-                let certificates = self.certificates.get().ok_or_else(|| CoreError::Tls {
-                    detail: "the app gave no client certificates".into(),
-                })?;
-                let resolver = certificate::Resolver::new(certificates.clone(), name);
-                Some(Arc::new(resolver) as Arc<dyn ResolvesClientCert>)
-            }
-            None => None,
-        };
-        let tls = tls_config(resolver, trusted, self.refused.clone())?;
+        let client = self.client_certificate(certificate)?;
+        let tls = tls_config(client, trusted, None)?;
         built.insert(key, tls.clone());
         Ok(tls)
+    }
+
+    /// Offers the platform's client certificate `certificate` to a server that asks.
+    fn client_certificate(
+        &self,
+        certificate: Option<&str>,
+    ) -> Result<Option<Arc<dyn ResolvesClientCert>>, CoreError> {
+        let Some(name) = certificate else {
+            return Ok(None);
+        };
+        let certificates = self.certificates.get().ok_or_else(|| CoreError::Tls {
+            detail: "the app gave no client certificates".into(),
+        })?;
+        Ok(Some(Arc::new(certificate::Resolver::new(
+            certificates.clone(),
+            name,
+        ))))
     }
 }
 
@@ -2285,7 +2286,7 @@ fn now() -> i64 {
 fn tls_config(
     client: Option<Arc<dyn ResolvesClientCert>>,
     trusted: Option<[u8; 32]>,
-    refused: Arc<RefusedCertificates>,
+    refused: Option<Arc<RefusedCertificates>>,
 ) -> Result<Arc<ClientConfig>, CoreError> {
     // Without the JNI setup the Android verifier panics on first use; refuse cleanly instead.
     #[cfg(target_os = "android")]

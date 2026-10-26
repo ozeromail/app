@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use ring::digest::{SHA256, digest};
-#[cfg(any(target_os = "android", test))]
 use tokio_rustls::rustls::CertificateError;
 use tokio_rustls::rustls::client::danger::{
     HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
@@ -76,17 +75,18 @@ pub struct Refused {
     pub reason: String,
 }
 
-/// The certificates the checks refused lately, by host, so a failed sign-in can say which.
+/// The certificates the checks refused during one sign-in, by host, so it can say which.
 #[derive(Debug, Default)]
 pub struct RefusedCertificates(Mutex<HashMap<String, Refused>>);
 
 impl RefusedCertificates {
-    /// The certificate `host` showed last time it was refused, if any; forgotten after.
-    pub fn take(&self, host: &str) -> Option<Refused> {
-        self.0
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .remove(host)
+    /// A refused certificate and its host, if any.
+    pub fn any(&self) -> Option<(String, Refused)> {
+        let refused = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        refused
+            .iter()
+            .next()
+            .map(|(host, r)| (host.clone(), r.clone()))
     }
 
     fn note(&self, host: String, refused: Refused) {
@@ -103,7 +103,8 @@ impl RefusedCertificates {
 pub struct Trusting {
     pub checks: Arc<dyn ServerCertVerifier>,
     pub trusted: Option<[u8; 32]>,
-    pub refused: Arc<RefusedCertificates>,
+    /// Where refused certificates go, for a sign-in.
+    pub refused: Option<Arc<RefusedCertificates>>,
 }
 
 impl ServerCertVerifier for Trusting {
@@ -129,12 +130,16 @@ impl ServerCertVerifier for Trusting {
         if self.trusted == Some(fingerprint) {
             return Ok(ServerCertVerified::assertion());
         }
-        let refused = Refused {
-            fingerprint,
-            reason: format!("{reason:?}"),
-        };
-        self.refused
-            .note(server_name.to_str().into_owned(), refused);
+        if let Some(refused) = &self.refused {
+            let reason = plain(reason);
+            refused.note(
+                server_name.to_str().into_owned(),
+                Refused {
+                    fingerprint,
+                    reason,
+                },
+            );
+        }
         result
     }
 
@@ -158,6 +163,24 @@ impl ServerCertVerifier for Trusting {
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
         self.checks.supported_verify_schemes()
+    }
+}
+
+/// Why a certificate was refused, in words the person and their IT team read.
+fn plain(reason: &CertificateError) -> String {
+    match reason {
+        CertificateError::Revoked => "revoked by its issuer".into(),
+        CertificateError::UnknownIssuer => {
+            "issued by an authority this device does not know".into()
+        }
+        CertificateError::Expired | CertificateError::ExpiredContext { .. } => "expired".into(),
+        CertificateError::NotValidYet | CertificateError::NotValidYetContext { .. } => {
+            "not valid yet".into()
+        }
+        CertificateError::NotValidForName | CertificateError::NotValidForNameContext { .. } => {
+            "made for another server name".into()
+        }
+        other => format!("{other:?}"),
     }
 }
 
@@ -290,7 +313,7 @@ mod tests {
         let verifier = Trusting {
             checks: Arc::new(Scripted(Mutex::new(vec![check]))),
             trusted,
-            refused: refused.clone(),
+            refused: Some(refused.clone()),
         };
         let result = verifier
             .verify_server_cert(
@@ -301,7 +324,11 @@ mod tests {
                 UnixTime::now(),
             )
             .map(|_| ());
-        (result, refused.take("mail.example.com"))
+        let refused = refused.any().map(|(host, r)| {
+            assert_eq!(host, "mail.example.com");
+            r
+        });
+        (result, refused)
     }
 
     #[test]
@@ -320,7 +347,7 @@ mod tests {
         );
         let refused = refused.unwrap();
         assert_eq!(refused.fingerprint, fingerprint(&[1]));
-        assert_eq!(refused.reason, "Revoked");
+        assert_eq!(refused.reason, "revoked by its issuer");
     }
 
     #[test]

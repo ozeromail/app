@@ -171,12 +171,7 @@ struct SignInView: View {
                     || error == "error_untrusted_certificate",
                 onBack: back
             ) { server, login, certificate in
-                let signIn = { (trusted: String?) in
-                    try await mail.signInExchange(
-                        email: address, password: password, server: server, login: login,
-                        certificate: certificate, trusted: trusted)
-                }
-                attempt(trusting: { trusted in attempt { try await signIn(trusted) } }) { try await signIn(nil) }
+                exchange(server: server, login: login, certificate: certificate, trusted: nil)
             }
         case .known(let provider):
             credentials(provider: provider, typed: provider == .gmail, servers: false, onKind: nil)
@@ -234,6 +229,16 @@ struct SignInView: View {
             self.google()
         } else {
             go(Provider.of(email).map { Step.known($0) } ?? .found)
+        }
+    }
+
+    /// Signs in to Exchange. Trusting a refused certificate runs it again with it, and asks
+    /// again if the server then shows another.
+    private func exchange(server: String?, login: String?, certificate: String?, trusted: String?) {
+        attempt(trusting: { exchange(server: server, login: login, certificate: certificate, trusted: $0) }) {
+            try await mail.signInExchange(
+                email: address, password: password, server: server, login: login,
+                certificate: certificate, trusted: trusted)
         }
     }
 
