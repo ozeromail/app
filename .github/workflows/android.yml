@@ -124,6 +124,22 @@ jobs:
             echo "::error::The debug APK is not signed by the shared debug key"
             exit 1
           fi
+      # Google Play takes only 64-bit libraries that load on 16 KB memory pages.
+      - name: Check the libraries suit 16 KB pages
+        working-directory: android
+        run: |
+          readelf="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          unzip -q -o app/build/outputs/apk/debug/app-debug.apk 'lib/arm64-v8a/*' 'lib/x86_64/*' -d "$RUNNER_TEMP/apk"
+          bad=0
+          for lib in "$RUNNER_TEMP"/apk/lib/*/*.so; do
+            for align in $("$readelf" -lW "$lib" | awk '$1 == "LOAD" { print $NF }'); do
+              if [ $((align)) -lt 16384 ]; then
+                echo "::error::${lib#"$RUNNER_TEMP"/apk/} is aligned to $align, not 16 KB"
+                bad=1
+              fi
+            done
+          done
+          exit $bad
       - name: Upload debug APK
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4

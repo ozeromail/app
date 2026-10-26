@@ -2,3 +2,10 @@
 # Our minimum iOS, for both the C code (SQLCipher) and the Rust link. They must match:
 # rustc's own default is iOS 10, which fails to link against C objects built for newer iOS.
 IPHONEOS_DEPLOYMENT_TARGET = "18.0"
+
+# Google Play wants 64-bit Android libraries laid out for 16 KB memory pages.
+[target.aarch64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
+
+[target.x86_64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
