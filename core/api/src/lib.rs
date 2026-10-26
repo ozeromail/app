@@ -826,7 +826,8 @@ impl Core {
                     // The waiter is taken and given up under the lock, so a push that finds it
                     // taken can leave its held action to the waiting push.
                     let wait = match step {
-                        Ok(next) => next.map_or(0, |at| at - now()),
+                        // One that came due while this push sent: at once, not left behind.
+                        Ok(next) => next.map_or(0, |at| (at - now()).max(1)),
                         Err(e) => {
                             drop(waiter.take());
                             return self.refused(&account, Err(e));
