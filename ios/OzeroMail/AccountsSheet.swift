@@ -9,6 +9,7 @@ struct AccountsActions {
     let onLabel: (AccountItem, String) -> Void
     let onSignIn: (AccountItem) -> Void
     let onKeepDays: (AccountItem, Int) -> Void
+    let onNewMail: (AccountItem, NewMail) -> Void
     let onRemove: (AccountItem) -> Void
     let onWrite: () -> Void
 }
@@ -25,9 +26,25 @@ struct AccountsSheet: View {
     let actions: AccountsActions
 
     @Environment(\.dismiss) private var dismiss
+    @State private var path: [Page]
+
+    /// `startOn` is the account whose page it opens on, as after adding it.
+    init(
+        accounts: [AccountItem], folders: [FolderItem], mailbox: Mailbox, drafts: Int, swipes: Binding<Swipes>,
+        groups: Binding<Groups>, actions: AccountsActions, startOn: Int64? = nil
+    ) {
+        self.accounts = accounts
+        self.folders = folders
+        self.mailbox = mailbox
+        self.drafts = drafts
+        _swipes = swipes
+        _groups = groups
+        self.actions = actions
+        _path = State(initialValue: startOn.map { [.account($0)] } ?? [])
+    }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             List {
                 MailboxRows(
                     accounts: accounts, folders: folders, mailbox: mailbox, drafts: drafts, groups: $groups,
@@ -239,8 +256,8 @@ private struct SwipeSettings: View {
     }
 }
 
-/// One account: its name and colour, how much of its mail the phone keeps, and a way to remove
-/// it. One the server signed out offers to sign in again first.
+/// One account: its name and colour, when new mail comes, how much of its mail the phone keeps,
+/// and a way to remove it. One the server signed out offers to sign in again first.
 private struct AccountSettings: View {
     let account: AccountItem
     let actions: AccountsActions
@@ -270,11 +287,20 @@ private struct AccountSettings: View {
                 }
             }
             Section {
-                TextField(text: $label, prompt: Text(verbatim: account.email)) { Text("account_name") }
-                    .textInputAutocapitalization(.sentences)
-                    .submitLabel(.done)
-                    .focused($editing)
-                    .onSubmit(saveLabel)
+                HStack {
+                    TextField(text: $label, prompt: Text(verbatim: account.email)) { Text("account_name") }
+                        .textInputAutocapitalization(.sentences)
+                        .submitLabel(.done)
+                        .focused($editing)
+                        .onSubmit(saveLabel)
+                    if label.trimmingCharacters(in: .whitespaces) != saved {
+                        Button("action_save") {
+                            editing = false
+                            saveLabel()
+                        }
+                        .fontWeight(.medium)
+                    }
+                }
             } header: {
                 Text("account_name")
             } footer: {
@@ -285,6 +311,20 @@ private struct AccountSettings: View {
             }
             Section("account_color") {
                 Swatches(current: Int(account.colorIndex)) { actions.onColor(account, $0) }
+            }
+            Section {
+                Picker("account_new_mail", selection: Binding(get: { account.newMail }, set: { actions.onNewMail(account, $0) })) {
+                    ForEach(newMail, id: \.check) { Text($0.label).tag($0.check) }
+                }
+                .pickerStyle(.segmented)
+            } header: {
+                Text("account_new_mail")
+            } footer: {
+                switch account.newMail {
+                case .push: Text("account_new_mail_push_hint_ios")
+                case .manually: Text("account_new_mail_manually_hint")
+                case .every: Text("account_new_mail_every_hint")
+                }
             }
             Section {
                 Picker("account_keep", selection: Binding(get: { Int(account.keepDays) }, set: { actions.onKeepDays(account, $0) })) {
@@ -318,7 +358,18 @@ private struct AccountSettings: View {
         saved = name
         actions.onLabel(account, label)
     }
+
+    /// The choices of when new mail comes; Instantly only where the server can.
+    private var newMail: [(check: NewMail, label: LocalizedStringKey)] {
+        allNewMail.filter { account.canPush || $0.check != .push }
+    }
 }
+
+/// When the phone looks for an account's new mail with the app closed, and what to call it.
+private let allNewMail: [(check: NewMail, label: LocalizedStringKey)] = [
+    (.push, "account_new_mail_push"), (.every(minutes: 15), "account_new_mail_quarter"),
+    (.every(minutes: 60), "account_new_mail_hourly"), (.manually, "account_new_mail_manually"),
+]
 
 /// How many days back an account's mail stays on the phone, 0 for all of it, and what to call it.
 private let keepDays: [(days: Int, label: LocalizedStringKey)] = [

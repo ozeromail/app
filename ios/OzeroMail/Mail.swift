@@ -105,6 +105,11 @@ final class Mail: Sendable {
         try core.setAccountLabel(account: account.id, label: label)
     }
 
+    /// When the phone looks for `account`'s new mail with the app closed.
+    func setNewMail(_ account: AccountItem, _ check: NewMail) async throws {
+        try core.setAccountNewMail(account: account.id, when: check)
+    }
+
     /// Keeps `account`'s mail of the last `days` days on the phone, or all of it with 0.
     func setKeepDays(_ account: AccountItem, days: Int) async throws {
         try await core.setAccountKeep(account: account.id, days: UInt32(days))
@@ -482,10 +487,12 @@ final class Mail: Sendable {
 
     /// Syncs `mailbox` in all accounts at once; the first failure is thrown once every one has
     /// finished. A refused login is not one: it marks its account. True if an account needs
-    /// signing in again.
+    /// signing in again. Only the accounts `which` picks are synced.
     @discardableResult
-    func refresh(_ mailbox: Mailbox = Mail.inbox) async throws -> Bool {
-        let checked = try await eachAccount(mailbox) { core, account, password -> Checked in
+    func refresh(
+        _ mailbox: Mailbox = Mail.inbox, which: (AccountItem) -> Bool = { _ in true }
+    ) async throws -> Bool {
+        let checked = try await eachAccount(mailbox, which) { core, account, password -> Checked in
             do {
                 try await core.syncMailbox(account: account.id, secret: password, mailbox: mailbox)
                 return .done
@@ -515,14 +522,15 @@ final class Mail: Sendable {
     /// in again, and returns what they gave; the first failure but a refused login is thrown once
     /// every one has finished.
     private func eachAccount<T: Sendable>(
-        _ mailbox: Mailbox, _ call: @escaping @Sendable (Core, AccountItem, String) async throws -> T
+        _ mailbox: Mailbox, _ which: (AccountItem) -> Bool = { _ in true },
+        _ call: @escaping @Sendable (Core, AccountItem, String) async throws -> T
     ) async throws -> [T] {
         // A folder is one account's, so only that account is asked.
         var owner: Int64?
         if case .folder(let id) = mailbox {
             owner = try core.folders().first { $0.id == id }?.accountId
         }
-        let signedIn = try core.accounts().filter { (owner == nil || $0.id == owner) && !$0.needsSignIn }
+        let signedIn = try core.accounts().filter { (owner == nil || $0.id == owner) && !$0.needsSignIn && which($0) }
             .compactMap { account in vault.passwordIfAny(email: account.email).map { (account, $0) } }
         let core = self.core
         let results = await withTaskGroup(of: Result<T, Error>.self) { group in
