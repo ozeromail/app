@@ -8,6 +8,9 @@ extension Color {
     /// The bright blue of buttons, Done, marks and water, the same in both themes.
     static let ozeroFill = Color(rgb: 0x2F8CFF)
 
+    /// The late sun of Snooze.
+    static let ozeroSnooze = dynamic(light: 0xE0922B, dark: 0xF0B25A)
+
     /// Errors and what cannot be undone.
     static let ozeroError = dynamic(light: 0xDF5260, dark: 0xEE6672)
 

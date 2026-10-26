@@ -45,6 +45,13 @@ struct InboxView: View {
                 }
             }
         }
+        .sheet(item: $model.snoozing) { snoozing in
+            SnoozeSheet { until in
+                model.snoozing = nil
+                snoozing.then()
+                Task { await model.snooze(snoozing.messages, until: until) }
+            }
+        }
         .sheet(isPresented: $model.accountsOpen) {
             AccountsSheet(
                 accounts: model.accounts, folders: model.folders, mailbox: model.mailbox, drafts: model.drafts.count,
@@ -450,7 +457,7 @@ private struct InboxList: View {
                     Label(action == .delete && !message.canTrash ? tr("action_delete_forever") : action.label, systemImage: action.icon)
                 }
             }
-            .tint(action == .done ? Color.ozeroFill : action == .delete ? Color.ozeroError : Color.gray)
+            .tint(action.tint)
         }
     }
 }
@@ -619,6 +626,14 @@ private struct ChoiceBar: View {
                 Image(systemName: "trash")
             }
             .accessibilityLabel(Text(forever ? "action_delete_forever" : "action_delete"))
+            if picked.contains(where: \.canSnooze) {
+                Button {
+                    model.choice { model.snoozing = Snoozing(messages: $0.filter(\.canSnooze)) }
+                } label: {
+                    Image(systemName: "clock")
+                }
+                .accessibilityLabel(Text("action_snooze"))
+            }
             Button(action: onMore) {
                 Image(systemName: "ellipsis.circle")
             }

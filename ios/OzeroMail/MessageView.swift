@@ -123,6 +123,9 @@ struct MessageView: View {
             HStack(spacing: 8) { answers(answer: answer, newest: newest) }
             HStack(spacing: 8) {
                 BarAction(icon: "trash", label: message.canTrash ? "action_delete" : "action_delete_forever", action: delete)
+                if message.canSnooze {
+                    BarAction(icon: "clock", label: "action_snooze", action: snooze)
+                }
                 BarAction(icon: "ellipsis", label: "action_more") { more = true }
                 if message.canArchive {
                     BarAction(icon: "checkmark", label: "action_done", tint: .white, background: .ozeroFill, action: done)
@@ -140,6 +143,9 @@ struct MessageView: View {
         HStack(spacing: 8) {
             answers(answer: answer, newest: newest)
             RoundButton(icon: "trash", label: message.canTrash ? "action_delete" : "action_delete_forever", size: button, action: delete)
+            if message.canSnooze {
+                RoundButton(icon: "clock", label: "action_snooze", size: button, action: snooze)
+            }
             RoundButton(icon: "ellipsis", label: "action_more", size: button) { more = true }
             if message.canArchive {
                 RoundButton(icon: "checkmark", label: "action_done", size: button, tint: .white, background: .ozeroFill, action: done)
@@ -190,12 +196,23 @@ struct MessageView: View {
         leave { await model.archive([message]) }
     }
 
+    /// The message stays open until a time is picked; then back to the list, as `leave`.
+    private func snooze() {
+        model.snoozing = Snoozing(messages: [message]) { [model, message] in
+            Self.close(message, in: model)
+        }
+    }
+
     /// Back to the list, then `act`, so the list shows the toast.
     private func leave(_ act: @escaping () async -> Void) {
+        Self.close(message, in: model)
+        Task { await act() }
+    }
+
+    private static func close(_ message: MessageItem, in model: InboxModel) {
         // Search over the list goes too: the toast shows in the inbox.
         model.path.removeAll { $0 == .message(message) || $0 == .search }
         if model.pane?.id == message.id { model.pane = nil }
-        Task { await act() }
     }
 
     /// How many files a message has: as the list knew, or as its body says once loaded.

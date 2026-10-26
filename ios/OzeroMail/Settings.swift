@@ -5,6 +5,7 @@ enum SwipeAction: String, CaseIterable, Identifiable {
     case done = "DONE"
     case read = "READ"
     case delete = "DELETE"
+    case snooze = "SNOOZE"
 
     var id: Self { self }
 
@@ -13,6 +14,7 @@ enum SwipeAction: String, CaseIterable, Identifiable {
         case .done: tr("action_done")
         case .read: tr("action_read")
         case .delete: tr("action_delete")
+        case .snooze: tr("action_snooze")
         }
     }
 
@@ -21,12 +23,27 @@ enum SwipeAction: String, CaseIterable, Identifiable {
         case .done: "checkmark"
         case .read: "envelope.badge"
         case .delete: "trash"
+        case .snooze: "clock"
         }
     }
 
-    /// Where an action applies: Done only where it files mail; Delete in the trash is for good.
+    var tint: Color {
+        switch self {
+        case .done: .ozeroFill
+        case .delete: .ozeroError
+        case .read: .gray
+        case .snooze: .ozeroSnooze
+        }
+    }
+
+    /// Where an action applies: Done and Snooze only where they file mail; Delete in the trash is
+    /// for good.
     func applies(to message: MessageItem) -> Bool {
-        self != .done || message.canArchive
+        switch self {
+        case .done: message.canArchive
+        case .snooze: message.canSnooze
+        case .read, .delete: true
+        }
     }
 }
 
