@@ -617,14 +617,7 @@ private class Still(private var falling: Boolean) {
         tint = color
         line = Brush.horizontalGradient(listOf(Color.Transparent, color, Color.Transparent), -1f, 1f)
         // Eased, so the glow has no rim where it ends.
-        glow = Brush.radialGradient(
-            0f to color,
-            0.35f to color.copy(alpha = color.alpha * 0.6f),
-            0.7f to color.copy(alpha = color.alpha * 0.2f),
-            1f to Color.Transparent,
-            center = Offset.Zero,
-            radius = 1f,
-        )
+        glow = Brush.radialGradient(listOf(color, Color.Transparent), Offset.Zero, 1f)
     }
 
     /**
@@ -664,7 +657,7 @@ private class Still(private var falling: Boolean) {
                 // few streaks that follow the surface. It breathes deeper while the water swells.
                 val r = 150.dp.toPx() * lv + 1f
                 // Never deeper than the water, so the glow fades out before it ends.
-                val flatten = min(r * 0.32f * (1f + 0.14f * sea * sin(t * 1.3f)), maxOf(1f, bottom - hzPx))
+                val flatten = r * 0.32f * (1f + 0.14f * sea * sin(t * 1.3f))
                 withTransform({
                     translate(cx, hzPx)
                     scale(r, flatten, Offset.Zero)
@@ -733,7 +726,7 @@ private class Still(private var falling: Boolean) {
     private fun edge(x: Float, y: Float, below: Float): Float {
         val side = min(x, middle * 2 - x) / EDGE_SIDE
         val near = (below - y) / EDGE_NEAR
-        return smooth(min(side, near))
+        return 1f
     }
 
     private fun smooth(v: Float): Float = v.coerceIn(0f, 1f).let { it * it * (3f - 2f * it) }
