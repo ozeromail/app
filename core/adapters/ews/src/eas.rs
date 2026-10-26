@@ -35,8 +35,7 @@ const HEADER_SIZE: &str = "16384";
 const MAX_WINDOW: u32 = 512;
 /// Most items one request names.
 const MAX_IDS: usize = 100;
-/// Mail from the last month (FilterType 5), the longest span ActiveSync has for mail: older
-/// mail is not synced.
+/// Mail from the last month (FilterType 5), the longest span synced: older mail is not.
 const MONTH: &str = "5";
 /// What Outlook calls the junk folder, which ActiveSync does not mark.
 const JUNK_NAMES: [&str; 3] = ["junk e-mail", "junk email", "нежелательная почта"];
@@ -70,6 +69,8 @@ struct Synced {
     n: u64,
     key: String,
     prev: String,
+    /// The FilterType the key was synced under.
+    filter: String,
 }
 
 /// A folder as FolderSync told of it.
@@ -124,13 +125,11 @@ impl EasSession {
         })
     }
 
-    /// Syncs only mail of the last `days` days, 0 for all; ActiveSync goes back a month at most.
+    /// Syncs only mail of the last `days` days, 0 for all, a month at most.
     pub fn keeping(mut self, days: u32) -> Self {
         self.filter = match days {
-            1 => "1",
-            2..=3 => "2",
+            1..=3 => "2",
             4..=7 => "3",
-            8..=14 => "4",
             _ => MONTH,
         };
         self
@@ -331,29 +330,21 @@ impl EasSession {
         Err(protocol("FolderSync keeps refusing its key"))
     }
 
-    /// Where the folder's sync stopped; None when it went back another span than it does now,
-    /// so it starts over.
     fn synced(&self, folder: &str) -> Option<Synced> {
-        let filter = self.state.get(&format!("filter.{folder}"));
-        if filter.as_deref().unwrap_or(MONTH) != self.filter {
-            return None;
-        }
         let saved = self.state.get(&format!("sync.{folder}"))?;
-        let mut parts = saved.splitn(3, '\t');
+        let mut parts = saved.splitn(4, '\t');
         Some(Synced {
             n: parts.next()?.parse().ok()?,
             key: parts.next()?.to_owned(),
             prev: parts.next().unwrap_or_default().to_owned(),
+            // Saved before there was a choice.
+            filter: parts.next().unwrap_or(MONTH).to_owned(),
         })
     }
 
     fn keep_synced(&self, folder: &str, synced: Option<&Synced>) {
-        let value = synced.map(|s| format!("{}\t{}\t{}", s.n, s.key, s.prev));
+        let value = synced.map(|s| format!("{}\t{}\t{}\t{}", s.n, s.key, s.prev, s.filter));
         self.state.set(&format!("sync.{folder}"), value.as_deref());
-        self.state.set(
-            &format!("filter.{folder}"),
-            synced.is_some().then_some(self.filter),
-        );
     }
 
     /// The folder's validity: one more each time its sync starts over.
@@ -426,6 +417,7 @@ impl EasSession {
                         n: 0,
                         key: self.first_key(folder).await?,
                         prev: String::new(),
+                        filter: self.filter.to_owned(),
                     },
                 };
                 let rest = options
@@ -626,9 +618,10 @@ impl MailProvider for EasSession {
         };
         for _ in 0..2 {
             let generation = self.generation(folder);
-            let saved = self
-                .synced(folder)
-                .filter(|_| since.validity == generation && since.next > 0);
+            // Under another span the folder starts over.
+            let saved = self.synced(folder).filter(|s| {
+                since.validity == generation && since.next > 0 && s.filter == self.filter
+            });
             // The key the checkpoint was saved after, or the one before if that sync's
             // answer was not saved.
             let key = saved.and_then(|s| {
@@ -696,6 +689,7 @@ impl MailProvider for EasSession {
                 n: base + 1,
                 key: new_key,
                 prev: key,
+                filter: self.filter.to_owned(),
             };
             self.keep_synced(folder, Some(&next));
             changes.checkpoint = Checkpoint {

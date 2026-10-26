@@ -366,7 +366,7 @@ fun <T> Choices(
         modifier = Modifier.padding(start = Gap.sheet, end = Gap.sheet, top = 8.dp, bottom = 8.dp),
     )
     // More than four take two rows, so each keeps room for its words.
-    val perRow = if (options.size > 4) (options.size + 1) / 2 else options.size
+    val perRow = (if (options.size > 4) (options.size + 1) / 2 else options.size).coerceAtLeast(1)
     Column(
         Modifier.fillMaxWidth().padding(horizontal = Gap.sheet).padding(bottom = 8.dp).selectableGroup(),
         verticalArrangement = Arrangement.spacedBy(8.dp),

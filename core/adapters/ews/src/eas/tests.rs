@@ -460,7 +460,7 @@ async fn marks_moves_reads_and_sends() {
         "1"
     );
     // The key after it, under the count the folder's checkpoint has.
-    assert_eq!(state.get("sync.1").as_deref(), Some("0\tS2\t"));
+    assert_eq!(state.get("sync.1").as_deref(), Some("0\tS2\t\t5"));
 
     let moved = eas
         .move_to("1", 0, &["1:1".to_owned(), "1:2".to_owned()], "2")
