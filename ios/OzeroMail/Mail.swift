@@ -159,6 +159,16 @@ final class Mail: Sendable {
             email: email, displayName: email, imap: imap, smtp: smtp, password: password)
     }
 
+    /// Like `signIn`, with the servers found from the email: IMAP at its domain's usual hosts,
+    /// else Exchange. Fails with `NotFound` when neither answers.
+    func signInFound(email: String, password: String) async throws {
+        if try core.accounts().contains(where: { $0.email.lowercased() == email.lowercased() }) {
+            throw CoreError.AccountExists
+        }
+        try vault.setPassword(password, email: email)
+        _ = try await core.addFoundAccount(email: email, password: password)
+    }
+
     /// Like `signIn`, for Exchange: the core finds the server from the email unless `server`
     /// is given, and signs in as the email unless `login` is.
     func signInExchange(
@@ -175,10 +185,10 @@ final class Mail: Sendable {
     }
 
     /// Starts Google sign-in and returns the page to open in the browser; `again` signs in to
-    /// that saved account, which Google then offers. A second tap opens the same sign-in, so
+    /// that saved account, which Google then offers, as it does a typed `email`. A second tap opens the same sign-in, so
     /// whichever browser finishes it, the answer is one we expect.
-    func startGoogle(again: AccountItem? = nil) async throws -> URL {
-        let hint = again?.email
+    func startGoogle(again: AccountItem? = nil, email: String? = nil) async throws -> URL {
+        let hint = again?.email ?? email
         let waiting = vault.googleSignIn().flatMap { start in
             URLComponents(string: start.url)?.queryItems?.first { $0.name == "login_hint" }?.value == hint ? start : nil
         }
@@ -606,6 +616,7 @@ extension Error {
         case .BadRecipients?: return "error_bad_recipients"
         case .NoSmtp?: return "error_no_smtp"
         case .NoServer?: return "error_no_server"
+        case .NotFound?: return "error_server_not_found"
         case .NoEws?: return "error_no_ews"
         case .CertificateNeeded?: return "error_certificate_needed"
         case .DeviceBlocked?: return "error_device_blocked"
