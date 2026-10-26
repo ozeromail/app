@@ -273,3 +273,36 @@ async fn sends_through_a_tunnel_and_knows_its_certificate() {
     assert_eq!(response.body, b"ok");
     assert_eq!(http.certificate(), Some(b"leaf".to_vec()));
 }
+
+/// Opens connections whose server answers only after 45 seconds, as a long poll does.
+#[derive(Debug)]
+struct Late;
+
+impl Tunnel for Late {
+    fn open<'a>(
+        &'a self,
+        _: &'a str,
+        _: u16,
+    ) -> Pin<Box<dyn Future<Output = Result<Opened, ProviderError>> + Send + 'a>> {
+        Box::pin(async move {
+            let (client, mut server) = duplex(1 << 10);
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(45)).await;
+                let _ = server
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                    .await;
+            });
+            Ok((Box::new(client) as Box<dyn Stream>, b"leaf".to_vec()))
+        })
+    }
+}
+
+/// A long poll waits as long through a tunnel as over the core's own TLS.
+#[tokio::test(start_paused = true)]
+async fn waits_for_a_long_poll_through_a_tunnel() {
+    for (wait, answers) in [(Duration::ZERO, false), (Duration::from_secs(60), true)] {
+        let mut http = HttpsClient::new("mail.example.com", 443, Tls::Tunnel(Arc::new(Late)));
+        let response = http.send_waiting("POST", "/", &[], None, false, wait).await;
+        assert_eq!(response.is_ok(), answers);
+    }
+}
