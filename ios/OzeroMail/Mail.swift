@@ -110,6 +110,20 @@ final class Mail: Sendable {
         try core.setAccountNewMail(account: account.id, when: check)
     }
 
+    /// The signature of accounts without one of their own; empty for none.
+    func signature() async throws -> String {
+        try core.signature()
+    }
+
+    func setSignature(_ signature: String) async throws {
+        try core.setSignature(signature: signature)
+    }
+
+    /// Gives `account` a signature of its own; empty goes back to the default one.
+    func setAccountSignature(_ account: AccountItem, signature: String) async throws {
+        try core.setAccountSignature(account: account.id, signature: signature)
+    }
+
     /// Keeps `account`'s mail of the last `days` days on the phone, or all of it with 0.
     func setKeepDays(_ account: AccountItem, days: Int) async throws {
         try await core.setAccountKeep(account: account.id, days: UInt32(days))
@@ -386,6 +400,11 @@ final class Mail: Sendable {
     /// From now on the remote images of mail from `message`'s sender load on their own.
     func allowImages(of message: MessageItem) async throws {
         try core.allowImages(message: message.id)
+    }
+
+    /// A blank message from the first account, with its signature.
+    func newDraft() async throws -> DraftItem {
+        try core.newDraft()
     }
 
     /// An answer to `message`: to its sender, or with `all` to everyone it went to as well.

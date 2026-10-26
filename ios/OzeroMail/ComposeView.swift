@@ -28,6 +28,7 @@ struct ComposeView: View {
     @State private var text = ""
     @State private var accountId: Int64 = 0
     @State private var quote = ""
+    @State private var signature = ""
     @State private var quotable = true
     @State private var accounts: [AccountItem] = []
     @State private var busy = false
@@ -55,7 +56,7 @@ struct ComposeView: View {
     /// To and Subject shown again while the text is typed on its side.
     @State private var unfolded = false
 
-    private enum Field { case to, subject, text }
+    private enum Field { case to, subject, text, signature }
 
     private var start: DraftItem { composing.draft }
 
@@ -66,7 +67,7 @@ struct ComposeView: View {
     private var current: DraftItem {
         DraftItem(
             id: 0, accountId: accountId, to: to, subject: subject, text: text, replyTo: start.replyTo, quote: quote,
-            saved: 0, forward: start.forward, files: files)
+            saved: 0, forward: start.forward, files: files, signature: signature)
     }
 
     /// Something written here or before, which Delete throws away.
@@ -148,6 +149,8 @@ struct ComposeView: View {
         }
         .onChange(of: focus) { _, now in
             if now == nil { unfolded = false }
+            // Taken out, a tap brings it back.
+            if now == .signature, signature.isEmpty, let from { signature = from.signsWith }
         }
         // Photos come as JPEG and H.264, which every mail app opens.
         .photosPicker(isPresented: $choosingPhotos, selection: $photos, matching: .any(of: [.images, .videos]),
@@ -218,6 +221,15 @@ struct ComposeView: View {
             let forwarding = start.forward != nil
             let forwardedFiles = forwarded.flatMap { $0.accountId == from?.id ? $0.attachments : nil } ?? []
             if !forwardedFiles.isEmpty { AttachmentChips(names: forwardedFiles) }
+            // Its own for this message: a change here stays here. Taken out, a tap brings it back.
+            if !signature.isEmpty || !(from?.signsWith.isBlank ?? true) {
+                TextField("account_signature", text: $signature, axis: .vertical)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1...6)
+                    .focused($focus, equals: .signature)
+                    .accessibilityLabel(Text("compose_signature"))
+            }
             if !quote.isEmpty {
                 QuoteLine(text: composing.original == nil ? quote : nil, forwarding: forwarding,
                           onRemove: forwarding ? nil : { quote = "" })
@@ -250,6 +262,8 @@ struct ComposeView: View {
             Menu {
                 ForEach(accounts, id: \.id) { account in
                     Button {
+                        // Its signature comes too, unless this message's was changed.
+                        if signature == from.signsWith { signature = account.signsWith }
                         accountId = account.id
                     } label: {
                         if account.id == from.id { Label(account.email, systemImage: "checkmark") } else { Text(account.email) }
@@ -313,6 +327,7 @@ struct ComposeView: View {
         text = start.text
         accountId = start.accountId
         quote = start.quote
+        signature = start.signature
         files = start.files
         keeper = DraftKeeper(mail: mail, id: start.id)
         firstSeen = current
