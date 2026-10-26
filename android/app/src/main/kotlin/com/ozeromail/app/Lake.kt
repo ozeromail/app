@@ -26,21 +26,25 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Density
@@ -56,6 +60,7 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.random.Random
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 
@@ -64,8 +69,9 @@ import kotlinx.coroutines.flow.emptyFlow
  * it, at rest until something moves it. With [drawIn], as the last message leaves, a drop lands
  * on the water and the horizon comes out of its waves. A touch sends a wave out too. [grey] water
  * is for plain empty folders: it never draws in. The words come in one way, once the list is known
- * to be empty: while [waiting] for its mail, the water swells and says it is checking, as it swells
- * through a pull's sync while [refreshing]. As the list is [pulled], a drop gathers over the water,
+ * to be empty, with [checked] under them when there is one. While there are [checking] words, the
+ * water swells and they say what it waits for, as through a pull's sync while [refreshing]: water
+ * never moves under words that say nothing is going on. As the list is [pulled], a drop gathers over the water,
  * growing with the pull, and falls on each of [drops], which carry how far it was pulled. The tabs'
  * [glide] sends a wave along it. [water] is how much of the water shows; [wordsModifier] moves
  * the words alone, while the water stays.
@@ -76,7 +82,8 @@ fun StillNote(
     text: String,
     drawIn: Boolean,
     grey: Boolean = false,
-    waiting: Boolean = false,
+    checking: Pair<String, String>? = null,
+    checkedAt: Long? = null,
     refreshing: Boolean = false,
     pulled: () -> Float = { 0f },
     drops: Flow<Float> = emptyFlow(),
@@ -86,8 +93,10 @@ fun StillNote(
 ) {
     val colors = MaterialTheme.colorScheme
     val still = rememberStill(fall = drawIn)
+    val waiting = checking != null
     val known by animateFloatAsState(if (waiting) 0f else 1f, Motion.calm(WORDS_MS), label = "words")
-    val checking by remember { derivedStateOf { known < 1f } }
+    val waitWords = rememberLast(checking)
+    val fading by remember { derivedStateOf { known < 1f } }
     LaunchedEffect(waiting, refreshing) { still.beat = waiting || refreshing }
     LaunchedEffect(drops) { drops.collect { still.release(it) } }
     Column(
@@ -97,36 +106,77 @@ fun StillNote(
     ) {
         // Grey water still takes a drop of the accent's color: a drop is a drop.
         val tint = colors.water(grey)
-        Canvas(Modifier.fillMaxWidth().height(LAKE_HEIGHT).graphicsLayer { alpha = water() }.touches(still)) {
+        Canvas(
+            Modifier.fillMaxWidth().height(LAKE_HEIGHT).graphicsLayer {
+                alpha = water()
+                compositingStrategy = CompositingStrategy.Offscreen
+            }.touches(still),
+        ) {
             still.draw(this, tint, colors.accent, HORIZON, size.height, pulled(), FALL, glide())
         }
         Box(wordsModifier, contentAlignment = Alignment.TopCenter) {
-            Column(
+            Words(
+                title,
+                text,
                 Modifier.graphicsLayer {
                     val shown = still.words() * known
                     alpha = shown
                     translationY = (1f - shown) * 8.dp.toPx()
                 },
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Text(title, style = Type.Heading, textAlign = TextAlign.Center)
-                Text(
-                    text,
-                    color = colors.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.widthIn(max = 280.dp).padding(horizontal = 32.dp),
-                )
+                checkedAt?.let { Checked(it) }
             }
-            // Until then the water is not empty yet, only checking: the words take its place.
-            if (checking) {
-                Text(
-                    stringResource(R.string.inbox_checking),
-                    color = colors.onSurfaceVariant,
-                    modifier = Modifier.graphicsLayer { alpha = 1f - known },
-                )
+            // Until then the water is not empty yet, only checking: these words take its place.
+            if (fading) {
+                waitWords?.let { (title, text) ->
+                    Words(
+                        title,
+                        text,
+                        Modifier.graphicsLayer {
+                            alpha = 1f - known
+                            translationY = known * 8.dp.toPx()
+                        },
+                    )
+                }
             }
         }
+    }
+}
+
+/** When the list was checked [at], ms on the clock: just now, then the time. */
+@Composable
+private fun Checked(at: Long) {
+    val context = LocalContext.current
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(at) {
+        now = System.currentTimeMillis()
+        delay(at + CHECKED_NOW_MS - now)
+        now = System.currentTimeMillis()
+    }
+    Text(
+        if (now - at < CHECKED_NOW_MS) stringResource(R.string.lake_checked_now)
+        else stringResource(R.string.lake_checked_at, shortDate(context, at / 1000)),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        style = Type.Caption,
+        modifier = Modifier.padding(top = 4.dp),
+    )
+}
+
+/** Within this long a check is "just now". */
+private const val CHECKED_NOW_MS = 60_000L
+
+/** An empty list's title and the line under it, and [more] under them. */
+@Composable
+private fun Words(title: String, text: String, modifier: Modifier, more: @Composable () -> Unit = {}) {
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(title, style = Type.Heading, textAlign = TextAlign.Center)
+        Text(
+            text,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.widthIn(max = 280.dp).padding(horizontal = 32.dp),
+        )
+        more()
     }
 }
 
@@ -154,7 +204,7 @@ fun PullWater(
     LaunchedEffect(refreshing) { still.beat = refreshing }
     LaunchedEffect(drops) { drops.collect { still.release(it) } }
     LaunchedEffect(still) { snapshotFlow { still.calmed }.collect(onCalm) }
-    Canvas(modifier) {
+    Canvas(modifier.graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }) {
         val depth = depth()
         val y = top() ?: run {
             // Out of sight, the water still calms, so the list need not wait for it.
@@ -572,7 +622,15 @@ private class Still(private var falling: Boolean) {
         if (color == tint) return
         tint = color
         line = Brush.horizontalGradient(listOf(Color.Transparent, color, Color.Transparent), -1f, 1f)
-        glow = Brush.radialGradient(listOf(color, Color.Transparent), Offset.Zero, 1f)
+        // Eased, so the glow has no rim where it ends.
+        glow = Brush.radialGradient(
+            0f to color,
+            0.35f to color.copy(alpha = color.alpha * 0.6f),
+            0.7f to color.copy(alpha = color.alpha * 0.2f),
+            1f to Color.Transparent,
+            center = Offset.Zero,
+            radius = 1f,
+        )
     }
 
     /**
@@ -580,6 +638,19 @@ private class Still(private var falling: Boolean) {
      * horizon; the water ends at [bottom] px. Water is [water], drops [drop]. The tabs stand at [glide].
      */
     fun draw(scope: DrawScope, water: Color, drop: Color, surface: Dp, bottom: Float, pull: Float, fall: Dp, glide: Float = 0f) = with(scope) {
+        drawWater(water, drop, surface, bottom, pull, fall, glide)
+        // The water fades out at its sides and toward the eye, so it never ends on an edge. The
+        // canvas draws offscreen, so this takes away only the water's own pixels.
+        val hzPx = surface.toPx()
+        val from = hzPx + (bottom - hzPx) * 0.35f
+        scale(size.width, 1f, Offset.Zero) { drawRect(SIDES, size = Size(1f, bottom), blendMode = BlendMode.DstIn) }
+        withTransform({
+            translate(top = from)
+            scale(1f, bottom - from, Offset.Zero)
+        }) { drawRect(DEPTH, size = Size(size.width, 1f), blendMode = BlendMode.DstIn) }
+    }
+
+    private fun DrawScope.drawWater(water: Color, drop: Color, surface: Dp, bottom: Float, pull: Float, fall: Dp, glide: Float) {
         val u = density
         val hz = surface.value
         horizon = hz
@@ -823,6 +894,10 @@ private val SWELLS = listOf(
     Swell(40f, 0.22f, -1f, 2.6f),
 )
 private const val LEVEL_MS = 1900f
+/** The water's fades, one unit across: at its sides, and toward the eye below the horizon. */
+private val SIDES = Brush.horizontalGradient(0f to Color.Transparent, 0.12f to Color.Black, 0.88f to Color.Black, 1f to Color.Transparent, endX = 1f)
+private val DEPTH = Brush.verticalGradient(0f to Color.Black, 0.5f to Color.Black.copy(alpha = 0.55f), 1f to Color.Transparent, endY = 1f)
+
 /** How long the words take to come in, however they come. */
 private const val WORDS_MS = 400
 

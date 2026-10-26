@@ -53,6 +53,8 @@ final class InboxModel {
     var hadMail = false
     /// The key of the error to show, if any.
     var error: String?
+    /// When the inbox last synced, to say how fresh it is.
+    var checkedAt: Date?
     var toast: Toast?
 
     var path: [Route] = []
@@ -74,6 +76,8 @@ final class InboxModel {
     // A sync asked for while one runs, say for a new account, runs right after it; quiet if
     // every ask for it was.
     private var syncAgain: [Mailbox: Bool] = [:]
+    /// Those who asked for it, waiting for it to end.
+    private var inLine: [CheckedContinuation<Bool, Never>] = []
     /// When the last inbox sync that went through began.
     private var lastSync: ContinuousClock.Instant?
     /// Since when syncs on their own have met no network, if they do.
@@ -243,7 +247,8 @@ final class InboxModel {
     func sync(_ box: Mailbox = Mail.inbox, quiet: Bool = false) async -> Bool {
         if syncing {
             syncAgain[box] = quiet && syncAgain[box] != false
-            return true
+            // Over once the syncs in line are, with how the last one went.
+            return await withCheckedContinuation { inLine.append($0) }
         }
         syncing = true
         if !quiet { error = nil }
@@ -253,10 +258,19 @@ final class InboxModel {
         var synced: Bool
         do {
             refused = try await mail.refresh(box)
-            if box == Mail.inbox { lastSync = started }
+            if box == Mail.inbox {
+                lastSync = started
+                checkedAt = .now
+            }
             offlineSince = nil
             error = nil
             synced = true
+        } catch is CancellationError {
+            // The app went away mid-sync: nothing went wrong, and nothing new is on screen. The
+            // next sync picks it up, with whatever waits in line.
+            syncing = false
+            finish(false)
+            return false
         } catch {
             // Another error means the network is there.
             let since = error.isNetwork ? offlineSince ?? started : nil
@@ -289,7 +303,15 @@ final class InboxModel {
             syncAgain[next] = nil
             return await sync(next, quiet: quietly)
         }
+        finish(synced)
         return synced
+    }
+
+    /// Lets the syncs asked for while one ran know it is over.
+    private func finish(_ synced: Bool) {
+        let waiting = inLine
+        inLine = []
+        for sync in waiting { sync.resume(returning: synced) }
     }
 
     /// On opening and on every return to the app: mail that came meanwhile shows without a pull.

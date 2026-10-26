@@ -111,7 +111,6 @@
   "account_name": "Name",
   "account_name_hint": "Shown in the list and on your mail; only on this phone.",
   "account_sender": "%1$s Your mail goes out as %2$s.",
-  "inbox_checking": "Checking for mail…",
   "account_keep": "Keep on this phone",
   "account_keep_month": "Month",
   "account_keep_quarter": "3 months",
@@ -174,5 +173,18 @@
   "action_select": "Select",
   "attachment_save_files": "Save to Files",
   "attachment_saved_files": "Saved to Files",
-  "crash_text_ios": "Send the report to the author? The letter opens first, so you can read it. It holds where the app failed, the app and iOS versions and the phone model. No mail."
+  "crash_text_ios": "Send the report to the author? The letter opens first, so you can read it. It holds where the app failed, the app and iOS versions and the phone model. No mail.",
+  "lake_checking_title": "Checking for new mail",
+  "lake_checking_text": "Asking the server of each account. This takes a few seconds.",
+  "lake_loading_title": "Loading your mail",
+  "lake_loading_text": "Getting the latest messages. The first time takes a little longer.",
+  "lake_loading_slow": "Still loading. A big mailbox takes a minute the first time.",
+  "lake_checked_now": "Checked just now",
+  "lake_checked_at": "Last checked at %1$s",
+  "status_checking": "Checking for new mail…",
+  "status_slow": "Still checking. The connection is slow, so this takes longer.",
+  "status_background": "This is taking long. The check goes on in the background.",
+  "status_up_to_date": "Checked just now. Mail is up to date.",
+  "status_offline": "No connection. Showing mail saved on this phone. It checks again once you are online.",
+  "status_try_again": "Try again"
 }

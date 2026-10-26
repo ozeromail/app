@@ -51,6 +51,7 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.offset
@@ -183,6 +184,13 @@ import java.util.Date
 /** How soon after a sync a return to the app syncs again. */
 private const val RESYNC_MS = 30_000L
 
+/** How long a check the user waits on goes before it says it is slow, and before it lets them go. */
+private const val SLOW_MS = 10_000L
+private const val GIVE_UP_MS = 30_000L
+
+/** How long the line over the dock says a check went through. */
+private const val UP_TO_DATE_MS = 2_000L
+
 /** How long syncs on their own may fail on the network before the error shows. */
 private const val BLIP_MS = 60_000L
 
@@ -237,6 +245,11 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     // Counts the loads that found more older mail, so the list looks at its end again after each.
     var olderLoads by remember { mutableIntStateOf(0) }
     var error by remember { mutableStateOf<Int?>(null) }
+    // When the inbox last synced, on the clock, to say how fresh it is.
+    var checkedAt by remember { mutableStateOf<Long?>(null) }
+    // A check the user waits on: how long it has gone (0, slow, given up), and whether it just went through.
+    var slow by remember { mutableIntStateOf(0) }
+    var upToDate by remember { mutableStateOf(false) }
     var open by remember { mutableStateOf<MessageItem?>(null) }
     var composing by remember { mutableStateOf<Composing?>(null) }
     // One answer or forward at a time: a second tap would replace the one being written.
@@ -398,7 +411,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             var refused = false
             synced = try {
                 refused = mail.refresh(box)
-                if (box == Mail.INBOX) lastSync = started
+                if (box == Mail.INBOX) {
+                    lastSync = started
+                    checkedAt = System.currentTimeMillis()
+                }
                 offlineSince = null
                 error = null
                 true
@@ -436,8 +452,31 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         }
         // The pulled drop lands before the gap closes, however quick the sync.
         if (pulled) delay(started + PULLED_MS - SystemClock.elapsedRealtime())
+        upToDate = pulled && synced
         pulled = false
         return synced
+    }
+
+    // The first mail of an empty list is on its way: the water waits, and says what for.
+    val waiting = syncing && listLoaded && messages.isEmpty() && mailbox !in syncedBoxes
+    // A check the user waits on says when it is slow; a pull lets go after a while, and the sync
+    // goes on behind. Its words then say so, until it ends.
+    LaunchedEffect(pulled || waiting) {
+        if (!pulled && !waiting) return@LaunchedEffect
+        slow = 0
+        delay(SLOW_MS)
+        slow = 1
+        delay(GIVE_UP_MS - SLOW_MS)
+        slow = 2
+        pulled = false
+    }
+    LaunchedEffect(upToDate) {
+        if (!upToDate) return@LaunchedEffect
+        delay(UP_TO_DATE_MS)
+        upToDate = false
+    }
+    LaunchedEffect(syncing) {
+        if (!syncing) slow = 0
     }
 
     // Only change when one is added.
@@ -838,8 +877,24 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         syncing = syncing,
                         refreshing = pulled,
                         listLoaded = listLoaded,
-                        // The first mail of an empty list is on its way: the water waits, without words.
-                        waiting = syncing && listLoaded && messages.isEmpty() && mailbox !in syncedBoxes,
+                        checking = when {
+                            waiting -> R.string.lake_loading_title to if (slow > 0) R.string.lake_loading_slow else R.string.lake_loading_text
+                            pulled -> R.string.lake_checking_title to if (slow > 0) R.string.status_slow else R.string.lake_checking_text
+                            else -> null
+                        },
+                        checkedAt = checkedAt.takeIf { mailbox == Mail.INBOX },
+                        status = when (val shown = error) {
+                            R.string.error_network -> Status(R.string.status_offline, retry = true)
+                            null -> null
+                            // A sync's own failures; another error is not one a new check mends.
+                            else -> Status(shown, retry = shown == R.string.error_server || shown == R.string.error_tls)
+                        } ?: when {
+                            syncing && slow == 2 && !waiting -> Status(R.string.status_background)
+                            // An empty list's words say it themselves.
+                            pulled && messages.isNotEmpty() -> Status(if (slow > 0) R.string.status_slow else R.string.status_checking)
+                            upToDate -> Status(R.string.status_up_to_date)
+                            else -> null
+                        },
                         onSync = {
                             pulled = true
                             scope.launch { sync(mailbox) }
@@ -1059,7 +1114,12 @@ private fun InboxList(
     syncing: Boolean,
     refreshing: Boolean,
     listLoaded: Boolean,
-    waiting: Boolean,
+    /** What an empty list waits for, title and text, while it does. */
+    checking: Pair<Int, Int>?,
+    /** When the list was last checked, ms on the clock, said under an empty list's words. */
+    checkedAt: Long?,
+    /** What the line over the dock says. */
+    status: Status?,
     /** A pull asks for a sync; the empty list answers it with its own water. */
     onSync: () -> Unit,
     mailbox: Mailbox,
@@ -1296,7 +1356,8 @@ private fun InboxList(
                                     stringResource(text),
                                     drawIn = hadMail && inbox,
                                     grey = !inbox,
-                                    waiting = waiting,
+                                    checking = checking?.let { (head, line) -> stringResource(head) to stringResource(line) },
+                                    checkedAt = checkedAt,
                                     refreshing = refreshing,
                                     pulled = { pull.fraction },
                                     drops = drops,
@@ -1381,16 +1442,18 @@ private fun InboxList(
         Column(Modifier.align(Alignment.BottomCenter)) {
             // Low on the screen, in reach of the thumb that swiped.
             Toast(snackbar, onGo = onGo, modifier = Modifier.padding(bottom = 8.dp))
-            Reveal(error) {
-                Text(
-                    stringResource(it),
-                    color = colors.onSurfaceVariant,
-                    style = Type.Caption,
-                    modifier = Modifier
+            Reveal(status) {
+                Row(
+                    Modifier
                         .fillMaxWidth()
                         .background(colors.bar)
-                        .padding(horizontal = Gap.screen, vertical = 8.dp),
-                )
+                        .padding(start = Gap.screen, end = if (it.retry) 8.dp else Gap.screen)
+                        .heightIn(min = 34.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(stringResource(it.text), color = colors.onSurfaceVariant, style = Type.Caption, modifier = Modifier.weight(1f).padding(vertical = 8.dp))
+                    if (it.retry) TextButton(onClick = onSync) { Text(stringResource(R.string.status_try_again)) }
+                }
             }
             Dock(
                 modifier = Modifier.onSizeChanged { dockHeight = with(density) { it.height.toDp() } },
@@ -2151,6 +2214,9 @@ private class ListPull(private val threshold: Float, private val scope: Coroutin
         private const val MOST = 2f
     }
 }
+
+/** A line over the dock: what the app is doing, or what went wrong, and whether a new check may help. */
+private data class Status(val text: Int, val retry: Boolean = false)
 
 /** A page as it was left: its [tab], the rows from the top one on screen, and where that one was. */
 private class Leaving(val tab: Category, val rows: List<MessageItem>, val top: Float)
