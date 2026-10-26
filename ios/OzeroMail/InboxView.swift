@@ -36,6 +36,9 @@ struct InboxView: View {
         .fullScreenCover(isPresented: $model.addingAccount) {
             SignInView(mail: model.mail, onCancel: { model.addingAccount = false }) {
                 model.addingAccount = false
+                // Its mail is all still to come.
+                model.everSynced = []
+                Settings.syncedBoxes = []
                 model.signedIn()
             }
         }
@@ -168,7 +171,8 @@ private struct InboxList: View {
 
     /// The first mail of an empty list is on its way: the water waits, and says what for.
     private var waiting: Bool {
-        model.syncing && model.listLoaded && model.messages.isEmpty && !model.syncedBoxes.contains(model.mailbox)
+        // Only the first time: after that an empty list is empty until a sync brings something.
+        model.syncing && model.listLoaded && model.messages.isEmpty && !model.everSynced.contains(model.mailbox.key)
     }
 
     private var checking: LakeWords? {

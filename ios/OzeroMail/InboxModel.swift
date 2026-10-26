@@ -47,6 +47,8 @@ final class InboxModel {
     var listLoaded = false
     /// Mailboxes synced since the app opened: until then, their empty list waits for its mail.
     var syncedBoxes: Set<Mailbox> = []
+    /// Mailboxes ever synced on this phone: one opened again shows its saved mail and syncs quietly.
+    var everSynced = Settings.syncedBoxes
     var loadingOlder = false
     /// Whether this tab or mailbox had mail since it was picked: then the lake draws itself in as
     /// the last message leaves, and not on opening the app or on picking an empty tab.
@@ -298,7 +300,10 @@ final class InboxModel {
         await loadFolders()
         await load()
         syncing = false
-        if synced { syncedBoxes.insert(box) }
+        if synced {
+            syncedBoxes.insert(box)
+            if everSynced.insert(box.key).inserted { Settings.syncedBoxes = everSynced }
+        }
         if let (next, quietly) = syncAgain.first {
             syncAgain[next] = nil
             return await sync(next, quiet: quietly)
@@ -615,5 +620,15 @@ extension DraftItem {
     /// Nothing worth keeping: no text, and for a new message no recipients or subject either.
     var isBlank: Bool {
         text.isBlank && (replyTo != nil || (to.isBlank && subject.isBlank))
+    }
+}
+
+extension Mailbox {
+    /// What names it when kept on the phone: a folder by its id, the unified mailboxes by their role.
+    var key: String {
+        switch self {
+        case .folder(let id): "folder-\(id)"
+        case .unified(let role): "all-\(role)"
+        }
     }
 }

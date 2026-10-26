@@ -203,14 +203,15 @@ private const val PAGE_ROWS = 12
 
 /** A folder by its id, which is positive; the unified mailboxes as their role below zero. */
 private val MailboxSaver = Saver<Mailbox, Long>(
-    save = {
-        when (it) {
-            is Mailbox.Folder -> it.id
-            is Mailbox.Unified -> -1L - it.role.ordinal
-        }
-    },
+    save = { it.key() },
     restore = { if (it >= 0) Mailbox.Folder(it) else Mailbox.Unified(FolderRole.entries[(-1L - it).toInt()]) },
 )
+
+/** A folder by its id, which is positive; the unified mailboxes as their role below zero. */
+fun Mailbox.key(): Long = when (this) {
+    is Mailbox.Folder -> id
+    is Mailbox.Unified -> -1L - role.ordinal
+}
 
 /**
  * The unified inbox, or another mailbox picked in the accounts sheet: shows what is saved at
@@ -272,6 +273,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var folders by remember { mutableStateOf(emptyList<FolderItem>()) }
     val context = LocalContext.current
     val settings = remember { Settings(context) }
+    // Mailboxes ever synced on this phone: one opened again shows its saved mail and syncs quietly.
+    var everSynced by remember { mutableStateOf(settings.syncedBoxes) }
     var swipes by remember { mutableStateOf(settings.swipes) }
     var groups by remember { mutableStateOf(settings.groups) }
     var swipeTip by remember { mutableStateOf(!settings.swipeTipSeen) }
@@ -445,7 +448,13 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         } finally {
             syncing = false
         }
-        if (synced) syncedBoxes += box
+        if (synced) {
+            syncedBoxes += box
+            if (box.key() !in everSynced) {
+                everSynced += box.key()
+                settings.syncedBoxes = everSynced
+            }
+        }
         syncAgain.entries.firstOrNull()?.let { (next, quietly) ->
             syncAgain -= next
             return sync(next, quietly)
@@ -457,8 +466,9 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         return synced
     }
 
-    // The first mail of an empty list is on its way: the water waits, and says what for.
-    val waiting = syncing && listLoaded && messages.isEmpty() && mailbox !in syncedBoxes
+    // The first mail of an empty list is on its way: the water waits, and says what for. Only the
+    // first time: after that an empty list is empty until a sync brings something.
+    val waiting = syncing && listLoaded && messages.isEmpty() && mailbox.key() !in everSynced
     // A check the user waits on says when it is slow; a pull lets go after a while, and the sync
     // goes on behind. Its words then say so, until it ends.
     LaunchedEffect(pulled || waiting) {
@@ -852,6 +862,9 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         mail,
                         onSignedIn = {
                             addingAccount = false
+                            // Its mail is all still to come.
+                            everSynced = emptySet()
+                            settings.syncedBoxes = everSynced
                             scope.launch { sync() }
                         },
                         onCancel = ::back,
