@@ -22,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import uniffi.ozero_api.CoreException
 
@@ -38,7 +39,7 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(dark) { enableEdgeToEdge() }
             OzeroTheme {
                 Surface(Modifier.fillMaxSize()) {
-                    App(mail)
+                    ProvideRoom { App(mail) }
                 }
             }
         }
@@ -77,7 +78,9 @@ private fun App(mail: Mail) {
     Crossfade(start, animationSpec = Motion.calm(Motion.NOTE), label = "start") { s ->
         when (s) {
             Start.Loading -> Unit
-            Start.SignIn -> SignInScreen(mail, onSignedIn = { start = Start.Inbox })
+            Start.SignIn -> Middle(if (LocalRoom.current.rails) LIST_MAX else Dp.Unspecified, Modifier.fillMaxSize()) {
+                SignInScreen(mail, onSignedIn = { start = Start.Inbox })
+            }
             Start.Inbox -> InboxScreen(mail, onNoAccounts = { start = Start.SignIn })
             is Start.Failed -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
                 Text(stringResource(s.text))

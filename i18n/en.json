@@ -174,5 +174,6 @@
   "action_select": "Select",
   "attachment_save_files": "Save to Files",
   "attachment_saved_files": "Saved to Files",
-  "crash_text_ios": "Send the report to the author? The letter opens first, so you can read it. It holds where the app failed, the app and iOS versions and the phone model. No mail."
+  "crash_text_ios": "Send the report to the author? The letter opens first, so you can read it. It holds where the app failed, the app and iOS versions and the phone model. No mail.",
+  "split_nothing_open": "Pick a message to read it here."
 }

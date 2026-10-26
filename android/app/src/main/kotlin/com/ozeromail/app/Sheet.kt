@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -152,6 +153,8 @@ private fun SheetBody(visible: Boolean, onClose: () -> Unit, content: @Composabl
 
     Column(
         Modifier
+            // On its side or on a tablet, a menu stays as wide as on a phone held upright.
+            .widthIn(max = SHEET_MAX)
             .fillMaxWidth()
             // Never taller than most of the screen, so the dimmed screen still shows above it.
             .layout { measurable, constraints ->
@@ -210,3 +213,6 @@ fun SheetRow(onClick: () -> Unit, lead: @Composable () -> Unit, content: @Compos
         content()
     }
 }
+
+/** How wide a sheet gets. */
+private val SHEET_MAX = 560.dp
