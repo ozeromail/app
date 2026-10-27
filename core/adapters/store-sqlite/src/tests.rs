@@ -2481,6 +2481,43 @@ fn a_draft_keeps_one_copy_on_its_server() {
 }
 
 #[test]
+fn only_imap_uids_tell_an_older_draft_copy() {
+    let store = store();
+    let a = account(&store, "a@example.com");
+    let folder = drafts_folder(&store, a);
+    let draft = SavedDraft {
+        id: None,
+        account_id: Some(a),
+        to: String::new(),
+        subject: "Hi".into(),
+        text: "Hello".into(),
+        signature: String::new(),
+        reply_to: None,
+        quote: String::new(),
+        forward: None,
+        saved: 100,
+        files: vec![],
+    };
+    let id = store.save_draft(&draft).unwrap();
+    // Gmail's ids are hex: "9f" is not newer than "a1".
+    let gmail = |id: &str| DraftCopy {
+        remote_id: id.into(),
+        ..copy(0)
+    };
+    store
+        .pushed_draft(a, id, 100, "m1@x", Some(&gmail("9f")))
+        .unwrap();
+    store.set_validity(folder, 7).unwrap();
+    let copies = [("9f", "m1@x"), ("a1", "m1@x")].map(|(remote_id, message_id)| NewMessage {
+        remote_id: remote_id.into(),
+        ..server_copy(0, message_id)
+    });
+    store.save_messages(folder, &copies).unwrap();
+    store.server_drafts(a).unwrap();
+    assert!(stale(&store, a).is_empty());
+}
+
+#[test]
 fn a_draft_moved_to_another_account_leaves_its_copy_behind() {
     let store = store();
     let a = account(&store, "a@example.com");
