@@ -1,4 +1,4 @@
-use crate::MessageLocation;
+use crate::{FolderId, MessageLocation};
 
 /// A change the user makes on the device first; the server gets it from the queue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -19,6 +19,8 @@ pub enum Action {
     /// Moves the message out of its folder into the account's snoozed folder, until it is
     /// time for it to come back.
     Snooze,
+    /// Moves the message out of its folder into another folder of its account.
+    Move(FolderId),
     /// Removes the message from the server for good: from the trash only.
     Delete,
     /// Empties the trash or spam the message is in, for good: everything the server has

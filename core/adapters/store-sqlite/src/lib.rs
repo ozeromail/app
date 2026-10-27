@@ -1974,6 +1974,7 @@ fn queue_one(
         Action::Spam => (0, Some(role_folder(tx, message, FolderRole::Junk)?)),
         Action::Inbox => (0, Some(role_folder(tx, message, FolderRole::Inbox)?)),
         Action::Snooze => (0, Some(role_folder(tx, message, FolderRole::Snoozed)?)),
+        Action::Move(folder) => (0, Some(other_folder(tx, message, folder)?)),
         Action::Delete | Action::Empty => (0, None),
     };
     if let Some(old) = old_copy {
@@ -2276,6 +2277,25 @@ fn role_folder(
     .ok_or(missing)
 }
 
+/// `folder`, where a move goes, if it is another folder of the message's account.
+fn other_folder(
+    tx: &Transaction<'_>,
+    message: MessageId,
+    folder: FolderId,
+) -> Result<i64, StoreError> {
+    tx.prepare_cached(
+        "SELECT t.id FROM message m JOIN folder f ON f.id = m.folder_id
+         JOIN folder t ON t.account_id = f.account_id AND t.id != f.id
+         WHERE m.id = ?1 AND t.id = ?2",
+    )
+    .and_then(|mut s| {
+        s.query_row(params![message.0, folder.0], |r| r.get(0))
+            .optional()
+    })
+    .map_err(storage)?
+    .ok_or(StoreError::NotAllowed)
+}
+
 fn drop_message(tx: &Transaction<'_>, message: i64) -> Result<(), StoreError> {
     tx.prepare_cached("DELETE FROM message WHERE id = ?1")
         .and_then(|mut s| s.execute([message]))
@@ -2461,7 +2481,7 @@ macro_rules! not_moving {
         concat!(
             "NOT EXISTS (SELECT 1 FROM op WHERE op.message_id = ",
             $m,
-            ".id AND op.kind IN ('archive', 'trash', 'spam', 'inbox', 'snooze', 'delete', 'empty'))"
+            ".id AND op.kind IN ('archive', 'trash', 'spam', 'inbox', 'snooze', 'move', 'delete', 'empty'))"
         )
     };
 }
@@ -3135,6 +3155,7 @@ enum StoredAction {
     Trash,
     Inbox,
     Snooze,
+    Move,
     Delete,
     Empty,
 }
@@ -3149,6 +3170,7 @@ fn stored(action: Action) -> (&'static str, i64) {
         Action::Trash => ("trash", 1),
         Action::Inbox => ("inbox", 1),
         Action::Snooze => ("snooze", 1),
+        Action::Move(folder) => ("move", folder.0),
         Action::Delete => ("delete", 1),
         Action::Empty => ("empty", 1),
     }
@@ -3164,6 +3186,7 @@ impl StoredAction {
             Self::Trash => Action::Trash,
             Self::Inbox => Action::Inbox,
             Self::Snooze => Action::Snooze,
+            Self::Move => Action::Move(FolderId(value)),
             Self::Delete => Action::Delete,
             Self::Empty => Action::Empty,
         }
@@ -3180,6 +3203,7 @@ impl FromSql for StoredAction {
             "trash" => Ok(Self::Trash),
             "inbox" => Ok(Self::Inbox),
             "snooze" => Ok(Self::Snooze),
+            "move" => Ok(Self::Move),
             "delete" => Ok(Self::Delete),
             "empty" => Ok(Self::Empty),
             _ => Err(FromSqlError::InvalidType),

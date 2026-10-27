@@ -56,12 +56,17 @@ impl FolderRole {
     /// Whether `action` applies to a message in a folder with this role: Done archives only
     /// mail that is not filed yet and so does Snooze, nothing goes to the trash from the trash,
     /// a delete in the trash is for good, only the trash and spam are emptied, and mail goes
-    /// back to the inbox from the archive, trash, spam or snoozed folder.
+    /// back to the inbox from the archive, trash, spam or snoozed folder. Mail moves to another
+    /// folder from where it is read, not from the sent, drafts or snoozed folder.
     pub fn allows(self, action: Action) -> bool {
         match action {
             Action::Seen(_) | Action::Flagged(_) => true,
             Action::Spam => matches!(self, Self::Inbox | Self::Custom | Self::Archive),
             Action::Archive | Action::Snooze => matches!(self, Self::Inbox | Self::Custom),
+            Action::Move(_) => matches!(
+                self,
+                Self::Inbox | Self::Custom | Self::Archive | Self::Trash | Self::Junk
+            ),
             Action::Trash => self != Self::Trash,
             Action::Delete => self == Self::Trash,
             Action::Empty => matches!(self, Self::Trash | Self::Junk),
@@ -130,6 +135,8 @@ mod tests {
         assert!(FolderRole::Junk.allows(Action::Empty));
         assert!(!FolderRole::Inbox.allows(Action::Empty));
         assert!(!FolderRole::Sent.allows(Action::Archive));
+        assert!(FolderRole::Archive.allows(Action::Move(FolderId(1))));
+        assert!(!FolderRole::Sent.allows(Action::Move(FolderId(1))));
         assert!(FolderRole::Inbox.allows(Action::Snooze));
         assert!(!FolderRole::Snoozed.allows(Action::Snooze));
         assert!(!FolderRole::Sent.allows(Action::Snooze));
