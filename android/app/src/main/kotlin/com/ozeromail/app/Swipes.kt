@@ -100,8 +100,10 @@ class Settings(context: Context) {
     var swipes: Swipes
         get() = Swipes().let {
             // A long swipe turned off is kept as OFF, so it does not come back as the default.
+            // Who picked their swipes before long ones came keeps them off, so a far swipe does what it did.
+            val picked = prefs.contains(LEFT)
             fun long(key: String, usual: SwipeAction?) = prefs.getString(key, null).let { name ->
-                if (name == OFF) null else action(name) ?: usual
+                if (name == OFF) null else action(name) ?: usual.takeIf { !picked }
             }
             Swipes(
                 left = action(prefs.getString(LEFT, null)) ?: it.left,
@@ -249,6 +251,8 @@ fun SwipeRow(
     var width by remember { mutableIntStateOf(0) }
     var held by remember { mutableStateOf(false) }
     var moving by remember { mutableStateOf<Job?>(null) }
+    // The stage let go at once the row acts, so the strip keeps showing it as the row goes.
+    var acted by remember { mutableStateOf<Int?>(null) }
 
     // The short and long action of the side the row goes to; a long one that does not apply is no long one.
     fun side(left: Boolean): Pair<SwipeAction, SwipeAction?> {
@@ -260,7 +264,7 @@ fun SwipeRow(
     val stage by remember {
         derivedStateOf {
             val far = if (width == 0) 0f else abs(offset) / width
-            when {
+            acted ?: when {
                 offset == 0f -> 0
                 far >= LONG && side(offset < 0f).second != null -> 2
                 far >= SHORT -> 1
@@ -306,8 +310,15 @@ fun SwipeRow(
                 swiped(action) {}
                 glide(0f)
             }
-            else -> glide(if (left) -width.toFloat() else width.toFloat()) {
-                swiped(action) { moving?.cancel(); offset = 0f }
+            else -> {
+                acted = stage.coerceAtLeast(1)
+                glide(if (left) -width.toFloat() else width.toFloat()) {
+                    swiped(action) {
+                        moving?.cancel()
+                        acted = null
+                        offset = 0f
+                    }
+                }
             }
         }
     }
@@ -459,21 +470,22 @@ fun SwipeAction.colors(): Pair<Color, Color> = with(MaterialTheme.colorScheme) {
 @Composable
 fun Swipes.summary(): String = stringResource(R.string.swipes_summary, stringResource(left.label), stringResource(right.label))
 
-/** What the tip says the swipes do, with the long ones when they are on, and how the mailboxes open. */
+/** What the tip says the swipes do, with the long ones when they are on, and, with [lift], how the mailboxes open. */
 @Composable
-private fun Swipes.tip(): String {
+private fun Swipes.tip(lift: Boolean): String {
     @Composable
     fun side(short: SwipeAction, long: SwipeAction?): String =
         long?.let { stringResource(R.string.swipes_further, stringResource(short.label), stringResource(it.label)) }
             ?: stringResource(short.label)
     val left = side(left, leftLong)
     val right = side(right, rightLong)
-    return stringResource(R.string.swipes_tip, left, right) + " " + stringResource(R.string.swipes_tip_lift)
+    val said = stringResource(R.string.swipes_tip, left, right)
+    return if (lift) said + " " + stringResource(R.string.swipes_tip_lift) else said
 }
 
 /** A one-time note above the list on what the swipes do. */
 @Composable
-fun SwipeTip(swipes: Swipes, onDismiss: () -> Unit) {
+fun SwipeTip(swipes: Swipes, lift: Boolean, onDismiss: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     Row(
         Modifier
@@ -485,7 +497,7 @@ fun SwipeTip(swipes: Swipes, onDismiss: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            swipes.tip(),
+            swipes.tip(lift),
             style = Type.Text,
             modifier = Modifier.weight(1f),
         )

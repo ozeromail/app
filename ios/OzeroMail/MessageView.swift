@@ -191,7 +191,7 @@ struct MessageView: View {
                 }
             }
         }
-        .moveDialog($targets) { folder, title in
+        .moveDialog($targets, targets: { $0 }) { _, folder, title in
             leave { await model.moveToFolder([message], to: folder, title: title) }
         }
         .alert(tr("unsubscribe_title", message.sender), isPresented: $leaving) {

@@ -55,9 +55,8 @@ struct InboxView: View {
                 Task { await model.snooze(snoozing.messages, until: until) }
             }
         }
-        .moveDialog(Binding { model.moving?.targets } set: { if $0 == nil { model.moving = nil } }) { folder, title in
-            guard let message = model.moving?.message else { return }
-            Task { await model.moveToFolder([message], to: folder, title: title) }
+        .moveDialog($model.moving, targets: \.targets) { moving, folder, title in
+            Task { await model.moveToFolder([moving.message], to: folder, title: title) }
         }
         .sheet(isPresented: $model.accountsOpen) {
             AccountsSheet(
@@ -306,7 +305,7 @@ private struct InboxList: View {
                 }
             }
             if model.swipeTip && !model.messages.isEmpty {
-                SwipeTip(swipes: model.swipes, onDismiss: model.closeSwipeTip)
+                SwipeTip(swipes: model.swipes, lift: !model.sideways, onDismiss: model.closeSwipeTip)
             }
             if lake {
                 let words = model.emptyWords
@@ -324,11 +323,11 @@ private struct InboxList: View {
                 // As in the iPhone's own Mail: a full swipe does the long action, a shorter one
                 // shows both to tap. The first is the one at the edge.
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                    if let long = model.swipes.leftLong { swipe(long, message) }
+                    if let long = model.swipes.leftLong, long != model.swipes.left { swipe(long, message) }
                     swipe(model.swipes.left, message)
                 }
                 .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                    if let long = model.swipes.rightLong { swipe(long, message) }
+                    if let long = model.swipes.rightLong, long != model.swipes.right { swipe(long, message) }
                     swipe(model.swipes.right, message)
                 }
                 .contextMenu {
@@ -797,11 +796,13 @@ private struct NoticeRow: View {
 /// Says what each swipe does, until the person has read it.
 private struct SwipeTip: View {
     let swipes: Swipes
+    /// Whether the dock is there to drag up.
+    let lift: Bool
     let onDismiss: () -> Void
 
     var body: some View {
         HStack {
-            Text(verbatim: swipes.tip).font(.subheadline)
+            Text(verbatim: lift ? swipes.tip + " " + tr("swipes_tip_lift") : swipes.tip).font(.subheadline)
             Spacer()
             Button("action_got_it", action: onDismiss).font(.subheadline.weight(.semibold))
         }
