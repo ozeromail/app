@@ -208,7 +208,7 @@ fun SwipeAction.appliesTo(message: MessageItem): Boolean = when (this) {
 /** What the action says on [message]: Read on a read one is Unread, Flag on a flagged one takes it off. */
 fun SwipeAction.label(message: MessageItem): Int = when {
     this == SwipeAction.READ && message.threadUnread == 0u -> R.string.action_unread
-    this == SwipeAction.FLAG && message.flagged -> R.string.swipe_unflag
+    this == SwipeAction.FLAG && message.flagged -> R.string.action_unflag
     this == SwipeAction.DELETE && !message.canTrash -> R.string.action_delete_forever
     else -> label
 }

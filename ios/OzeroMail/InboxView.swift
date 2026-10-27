@@ -55,15 +55,9 @@ struct InboxView: View {
                 Task { await model.snooze(snoozing.messages, until: until) }
             }
         }
-        .confirmationDialog(
-            "move_title", isPresented: Binding { model.moving != nil } set: { if !$0 { model.moving = nil } },
-            titleVisibility: .visible, presenting: model.moving
-        ) { moving in
-            ForEach(moving.targets, id: \.folder.id) { target in
-                Button(target.title) {
-                    Task { await model.moveToFolder([moving.message], to: target.folder, title: target.title) }
-                }
-            }
+        .moveDialog(Binding { model.moving?.targets } set: { if $0 == nil { model.moving = nil } }) { folder, title in
+            guard let message = model.moving?.message else { return }
+            Task { await model.moveToFolder([message], to: folder, title: title) }
         }
         .sheet(isPresented: $model.accountsOpen) {
             AccountsSheet(

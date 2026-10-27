@@ -38,7 +38,7 @@ enum SwipeAction: String, CaseIterable, Identifiable {
     func label(for message: MessageItem) -> String {
         switch self {
         case .read where message.threadUnread == 0: tr("action_unread")
-        case .flag where message.flagged: tr("swipe_unflag")
+        case .flag where message.flagged: tr("action_unflag")
         case .delete where !message.canTrash: tr("action_delete_forever")
         default: label
         }
