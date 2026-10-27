@@ -214,7 +214,6 @@
   "error_untrusted_certificate": "This server's certificate did not pass the checks. Trust it only if your IT team confirms the fingerprint below.",
   "signin_trust_certificate": "Trust this certificate",
   "error_device_blocked": "Your company's server has not let this phone in yet. Ask your IT team to allow Ozero Mail in Exchange ActiveSync, then try again.",
-  "mailboxes_more": "Accounts and settings",
   "compose_attach": "Attach",
   "compose_attach_photos": "Photos and videos",
   "compose_attach_files": "Files",
@@ -281,5 +280,7 @@
   "account_add_short": "Account",
   "account_settings_hint": "Hold an account in the list to open its settings.",
   "mail_settings": "Mail",
-  "action_move": "Move"
+  "action_move": "Move",
+  "action_pin": "Pin",
+  "action_unpin": "Unpin"
 }

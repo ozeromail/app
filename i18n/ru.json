@@ -214,7 +214,6 @@
   "error_untrusted_certificate": "Сертификат сервера не прошёл проверку. Доверяйте ему, только если IT-отдел подтвердит отпечаток ниже.",
   "signin_trust_certificate": "Доверять этому сертификату",
   "error_device_blocked": "Сервер компании пока не пустил этот телефон. Попросите IT-отдел разрешить Ozero Mail в Exchange ActiveSync и попробуйте снова.",
-  "mailboxes_more": "Аккаунты и настройки",
   "compose_attach": "Прикрепить",
   "compose_attach_photos": "Фото и видео",
   "compose_attach_files": "Файлы",
@@ -281,5 +280,7 @@
   "account_add_short": "Аккаунт",
   "account_settings_hint": "Удерживайте аккаунт в списке, чтобы открыть его настройки.",
   "mail_settings": "Почта",
-  "action_move": "Переставить"
+  "action_move": "Переставить",
+  "action_pin": "Закрепить",
+  "action_unpin": "Открепить"
 }

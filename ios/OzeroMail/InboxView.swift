@@ -20,7 +20,7 @@ struct InboxView: View {
             // beside it.
             HStack(spacing: 0) {
                 if model.sideways && model.pane == nil {
-                    Mailboxes(model: model)
+                    Mailboxes(model: model, actions: accountsActions)
                         .transition(.move(edge: .leading).combined(with: .opacity))
                     Divider()
                 }
@@ -55,8 +55,8 @@ struct InboxView: View {
         .sheet(isPresented: $model.accountsOpen, onDismiss: { model.added = nil }) {
             AccountsSheet(
                 accounts: model.accounts, folders: model.folders, mailbox: model.mailbox, drafts: model.drafts.count,
-                signature: model.signature, swipes: $model.swipes, groups: $model.groups, actions: accountsActions,
-                startOn: model.added)
+                unread: model.peopleUnread, signature: model.signature, swipes: $model.swipes, groups: $model.groups,
+                allBoxes: $model.allBoxes, actions: accountsActions, startOn: model.added)
             .task { await model.loadFolders() }
         }
         .fullScreenCover(isPresented: $model.addingAccount) {
@@ -113,6 +113,8 @@ struct InboxView: View {
         .onChange(of: model.mailbox) {
             Task {
                 await model.switched()
+                // An account's inbox has tabs of its own.
+                await model.counts()
                 // Another mailbox brings in what changed in it; the inbox keeps itself up to date.
                 if !model.isInbox { await model.sync(model.mailbox) }
             }
@@ -131,6 +133,23 @@ struct InboxView: View {
             onDrafts: {
                 model.accountsOpen = false
                 model.path.append(.drafts)
+            },
+            onInAll: { account, on in
+                model.changeAccount {
+                    try await model.mail.setInAll(account, on)
+                    await model.load()
+                }
+            },
+            onOrder: { order in
+                // In the new order at once, so the moved row does not jump back meanwhile.
+                model.accounts = order
+                model.changeAccount { try await model.mail.setAccountOrder(order) }
+            },
+            onPin: { folder, pinned in
+                model.changeAccount {
+                    try await model.mail.setPinned(folder, pinned)
+                    await model.loadFolders()
+                }
             },
             onAdd: {
                 model.accountsOpen = false
@@ -268,7 +287,7 @@ private struct InboxList: View {
             }
             if lake {
                 let words = model.emptyWords
-                LakeNote(title: words.title, text: words.text, drawIn: model.hadMail, grey: !model.isInbox,
+                LakeNote(title: words.title, text: words.text, drawIn: model.hadMail, grey: !model.tabbed,
                          checking: checking, checkedAt: model.isInbox ? model.checkedAt : nil,
                          refreshing: refreshing, pull: pull)
                     .id(model.mailbox)
@@ -321,7 +340,7 @@ private struct InboxList: View {
         // gathers a drop over it, and a pull on a list moves the rows down to uncover the same water.
         .overlay(alignment: .top) {
             if !lake {
-                PullWater(grey: !model.isInbox, refreshing: refreshing, pull: pull) { waterCalm = $0 }
+                PullWater(grey: !model.tabbed, refreshing: refreshing, pull: pull) { waterCalm = $0 }
                     .frame(height: pull.gap)
                     .clipped()
                     .padding(.top, top.inset)
@@ -399,7 +418,7 @@ private struct InboxList: View {
                     .transition(.opacity)
                 }
                 // On its side search and a new message are beside the title: without tabs the dock has nothing.
-                if !model.sideways || model.isInbox || choosing || (model.emptyLabel != nil && !model.messages.isEmpty) {
+                if !model.sideways || model.tabbed || choosing || (model.emptyLabel != nil && !model.messages.isEmpty) {
                     Dock(model: model, choosing: choosing, picked: picked, onMore: { more = true })
                 }
             }
@@ -486,7 +505,7 @@ private struct Dock: View {
     var body: some View {
         VStack(spacing: 8) {
             if !model.sideways {
-                if model.isInbox { tabs }
+                if model.tabbed { tabs }
                 if !choosing { EmptyFolderButton(model: model) }
             }
             Group {
@@ -494,10 +513,10 @@ private struct Dock: View {
                     ChoiceBar(model: model, picked: picked, onMore: onMore)
                 } else if model.sideways {
                     // Search and a new message are beside the title.
-                    if model.isInbox { tabs } else { EmptyFolderButton(model: model) }
+                    if model.tabbed { tabs } else { EmptyFolderButton(model: model) }
                 } else {
                     HStack(spacing: 8) {
-                        AccountsButton(accounts: model.accounts) { model.accountsOpen = true }
+                        AccountsButton(accounts: model.scope) { model.accountsOpen = true }
                         Button {
                             model.path.append(.search)
                         } label: {
@@ -555,19 +574,22 @@ struct OpenRow: View {
     }
 }
 
-/// The mailboxes down the left on its side, always there; the rest of the accounts sheet opens
-/// from the last row.
+/// The mailboxes down the left on its side, always there: the sheet's list of them; the
+/// settings open in the sheet from the last row.
 private struct Mailboxes: View {
     @Bindable var model: InboxModel
+    let actions: AccountsActions
 
     var body: some View {
         List {
             MailboxRows(
                 accounts: model.accounts, folders: model.folders, mailbox: model.mailbox, drafts: model.drafts.count,
-                groups: $model.groups, settings: false,
-                onMailbox: { model.mailbox = $0 }, onDrafts: { model.path.append(.drafts) })
+                unread: model.peopleUnread, allBoxes: $model.allBoxes, groups: $model.groups, actions: actions)
             Section {
-                SheetAction(icon: "ellipsis.circle", text: "mailboxes_more", color: .primary) { model.accountsOpen = true }
+                SheetAction(icon: "gear", text: "settings_title", color: .primary) {
+                    model.added = .settings
+                    model.accountsOpen = true
+                }
             }
         }
         .listStyle(.sidebar)
@@ -673,10 +695,22 @@ private struct AccountsButton: View {
                 if let one = accounts.first, accounts.count == 1 {
                     AccountInitial(name: one.name, color: one.tint)
                 } else {
+                    // Past four, the fourth place says how many more there are.
+                    let shown = accounts.count > 4 ? Array(accounts.prefix(3)) : accounts
                     Grid(horizontalSpacing: 4, verticalSpacing: 4) {
-                        ForEach(Array(stride(from: 0, to: min(accounts.count, 4), by: 2)), id: \.self) { start in
+                        GridRow {
+                            ForEach(shown.prefix(2), id: \.id) { AccountDot(color: $0.tint) }
+                        }
+                        if shown.count > 2 {
                             GridRow {
-                                ForEach(accounts[start..<min(start + 2, accounts.count)], id: \.id) { AccountDot(color: $0.tint) }
+                                ForEach(shown.dropFirst(2), id: \.id) { AccountDot(color: $0.tint) }
+                                if accounts.count > 4 {
+                                    Text(verbatim: "+\(accounts.count - 3)")
+                                        .font(.system(size: 9, weight: .bold))
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize()
+                                        .frame(width: 10, height: 10)
+                                }
                             }
                         }
                     }
