@@ -6,7 +6,7 @@ use std::sync::Arc;
 use ozero_domain::ProviderError;
 use tokio_rustls::rustls::ClientConfig;
 
-use crate::{HttpsClient, Response};
+use crate::{Body, HttpsClient, Response};
 
 /// Largest image loaded.
 pub const MAX_IMAGE: usize = 4 * 1024 * 1024;
@@ -45,6 +45,26 @@ pub async fn image(url: &str, tls: Arc<ClientConfig>) -> Result<Response, Provid
         (host, port, path) = split(&next)?;
     }
     Err(bad("too many redirects"))
+}
+
+/// Largest answer read to a one-click unsubscribe; only its status counts.
+const MAX_ANSWER: usize = 64 * 1024;
+
+/// Leaves a mailing list with the one-click POST of RFC 8058: on a public address only, with
+/// no cookies or anything else that tells who asks, and no redirects followed.
+pub async fn one_click(url: &str, tls: Arc<ClientConfig>) -> Result<(), ProviderError> {
+    let (host, port, path) = split(url)?;
+    let mut client = HttpsClient::untrusted(&host, port, tls, MAX_ANSWER);
+    let body = Body {
+        content_type: "application/x-www-form-urlencoded",
+        data: b"List-Unsubscribe=One-Click",
+    };
+    let response = client.send("POST", &path, &[], Some(body)).await?;
+    if response.ok() {
+        Ok(())
+    } else {
+        Err(bad(format!("unsubscribe refused: {}", response.status)))
+    }
 }
 
 /// The path a relative reference such as `b.png` or `?v=2` leads to from `path`.

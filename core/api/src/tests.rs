@@ -533,6 +533,7 @@ fn a_unified_list_ends_where_an_account_has_older_mail_to_load() {
                 date,
                 flags: Default::default(),
                 category: Category::People,
+                unsubscribe: None,
             })
             .collect();
         let checkpoint = store.checkpoint(folder).unwrap().0;
@@ -597,6 +598,7 @@ fn tells_who_a_message_went_to_and_copies_the_others_on_reply_all() {
         date: 10,
         flags: Default::default(),
         category: Category::People,
+        unsubscribe: None,
     };
     let checkpoint = store.checkpoint(folder).unwrap().0;
     let changes = Changes {
@@ -1030,4 +1032,72 @@ fn folders_sit_inside_the_folder_their_name_continues() {
     ];
     let expected = [(None, "INBOX"), (None, "Bills"), (Some(2), "2026")];
     assert_eq!(tree(&dots), expected.map(|(p, n)| (p, n.to_owned())));
+}
+
+#[test]
+fn leaves_a_list_by_its_page_when_it_offers_nothing_else() {
+    let db = TempDb::new("unsubscribe");
+    let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
+    let store = &core.store;
+    let account = store
+        .add_account(&NewAccount {
+            kind: AccountKind::Imap,
+            email: "me@example.com".into(),
+            display_name: "Me".into(),
+            server: None,
+            smtp: None,
+        })
+        .unwrap();
+    let folder = NewFolder {
+        remote_id: "INBOX".into(),
+        name: "Inbox".into(),
+        role: FolderRole::Inbox,
+    };
+    let folder = store.save_folders(account, &[folder]).unwrap()[0].id;
+    let message = |id: &str, links: Option<&str>| ozero_domain::NewMessage {
+        remote_id: id.into(),
+        message_id: None,
+        references: vec![],
+        from: Address {
+            name: None,
+            email: "news@shop.example".into(),
+        },
+        answer_to: vec![],
+        to: vec![],
+        cc: vec![],
+        subject: id.into(),
+        snippet: String::new(),
+        date: id.parse().unwrap_or_default(),
+        flags: Default::default(),
+        category: Category::People,
+        unsubscribe: ozero_domain::Unsubscribe::new(links, None),
+    };
+    let changes = Changes {
+        checkpoint: store.checkpoint(folder).unwrap().0,
+        new: vec![
+            message("1", None),
+            message("2", Some("<https://shop.example/leave>")),
+        ],
+        flags: vec![],
+        gone: vec![],
+    };
+    store.save_changes(folder, &changes).unwrap();
+    let rows = core.inbox(None, Category::People, 10).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    assert!(core.can_unsubscribe(rows[0].id).unwrap());
+    assert_eq!(
+        runtime.block_on(core.unsubscribe(rows[0].id)),
+        Ok(Unsubscribed::Page {
+            url: "https://shop.example/leave".into()
+        })
+    );
+    assert!(!core.can_unsubscribe(rows[1].id).unwrap());
+    assert_eq!(
+        runtime.block_on(core.unsubscribe(rows[1].id)),
+        Err(CoreError::NotFound)
+    );
 }

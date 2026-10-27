@@ -12,7 +12,7 @@ use ozero_domain::{
     ListQuery, MailProvider, MailSender, MessageBuilder, MessageId, MessageLocation, MessageParser,
     MessageRow, Moved, NewAccount, NewFolder, NewMail, NewMessage, Older, Op, OpId, OutboxId,
     Outgoing, OutgoingFile, ProviderError, RawMessage, RecentFile, SavedDraft, ServerDraft, Store,
-    StoreError, Unsent,
+    StoreError, Unsent, Unsubscribe,
 };
 
 /// Fakes answer at once, so one poll finishes the future.
@@ -313,6 +313,7 @@ impl MessageParser for Parser {
             date: raw.received,
             flags: raw.flags,
             category: Category::People,
+            unsubscribe: None,
         }
     }
 
@@ -406,6 +407,10 @@ impl Store for Memory {
 
     fn correspondents(&self, _: MessageId) -> Result<Correspondents, StoreError> {
         Ok(Correspondents::default())
+    }
+
+    fn unsubscribe(&self, _: MessageId) -> Result<Option<Unsubscribe>, StoreError> {
+        Ok(None)
     }
 
     fn remove_account(&self, _: AccountId) -> Result<(), StoreError> {

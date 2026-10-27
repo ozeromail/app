@@ -111,6 +111,7 @@ fn message(uid: u32, date: i64) -> NewMessage {
         date,
         flags: Flags::default(),
         category: Category::People,
+        unsubscribe: None,
     }
 }
 
@@ -2931,4 +2932,33 @@ fn a_conversation_moves_to_another_folder_of_its_account() {
     );
     assert!(store.undo(&ops, 49).unwrap());
     assert_eq!(list(&store, ListScope::Folder(folder), 10, None).len(), 1);
+}
+
+#[test]
+fn a_message_keeps_how_to_leave_its_list() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let folder = inbox(&store, account);
+    let leave = Unsubscribe {
+        links: "<https://shop.example/u>".into(),
+        one_click: true,
+    };
+    store
+        .save_messages(
+            folder,
+            &[
+                NewMessage {
+                    unsubscribe: Some(leave.clone()),
+                    ..message(1, 100)
+                },
+                message(2, 200),
+            ],
+        )
+        .unwrap();
+    let rows = list(&store, ListScope::Folder(folder), 10, None);
+    let found: Vec<_> = rows
+        .iter()
+        .map(|r| store.unsubscribe(r.id).unwrap())
+        .collect();
+    assert_eq!(found, [None, Some(leave)]);
 }

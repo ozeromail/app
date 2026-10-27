@@ -38,6 +38,8 @@ pub struct NewMessage {
     pub date: i64,
     pub flags: Flags,
     pub category: Category,
+    /// How to leave the list it came from, if it says.
+    pub unsubscribe: Option<crate::Unsubscribe>,
 }
 
 /// The addresses of a saved message, for answering it.

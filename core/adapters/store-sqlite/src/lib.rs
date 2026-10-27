@@ -11,8 +11,8 @@ use ozero_domain::{
     Checkpoint, Correspondents, Draft, DraftCopy, DraftFile, DraftId, DraftToPush, FileId, Flags,
     Folder, FolderId, FolderRole, ListQuery, ListScope, MessageId, MessageLocation, MessageRow,
     Moved, NewAccount, NewFolder, NewMail, NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile,
-    RecentFile, SavedDraft, Sender, Server, ServerDraft, Store, StoreError, Unsent, default_label,
-    full_text, typed_addresses,
+    RecentFile, SavedDraft, Sender, Server, ServerDraft, Store, StoreError, Unsent, Unsubscribe,
+    default_label, full_text, typed_addresses,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{
@@ -796,6 +796,21 @@ impl Store for SqliteStore {
                         to,
                         cc,
                     })
+                })
+                .optional()
+            })
+            .map_err(storage)?
+            .ok_or(StoreError::NotFound)
+    }
+
+    fn unsubscribe(&self, message: MessageId) -> Result<Option<Unsubscribe>, StoreError> {
+        self.conn()
+            .prepare_cached("SELECT unsubscribe, one_click FROM message WHERE id = ?1")
+            .and_then(|mut s| {
+                s.query_row([message.0], |r| {
+                    let one_click = r.get(1)?;
+                    Ok(r.get::<_, Option<String>>(0)?
+                        .map(|links| Unsubscribe { links, one_click }))
                 })
                 .optional()
             })
@@ -2081,9 +2096,9 @@ fn copy_into(tx: &Transaction<'_>, message: MessageId, folder: i64) -> Result<i6
         .prepare_cached(
             "INSERT INTO message (folder_id, remote_id, message_id, from_name, from_email,
                                   subject, snippet, date, flags, category, answer_to, recipients,
-                                  thread_id, stand_in)
+                                  unsubscribe, one_click, thread_id, stand_in)
              SELECT ?2, '~' || id, message_id, from_name, from_email, subject, snippet, date,
-                    flags, category, answer_to, recipients, thread_id, 1
+                    flags, category, answer_to, recipients, unsubscribe, one_click, thread_id, 1
              FROM message WHERE id = ?1
              RETURNING id",
         )
@@ -2186,6 +2201,8 @@ fn write_message(
             category_ref(m.category),
             m.answer_to.join("\n"),
             people_column(&m.to, &m.cc),
+            m.unsubscribe.as_ref().map(|u| &u.links),
+            m.unsubscribe.as_ref().is_some_and(|u| u.one_click),
         ])
         .map_err(storage)
 }
@@ -2454,25 +2471,28 @@ macro_rules! snooze_key {
 /// Mail that came back from a snooze is dated when it came back, in the inbox.
 const SAVE_MESSAGE: &str = concat!(
     "INSERT INTO message (folder_id, remote_id, message_id, from_name, from_email,
-                          subject, snippet, date, flags, category, answer_to, recipients, fresh)
+                          subject, snippet, date, flags, category, answer_to, recipients, fresh,
+                          unsubscribe, one_click)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
              coalesce((SELECT s.wake_at FROM snooze s JOIN folder f ON f.account_id = s.account_id
                        WHERE f.id = ?1 AND f.role = 'inbox' AND s.woke = 1
                          AND s.message_id = coalesce(?3, ?5 || char(31) || ?8 || char(31) || ?6)),
                       ?8),
-             ?9, ?10, ?11, ?12, 1)
+             ?9, ?10, ?11, ?12, 1, ?13, ?14)
      ON CONFLICT (folder_id, remote_id) DO UPDATE SET
          found = 0, message_id = excluded.message_id, from_name = excluded.from_name,
          from_email = excluded.from_email, subject = excluded.subject,
          answer_to = excluded.answer_to, recipients = excluded.recipients,
+         unsubscribe = excluded.unsubscribe, one_click = excluded.one_click,
          snippet = coalesce(nullif(excluded.snippet, ''), snippet),
          date = excluded.date, category = excluded.category, flags = ",
     merged_flags!("excluded.flags"),
     " WHERE (found, message_id, from_name, from_email, subject, snippet, date, category,
-            answer_to, recipients, flags)
+            answer_to, recipients, unsubscribe, one_click, flags)
          IS NOT (0, excluded.message_id, excluded.from_name, excluded.from_email,
                  excluded.subject, coalesce(nullif(excluded.snippet, ''), snippet),
-                 excluded.date, excluded.category, excluded.answer_to, excluded.recipients, ",
+                 excluded.date, excluded.category, excluded.answer_to, excluded.recipients,
+                 excluded.unsubscribe, excluded.one_click, ",
     merged_flags!("excluded.flags"),
     ")"
 );
@@ -2735,8 +2755,9 @@ fn hit_words(text: &str) -> Option<String> {
 /// Saves a message a server search found, unless it is saved already; not new mail.
 const SAVE_FOUND: &str = "
     INSERT INTO message (folder_id, remote_id, message_id, from_name, from_email, subject,
-                         snippet, date, flags, category, answer_to, recipients, found)
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1)
+                         snippet, date, flags, category, answer_to, recipients, unsubscribe,
+                         one_click, found)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 1)
     ON CONFLICT (folder_id, remote_id) DO NOTHING";
 
 /// How long mail that came back from a snooze stays dated when it came back, in seconds.

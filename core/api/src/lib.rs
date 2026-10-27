@@ -16,7 +16,7 @@ use ozero_app::sync::{
 };
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Attachment, Body, Category, Changes,
-    Checkpoint, Draft, DraftFile, DraftId, FileId, Folder, FolderId, FolderRole, ListQuery,
+    Checkpoint, Draft, DraftFile, DraftId, FileId, Folder, FolderId, FolderRole, Leave, ListQuery,
     ListScope, MailProvider, MailSender, MailService, MessageId, MessageRow, Moved, NewAccount,
     NewFolder, NewMail, Older, OpId, OutboxId, Outgoing, OutgoingFile, ProviderError,
     ProviderState, RawMessage, RecentFile, SavedDraft, Sender, Server, Store, StoreError,
@@ -560,6 +560,42 @@ impl Core {
         self.account_folders(here.account_id, |f| {
             f.role.takes_moves() && f.remote_id != here.folder_remote_id
         })
+    }
+
+    /// Whether the message says how to leave its list in a way `unsubscribe` takes.
+    pub fn can_unsubscribe(&self, message: i64) -> Result<bool, CoreError> {
+        Ok(self.leave(message)?.is_some())
+    }
+
+    /// Leaves the list the message came from, the best way it offers: a one-click request
+    /// now, or a message through the outbox, which `push_actions` sends; a page is left to the
+    /// person to open. Fails with `NotFound` if it offers none.
+    pub async fn unsubscribe(&self, message: i64) -> Result<Unsubscribed, CoreError> {
+        match self.leave(message)?.ok_or(CoreError::NotFound)? {
+            Leave::Post(url) => {
+                ozero_http::one_click(&url, self.tls()?).await?;
+                Ok(Unsubscribed::Done)
+            }
+            Leave::Mail { to, subject, body } => {
+                let account = self.store.location(MessageId(message))?.account_id;
+                self.send(DraftItem {
+                    id: 0,
+                    account_id: account.0,
+                    to,
+                    subject,
+                    text: body,
+                    reply_to: None,
+                    quote: String::new(),
+                    saved: 0,
+                    forward: None,
+                    files: vec![],
+                    signature: String::new(),
+                    cc: String::new(),
+                })?;
+                Ok(Unsubscribed::Sent)
+            }
+            Leave::Page(url) => Ok(Unsubscribed::Page { url }),
+        }
     }
 
     /// As `archive`, into the account's snoozed folder until `until` (seconds), when `wake`
@@ -1687,6 +1723,13 @@ impl Core {
             rows.retain(|r| r.date >= floor);
         }
         self.items(rows)
+    }
+
+    fn leave(&self, message: i64) -> Result<Option<Leave>, CoreError> {
+        Ok(self
+            .store
+            .unsubscribe(MessageId(message))?
+            .and_then(|u| u.leave()))
     }
 
     /// The account's folders that `keep` takes, placed in its folder tree.
@@ -3428,6 +3471,17 @@ fn sandboxed(html: &str, styled: bool) -> String {
     const BODY: &str = "</style></head><body dir=\"auto\">";
     let theme = if styled { LIGHT } else { THEMED };
     [HEAD, theme, BODY, html, "</body></html>"].concat()
+}
+
+/// What `Core::unsubscribe` did.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum Unsubscribed {
+    /// The list took the request: no more mail from it.
+    Done,
+    /// A message asking to leave is in the outbox.
+    Sent,
+    /// The list leaves it to the person, on this page.
+    Page { url: String },
 }
 
 /// One row of a message list.

@@ -4,7 +4,7 @@ use crate::{
     Account, AccountId, Action, Body, Category, Changes, Checkpoint, Correspondents, Draft,
     DraftCopy, DraftFile, DraftId, DraftToPush, FileId, Folder, FolderId, ListQuery, MessageId,
     MessageLocation, MessageRow, Moved, NewAccount, NewFolder, NewMail, NewMessage, Op, OpId,
-    OutboxId, Outgoing, OutgoingFile, RecentFile, SavedDraft, ServerDraft, Unsent,
+    OutboxId, Outgoing, OutgoingFile, RecentFile, SavedDraft, ServerDraft, Unsent, Unsubscribe,
 };
 
 /// Local database port. The UI reads only from here; sync writes here.
@@ -117,6 +117,8 @@ pub trait Store: Send + Sync {
     fn allow_images(&self, message: MessageId) -> Result<(), StoreError>;
     /// Who the message came from and went to.
     fn correspondents(&self, message: MessageId) -> Result<Correspondents, StoreError>;
+    /// How to leave the list the message came from, if it says.
+    fn unsubscribe(&self, message: MessageId) -> Result<Option<Unsubscribe>, StoreError>;
     fn location(&self, message: MessageId) -> Result<MessageLocation, StoreError>;
     /// The account's `limit` newest inbox messages and the rest of their conversations, those
     /// with no saved body and not being moved, newest first.

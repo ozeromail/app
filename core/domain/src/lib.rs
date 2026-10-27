@@ -10,6 +10,7 @@ mod outbox;
 mod provider;
 mod sort;
 mod store;
+mod unsubscribe;
 
 pub use account::{
     Account, AccountId, AccountKind, MailService, NewAccount, NewMail, Server, default_label,
@@ -33,3 +34,4 @@ pub use provider::{
 };
 pub use sort::{Category, Signals};
 pub use store::{Store, StoreError};
+pub use unsubscribe::{Leave, Unsubscribe};
