@@ -182,7 +182,7 @@ final class Mail: Sendable {
 
     /// Unread People mail in each account's inbox, by account id; none for an account without.
     func peopleUnread() async throws -> [Int64: Int] {
-        try Dictionary(core.peopleUnread().map { ($0.account, Int($0.unread)) }, uniquingKeysWith: { a, _ in a })
+        try Dictionary(uniqueKeysWithValues: core.peopleUnread().map { ($0.account, Int($0.unread)) })
     }
 
     /// Puts the accounts in this order.

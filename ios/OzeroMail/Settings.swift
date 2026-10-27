@@ -60,28 +60,15 @@ struct Swipes: Equatable {
     }
 }
 
-/// Which groups of the accounts sheet show their folders: account ids, or `Settings.allAccounts`.
-/// A group the person closed or opened stays so. One never touched starts open, but with
-/// `many` accounts each account's starts closed, so the sheet stays short.
+/// The accounts whose folders the accounts sheet shows; the rest stay closed, so the sheet stays short.
 struct Groups: Equatable {
-    var collapsed: Set<Int64> = []
     var expanded: Set<Int64> = []
 
-    func open(_ group: Int64, many: Bool) -> Bool {
-        if collapsed.contains(group) { return false }
-        if expanded.contains(group) { return true }
-        return group == Settings.allAccounts || !many
-    }
+    func open(_ account: Int64) -> Bool { expanded.contains(account) }
 
-    func toggled(_ group: Int64, many: Bool) -> Groups {
+    func toggled(_ account: Int64) -> Groups {
         var next = self
-        if open(group, many: many) {
-            next.collapsed.insert(group)
-            next.expanded.remove(group)
-        } else {
-            next.collapsed.remove(group)
-            next.expanded.insert(group)
-        }
+        if open(account) { next.expanded.remove(account) } else { next.expanded.insert(account) }
         return next
     }
 }
@@ -102,41 +89,38 @@ enum AllBox: String, CaseIterable, Identifiable {
 
     var id: Self { self }
 
-    var mailbox: Mailbox {
+    /// The role of a mailbox of all accounts' folders of one role.
+    private var role: FolderRole? {
         switch self {
-        case .unread: .unread
-        case .files: .files
-        case .snoozed: .unified(role: .snoozed)
-        case .flagged: .unified(role: .flagged)
-        case .sent: .unified(role: .sent)
-        case .archive: .unified(role: .archive)
-        case .junk: .unified(role: .junk)
-        case .trash: .unified(role: .trash)
+        case .unread, .files: nil
+        case .snoozed: .snoozed
+        case .flagged: .flagged
+        case .sent: .sent
+        case .archive: .archive
+        case .junk: .junk
+        case .trash: .trash
         }
+    }
+
+    var mailbox: Mailbox {
+        if let role { return .unified(role: role) }
+        return self == .unread ? .unread : .files
     }
 
     var icon: String {
-        switch mailbox {
-        case .unread: "envelope.badge"
-        case .files: "paperclip"
-        case .unified(let role): role.icon
-        case .folder: "folder"
-        }
+        if let role { return role.icon }
+        return self == .unread ? "envelope.badge" : "paperclip"
     }
 
     var title: String {
-        switch mailbox {
-        case .unread: tr("folder_unread")
-        case .files: tr("folder_files")
-        case .unified(let role): role.allTitle
-        case .folder: ""
-        }
+        if let role { return role.allTitle }
+        return tr(self == .unread ? "folder_unread" : "folder_files")
     }
 
     /// Shown in the list: a role's mailbox once some account has such a folder.
     func listed(_ folders: [FolderItem]) -> Bool {
-        if case .unified(let role) = mailbox { return folders.contains { $0.role == role } }
-        return true
+        guard let role else { return true }
+        return folders.contains { $0.role == role }
     }
 }
 
@@ -148,9 +132,6 @@ struct AllBoxes: Equatable {
 
 /// The person's choices, kept on the phone.
 enum Settings {
-    /// The group of the mailboxes of all accounts together; account ids are positive.
-    static let allAccounts: Int64 = 0
-
     private static let defaults = UserDefaults.standard
 
     static var swipes: Swipes {
@@ -186,11 +167,8 @@ enum Settings {
 
     /// The groups of the accounts sheet the person closed or opened.
     static var groups: Groups {
-        get { Groups(collapsed: ids("collapsed_groups"), expanded: ids("expanded_groups")) }
-        set {
-            defaults.set(newValue.collapsed.map(String.init), forKey: "collapsed_groups")
-            defaults.set(newValue.expanded.map(String.init), forKey: "expanded_groups")
-        }
+        get { Groups(expanded: ids("expanded_groups")) }
+        set { defaults.set(newValue.expanded.map(String.init), forKey: "expanded_groups") }
     }
 
     /// The mailboxes of all accounts below the inboxes in the accounts sheet: their order and which show.

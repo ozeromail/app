@@ -608,7 +608,6 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         if (context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             askToNotify.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        counts()
     }
     // Only once there is an account: without one a check has nothing to do.
     LaunchedEffect(accounts.isEmpty()) {
@@ -1212,7 +1211,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                     scope.launch { sync(mailbox) }
                                 },
                                 mailbox = mailbox,
-                                tabbed = mailbox == Mail.INBOX || openFolder?.role == FolderRole.INBOX,
+                                tabbed = tabbed(),
                                 scope = scopeAccounts(mailbox, openFolder, accounts),
                                 title = mailboxTitle(mailbox, openFolder),
                                 owner = mailboxOwner(mailbox, openFolder, accounts),
@@ -1478,8 +1477,7 @@ private fun InboxList(
     // Right after a switch the list is still the old tab's, so it does not count.
     val oldTabList = remember(tab, mailbox) { messages }
     // With nothing in any tab there is one lake under them all, which stays put as they change.
-    val inbox = tabbed
-    val allEmpty = inbox && inboxEmpty
+    val allEmpty = tabbed && inboxEmpty
     var hadMail by remember(tab, mailbox) { mutableStateOf(false) }
     LaunchedEffect(messages) { hadMail = messages.isNotEmpty() && messages !== oldTabList }
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
@@ -1575,7 +1573,7 @@ private fun InboxList(
     Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
         // The other tabs' pages, under the list: the one left goes on from where the finger let it
         // go, and the next shows under the finger before it is picked.
-        if (inbox && !allEmpty) {
+        if (tabbed && !allEmpty) {
             Category.entries.forEachIndexed { at, category ->
                 if (category == tab) return@forEachIndexed
                 val from = leaving?.takeIf { it.tab == category }
@@ -1658,12 +1656,12 @@ private fun InboxList(
                         val fade = if (fresh) Modifier.graphicsLayer { alpha = glidedAlpha(thumb() - page) } else Modifier
                         Box(Modifier.animateItem(fadeInSpec = null, placementSpec = null, fadeOutSpec = Motion.calm(Motion.SMALL)).then(fade)) {
                             key(mailbox) {
-                                val (title, text) = emptyWords(inbox, allEmpty, tab)
+                                val (title, text) = emptyWords(tabbed, allEmpty, tab)
                                 StillNote(
                                     stringResource(title),
                                     stringResource(text),
-                                    drawIn = hadMail && inbox,
-                                    grey = !inbox,
+                                    drawIn = hadMail && tabbed,
+                                    grey = !tabbed,
                                     checking = checking?.let { (head, line) -> stringResource(head) to stringResource(line) },
                                     checkedAt = checkedAt,
                                     refreshing = refreshing,
@@ -1721,7 +1719,7 @@ private fun InboxList(
             // The rows move down with the finger and still water shows in the gap they leave.
             if (!lake) {
                 PullWater(
-                    grey = !inbox,
+                    grey = !tabbed,
                     fraction = { pull.fraction },
                     depth = { with(density) { pullGap(opened()) } },
                     refreshing = refreshing,
@@ -1775,7 +1773,7 @@ private fun InboxList(
             Dock(
                 modifier = Modifier.onSizeChanged { dockHeight = with(density) { it.height.toDp() } },
                 tab = tab,
-                tabs = tabs.takeIf { inbox },
+                tabs = tabs.takeIf { tabbed },
                 glide = glide,
                 thumb = thumb,
                 accounts = scope,

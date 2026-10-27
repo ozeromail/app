@@ -49,6 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -219,16 +220,7 @@ fun SheetRow(
         Modifier
             .fillMaxWidth()
             .heightIn(min = if (short) 40.dp else 52.dp)
-            .combinedClickable(
-                onLongClickLabel = longClickLabel,
-                onLongClick = onLongClick?.let { held ->
-                    {
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        held()
-                    }
-                },
-                onClick = onClick,
-            )
+            .holdable(haptics, onClick, onLongClick, onLongClickLabel = longClickLabel)
             .padding(horizontal = Gap.sheet, vertical = if (short) 6.dp else 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -237,6 +229,25 @@ fun SheetRow(
         content()
     }
 }
+
+/** Tapped, does [onClick]; held, does [onLongClick], if any, with a buzz. */
+fun Modifier.holdable(
+    haptics: HapticFeedback,
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)?,
+    onClickLabel: String? = null,
+    onLongClickLabel: String? = null,
+): Modifier = combinedClickable(
+    onClickLabel = onClickLabel,
+    onLongClickLabel = onLongClickLabel,
+    onLongClick = onLongClick?.let { held ->
+        {
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+            held()
+        }
+    },
+    onClick = onClick,
+)
 
 /** How wide a sheet gets. */
 private val SHEET_MAX = 560.dp
