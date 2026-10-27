@@ -2876,3 +2876,53 @@ fn a_draft_moved_to_another_account_leaves_its_copy_behind() {
         .unwrap();
     assert_eq!(stale(&store, b), ["5"]);
 }
+
+#[test]
+fn a_conversation_moves_to_another_folder_of_its_account() {
+    let store = store();
+    let other = account(&store, "b@example.com");
+    let account = account(&store, "a@example.com");
+    let folder = inbox(&store, account);
+    store
+        .save_folders(
+            account,
+            &[
+                NewFolder {
+                    remote_id: "INBOX".into(),
+                    name: "Inbox".into(),
+                    role: FolderRole::Inbox,
+                },
+                NewFolder {
+                    remote_id: "Work".into(),
+                    name: "Work".into(),
+                    role: FolderRole::Custom,
+                },
+            ],
+        )
+        .unwrap();
+    let work = store.folders(account).unwrap()[1].id;
+    let elsewhere = inbox(&store, other);
+    store
+        .save_messages(folder, &[message(1, 100), reply(2, 200, &[1])])
+        .unwrap();
+    let shown = list(&store, ListScope::Folder(folder), 10, None)[0].id;
+
+    // Not into the folder it is in, nor into another account's.
+    for to in [folder, elsewhere] {
+        assert_eq!(
+            store.queue_all(&[(shown, Action::Move(to))], 50),
+            Err(StoreError::NotAllowed)
+        );
+    }
+    let ops = store.queue_all(&[(shown, Action::Move(work))], 50).unwrap();
+    assert_eq!(ops.len(), 2);
+    assert!(list(&store, ListScope::Folder(folder), 10, None).is_empty());
+    assert_eq!(list(&store, ListScope::Folder(work), 10, None).len(), 1);
+    let due = store.due(account, 50).unwrap();
+    assert!(
+        due.iter()
+            .all(|op| op.action == Action::Move(work) && op.to.as_deref() == Some("Work"))
+    );
+    assert!(store.undo(&ops, 49).unwrap());
+    assert_eq!(list(&store, ListScope::Folder(folder), 10, None).len(), 1);
+}

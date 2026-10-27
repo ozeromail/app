@@ -34,7 +34,12 @@ pub async fn push_ops(
                 provider.set_flagged(&folder, validity, &ids, flagged).await
             }
             (
-                Action::Archive | Action::Trash | Action::Spam | Action::Inbox | Action::Snooze,
+                Action::Archive
+                | Action::Trash
+                | Action::Spam
+                | Action::Inbox
+                | Action::Snooze
+                | Action::Move(_),
                 Some(to),
             ) => {
                 // The copies in the folder they went to take the ids the server gave. The
@@ -52,7 +57,12 @@ pub async fn push_ops(
                     .await
             }
             (
-                Action::Archive | Action::Trash | Action::Spam | Action::Inbox | Action::Snooze,
+                Action::Archive
+                | Action::Trash
+                | Action::Spam
+                | Action::Inbox
+                | Action::Snooze
+                | Action::Move(_),
                 None,
             ) => Err(ProviderError::Protocol("no folder to move to".into())),
         };

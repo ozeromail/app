@@ -395,18 +395,7 @@ impl Core {
     pub fn folders(&self) -> Result<Vec<FolderItem>, CoreError> {
         let mut items = vec![];
         for account in self.store.accounts()? {
-            let folders = self.store.folders(account.id)?;
-            let tree = folder_tree(&folders);
-            items.extend(
-                folders
-                    .into_iter()
-                    .zip(tree)
-                    .map(|(f, (parent, short_name))| FolderItem {
-                        parent: parent.map(|p| p.0),
-                        short_name,
-                        ..FolderItem::from(f)
-                    }),
-            );
+            items.extend(self.account_folders(account.id, |_| true)?);
         }
         Ok(items)
     }
@@ -557,6 +546,23 @@ impl Core {
     /// As `archive`, back into the inbox: for mail in the archive, trash or spam.
     pub fn move_to_inbox(&self, messages: Vec<i64>) -> Result<Vec<i64>, CoreError> {
         self.hold_move(messages, Action::Inbox)
+    }
+
+    /// As `archive`, into `folder`, another folder of the messages' account.
+    pub fn move_to_folder(&self, messages: Vec<i64>, folder: i64) -> Result<Vec<i64>, CoreError> {
+        self.hold_move(messages, Action::Move(FolderId(folder)))
+    }
+
+    /// Where `move_to_folder` can take the message: its account's inbox, archive and own
+    /// folders, other than the one it is in, in tree order.
+    pub fn move_targets(&self, message: i64) -> Result<Vec<FolderItem>, CoreError> {
+        let here = self.store.location(MessageId(message))?;
+        self.account_folders(here.account_id, |f| {
+            matches!(
+                f.role,
+                FolderRole::Inbox | FolderRole::Archive | FolderRole::Custom
+            ) && f.remote_id != here.folder_remote_id
+        })
     }
 
     /// As `archive`, into the account's snoozed folder until `until` (seconds), when `wake`
@@ -1687,6 +1693,26 @@ impl Core {
     }
 
     /// Queues a move held for the undo time and returns its ops for `undo`.
+    /// The account's folders that `keep` takes, placed in its folder tree.
+    fn account_folders(
+        &self,
+        account: AccountId,
+        keep: impl Fn(&Folder) -> bool,
+    ) -> Result<Vec<FolderItem>, CoreError> {
+        let folders = self.store.folders(account)?;
+        let tree = folder_tree(&folders);
+        Ok(folders
+            .into_iter()
+            .zip(tree)
+            .filter(|(f, _)| keep(f))
+            .map(|(f, (parent, short_name))| FolderItem {
+                parent: parent.map(|p| p.0),
+                short_name,
+                ..FolderItem::from(f)
+            })
+            .collect())
+    }
+
     fn hold_move(&self, messages: Vec<i64>, action: Action) -> Result<Vec<i64>, CoreError> {
         Ok(ids(self
             .store
