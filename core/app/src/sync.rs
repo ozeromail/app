@@ -266,8 +266,8 @@ pub async fn download_whole(
     Ok((raw, body.attachments))
 }
 
-/// Downloads the missing bodies among the account's `limit` newest inbox messages, so they
-/// open at once. A message gone from the server is skipped; any other failure stops it, and
+/// Downloads the missing bodies of the account's `limit` newest inbox conversations' messages,
+/// so they open at once. A message gone from the server is skipped; any other failure stops it, and
 /// the reader downloads what is left.
 pub async fn prefetch_bodies(
     store: &dyn Store,

@@ -96,11 +96,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.plus
 import kotlinx.coroutines.withTimeoutOrNull
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.DraftItem
@@ -156,20 +164,42 @@ fun MessageScreen(
     var known by remember(message.id) { mutableStateOf(emptySet<Long>()) }
     var showAll by remember(message.id) { mutableStateOf(false) }
     // Loaded bodies and who each message went to, so a message opened again shows at once.
-    val bodies = remember(message.id) { mutableStateMapOf<Long, MessageBody>() }
+    val bodies = remember(message.id) { Bodies(mail, scope) }
     val people = remember(message.id) { mutableStateMapOf<Long, PeopleItem>() }
     val details = remember(message.id) { mutableStateMapOf<Long, Boolean>() }
     var replying by remember(message.id) { mutableStateOf<Replying?>(null) }
     // A reply on its way to the page: a second tap meanwhile starts nothing more.
     var answering by remember(message.id) { mutableStateOf(false) }
-    DisposableEffect(bodies) { onDispose { expectGone(bodies, "bodies of a closed conversation") } }
+    DisposableEffect(bodies) {
+        onDispose {
+            bodies.cancel()
+            expectGone(bodies, "bodies of a closed conversation")
+        }
+    }
     LaunchedEffect(message.id) {
         try {
             // Read before it is marked read, so what was new opens.
             val first = mail.thread(message).ifEmpty { listOf(message) }
+            val new = first.filter { !it.seen }.mapTo(mutableSetOf()) { it.id }
+            // What opens comes with who it went to and its body, so the page shows whole at
+            // once, not line by line. A body still to download holds it up only a moment.
+            val opens = first.filter { it.id in new || (new.isEmpty() && it.id == message.id) }
+            for (m in opens) people.load(mail, m)
+            withTimeoutOrNull(BODY_WAIT_MS) {
+                opens.map { m -> async { runCatching { bodies.of(m) } } }.awaitAll()
+            }
             thread = first
             known = first.mapTo(mutableSetOf()) { it.id }
-            unread = first.filter { !it.seen }.mapTo(mutableSetOf()) { it.id }
+            unread = new
+            // The rest downloads quietly, so a closed message shows how it starts and opens at once.
+            launch {
+                if (!bodies.fill(first)) return@launch
+                try {
+                    mail.thread(message).takeIf { it.isNotEmpty() }?.let { thread = it }
+                } catch (e: CoreException) {
+                    error = e.text()
+                }
+            }
         } catch (e: CoreException) {
             error = e.text()
         }
@@ -268,10 +298,12 @@ fun MessageScreen(
                     Column(Modifier.fillMaxSize().nestedScroll(hiding).verticalScroll(scroll)) {
                         val page = this
                         Title(message)
+                        // Until the conversation is read only the title shows, so nothing jumps in above.
+                        val ready = unread != null || error != null
                         // A long run of closed messages in the middle folds into one line.
                         val middle = 1 until thread.size - 2
                         val folded = !showAll && middle.count() >= 2 && middle.none { isOpen(thread[it]) }
-                        thread.forEachIndexed { i, m ->
+                        if (ready) thread.forEachIndexed { i, m ->
                             if (i == 1) {
                                 Reveal(middle.count().takeIf { folded }) { count -> More(count, onClick = { showAll = true }) }
                             }
@@ -433,8 +465,8 @@ private fun Hiding(shown: () -> Boolean, modifier: Modifier, content: @Composabl
 private const val HIDE_AFTER = 2f
 
 /** How many files a message has: as the list knew, or as its body says once loaded. */
-private fun fileCount(message: MessageItem, bodies: Map<Long, MessageBody>): Int =
-    maxOf(message.attachments.size, bodies[message.id]?.attachments?.size ?: 0)
+private fun fileCount(message: MessageItem, bodies: Bodies): Int =
+    maxOf(message.attachments.size, bodies.saved[message.id]?.attachments?.size ?: 0)
 
 /** A message opens slowly from its line down, and closes a little quicker. */
 private val opening = expandVertically(Motion.calm(Motion.SCREEN), expandFrom = Alignment.Top) + fadeIn(Motion.calm(Motion.SCREEN))
@@ -449,7 +481,7 @@ private fun Letter(
     mail: Mail,
     files: Files,
     message: MessageItem,
-    bodies: MutableMap<Long, MessageBody>,
+    bodies: Bodies,
     people: MutableMap<Long, PeopleItem>,
     open: Boolean,
     unread: Boolean,
@@ -464,13 +496,7 @@ private fun Letter(
 ) {
     val filesAt = remember { BringIntoViewRequester() }
     LaunchedEffect(message.id, open) {
-        if (!open || message.id in people) return@LaunchedEffect
-        try {
-            people[message.id] = mail.people(message)
-        } catch (e: CoreException) {
-            // The line under the name stays empty; the message reads the same.
-            Log.w("Ozero", "recipients not read", e)
-        }
+        if (open) people.load(mail, message)
     }
     Column(modifier.fillMaxWidth()) {
         HorizontalDivider(Modifier.padding(horizontal = Gap.screen), color = MaterialTheme.colorScheme.outlineVariant)
@@ -531,6 +557,53 @@ private fun More(count: Int, onClick: () -> Unit) {
     }
 }
 
+/** Reads who [message] went to, once. */
+private suspend fun MutableMap<Long, PeopleItem>.load(mail: Mail, message: MessageItem) {
+    if (message.id in this) return
+    try {
+        this[message.id] = mail.people(message)
+    } catch (e: CoreException) {
+        // The line under the name stays empty; the message reads the same.
+        Log.w("Ozero", "recipients not read", e)
+    }
+}
+
+/** A conversation's bodies, each downloaded once however many ask for it, kept while it is open. */
+private class Bodies(private val mail: Mail, scope: CoroutineScope) {
+    // A failed or abandoned download leaves the screen and the others be.
+    private val scope = scope + SupervisorJob(scope.coroutineContext[Job])
+    val saved = mutableStateMapOf<Long, MessageBody>()
+    private val loading = mutableMapOf<Long, Deferred<MessageBody>>()
+
+    /** Leaves what is still downloading: the conversation is closed. */
+    fun cancel() = scope.cancel()
+
+    suspend fun of(message: MessageItem): MessageBody = saved[message.id] ?: loading.getOrPut(message.id) {
+        scope.async(start = CoroutineStart.LAZY) {
+            try {
+                mail.body(message).also { saved[message.id] = it }
+            } finally {
+                loading.remove(message.id)
+            }
+        }
+    }.await()
+
+    /** Downloads the missing ones one by one, stopping at a failure, as offline; true if it got any. */
+    suspend fun fill(messages: List<MessageItem>): Boolean {
+        var got = false
+        for (m in messages.filter { it.id !in saved }) {
+            try {
+                of(m)
+                got = true
+            } catch (e: CoreException) {
+                Log.w("Ozero", "bodies not downloaded", e)
+                break
+            }
+        }
+        return got
+    }
+}
+
 /**
  * A message's page, or its text with the quote folded; it loads when shown, once into
  * [bodies]. It is as tall as it is, and its files follow the text; [filesAt] brings them
@@ -542,10 +615,10 @@ private fun LetterBody(
     files: Files,
     filesAt: BringIntoViewRequester,
     message: MessageItem,
-    bodies: MutableMap<Long, MessageBody>,
+    bodies: Bodies,
 ) {
     // A page whose images load on their own waits for them again, as on the first time.
-    var body by remember(message.id) { mutableStateOf(bodies[message.id]?.takeUnless { it.remoteImages > 0u && it.showsImages }) }
+    var body by remember(message.id) { mutableStateOf(bodies.saved[message.id]?.takeUnless { it.remoteImages > 0u && it.showsImages }) }
     var error by remember(message.id) { mutableStateOf<Int?>(null) }
     // The page again with its remote images.
     var withImages by remember(message.id) { mutableStateOf<ImagesPage?>(null) }
@@ -560,7 +633,7 @@ private fun LetterBody(
     }
     LaunchedEffect(message.id) {
         try {
-            val loaded = bodies[message.id] ?: mail.body(message).also { bodies[message.id] = it }
+            val loaded = bodies.of(message)
             if (loaded.remoteImages > 0u && loaded.showsImages) {
                 // Wait a moment for the images, so the page does not load twice and jump.
                 coroutineScope {
@@ -606,9 +679,9 @@ private fun LetterBody(
                     try {
                         mail.allowImages(message)
                         // The sender's other messages load theirs on their own now too.
-                        val allowed = bodies[message.id]?.copy(showsImages = true)
-                        bodies.clear()
-                        allowed?.let { bodies[message.id] = it }
+                        val allowed = bodies.saved[message.id]?.copy(showsImages = true)
+                        bodies.saved.clear()
+                        allowed?.let { bodies.saved[message.id] = it }
                         loadImages()
                     } catch (e: CoreException) {
                         imagesError = e.text()
@@ -1179,3 +1252,6 @@ private fun paneButton(): Dp = if (LocalRoom.current.short) 40.dp else 46.dp
 
 /** How long a page waits for its images before it shows without them. */
 private const val IMAGES_WAIT_MS = 2_000L
+
+/** How long a conversation waits for the bodies that open before it shows. */
+private const val BODY_WAIT_MS = 250L

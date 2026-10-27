@@ -317,6 +317,25 @@ pub struct ListQuery {
     pub after: Option<Cursor>,
 }
 
+/// The text with every run of blank lines, as a page's layout leaves in it, closed up to one
+/// and none at its ends.
+pub fn close_blank_lines(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut blank = false;
+    for line in text.trim().lines() {
+        if line.trim().is_empty() {
+            blank = true;
+            continue;
+        }
+        if !out.is_empty() {
+            out.push_str(if blank { "\n\n" } else { "\n" });
+        }
+        blank = false;
+        out.push_str(line.trim_end());
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,6 +381,14 @@ mod tests {
         ] {
             assert_eq!(body(text).split_quote(), (text, ""), "{text}");
         }
+    }
+
+    #[test]
+    fn blank_runs_close_up() {
+        assert_eq!(
+            close_blank_lines("\n Hi,\n\n \n\t\nsee you\n\n\n"),
+            "Hi,\n\nsee you"
+        );
     }
 
     #[test]

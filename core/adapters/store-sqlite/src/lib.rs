@@ -2617,18 +2617,25 @@ const INBOX_UNREAD: &str = concat!(
     not_moving!(),
     " GROUP BY m.category"
 );
-// The messages of a folder, leaving out those on their way out.
-/// Inbox mail of an account, newest `?2` of it, still without a body and staying.
+/// The account's newest `?2` inbox messages and the rest of their conversations, the user's
+/// replies included, so a conversation opens whole: those still without a body and staying.
+/// A long conversation brings at most a few times `?2` more.
 const WITHOUT_BODY: &str = concat!(
-    "SELECT m.id, f.remote_id, f.validity, m.remote_id
-     FROM (SELECT id, folder_id, remote_id, date FROM message
-           WHERE folder_id IN (SELECT id FROM folder WHERE account_id = ?1 AND role = 'inbox')
-             AND stand_in = 0
-           ORDER BY date DESC, id DESC LIMIT ?2) m
-     JOIN folder f ON f.id = m.folder_id
-     WHERE NOT EXISTS (SELECT 1 FROM message_body b WHERE b.message_id = m.id) AND ",
+    "WITH s AS (SELECT id, folder_id, thread_id, category FROM message
+                WHERE folder_id IN (SELECT id FROM folder WHERE account_id = ?1 AND role = 'inbox')
+                  AND stand_in = 0
+                ORDER BY date DESC, id DESC LIMIT ?2),
+          c AS (SELECT id FROM s UNION
+                SELECT m.id FROM s JOIN message m ON m.thread_id = s.thread_id
+                JOIN folder f ON f.id = m.folder_id WHERE ",
+    in_conversation!("m", "f", "s"),
+    ")
+     SELECT m.id, f.remote_id, f.validity, m.remote_id
+     FROM c JOIN message m ON m.id = c.id JOIN folder f ON f.id = m.folder_id
+     WHERE m.stand_in = 0
+       AND NOT EXISTS (SELECT 1 FROM message_body b WHERE b.message_id = m.id) AND ",
     not_moving!(),
-    " ORDER BY m.date DESC, m.id DESC"
+    " ORDER BY m.date DESC, m.id DESC LIMIT ?2 * 4"
 );
 
 const FOLDER_MESSAGES: &str = concat!(

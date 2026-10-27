@@ -34,6 +34,11 @@ struct MessageView: View {
     @State private var barShown = true
     /// A reply on its way to the page: a second tap meanwhile starts nothing more.
     @State private var answering = false
+    /// The rest of the conversation downloading; it stops when the message closes.
+    @State private var filling: Task<Void, Never>?
+
+    /// How long a conversation waits for the bodies that open before it shows.
+    private static let bodyWait = Duration.milliseconds(250)
 
     private var mail: Mail { model.mail }
 
@@ -53,10 +58,12 @@ struct MessageView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     Title(message: message)
+                    // Until the conversation is read only the title shows, so nothing jumps in above.
+                    let ready = unread != nil || error != nil
                     // A long run of closed messages in the middle folds into one line.
                     let middle = 1..<max(1, shown.count - 2)
                     let folded = !showAll && middle.count >= 2 && !middle.contains { isOpen(shown[$0]) }
-                    ForEach(Array(shown.enumerated()), id: \.element.id) { i, m in
+                    ForEach(Array((ready ? shown : []).enumerated()), id: \.element.id) { i, m in
                         if i == 1 && folded {
                             FoldedLine(count: middle.count) { withAnimation(.smooth) { showAll = true } }
                         }
@@ -164,14 +171,33 @@ struct MessageView: View {
             if person.name != person.email { Text(verbatim: person.email) }
         }
         .attachmentActions(files)
+        .onDisappear { filling?.cancel() }
         .task(id: message.id) {
             do {
                 // Read before it is marked read, so what was new opens.
                 var first = try await mail.thread(of: message)
                 if first.isEmpty { first = [message] }
+                let new = Set(first.filter { !$0.seen }.map(\.id))
+                // What opens comes with who it went to and its body, so the page shows whole at
+                // once, not line by line. A body still to download holds it up only a moment.
+                let opens = first.filter { new.contains($0.id) || (new.isEmpty && $0.id == message.id) }
+                for m in opens {
+                    if let found = try? await mail.people(of: m) { people[m.id] = found }
+                }
+                let bodies = bodies
+                await Task {
+                    await withTaskGroup(of: Void.self) { group in
+                        for m in opens { group.addTask { _ = try? await bodies.of(m, mail: mail) } }
+                    }
+                }.wait(upTo: Self.bodyWait)
                 thread = first
                 known = Set(first.map(\.id))
-                unread = Set(first.filter { !$0.seen }.map(\.id))
+                unread = new
+                // The rest downloads quietly, so a closed message shows how it starts and opens at once.
+                filling = Task {
+                    guard await bodies.fill(first, mail: mail) else { return }
+                    if let found = try? await mail.thread(of: message), !found.isEmpty { thread = found }
+                }
             } catch {
                 self.error = error.text()
             }
@@ -371,10 +397,50 @@ struct Replying: Equatable {
     var copied: [String]
 }
 
-/// Loaded bodies of one conversation, shared by its letters.
-@Observable
+extension Task where Failure == Never {
+    /// Waits until the task is done or `limit` has passed, whichever comes first; it runs on.
+    func wait(upTo limit: Duration) async {
+        let (done, finish) = AsyncStream<Void>.makeStream()
+        let work = Task<Void, Never> {
+            _ = await value
+            finish.yield()
+        }
+        let timer = Task<Void, Never> {
+            try? await Task.sleep(for: limit)
+            finish.yield()
+        }
+        for await _ in done { break }
+        work.cancel()
+        timer.cancel()
+    }
+}
+
+/// A conversation's bodies, shared by its letters: each downloaded once however many ask for it.
+@MainActor @Observable
 final class Bodies {
     var loaded: [Int64: MessageBody] = [:]
+    @ObservationIgnored private var loading: [Int64: Task<MessageBody, Error>] = [:]
+
+    func of(_ message: MessageItem, mail: Mail) async throws -> MessageBody {
+        if let saved = loaded[message.id] { return saved }
+        // Not cancelled with the one that asked first: the others still wait for it.
+        let task = loading[message.id] ?? Task { try await mail.body(of: message) }
+        loading[message.id] = task
+        defer { loading[message.id] = nil }
+        let body = try await task.value
+        loaded[message.id] = body
+        return body
+    }
+
+    /// Downloads the missing ones one by one, stopping at a failure, as offline; true if it got any.
+    func fill(_ messages: [MessageItem], mail: Mail) async -> Bool {
+        var got = false
+        for m in messages where loaded[m.id] == nil {
+            guard !Task.isCancelled, (try? await of(m, mail: mail)) != nil else { break }
+            got = true
+        }
+        return got
+    }
 
     /// How many files a message has: as the list knew, or as its body says once loaded.
     func files(of message: MessageItem) -> Int {
@@ -471,6 +537,9 @@ private struct LetterBody: View {
     let bodies: Bodies
     let message: MessageItem
 
+    /// How long a page with remote images waits for them before it shows.
+    private static let imagesWait = Duration.seconds(2)
+
     @State private var body_: MessageBody?
     @State private var error: LocalizedStringKey?
     /// The page again with its remote images.
@@ -524,22 +593,10 @@ private struct LetterBody: View {
 
     private func load() async {
         do {
-            let loaded: MessageBody
-            if let saved = bodies.loaded[message.id] {
-                loaded = saved
-            } else {
-                loaded = try await mail.body(of: message)
-                bodies.loaded[message.id] = loaded
-            }
+            let loaded = try await bodies.of(message, mail: mail)
             if loaded.remoteImages > 0 && loaded.showsImages {
                 // Wait a moment for the images, so the page does not load twice and jump.
-                let images = Task { await loadImages() }
-                _ = await withTaskGroup(of: Void.self) { group in
-                    group.addTask { await images.value }
-                    group.addTask { try? await Task.sleep(for: .seconds(2)) }
-                    await group.next()
-                    group.cancelAll()
-                }
+                await Task { await loadImages() }.wait(upTo: Self.imagesWait)
             }
             body_ = loaded
         } catch {
