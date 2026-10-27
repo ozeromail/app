@@ -25,8 +25,7 @@ import uniffi.ozero_api.NewMail
 
 /**
  * Checks the accounts that are due for new mail while the app is closed, each as often as it is
- * set to, and tells about mail from people. Accounts set to Instantly are [WatchService]'s while
- * it runs.
+ * set to, and tells about mail from people.
  */
 class MailWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
@@ -35,7 +34,6 @@ class MailWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         val now = System.currentTimeMillis()
         val due = { account: AccountItem ->
             when (val every = account.newMail) {
-                NewMail.Push -> !WatchService.running
                 NewMail.Manually -> false
                 // A run a little early is due: runs are 15 minutes apart, give or take.
                 is NewMail.Every -> now - checked.getLong(account.id.toString(), 0) >= every.minutes.toLong() * 60_000 - SLACK_MS
@@ -80,6 +78,8 @@ class MailWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                 .build()
             WorkManager.getInstance(context)
                 .enqueueUniquePeriodicWork(NAME, ExistingPeriodicWorkPolicy.KEEP, request)
+            // Left in the system settings by the connection once kept open with the app closed.
+            NotificationManagerCompat.from(context).deleteNotificationChannel("connected")
         }
     }
 }

@@ -29,7 +29,6 @@ enum BackgroundCheck {
             let due = try await mail.accounts().filter { account in
                 let last = Date(timeIntervalSince1970: Settings.checked[String(account.id)] ?? 0)
                 switch account.newMail {
-                case .push: return true
                 case .manually: return false
                 // A run a little early is due.
                 case .every(let minutes): return now.timeIntervalSince(last) >= Double(minutes) * 60 - slack
