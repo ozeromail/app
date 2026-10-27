@@ -2797,8 +2797,11 @@ impl Mailbox {
         match self {
             Self::Unified { role } => folder.role == role,
             Self::Folder { id } => folder.id.0 == id,
-            // Most of such mail is in the inboxes: older mail loads there.
-            Self::Unread | Self::Files => folder.role == FolderRole::Inbox,
+            // The folders their lists cover.
+            Self::Unread | Self::Files => !matches!(
+                folder.role,
+                FolderRole::Trash | FolderRole::Junk | FolderRole::Drafts
+            ),
         }
     }
 }
@@ -2837,6 +2840,13 @@ impl From<Folder> for FolderItem {
 /// every folder, counts as at the top.
 fn folder_tree(folders: &[Folder]) -> Vec<(Option<FolderId>, String)> {
     let by_name: HashMap<&str, &Folder> = folders.iter().map(|f| (f.name.as_str(), f)).collect();
+    // Servers that keep folders under INBOX split names with `.`; the rest, and labels, with `/`.
+    // Only one of them, so a name such as "Dr. Who" stays whole.
+    let split = if folders.iter().any(|f| f.name.starts_with("INBOX.")) {
+        '.'
+    } else {
+        '/'
+    };
     folders
         .iter()
         .map(|folder| {
@@ -2845,7 +2855,7 @@ fn folder_tree(folders: &[Folder]) -> Vec<(Option<FolderId>, String)> {
             let parent = name
                 .char_indices()
                 .rev()
-                .filter(|&(i, c)| (c == '/' || c == '.') && i + 1 < name.len())
+                .filter(|&(i, c)| c == split && i + 1 < name.len())
                 .find_map(|(i, _)| Some((*by_name.get(&name[..i])?, &name[i + 1..])));
             match parent {
                 Some((outer, rest)) if outer.role == FolderRole::Inbox => (None, rest.to_owned()),

@@ -228,6 +228,13 @@ impl Store for SqliteStore {
             .conn()
             .execute("DELETE FROM account WHERE id = ?1", [account.0])
             .map_err(storage)?;
+        // The unified inbox keeps one account at least: all of them, when the last one in it goes.
+        self.conn()
+            .execute(
+                "UPDATE account SET in_all = 1 WHERE NOT EXISTS (SELECT 1 FROM account WHERE in_all = 1)",
+                [],
+            )
+            .map_err(storage)?;
         found(changed)
     }
 
@@ -607,24 +614,21 @@ impl Store for SqliteStore {
         let (date, id) = query
             .after
             .map_or((i64::MAX, i64::MAX), |c| (c.date, c.id.0));
-        let tab = match &query.scope {
-            ListScope::Inbox(_, category) => Some(*category_ref(*category)),
-            _ => None,
-        };
-        let inbox = match &query.scope {
-            ListScope::Inbox(account, _) => account.map(|a| a.0),
-            _ => None,
-        };
-        let (sql, scope): (&str, &dyn rusqlite::ToSql) = match &query.scope {
-            ListScope::Folder(folder) => (LIST_FOLDER, &folder.0),
-            ListScope::Inbox(..) => (LIST_INBOX_TAB, &inbox),
-            // Their scopes take no value; `?1` stays unused.
-            ListScope::Unread => (LIST_UNREAD, &0),
-            ListScope::Files => (LIST_FILES, &0),
-            ListScope::Unified(role) if walks_by_date(*role) => {
-                (LIST_UNIFIED_BY_DATE, role_ref(*role))
+        let inbox;
+        // The value of `?1`, and of `?5` for a tab.
+        let (sql, scope, tab): (&str, &dyn rusqlite::ToSql, _) = match &query.scope {
+            ListScope::Folder(folder) => (LIST_FOLDER, &folder.0, None),
+            ListScope::Inbox(account, category) => {
+                inbox = account.map(|a| a.0);
+                (LIST_INBOX_TAB, &inbox, Some(*category_ref(*category)))
             }
-            ListScope::Unified(role) => (LIST_UNIFIED_BY_FOLDER, role_ref(*role)),
+            // Their scopes take no value; `?1` stays unused.
+            ListScope::Unread => (LIST_UNREAD, &0, None),
+            ListScope::Files => (LIST_FILES, &0, None),
+            ListScope::Unified(role) if walks_by_date(*role) => {
+                (LIST_UNIFIED_BY_DATE, role_ref(*role), None)
+            }
+            ListScope::Unified(role) => (LIST_UNIFIED_BY_FOLDER, role_ref(*role), None),
         };
         let conn = self.conn();
         let rows = conn.prepare_cached(sql).and_then(|mut s| {
@@ -2604,12 +2608,16 @@ const LIST_INBOX_TAB: &str = list_sql!("m.category = ?5 AND +m.folder_id IN ", i
 const LIST_UNREAD: &str = list_sql!(
     "(m.thread_id, +m.folder_id, +m.category) IN (SELECT n.thread_id, n.folder_id, n.category
          FROM message n JOIN folder nf ON nf.id = n.folder_id
-         WHERE n.flags & 1 = 0 AND n.found = 0 AND nf.role NOT IN ('trash', 'junk', 'drafts'))"
+         WHERE n.flags & 1 = 0 AND n.found = 0 AND nf.role NOT IN ('trash', 'junk', 'drafts') AND ",
+    not_moving!("n"),
+    ")"
 );
 const LIST_FILES: &str = list_sql!(
     "(m.thread_id, +m.folder_id, +m.category) IN (SELECT n.thread_id, n.folder_id, n.category
          FROM attachment a JOIN message n ON n.id = a.message_id JOIN folder nf ON nf.id = n.folder_id
-         WHERE a.name != '' AND n.found = 0 AND nf.role NOT IN ('trash', 'junk', 'drafts'))"
+         WHERE a.name != '' AND n.found = 0 AND nf.role NOT IN ('trash', 'junk', 'drafts') AND ",
+    not_moving!("n"),
+    ")"
 );
 
 /// The conversation of message `?1` in its folder and inbox tab, with the user's replies
