@@ -49,6 +49,7 @@ import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
 import uniffi.ozero_api.NewMail
 import uniffi.ozero_api.RecentFileItem
+import uniffi.ozero_api.Unsubscribed
 import uniffi.ozero_api.UnsentItem
 import uniffi.ozero_api.googleSignIn
 
@@ -334,6 +335,16 @@ class Mail(private val context: Context) {
 
     /** Where [moveToFolder] can take [message]: its account's inbox, archive and own folders, but its own. */
     suspend fun moveTargets(message: MessageItem): List<FolderItem> = io { core.moveTargets(message.id) }
+
+    /** Whether [message] says how to leave its list in a way [unsubscribe] takes. */
+    suspend fun canUnsubscribe(message: MessageItem): Boolean = io { core.canUnsubscribe(message.id) }
+
+    /** Leaves [message]'s list; a message asking to leave goes out in the background. */
+    suspend fun unsubscribe(message: MessageItem): Unsubscribed {
+        val done = io { core.unsubscribe(message.id) }
+        if (done == Unsubscribed.Sent) push(message.accountId)
+        return done
+    }
 
     /** As [archive], back into the inbox: for mail in the archive, trash or spam. */
     suspend fun moveToInbox(messages: List<MessageItem>): List<Long> = move(messages) { core.moveToInbox(it) }

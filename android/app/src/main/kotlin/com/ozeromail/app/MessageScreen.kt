@@ -2,7 +2,11 @@
 
 package com.ozeromail.app
 
+import android.content.ActivityNotFoundException
 import android.content.ClipData
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.annotation.DrawableRes
@@ -50,10 +54,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -119,6 +125,7 @@ import uniffi.ozero_api.MessageItem
 import uniffi.ozero_api.PeopleItem
 import uniffi.ozero_api.PersonItem
 import uniffi.ozero_api.RemoteImage
+import uniffi.ozero_api.Unsubscribed
 
 /**
  * A conversation, oldest first, on one page that scrolls title and all. What was unread
@@ -156,6 +163,9 @@ fun MessageScreen(
     pane: Boolean = false,
 ) {
     var sheet by remember(message.id) { mutableStateOf<ReaderSheet?>(null) }
+    // Whether the list it came from can be left from here, and the question before it is.
+    var leaves by remember(message.id) { mutableStateOf(false) }
+    var leaving by remember(message.id) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
@@ -179,6 +189,13 @@ fun MessageScreen(
         onDispose {
             bodies.cancel()
             expectGone(bodies, "bodies of a closed conversation")
+        }
+    }
+    LaunchedEffect(message.id) {
+        leaves = try {
+            mail.canUnsubscribe(message)
+        } catch (_: CoreException) {
+            false
         }
     }
     LaunchedEffect(message.id) {
@@ -458,6 +475,12 @@ fun MessageScreen(
                             }
                         }
                     }
+                    if (leaves) {
+                        SheetAction(R.drawable.ic_unsubscribe, stringResource(R.string.action_unsubscribe), colors.onSurface) {
+                            sheet = null
+                            leaving = true
+                        }
+                    }
                     onSpam?.let { spam ->
                         SheetAction(R.drawable.ic_spam, stringResource(R.string.action_spam), colors.onSurface) {
                             sheet = null
@@ -480,6 +503,32 @@ fun MessageScreen(
                 null -> {}
             }
         }
+        if (leaving) {
+            Unsubscribe(
+                sender = message.fromName?.takeIf { it.isNotBlank() } ?: message.fromEmail,
+                onDismiss = { leaving = false },
+                onConfirm = {
+                    leaving = false
+                    scope.launch {
+                        val text = try {
+                            when (val done = mail.unsubscribe(message)) {
+                                Unsubscribed.Done -> R.string.unsubscribe_done
+                                Unsubscribed.Sent -> R.string.unsubscribe_sent
+                                is Unsubscribed.Page -> {
+                                    openPage(context, done.url)
+                                    null
+                                }
+                            }
+                        } catch (e: CoreException) {
+                            snackbar.showSnackbar(context.getString(e.text()))
+                            return@launch
+                        }
+                        leaves = false
+                        text?.let { snackbar.showSnackbar(context.getString(it)) }
+                    }
+                },
+            )
+        }
         AttachmentActions(files)
         FileViewer(files)
         Toast(
@@ -487,6 +536,34 @@ fun MessageScreen(
             onGo = {},
             modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = if (pane) TOAST_ABOVE_ROW else TOAST_ABOVE_BAR),
         )
+    }
+}
+
+/** Asks before leaving [sender]'s list, which cannot be taken back. */
+@Composable
+private fun Unsubscribe(sender: String, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text(stringResource(R.string.action_unsubscribe), color = colors.error) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+        },
+        title = { Text(stringResource(R.string.unsubscribe_title, sender)) },
+        text = { Text(stringResource(R.string.unsubscribe_text)) },
+        containerColor = colors.background,
+        shape = RoundedCornerShape(Radius.dialog),
+    )
+}
+
+/** Opens an `https` page in the browser; nothing if no app takes it. */
+private fun openPage(context: Context, url: String) {
+    try {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE))
+    } catch (_: ActivityNotFoundException) {
+        // Nothing opens pages.
     }
 }
 

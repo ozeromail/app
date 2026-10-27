@@ -382,6 +382,18 @@ final class Mail: Sendable {
         try core.moveTargets(message: message.id)
     }
 
+    /// Whether `message` says how to leave its list in a way `unsubscribe` takes.
+    func canUnsubscribe(_ message: MessageItem) async throws -> Bool {
+        try core.canUnsubscribe(message: message.id)
+    }
+
+    /// Leaves `message`'s list; a message asking to leave goes out in the background.
+    func unsubscribe(_ message: MessageItem) async throws -> Unsubscribed {
+        let done = try await core.unsubscribe(message: message.id)
+        if done == .sent { push(account: message.accountId) }
+        return done
+    }
+
     /// As `archive`, back into the inbox: for mail in the archive, trash or spam.
     func moveToInbox(_ messages: [MessageItem]) async throws -> [Int64] {
         try move(messages) { try core.moveToInbox(messages: $0) }

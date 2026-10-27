@@ -288,5 +288,10 @@
   "action_move_to_folder": "В папку",
   "move_title": "Перенести в",
   "inbox_moved_to": "Перенесено в «%1$s»",
-  "move_none": "Других папок нет"
+  "move_none": "Других папок нет",
+  "action_unsubscribe": "Отписаться",
+  "unsubscribe_title": "Отписаться от %1$s?",
+  "unsubscribe_text": "Новые письма из этой рассылки приходить не будут. Уже пришедшие останутся.",
+  "unsubscribe_done": "Вы отписались",
+  "unsubscribe_sent": "Запрос на отписку отправлен"
 }

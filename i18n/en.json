@@ -288,5 +288,10 @@
   "action_move_to_folder": "Move to Folder",
   "move_title": "Move to",
   "inbox_moved_to": "Moved to %1$s",
-  "move_none": "No other folders"
+  "move_none": "No other folders",
+  "action_unsubscribe": "Unsubscribe",
+  "unsubscribe_title": "Unsubscribe from %1$s?",
+  "unsubscribe_text": "Mail from this list stops coming. What is already here stays.",
+  "unsubscribe_done": "Unsubscribed",
+  "unsubscribe_sent": "Asked to unsubscribe"
 }
