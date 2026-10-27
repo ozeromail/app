@@ -396,10 +396,23 @@ private fun AccountFolders(account: AccountItem, state: MailboxesState, actions:
     }
 }
 
+/** A folder a message can move to, named and placed as the list shows it. */
+data class MoveTarget(val folder: FolderItem, val title: String, val indent: Boolean)
+
 /**
  * Where a message can move, from [targets]: the account's inbox and archive, then its own
- * folders in tree order. Without any, says so.
+ * folders in tree order.
  */
+@Composable
+fun moveOrder(targets: List<FolderItem>): List<MoveTarget> {
+    val (usual, own) = targets.partition { it.role != FolderRole.CUSTOM }
+    val ids = targets.map { it.id }.toSet()
+    val ownIds = own.map { it.id }.toSet()
+    return usual.sortedBy { it.role.rank() }.map { MoveTarget(it, it.title(), indent = false) } +
+        treeOrder(own).map { MoveTarget(it, it.shownName(ids), indent = it.parent in ownIds) }
+}
+
+/** The folders [moveOrder] lists, to pick one; without any, says so. */
 @Composable
 fun MoveTargets(targets: List<FolderItem>, onPick: (FolderItem, String) -> Unit) {
     val colors = MaterialTheme.colorScheme
@@ -413,20 +426,8 @@ fun MoveTargets(targets: List<FolderItem>, onPick: (FolderItem, String) -> Unit)
         )
         return
     }
-    val (usual, own) = targets.partition { it.role != FolderRole.CUSTOM }
-    usual.sortedBy { it.role.rank() }.forEach { folder ->
-        val title = folder.title()
-        FolderRow(folder.role.icon(), title, open = false) { onPick(folder, title) }
-    }
-    val ids = targets.map { it.id }.toSet()
-    treeOrder(own).forEach { folder ->
-        val title = folder.shownName(ids)
-        FolderRow(
-            lead = { Glyph(R.drawable.ic_folder, null, colors.primary) },
-            title = title,
-            open = false,
-            indent = own.any { it.id == folder.parent },
-        ) { onPick(folder, title) }
+    moveOrder(targets).forEach { (folder, title, indent) ->
+        FolderRow(lead = { Glyph(folder.role.icon(), null, colors.primary) }, title = title, open = false, indent = indent) { onPick(folder, title) }
     }
 }
 

@@ -553,15 +553,12 @@ impl Core {
         self.hold_move(messages, Action::Move(FolderId(folder)))
     }
 
-    /// Where `move_to_folder` can take the message: its account's inbox, archive and own
-    /// folders, other than the one it is in, in tree order.
+    /// Where `move_to_folder` can take the message: the folders of its account that take
+    /// moves, other than the one it is in.
     pub fn move_targets(&self, message: i64) -> Result<Vec<FolderItem>, CoreError> {
         let here = self.store.location(MessageId(message))?;
         self.account_folders(here.account_id, |f| {
-            matches!(
-                f.role,
-                FolderRole::Inbox | FolderRole::Archive | FolderRole::Custom
-            ) && f.remote_id != here.folder_remote_id
+            f.role.takes_moves() && f.remote_id != here.folder_remote_id
         })
     }
 
@@ -1692,7 +1689,6 @@ impl Core {
         self.items(rows)
     }
 
-    /// Queues a move held for the undo time and returns its ops for `undo`.
     /// The account's folders that `keep` takes, placed in its folder tree.
     fn account_folders(
         &self,
@@ -1713,6 +1709,7 @@ impl Core {
             .collect())
     }
 
+    /// Queues a move held for the undo time and returns its ops for `undo`.
     fn hold_move(&self, messages: Vec<i64>, action: Action) -> Result<Vec<i64>, CoreError> {
         Ok(ids(self
             .store

@@ -25,7 +25,7 @@ struct MessageView: View {
     @State private var showAll = false
     @State private var more = false
     /// The folders the message can move to, picked from More.
-    @State private var targets: [FolderItem]?
+    @State private var targets: [(folder: FolderItem, title: String)]?
     @State private var files = Files()
     /// Loaded bodies and who each message went to, so a message opened again shows at once.
     @State private var bodies = Bodies()
@@ -171,7 +171,7 @@ struct MessageView: View {
                 Button("action_move_to_folder") {
                     Task {
                         do {
-                            targets = try await mail.moveTargets(of: message)
+                            targets = try await moveOrder(mail.moveTargets(of: message))
                         } catch {
                             model.error = error.textKey()
                         }
@@ -188,7 +188,7 @@ struct MessageView: View {
             "move_title", isPresented: Binding { targets != nil } set: { if !$0 { targets = nil } },
             titleVisibility: .visible, presenting: targets
         ) { targets in
-            ForEach(moveOrder(targets), id: \.folder.id) { target in
+            ForEach(targets, id: \.folder.id) { target in
                 Button(target.title) {
                     leave { await model.moveToFolder([message], to: target.folder, title: target.title) }
                 }
