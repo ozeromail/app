@@ -89,6 +89,19 @@ class DraftKeeper(private val mail: Mail, private val scope: CoroutineScope, id:
         mail.attachFile(id, file)
     }
 
+    /**
+     * Saves [draft] now and stops saving, for another screen to go on with it. Gives the id it
+     * is saved under.
+     */
+    suspend fun handOff(draft: DraftItem): Long = lock.withLock {
+        latest.set(null)
+        if (!done) {
+            id = mail.saveDraft(draft.copy(id = id))
+            done = true
+        }
+        id
+    }
+
     /** Takes [file] off the draft, in turn with saves and the send, so a send after it goes without it. */
     suspend fun detach(file: DraftFileItem) = lock.withLock { mail.detachFile(file.id) }
 

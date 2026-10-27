@@ -211,6 +211,6 @@ fun ChoiceBar(done: Int, unread: Boolean, forever: Boolean, onCancel: () -> Unit
             onClick = onDelete,
         )
         BarAction(R.drawable.ic_more, stringResource(R.string.action_more), colors.onSurface, onClick = onMore)
-        onDone?.let { BarAction(R.drawable.ic_done, stringResource(R.string.action_done_count, done), colors.onAccent, colors.accent, it) }
+        onDone?.let { BarAction(R.drawable.ic_done, stringResource(R.string.action_done_count, done), colors.onAccent, colors.accent, onClick = it) }
     }
 }

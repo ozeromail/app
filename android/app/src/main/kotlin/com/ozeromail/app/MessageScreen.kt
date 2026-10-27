@@ -1,7 +1,10 @@
-@file:OptIn(ExperimentalFoundationApi::class)
+@file:OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 
 package com.ozeromail.app
 
+import android.content.ClipData
+import android.util.Log
+import androidx.activity.compose.BackHandler
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -11,13 +14,18 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -27,6 +35,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
@@ -38,57 +47,90 @@ import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import uniffi.ozero_api.CoreException
+import uniffi.ozero_api.DraftItem
 import uniffi.ozero_api.ImagesPage
 import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
+import uniffi.ozero_api.PeopleItem
+import uniffi.ozero_api.PersonItem
 import uniffi.ozero_api.RemoteImage
+import uniffi.ozero_api.undoSeconds
 
 /**
- * A conversation, oldest first, on one page. The message opened from the list is open; the
- * others sit closed as a line each, unread ones in bold, and a tap opens or closes any of them.
- * A message on its own fills the screen, so a wide newsletter can be pinched. Reply, Reply
- * all, Forward and Done sit at the bottom, in reach of the thumb.
+ * A conversation, oldest first, on one page that scrolls title and all. What was unread
+ * when it opened is open, and the page starts at the first of it; the rest sit closed as a
+ * line each, and a tap opens or closes any of them. Under each open one in a conversation,
+ * Reply and Forward answer that very message.
+ *
+ * Reply, Delete, Snooze, More and Done sit in one row at the bottom, in reach of the thumb;
+ * the row steps aside while the page is read down and comes back on the way up and at the
+ * end. A reply is written low on the same page, the message still in sight above it; one
+ * more tap takes it to the whole screen.
  */
 @Composable
 fun MessageScreen(
     mail: Mail,
     message: MessageItem,
-    onReply: (MessageItem, all: Boolean) -> Unit,
+    /** A message to write on the whole screen: a reply taken there, or one to a person. */
+    onWrite: (Composing) -> Unit,
+    /** A reply closed with something written: it is in the drafts. */
+    onKept: () -> Unit,
     onForward: (MessageItem) -> Unit,
     onDelete: () -> Unit,
     onUnread: () -> Unit,
@@ -99,21 +141,32 @@ fun MessageScreen(
     /** Beside the list: the actions fit one row, and the list keeps the start edge clear. */
     pane: Boolean = false,
 ) {
-    var more by remember(message.id) { mutableStateOf(false) }
+    var sheet by remember(message.id) { mutableStateOf<ReaderSheet?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     val files = remember(message.id) { Files(mail, context, scope, snackbar) }
     var thread by remember(message.id) { mutableStateOf(listOf(message)) }
     var error by remember(message.id) { mutableStateOf<Int?>(null) }
-    // What the user opened or closed; at first only the message from the list is open.
+    // What the user opened or closed.
     val opened = remember(message.id) { mutableStateMapOf<Long, Boolean>() }
+    // What was unread when it opened, and every message it had then; null until read.
+    var unread by remember(message.id) { mutableStateOf<Set<Long>?>(null) }
+    var known by remember(message.id) { mutableStateOf(emptySet<Long>()) }
     var showAll by remember(message.id) { mutableStateOf(false) }
-    // Loaded bodies, so a message opened again shows at once.
+    // Loaded bodies and who each message went to, so a message opened again shows at once.
     val bodies = remember(message.id) { mutableStateMapOf<Long, MessageBody>() }
+    val people = remember(message.id) { mutableStateMapOf<Long, PeopleItem>() }
+    val details = remember(message.id) { mutableStateMapOf<Long, Boolean>() }
+    var replying by remember(message.id) { mutableStateOf<Replying?>(null) }
     DisposableEffect(bodies) { onDispose { expectGone(bodies, "bodies of a closed conversation") } }
     LaunchedEffect(message.id) {
         try {
+            // Read before it is marked read, so what was new opens.
+            val first = mail.thread(message).ifEmpty { listOf(message) }
+            thread = first
+            known = first.mapTo(mutableSetOf()) { it.id }
+            unread = first.filter { !it.seen }.mapTo(mutableSetOf()) { it.id }
             if (message.threadUnread > 0u) mail.markRead(listOf(message))
         } catch (e: CoreException) {
             error = e.text()
@@ -128,19 +181,82 @@ fun MessageScreen(
             }
         }
     }
-    fun isOpen(m: MessageItem) = opened[m.id] ?: (m.id == message.id)
+    // Unread then, new since, or the one from the list when nothing was unread.
+    fun isOpen(m: MessageItem): Boolean = opened[m.id] ?: when (val new = unread) {
+        null -> m.id == message.id
+        else -> m.id in new || m.id !in known || (new.isEmpty() && m.id == message.id)
+    }
     // The newest message not from the user.
     val answer = thread.lastOrNull { !it.sent } ?: message
+    val many = thread.size > 1 || message.threadCount > 1u
+
+    fun reply(to: MessageItem, all: Boolean) {
+        sheet = null
+        if (replying != null) return
+        scope.launch {
+            try {
+                val draft = mail.reply(to, all)
+                val others = (people[to.id] ?: mail.people(to).also { people[to.id] = it }).others
+                replying = Replying(draft, to, others, copied = if (all) others.map { it.email } else emptyList())
+            } catch (e: CoreException) {
+                error = e.text()
+            }
+        }
+    }
+    val sending = stringResource(R.string.inbox_sending)
+    val undo = stringResource(R.string.action_undo)
+    fun sent(id: Long, reply: Replying) {
+        replying = null
+        scope.launch {
+            snackbar.currentSnackbarData?.dismiss()
+            // Closes before the core sends, so Undo is never too late.
+            val result = withTimeoutOrNull(undoSeconds().toLong() * 1000) {
+                snackbar.showSnackbar(MovedToast(sending, undo, null))
+            }
+            if (result != SnackbarResult.ActionPerformed) return@launch
+            try {
+                mail.undoSend(id)?.let { replying = reply.copy(draft = it) }
+            } catch (e: CoreException) {
+                error = e.text()
+            }
+        }
+    }
+
+    val scroll = rememberScrollState()
+    // The bottom row steps aside while the page is read down, and comes back on the way up.
+    var barShown by remember(message.id) { mutableStateOf(true) }
+    val hiding = remember {
+        object : NestedScrollConnection {
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                if (consumed.y < -HIDE_AFTER) barShown = false else if (consumed.y > HIDE_AFTER) barShown = true
+                return Offset.Zero
+            }
+        }
+    }
+    // At the end, where what to do with the message is decided, it is back.
+    LaunchedEffect(scroll) {
+        snapshotFlow { scroll.value >= scroll.maxValue }.collect { if (it) barShown = true }
+    }
+    var barHeight by remember { mutableIntStateOf(0) }
+    // Where each message starts on the page, to begin at the first unread one.
+    val tops = remember(message.id) { mutableStateMapOf<Long, Float>() }
+    var landed by remember(message.id) { mutableStateOf(false) }
+    val firstUnread = unread?.let { new -> thread.firstOrNull { it.id in new } }
+    LaunchedEffect(firstUnread?.id, firstUnread?.let { tops[it.id] }) {
+        val top = firstUnread?.let { tops[it.id] } ?: return@LaunchedEffect
+        if (landed) return@LaunchedEffect
+        landed = true
+        // The first message is under the title: it opens at the top.
+        if (firstUnread.id != thread.first().id) scroll.scrollTo(top.toInt())
+    }
 
     Box(Modifier.fillMaxSize()) {
         val edges = if (pane) WindowInsetsSides.Top else WindowInsetsSides.Top + WindowInsetsSides.Horizontal
-        // On its side the height is short, so a message alone scrolls title and all.
-        val sideways = LocalRoom.current.sideways
         Middle(LETTER_MAX, Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(edges))) {
                 BackArrow(onBack, Modifier.padding(top = 4.dp))
-                if (thread.size > 1 || message.threadCount > 1u) {
-                    Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    Column(Modifier.fillMaxSize().nestedScroll(hiding).verticalScroll(scroll)) {
                         Title(message)
                         // A long run of closed messages in the middle folds into one line.
                         val middle = 1 until thread.size - 2
@@ -150,56 +266,131 @@ fun MessageScreen(
                                 Reveal(middle.count().takeIf { folded }) { count -> More(count, onClick = { showAll = true }) }
                             }
                             key(m.id) {
-                                val letter = @Composable { Letter(mail, files, m, bodies, isOpen(m), onToggle = { opened[m.id] = !isOpen(m) }) }
+                                val at = Modifier.onGloballyPositioned { tops[m.id] = it.positionInParent().y }
+                                val letter = @Composable { modifier: Modifier ->
+                                    Letter(
+                                        mail,
+                                        files,
+                                        m,
+                                        bodies,
+                                        people,
+                                        open = isOpen(m),
+                                        unread = unread?.contains(m.id) == true,
+                                        inThread = many,
+                                        details = details[m.id] == true,
+                                        onToggle = { opened[m.id] = !isOpen(m) }.takeIf { many },
+                                        onDetails = { details[m.id] = details[m.id] != true },
+                                        onPerson = { sheet = ReaderSheet.Person(it) },
+                                        onReply = { reply(m, all = false) },
+                                        onForward = { onForward(m) },
+                                        modifier = modifier,
+                                    )
+                                }
                                 if (i in middle) {
-                                    AnimatedVisibility(!folded, enter = opening, exit = closing) { letter() }
+                                    AnimatedVisibility(!folded, at, enter = opening, exit = closing) { letter(Modifier) }
                                 } else {
-                                    letter()
+                                    letter(at)
                                 }
                             }
                         }
                         Reveal(error) { Text(stringResource(it), color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(Gap.screen)) }
-                        Spacer(Modifier.height(12.dp))
+                        // The end of the page clears the row over it.
+                        Spacer(Modifier.height(12.dp + with(LocalDensity.current) { barHeight.toDp() }))
                     }
-                } else {
-                    val filesAt = remember { BringIntoViewRequester() }
-                    Column(Modifier.weight(1f).fillMaxWidth().then(if (sideways) Modifier.verticalScroll(rememberScrollState()) else Modifier)) {
-                        Title(message)
-                        From(message, open = true, fileCount(message, bodies), filesAt)
-                        HorizontalDivider(Modifier.padding(top = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
-                        LetterBody(mail, files, filesAt, message, bodies, if (sideways) Modifier.fillMaxWidth() else Modifier.weight(1f), fill = !sideways)
+                    if (!pane && replying == null) {
+                        AnimatedVisibility(
+                            barShown,
+                            Modifier.align(Alignment.BottomCenter).onSizeChanged { barHeight = it.height },
+                            enter = slideInVertically(Motion.calm(Motion.SMALL)) { it } + fadeIn(Motion.calm(Motion.SMALL)),
+                            exit = slideOutVertically(Motion.calm(Motion.SMALL)) { it } + fadeOut(Motion.calm(Motion.SMALL)),
+                        ) {
+                            Actions(
+                                onReply = { reply(answer, all = false) },
+                                onAnswers = { sheet = ReaderSheet.Answers },
+                                onDelete = onDelete,
+                                forever = !message.canTrash,
+                                onSnooze = onSnooze,
+                                onMore = { sheet = ReaderSheet.More },
+                                onDone = onDone,
+                            )
+                        }
                     }
                 }
-                // The newest message is forwarded, the user's own too.
-                val answers = @Composable { row: RowScope -> row.Answers({ onReply(answer, it) }, { onForward(thread.lastOrNull() ?: message) }) }
-                if (pane) {
-                    PaneActions(answers, onDelete = onDelete, forever = !message.canTrash, onSnooze = onSnooze, onMore = { more = true }, onDone = onDone)
-                } else {
-                    Column(
-                        Modifier.fillMaxWidth().navigationBarsPadding().padding(top = Gap.barTop, bottom = Gap.barBottom),
-                        verticalArrangement = Arrangement.spacedBy(Gap.inBar),
-                    ) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(horizontal = Gap.bar),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
-                        ) { answers(this) }
-                        Actions(onDelete = onDelete, forever = !message.canTrash, onSnooze = onSnooze, onMore = { more = true }, onDone = onDone)
-                    }
+                val writing = replying
+                if (writing != null) {
+                    QuickReply(
+                        mail,
+                        writing,
+                        onChange = { replying = it },
+                        onClose = { kept ->
+                            replying = null
+                            if (kept) onKept()
+                        },
+                        onExpand = { draft ->
+                            replying = null
+                            onWrite(Composing(draft, writing.original))
+                        },
+                        onSent = { id -> sent(id, writing) },
+                    )
+                } else if (pane) {
+                    PaneActions(
+                        onReply = { reply(answer, all = false) },
+                        onReplyAll = { reply(answer, all = true) },
+                        onForward = { onForward(thread.lastOrNull() ?: message) },
+                        onDelete = onDelete,
+                        forever = !message.canTrash,
+                        onSnooze = onSnooze,
+                        onMore = { sheet = ReaderSheet.More },
+                        onDone = onDone,
+                    )
                 }
             }
         }
         // Like every menu, the rarer actions open in a sheet, low in reach of the thumb.
-        Sheet(visible = more, onClose = { more = false }) {
-            SheetAction(R.drawable.ic_unread, stringResource(R.string.action_mark_unread), MaterialTheme.colorScheme.onSurface) {
-                more = false
-                onUnread()
-            }
-            onMoveToInbox?.let { move ->
-                SheetAction(R.drawable.ic_inbox, stringResource(R.string.action_move_to_inbox), MaterialTheme.colorScheme.onSurface) {
-                    more = false
-                    move()
+        val colors = MaterialTheme.colorScheme
+        val shown = rememberLast(sheet)
+        Sheet(visible = sheet != null, onClose = { sheet = null }) {
+            when (shown) {
+                ReaderSheet.Answers, ReaderSheet.More -> {
+                    if (shown == ReaderSheet.Answers) {
+                        SheetAction(R.drawable.ic_reply, stringResource(R.string.message_reply), colors.onSurface) { reply(answer, all = false) }
+                    }
+                    if (shown == ReaderSheet.Answers || !pane) {
+                        SheetAction(R.drawable.ic_reply_all, stringResource(R.string.message_reply_all), colors.onSurface) { reply(answer, all = true) }
+                        SheetAction(R.drawable.ic_forward, stringResource(R.string.message_forward), colors.onSurface) {
+                            sheet = null
+                            // The newest message is forwarded, the user's own too.
+                            onForward(thread.lastOrNull() ?: message)
+                        }
+                    }
+                    if (shown == ReaderSheet.More) {
+                        SheetAction(R.drawable.ic_unread, stringResource(R.string.action_mark_unread), colors.onSurface) {
+                            sheet = null
+                            onUnread()
+                        }
+                        onMoveToInbox?.let { move ->
+                            SheetAction(R.drawable.ic_inbox, stringResource(R.string.action_move_to_inbox), colors.onSurface) {
+                                sheet = null
+                                move()
+                            }
+                        }
+                    }
                 }
+                is ReaderSheet.Person -> PersonSheet(
+                    shown.person,
+                    onWrite = {
+                        sheet = null
+                        scope.launch {
+                            try {
+                                onWrite(Composing(mail.newDraft().copy(to = shown.person.email)))
+                            } catch (e: CoreException) {
+                                error = e.text()
+                            }
+                        }
+                    },
+                    onCopied = { sheet = null },
+                )
+                null -> {}
             }
         }
         AttachmentActions(files)
@@ -207,10 +398,27 @@ fun MessageScreen(
         Toast(
             snackbar,
             onGo = {},
-            modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = if (pane) TOAST_ABOVE_ROW else TOAST_ABOVE_BARS),
+            modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = if (pane) TOAST_ABOVE_ROW else TOAST_ABOVE_BAR),
         )
     }
 }
+
+/** What a sheet of the message screen holds. */
+private sealed interface ReaderSheet {
+    /** Reply, Reply all and Forward, from a long press on Reply. */
+    data object Answers : ReaderSheet
+
+    data object More : ReaderSheet
+
+    /** What to do with someone the message is from or went to. */
+    data class Person(val person: PersonItem) : ReaderSheet
+}
+
+/** A reply being written low on the page: its draft, the message it answers, and who else may get a copy. */
+data class Replying(val draft: DraftItem, val original: MessageItem, val others: List<PersonItem>, val copied: List<String>)
+
+/** How far a scroll moves before the bottom row steps aside or comes back, in pixels. */
+private const val HIDE_AFTER = 2f
 
 /** How many files a message has: as the list knew, or as its body says once loaded. */
 private fun fileCount(message: MessageItem, bodies: Map<Long, MessageBody>): Int =
@@ -220,16 +428,75 @@ private fun fileCount(message: MessageItem, bodies: Map<Long, MessageBody>): Int
 private val opening = expandVertically(Motion.calm(Motion.SCREEN), expandFrom = Alignment.Top) + fadeIn(Motion.calm(Motion.SCREEN))
 private val closing = shrinkVertically(Motion.calm(Motion.NOTE), shrinkTowards = Alignment.Top) + fadeOut(Motion.calm(Motion.SMALL))
 
-/** One message of a conversation: its line, and under it the message when open. */
+/**
+ * One message: its line, and under it the message when open. In a conversation [onToggle]
+ * opens or closes it, and Reply and Forward under it answer this one.
+ */
 @Composable
-private fun Letter(mail: Mail, files: Files, message: MessageItem, bodies: MutableMap<Long, MessageBody>, open: Boolean, onToggle: () -> Unit) {
+private fun Letter(
+    mail: Mail,
+    files: Files,
+    message: MessageItem,
+    bodies: MutableMap<Long, MessageBody>,
+    people: MutableMap<Long, PeopleItem>,
+    open: Boolean,
+    unread: Boolean,
+    inThread: Boolean,
+    details: Boolean,
+    onToggle: (() -> Unit)?,
+    onDetails: () -> Unit,
+    onPerson: (PersonItem) -> Unit,
+    onReply: () -> Unit,
+    onForward: () -> Unit,
+    modifier: Modifier,
+) {
     val filesAt = remember { BringIntoViewRequester() }
-    Column(Modifier.fillMaxWidth()) {
-        HorizontalDivider(Modifier.padding(horizontal = Gap.screen), color = MaterialTheme.colorScheme.outlineVariant)
-        From(message, open, fileCount(message, bodies), filesAt, onToggle)
-        AnimatedVisibility(open, enter = opening, exit = closing) {
-            LetterBody(mail, files, filesAt, message, bodies, Modifier.fillMaxWidth(), fill = false)
+    LaunchedEffect(message.id, open) {
+        if (!open || message.id in people) return@LaunchedEffect
+        try {
+            people[message.id] = mail.people(message)
+        } catch (e: CoreException) {
+            // The line under the name stays empty; the message reads the same.
+            Log.w("Ozero", "recipients not read", e)
         }
+    }
+    Column(modifier.fillMaxWidth()) {
+        HorizontalDivider(Modifier.padding(horizontal = Gap.screen), color = MaterialTheme.colorScheme.outlineVariant)
+        if (open) {
+            From(message, people[message.id], unread, fileCount(message, bodies), filesAt, details, onToggle, onDetails, onPerson)
+        } else {
+            Closed(message, unread, onToggle)
+        }
+        AnimatedVisibility(open, enter = opening, exit = closing) {
+            Column {
+                LetterBody(mail, files, filesAt, message, bodies)
+                if (inThread) {
+                    Row(Modifier.padding(start = Gap.screen, end = Gap.screen, bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (!message.sent) Chip(R.drawable.ic_reply, stringResource(R.string.message_reply), onReply)
+                        Chip(R.drawable.ic_forward, stringResource(R.string.message_forward), onForward)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** A small rounded button under a message. */
+@Composable
+private fun Chip(@DrawableRes icon: Int, label: String, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Row(
+        Modifier
+            .heightIn(min = 36.dp)
+            .clip(CircleShape)
+            .background(colors.surfaceVariant)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Glyph(icon, null, colors.primary, size = 17.dp)
+        Text(label, color = colors.primary, style = Type.Caption, fontWeight = Weight.SemiBold)
     }
 }
 
@@ -254,9 +521,8 @@ private fun More(count: Int, onClick: () -> Unit) {
 
 /**
  * A message's page, or its text with the quote folded; it loads when shown, once into
- * [bodies]. With [fill] it takes the space it is given and scrolls itself; otherwise it is
- * as tall as it is. Its files follow the text; [filesAt] brings them into sight. A page that
- * scrolls itself keeps them under it instead.
+ * [bodies]. It is as tall as it is, and its files follow the text; [filesAt] brings them
+ * into sight.
  */
 @Composable
 private fun LetterBody(
@@ -265,8 +531,6 @@ private fun LetterBody(
     filesAt: BringIntoViewRequester,
     message: MessageItem,
     bodies: MutableMap<Long, MessageBody>,
-    modifier: Modifier,
-    fill: Boolean,
 ) {
     // A page whose images load on their own waits for them again, as on the first time.
     var body by remember(message.id) { mutableStateOf(bodies[message.id]?.takeUnless { it.remoteImages > 0u && it.showsImages }) }
@@ -319,11 +583,8 @@ private fun LetterBody(
         else -> Body.Loading
     }
     val attachments = loaded?.attachments.orEmpty()
-    val fileList = @Composable {
-        if (attachments.isNotEmpty()) AttachmentList(files, message, attachments, Modifier.bringIntoViewRequester(filesAt))
-    }
     // A page grows in steps as it lays out; only the short text and notes animate.
-    Column(if (fill || shown is Body.Page) modifier else modifier.animateContentSize(Motion.calm(Motion.NOTE))) {
+    Column(if (shown is Body.Page) Modifier.fillMaxWidth() else Modifier.fillMaxWidth().animateContentSize(Motion.calm(Motion.NOTE))) {
         Reveal(imagesNote) { note ->
             HiddenImages(note, onShow = onShow@{
                 // The note is closing: the images are here already.
@@ -346,12 +607,12 @@ private fun LetterBody(
         // The page fades in over the spinner instead of popping in; the old one fades out whole.
         AnimatedContent(
             shown,
-            if (fill) Modifier.weight(1f).fillMaxWidth() else Modifier.fillMaxWidth(),
+            Modifier.fillMaxWidth(),
             transitionSpec = { (fadeIn(Motion.calm(Motion.SMALL)) togetherWith fadeOut(Motion.calm(Motion.SMALL))).using(null) },
             contentKey = { it::class },
             label = "body",
         ) { kind ->
-            val content = if (fill) Modifier.fillMaxSize() else Modifier.fillMaxWidth()
+            val content = Modifier.fillMaxWidth()
             when (kind) {
                 // A new web view per page: it loads its page only once.
                 // A newsletter keeps the light page it was made for, as a card on the screen.
@@ -368,35 +629,23 @@ private fun LetterBody(
                     Box(content) {
                         HtmlView(kind.html, kind.images, page, onShown = { drawn = true })
                         if (cover > 0f) {
-                            Box(Modifier.graphicsLayer { alpha = cover }.background(MaterialTheme.colorScheme.background)) { BodySpinner(fill) }
+                            Box(Modifier.graphicsLayer { alpha = cover }.background(MaterialTheme.colorScheme.background)) { BodySpinner() }
                         }
                     }
                 }
-                is Body.Plain -> if (fill) {
-                    Column(content.verticalScroll(rememberScrollState())) {
-                        PlainText(kind.text, kind.quote, Modifier.fillMaxWidth())
-                        fileList()
-                    }
-                } else {
-                    PlainText(kind.text, kind.quote, content)
-                }
+                is Body.Plain -> PlainText(kind.text, kind.quote, content)
                 is Body.Failed -> Text(stringResource(kind.text), color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = content.padding(Gap.screen))
-                Body.Loading -> BodySpinner(fill)
+                Body.Loading -> BodySpinner()
             }
         }
-        when {
-            !fill -> fileList()
-            shown is Body.Page -> Box(Modifier.heightIn(max = PINNED_FILES).verticalScroll(rememberScrollState())) {
-                fileList()
-            }
-        }
+        if (attachments.isNotEmpty()) AttachmentList(files, message, attachments, Modifier.bringIntoViewRequester(filesAt))
     }
 }
 
-/** A body still loading: the spinner in the middle of the screen, or of a short space in a conversation. */
+/** A body still loading: the spinner in the middle of a short space. */
 @Composable
-private fun BodySpinner(fill: Boolean) {
-    Box(if (fill) Modifier.fillMaxSize() else Modifier.fillMaxWidth().height(96.dp), contentAlignment = Alignment.Center) {
+private fun BodySpinner() {
+    Box(Modifier.fillMaxWidth().height(96.dp), contentAlignment = Alignment.Center) {
         SlowSpinner()
     }
 }
@@ -434,32 +683,56 @@ private fun PlainText(text: String, quote: String, modifier: Modifier) {
 }
 
 /**
- * The actions under the thumb, each in an equal place; Done, the one used most, takes the last.
- * Snooze and Done are null in a folder where they do not apply, such as Done in the archive;
- * Delete is [forever] in the trash.
+ * The actions under the thumb in one row, each in an equal place; Done, the one used most,
+ * takes the last. A long press on Reply offers Reply all and Forward. Snooze and Done are
+ * null in a folder where they do not apply, such as Done in the archive; Delete is
+ * [forever] in the trash.
  */
 @Composable
-private fun Actions(onDelete: () -> Unit, forever: Boolean, onSnooze: (() -> Unit)?, onMore: () -> Unit, onDone: (() -> Unit)?) {
+private fun Actions(
+    onReply: () -> Unit,
+    onAnswers: () -> Unit,
+    onDelete: () -> Unit,
+    forever: Boolean,
+    onSnooze: (() -> Unit)?,
+    onMore: () -> Unit,
+    onDone: (() -> Unit)?,
+) {
     val colors = MaterialTheme.colorScheme
-    Row(Modifier.fillMaxWidth().padding(horizontal = Gap.bar), horizontalArrangement = Arrangement.spacedBy(Gap.inBar)) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(colors.background)
+            .navigationBarsPadding()
+            .padding(start = Gap.bar, end = Gap.bar, top = Gap.barTop, bottom = Gap.barBottom),
+        horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
+    ) {
+        BarAction(R.drawable.ic_reply, stringResource(R.string.message_reply), colors.onSurface, onLongClick = onAnswers, onClick = onReply)
         val delete = if (forever) R.string.action_delete_forever else R.string.action_delete
         BarAction(R.drawable.ic_delete, stringResource(delete), colors.onSurface, onClick = onDelete)
         onSnooze?.let { BarAction(R.drawable.ic_snooze, stringResource(R.string.action_snooze), colors.onSurface, onClick = it) }
         BarAction(R.drawable.ic_more, stringResource(R.string.action_more), colors.onSurface, onClick = onMore)
-        onDone?.let { BarAction(R.drawable.ic_done, stringResource(R.string.action_done), colors.onAccent, colors.accent, it) }
+        onDone?.let { BarAction(R.drawable.ic_done, stringResource(R.string.action_done), colors.onAccent, colors.accent, onClick = it) }
     }
 }
 
 /** One of the big buttons along the bottom of a screen: an icon over its name. */
 @Composable
-fun RowScope.BarAction(@DrawableRes icon: Int, label: String, tint: Color, background: Color = Color.Transparent, onClick: () -> Unit) {
+fun RowScope.BarAction(
+    @DrawableRes icon: Int,
+    label: String,
+    tint: Color,
+    background: Color = Color.Transparent,
+    onLongClick: (() -> Unit)? = null,
+    onClick: () -> Unit,
+) {
     Column(
         Modifier
             .weight(1f)
             .height(if (LocalRoom.current.short) 44.dp else 52.dp)
             .clip(RoundedCornerShape(Radius.medium))
             .background(background)
-            .clickable(role = Role.Button, onClick = onClick),
+            .combinedClickable(role = Role.Button, onLongClick = onLongClick, onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically),
     ) {
@@ -501,57 +774,140 @@ private fun HiddenImages(note: Int, onShow: () -> Unit) {
     }
 }
 
+/** The name the user is shown by in a message: "You" when they wrote it. */
+@Composable
+private fun MessageItem.from(): String = if (sent) stringResource(R.string.message_you) else sender
+
 /**
- * Who sent a message and when. Open, it shows the address and the full date; closed, the
- * start of the text. Open with [files], a paperclip by the date brings them in sight through
- * [filesAt]. With [onToggle] a tap opens or closes the message.
+ * Who wrote an open message, to whom, and when, in two lines: "Anna Lee" and "To you, Oleg
+ * and Maria". A tap on the name offers what to do with the person ([onPerson]); a tap on
+ * the second line shows every address and the full date ([details]). With [onToggle] a tap
+ * elsewhere closes the message. With [files], a paperclip by the date brings them in sight.
  */
 @Composable
-private fun From(message: MessageItem, open: Boolean, files: Int, filesAt: BringIntoViewRequester, onToggle: (() -> Unit)? = null) {
+private fun From(
+    message: MessageItem,
+    people: PeopleItem?,
+    unread: Boolean,
+    files: Int,
+    filesAt: BringIntoViewRequester,
+    details: Boolean,
+    onToggle: (() -> Unit)?,
+    onDetails: () -> Unit,
+    onPerson: (PersonItem) -> Unit,
+) {
     val colors = MaterialTheme.colorScheme
-    val unread = message.threadUnread > 0u
-    val detail = when {
-        !open -> message.snippet
-        message.sender != message.fromEmail -> message.fromEmail
-        else -> ""
+    val context = LocalContext.current
+    val author = PersonItem(message.sender, message.fromEmail, message.sent)
+    Column(Modifier.fillMaxWidth().then(if (onToggle == null) Modifier else Modifier.clickable(onClick = onToggle))) {
+        Row(Modifier.fillMaxWidth().padding(start = Gap.screen, end = Gap.screen, top = 12.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    message.from(),
+                    style = Type.Row,
+                    fontWeight = if (unread) Weight.Bold else Weight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = if (message.sent) Modifier else Modifier.clickable(role = Role.Button) { onPerson(author) },
+                )
+                val line = people?.let { toLine(it) }
+                if (!line.isNullOrEmpty()) {
+                    Row(
+                        Modifier.clickable(role = Role.Button, onClick = onDetails),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(line, color = colors.onSurfaceVariant, style = Type.Caption, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                        val turn by animateFloatAsState(if (details) 180f else 0f, Motion.calm(Motion.SMALL), label = "details")
+                        Text("▾", color = colors.onSurfaceVariant, style = Type.Caption, modifier = Modifier.rotate(turn))
+                    }
+                }
+            }
+            Column(Modifier.padding(top = 2.dp), horizontalAlignment = Alignment.End) {
+                Text(
+                    if (message.sending) stringResource(R.string.inbox_sending) else shortDate(context, message.date),
+                    color = colors.onSurfaceVariant,
+                    style = Type.Caption,
+                )
+                if (files > 0) {
+                    val scope = rememberCoroutineScope()
+                    AttachmentMark(files, onClick = { scope.launch { filesAt.bringIntoView() } })
+                }
+            }
+        }
+        Reveal(people?.takeIf { details }) { Details(message, author, it, onPerson) }
     }
+}
+
+/** "To you, Oleg and Maria": who a message went to, copies too, by first name. */
+@Composable
+private fun toLine(people: PeopleItem): String {
+    val you = stringResource(R.string.message_you_to)
+    val names = (people.to + people.cc)
+        .distinctBy { it.email.lowercase() }
+        .sortedByDescending { it.me }
+        .map { if (it.me) you else firstName(it.name) }
+    if (names.isEmpty()) return ""
+    val joined = if (names.size == 1) names[0] else stringResource(R.string.message_and, names.dropLast(1).joinToString(", "), names.last())
+    return stringResource(R.string.message_to_line, joined)
+}
+
+/** Every address of a message and its full date, each person a tap away. */
+@Composable
+private fun Details(message: MessageItem, author: PersonItem, people: PeopleItem, onPerson: (PersonItem) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val context = LocalContext.current
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = Gap.card, end = Gap.card, bottom = 10.dp)
+            .background(colors.surfaceVariant, RoundedCornerShape(Radius.medium))
+            .padding(horizontal = Gap.inCard, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        @Composable
+        fun Field(label: Int, persons: List<PersonItem>) {
+            if (persons.isEmpty()) return
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(stringResource(label), color = colors.onSurfaceVariant, style = Type.Caption, modifier = Modifier.widthIn(min = 52.dp))
+                FlowRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    persons.forEach { person ->
+                        Text(
+                            if (person.name == person.email) person.email else "${person.name} ${person.email}",
+                            style = Type.Caption,
+                            modifier = Modifier.clickable(role = Role.Button) { onPerson(person) },
+                        )
+                    }
+                }
+            }
+        }
+        Field(R.string.message_from, listOf(author))
+        Field(R.string.compose_to, people.to)
+        Field(R.string.compose_cc, people.cc)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(stringResource(R.string.message_date), color = colors.onSurfaceVariant, style = Type.Caption, modifier = Modifier.widthIn(min = 52.dp))
+            Text(longDate(context, message.date), style = Type.Caption)
+        }
+    }
+}
+
+/** A closed message in a conversation: who, the start of its text, and when; [onToggle] opens it. */
+@Composable
+private fun Closed(message: MessageItem, unread: Boolean, onToggle: (() -> Unit)?) {
+    val colors = MaterialTheme.colorScheme
+    val context = LocalContext.current
     Row(
         Modifier
             .fillMaxWidth()
             .then(if (onToggle == null) Modifier else Modifier.clickable(onClick = onToggle))
             .padding(horizontal = Gap.screen, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Avatar(message.sender, message.fromEmail, size = if (open) 40.dp else 32.dp)
         Column(Modifier.weight(1f)) {
-            Text(
-                message.sender,
-                style = Type.Row,
-                fontWeight = if (unread) Weight.Bold else Weight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (detail.isNotBlank()) {
-                Text(detail, color = colors.onSurfaceVariant, style = Type.Caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
+            Text(message.from(), style = Type.Row, fontWeight = if (unread) Weight.Bold else Weight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(message.snippet, color = colors.onSurfaceVariant, style = Type.Caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        val context = LocalContext.current
-        Column(Modifier.align(Alignment.Top).padding(top = 2.dp), horizontalAlignment = Alignment.End) {
-            Text(
-                when {
-                    message.sending -> stringResource(R.string.inbox_sending)
-                    open -> longDate(context, message.date)
-                    else -> shortDate(context, message.date)
-                },
-                color = colors.onSurfaceVariant,
-                style = Type.Caption,
-            )
-            if (open && files > 0) {
-                val scope = rememberCoroutineScope()
-                AttachmentMark(files, onClick = { scope.launch { filesAt.bringIntoView() } })
-            }
-        }
+        Text(shortDate(context, message.date), color = colors.onSurfaceVariant, style = Type.Caption, modifier = Modifier.padding(top = 2.dp))
     }
 }
 
@@ -583,6 +939,180 @@ private fun Title(message: MessageItem) {
     }
 }
 
+/** What to do with someone a message is from or went to. */
+@Composable
+private fun PersonSheet(person: PersonItem, onWrite: () -> Unit, onCopied: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
+    SheetTitle(person.name, Modifier.padding(start = Gap.sheet, end = Gap.sheet))
+    if (person.name != person.email) {
+        Text(person.email, color = colors.onSurfaceVariant, style = Type.Text, modifier = Modifier.padding(start = Gap.sheet, end = Gap.sheet, bottom = 10.dp))
+    }
+    SheetAction(R.drawable.ic_compose, stringResource(R.string.message_write_to), colors.onSurface, onWrite)
+    SheetAction(R.drawable.ic_share, stringResource(R.string.message_copy_address), colors.onSurface) {
+        scope.launch {
+            clipboard.setClipEntry(ClipEntry(ClipData.newPlainText(person.email, person.email)))
+            onCopied()
+        }
+    }
+}
+
+/**
+ * A reply written low on the page, over the keyboard: to the sender, with the others it
+ * went to a tap away as copies. It is kept as a draft as it is written; [onExpand] takes it
+ * to the whole screen, and [onClose] says whether it was kept.
+ */
+@Composable
+private fun QuickReply(
+    mail: Mail,
+    replying: Replying,
+    onChange: (Replying) -> Unit,
+    onClose: (kept: Boolean) -> Unit,
+    onExpand: (DraftItem) -> Unit,
+    onSent: (Long) -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val scope = rememberCoroutineScope()
+    val start = replying.draft
+    val keeper = remember(start) { mail.keeper(start.id) }
+    var text by remember(start) { mutableStateOf(start.text) }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember(start) { mutableStateOf<Int?>(null) }
+    fun current() = start.copy(text = text, cc = replying.copied.joinToString(", "))
+    LaunchedEffect(keeper) {
+        snapshotFlow { current() }.drop(1).collectLatest { draft ->
+            delay(SAVE_PAUSE_MS)
+            keeper.save(draft)
+        }
+    }
+    fun close() {
+        val draft = current()
+        if (draft.isBlank()) {
+            keeper.discard()
+            onClose(false)
+        } else {
+            keeper.save(draft)
+            onClose(true)
+        }
+    }
+    BackHandler(onBack = ::close)
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(colors.background)
+            .hairline(colors.outlineVariant, top = true)
+            .navigationBarsPadding()
+            .imePadding()
+            .padding(top = 8.dp),
+    ) {
+        FlowRow(
+            Modifier.fillMaxWidth().padding(horizontal = Gap.screen, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            val to = if (start.to.equals(replying.original.fromEmail, ignoreCase = true)) replying.original.sender else start.to
+            Person(to, onClick = null)
+            replying.others.filter { it.email in replying.copied }.forEach { person ->
+                Person(stringResource(R.string.message_copy_person, person.name), onClick = {
+                    onChange(replying.copy(copied = replying.copied - person.email))
+                })
+            }
+            val left = replying.others.filter { it.email !in replying.copied }
+            if (left.isNotEmpty()) {
+                val names = left.map { firstName(it.name) }
+                val joined = if (names.size == 1) names[0] else stringResource(R.string.message_and, names.dropLast(1).joinToString(", "), names.last())
+                Person(stringResource(R.string.message_add_people, joined), primary = true, onClick = {
+                    onChange(replying.copy(copied = replying.copied + left.map { it.email }))
+                })
+            }
+        }
+        Plain(
+            text,
+            { text = it },
+            R.string.message_reply_prompt,
+            Type.Writing,
+            KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+            singleLine = false,
+            modifier = Modifier
+                .padding(horizontal = Gap.screen, vertical = 6.dp)
+                .heightIn(min = 54.dp, max = 162.dp)
+                .focusRequester(focus),
+        )
+        Reveal(error) { Text(stringResource(it), color = colors.error, style = Type.Caption, modifier = Modifier.padding(horizontal = Gap.screen)) }
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = Gap.bar, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
+        ) {
+            IconTile(R.drawable.ic_close, stringResource(R.string.action_close), ::close, shape = CircleShape, size = 44.dp)
+            IconTile(
+                R.drawable.ic_expand,
+                stringResource(R.string.message_full_screen),
+                {
+                    scope.launch {
+                        try {
+                            val draft = current()
+                            onExpand(draft.copy(id = keeper.handOff(draft)))
+                        } catch (e: CoreException) {
+                            error = e.text()
+                        }
+                    }
+                },
+                shape = CircleShape,
+                size = 44.dp,
+            )
+            Spacer(Modifier.weight(1f))
+            IconTile(
+                R.drawable.ic_send,
+                stringResource(R.string.compose_send),
+                {
+                    if (!busy) {
+                        busy = true
+                        error = null
+                        scope.launch {
+                            try {
+                                onSent(keeper.send(current()))
+                            } catch (e: CoreException) {
+                                error = e.text()
+                            } finally {
+                                busy = false
+                            }
+                        }
+                    }
+                },
+                Modifier.padding(end = 4.dp),
+                background = colors.accent,
+                tint = colors.onAccent,
+                shape = CircleShape,
+                size = 44.dp,
+                enabled = !busy,
+            )
+        }
+    }
+}
+
+/** Someone a reply goes to, as a chip; [onClick] takes them off or adds them. */
+@Composable
+private fun Person(text: String, onClick: (() -> Unit)?, primary: Boolean = false) {
+    val colors = MaterialTheme.colorScheme
+    Text(
+        text,
+        color = if (primary) colors.primary else colors.onSurface,
+        style = Type.Caption,
+        fontWeight = Weight.Medium,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(colors.surfaceVariant)
+            .then(if (onClick == null) Modifier else Modifier.clickable(role = Role.Button, onClick = onClick))
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+    )
+}
+
 /** What a message's body area shows. */
 private sealed interface Body {
     data object Loading : Body
@@ -591,28 +1121,18 @@ private sealed interface Body {
     data class Failed(val text: Int) : Body
 }
 
-/** How tall the files under a page that scrolls itself may get before they scroll too. */
-private val PINNED_FILES = 220.dp
-
-/** Where a toast sits: over the reply and the actions. */
-private val TOAST_ABOVE_BARS = 128.dp
+/** Where a toast sits: over the row of actions. */
+private val TOAST_ABOVE_BAR = 80.dp
 
 /** Over the one row of them beside the list. */
 private val TOAST_ABOVE_ROW = 72.dp
 
-/** Reply, Reply all and Forward. */
-@Composable
-private fun RowScope.Answers(onReply: (all: Boolean) -> Unit, onForward: () -> Unit) {
-    val button = paneButton()
-    Pill(stringResource(R.string.message_reply_prompt), onClick = { onReply(false) }, modifier = Modifier.weight(1f), height = button)
-    IconTile(R.drawable.ic_reply_all, stringResource(R.string.message_reply_all), { onReply(true) }, shape = CircleShape, size = button)
-    IconTile(R.drawable.ic_forward, stringResource(R.string.message_forward), onForward, shape = CircleShape, size = button)
-}
-
 /** Beside the list, where the height is short: the answers and the actions in one row. */
 @Composable
 private fun PaneActions(
-    answers: @Composable (RowScope) -> Unit,
+    onReply: () -> Unit,
+    onReplyAll: () -> Unit,
+    onForward: () -> Unit,
     onDelete: () -> Unit,
     forever: Boolean,
     onSnooze: (() -> Unit)?,
@@ -631,7 +1151,9 @@ private fun PaneActions(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
     ) {
-        answers(this)
+        Pill(stringResource(R.string.message_reply_prompt), onClick = onReply, modifier = Modifier.weight(1f), height = button)
+        IconTile(R.drawable.ic_reply_all, stringResource(R.string.message_reply_all), onReplyAll, shape = CircleShape, size = button)
+        IconTile(R.drawable.ic_forward, stringResource(R.string.message_forward), onForward, shape = CircleShape, size = button)
         IconTile(
             R.drawable.ic_delete,
             stringResource(if (forever) R.string.action_delete_forever else R.string.action_delete),

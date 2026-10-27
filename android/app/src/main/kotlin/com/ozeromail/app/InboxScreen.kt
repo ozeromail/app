@@ -897,7 +897,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         MessageScreen(
             mail,
             message,
-            onReply = { to, all -> write(to) { mail.reply(to, all) } },
+            onWrite = { composing = it },
+            onKept = ::kept,
             onForward = { original ->
                 write(original) { mail.forward(original, forwardLabels(context), longDate(context, original.date)) }
             },
@@ -2291,7 +2292,7 @@ fun MessageItem.participants(): String {
 }
 
 /** "Anna" of "Anna Lee", "Lee, Anna" or "anna@x.com". */
-private fun firstName(name: String): String {
+fun firstName(name: String): String {
     val given = name.substringBefore('@').substringAfter(", ").trim()
     return given.substringBefore(' ').ifEmpty { name }
 }

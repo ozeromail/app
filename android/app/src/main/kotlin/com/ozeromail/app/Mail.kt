@@ -37,6 +37,7 @@ import uniffi.ozero_api.Core
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.DraftFileItem
 import uniffi.ozero_api.DraftItem
+import uniffi.ozero_api.PeopleItem
 import uniffi.ozero_api.Endpoint
 import uniffi.ozero_api.FolderItem
 import uniffi.ozero_api.FolderRole
@@ -361,6 +362,9 @@ class Mail(private val context: Context) {
 
     /** An answer to [message]: to its sender, or with [all] to everyone it went to as well. */
     suspend fun reply(message: MessageItem, all: Boolean): DraftItem = io { core.reply(message, all) }
+
+    /** Who [message] went to, and who else a reply to all would copy. */
+    suspend fun people(message: MessageItem): PeopleItem = io { core.people(message) }
 
     /** [message] to send on, its text under [labels] and [date]; loads the text if not saved. */
     suspend fun forward(message: MessageItem, labels: ForwardLabels, date: String): DraftItem = io {
