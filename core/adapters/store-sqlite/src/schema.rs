@@ -364,4 +364,9 @@ pub const MIGRATIONS: &[&str] = &[
         WHERE id = NEW.id;
     END;
     ",
+    // 35: no connection kept open with the app closed any more: accounts that waited on one
+    // check every 15 minutes, as new ones do.
+    "
+    UPDATE account SET new_mail = 15 WHERE new_mail = 0;
+    ",
 ];

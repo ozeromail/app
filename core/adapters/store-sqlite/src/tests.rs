@@ -1815,12 +1815,11 @@ fn names_an_account() {
 fn keeps_when_an_account_looks_for_new_mail() {
     let store = store();
     let a = account(&store, "a@example.com");
-    assert_eq!(store.accounts().unwrap()[0].new_mail, NewMail::Push);
-    for when in [
-        NewMail::Every { minutes: 60 },
-        NewMail::Manually,
-        NewMail::Push,
-    ] {
+    assert_eq!(
+        store.accounts().unwrap()[0].new_mail,
+        NewMail::Every { minutes: 15 }
+    );
+    for when in [NewMail::Every { minutes: 60 }, NewMail::Manually] {
         store.set_account_new_mail(a, when).unwrap();
         assert_eq!(store.accounts().unwrap()[0].new_mail, when);
     }

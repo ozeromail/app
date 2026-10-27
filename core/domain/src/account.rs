@@ -56,16 +56,20 @@ pub struct Account {
     pub signature: String,
 }
 
-/// When the phone looks for an account's new mail while the app is closed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+/// When the phone looks for an account's new mail while the app is closed; while it is open,
+/// mail comes as soon as the server has it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NewMail {
-    /// As soon as the server has it, on a connection kept open.
-    #[default]
-    Push,
     /// Every so many minutes, as often as the system lets it.
     Every { minutes: u32 },
     /// Only when the app is open.
     Manually,
+}
+
+impl Default for NewMail {
+    fn default() -> Self {
+        Self::Every { minutes: 15 }
+    }
 }
 
 impl Account {
@@ -191,7 +195,7 @@ mod tests {
             color: 0,
             label: String::new(),
             keep_days: 0,
-            new_mail: NewMail::Push,
+            new_mail: NewMail::default(),
             needs_sign_in: false,
             signature: String::new(),
         };
