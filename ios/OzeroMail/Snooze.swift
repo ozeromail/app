@@ -96,3 +96,20 @@ struct SnoozeSheet: View {
         .presentationDetents(picking ? [.large] : [.medium, .large])
     }
 }
+
+extension View {
+    /// Asks which of `targets` to move to, while there are any to ask about; says so when there
+    /// is no other folder.
+    func moveDialog(_ targets: Binding<[(folder: FolderItem, title: String)]?>, onPick: @escaping (FolderItem, String) -> Void) -> some View {
+        confirmationDialog(
+            "move_title", isPresented: Binding { targets.wrappedValue != nil } set: { if !$0 { targets.wrappedValue = nil } },
+            titleVisibility: .visible, presenting: targets.wrappedValue
+        ) { list in
+            ForEach(list, id: \.folder.id) { target in
+                Button(target.title) { onPick(target.folder, target.title) }
+            }
+        } message: { list in
+            if list.isEmpty { Text("move_none") }
+        }
+    }
+}

@@ -191,17 +191,8 @@ struct MessageView: View {
                 }
             }
         }
-        .confirmationDialog(
-            "move_title", isPresented: Binding { targets != nil } set: { if !$0 { targets = nil } },
-            titleVisibility: .visible, presenting: targets
-        ) { targets in
-            ForEach(targets, id: \.folder.id) { target in
-                Button(target.title) {
-                    leave { await model.moveToFolder([message], to: target.folder, title: target.title) }
-                }
-            }
-        } message: { targets in
-            if targets.isEmpty { Text("move_none") }
+        .moveDialog($targets) { folder, title in
+            leave { await model.moveToFolder([message], to: folder, title: title) }
         }
         .alert(tr("unsubscribe_title", message.sender), isPresented: $leaving) {
             Button("action_unsubscribe", role: .destructive) { Task { await unsubscribe() } }
