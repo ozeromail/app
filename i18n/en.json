@@ -66,6 +66,7 @@
   "compose_forwarded": "The forwarded message goes under your text",
   "message_images_hidden": "Images are hidden, so the sender can’t tell you opened this.",
   "action_show": "Show",
+  "action_hide": "Hide",
   "feedback_write": "Write to the author",
   "feedback_subject": "About Ozero Mail",
   "crash_subject": "Ozero Mail crashed",

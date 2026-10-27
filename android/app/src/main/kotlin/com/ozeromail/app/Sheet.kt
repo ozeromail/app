@@ -274,7 +274,7 @@ fun SmallSwitch(on: Boolean, enabled: Boolean = true) {
             .size(width = 38.dp, height = 22.dp)
             .alpha(if (enabled) 1f else 0.4f)
             .clip(CircleShape)
-            .drawBehind { drawRect(lerp(colors.outlineVariant, colors.primary, at)) }
+            .drawBehind { drawRect(lerp(colors.outline, colors.primary, at)) }
             .padding(2.dp)
             .semantics {
                 role = Role.Switch

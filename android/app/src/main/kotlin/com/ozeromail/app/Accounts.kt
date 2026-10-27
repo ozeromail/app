@@ -460,7 +460,7 @@ private fun Caption(text: String, open: Boolean? = null, onToggle: (() -> Unit)?
             .height(40.dp)
             .then(
                 if (onToggle == null) Modifier
-                else Modifier.clickable(onClickLabel = stringResource(if (open == true) R.string.action_collapse else R.string.action_expand), onClick = onToggle),
+                else Modifier.clickable(onClickLabel = stringResource(if (open == true) R.string.action_hide else R.string.action_show), onClick = onToggle),
             )
             .padding(start = Gap.sheet, end = Gap.sheet - 12.dp),
         verticalAlignment = Alignment.CenterVertically,
