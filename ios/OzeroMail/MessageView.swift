@@ -413,9 +413,22 @@ struct MessageView: View {
         }
     }
 
-    /// Back to the list, where the toast can undo it.
+    /// The next message in the list opens in its place, and the toast can undo it there; after
+    /// the last, or from search, back to the list.
     private func done() {
-        leave { await model.archive([message]) }
+        let rows = model.messages
+        guard !model.path.contains(.search), let at = rows.firstIndex(where: { $0.id == message.id }),
+              at + 1 < rows.count else {
+            leave { await model.archive([message]) }
+            return
+        }
+        let next = rows[at + 1]
+        if model.pane?.id == message.id {
+            model.pane = next
+        } else if let shown = model.path.lastIndex(of: .message(message)) {
+            model.path[shown] = .message(next)
+        }
+        Task { await model.archive([message]) }
     }
 
     /// The message stays open until a time is picked; then back to the list, as `leave`.

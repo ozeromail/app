@@ -117,6 +117,7 @@ import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.DraftItem
 import uniffi.ozero_api.FolderItem
 import uniffi.ozero_api.ImagesPage
+import uniffi.ozero_api.Mailbox
 import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
 import uniffi.ozero_api.PeopleItem
@@ -158,6 +159,9 @@ fun MessageScreen(
     onBack: () -> Unit,
     /** Beside the list: the actions fit one row, and the list keeps the start edge clear. */
     pane: Boolean = false,
+    /** On its own screen, the list's toasts, so Undo shows over the next message; [onGo] shows a folder. */
+    toasts: SnackbarHostState? = null,
+    onGo: (Mailbox) -> Unit = {},
 ) {
     var sheet by remember(message.id) { mutableStateOf<ReaderSheet?>(null) }
     // Whether the person left the list it came from here, and the question before they do.
@@ -165,7 +169,8 @@ fun MessageScreen(
     var leaving by remember(message.id) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val snackbar = remember { SnackbarHostState() }
+    val own = remember { SnackbarHostState() }
+    val snackbar = toasts ?: own
     val files = remember(message.id) { Files(mail, context, scope, snackbar) }
     var thread by remember(message.id) { mutableStateOf(listOf(message)) }
     var error by remember(message.id) { mutableStateOf<Int?>(null) }
@@ -518,7 +523,7 @@ fun MessageScreen(
         FileViewer(files)
         Toast(
             snackbar,
-            onGo = {},
+            onGo = onGo,
             modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = if (pane) TOAST_ABOVE_ROW else TOAST_ABOVE_BAR),
         )
     }

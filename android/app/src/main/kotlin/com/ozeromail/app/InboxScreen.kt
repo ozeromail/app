@@ -1099,9 +1099,11 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 }
             },
             onDone = {
-                open = null
-                // Back to the list, where the toast can undo it.
-                closeSearch()
+                // The next message in the list opens in its place, and the toast can undo it there;
+                // after the last, or from search, back to the list.
+                val next = messages.dropWhile { it.id != message.id }.getOrNull(1)?.takeUnless { searching }
+                open = next
+                if (next == null) closeSearch()
                 archive(listOf(message))
             }.takeIf { message.canArchive },
             onSnooze = {
@@ -1113,6 +1115,11 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             }.takeIf { message.canSnooze },
             onBack = if (pane) ::closePane else ::back,
             pane = pane,
+            toasts = snackbar.takeUnless { pane },
+            onGo = {
+                open = null
+                mailbox = it
+            },
         )
     }
 
