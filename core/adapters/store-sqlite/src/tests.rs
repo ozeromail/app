@@ -318,8 +318,10 @@ fn large_lists_read_an_index_in_order() {
     let conn = store.conn();
     for sql in [LIST_FOLDER, LIST_UNIFIED_BY_DATE, LIST_INBOX_TAB] {
         let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+        let values: [&dyn rusqlite::ToSql; 5] = [&"1", &0, &0, &30, &"people"];
+        let count = stmt.parameter_count();
         let plan: Vec<String> = stmt
-            .query_map(params!["1", 0, 0, 30], |r| r.get(3))
+            .query_map(&values[..count], |r| r.get(3))
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap();
@@ -1190,22 +1192,31 @@ fn an_account_left_out_of_the_unified_inbox_keeps_its_own_tabs() {
     store.save_messages(inbox_a, &[message(1, 100)]).unwrap();
     store.save_messages(inbox_b, &[message(2, 200)]).unwrap();
     store.set_account_in_all(b, false).unwrap();
-    assert_eq!(store.left_out_of_all().unwrap(), [b]);
+    let in_all = store.accounts().unwrap().into_iter().map(|x| x.in_all);
+    assert_eq!(in_all.collect::<Vec<_>>(), [true, false]);
 
     let subjects = |scope| {
         let rows = list(&store, scope, 10, None);
         rows.into_iter().map(|r| r.subject).collect::<Vec<_>>()
     };
-    assert_eq!(subjects(ListScope::Inbox(Category::People)), ["Subject 1"]);
     assert_eq!(
-        subjects(ListScope::FolderTab(inbox_b, Category::People)),
+        subjects(ListScope::Inbox(None, Category::People)),
+        ["Subject 1"]
+    );
+    assert_eq!(
+        subjects(ListScope::Inbox(Some(b), Category::People)),
         ["Subject 2"]
     );
-    assert!(subjects(ListScope::FolderTab(inbox_b, Category::Newsletters)).is_empty());
+    assert!(subjects(ListScope::Inbox(Some(b), Category::Newsletters)).is_empty());
     assert_eq!(store.inbox_unread(None).unwrap(), [(Category::People, 1)]);
     assert_eq!(
         store.inbox_unread(Some(b)).unwrap(),
         [(Category::People, 1)]
+    );
+
+    assert_eq!(
+        store.unread_by_account(Category::People).unwrap(),
+        [(a, 1), (b, 1)]
     );
 
     let id = list(&store, ListScope::Folder(inbox_a), 10, None)[0].id;
@@ -1240,12 +1251,13 @@ fn pins_folders() {
     let store = store();
     let account = account(&store, "a@example.com");
     archive_folder(&store, account);
+    let pinned = || store.folders(account).unwrap()[1].pinned;
     let archive = store.folders(account).unwrap()[1].id;
-    assert!(store.pinned_folders().unwrap().is_empty());
+    assert!(!pinned());
     store.set_folder_pinned(archive, true).unwrap();
-    assert_eq!(store.pinned_folders().unwrap(), [archive]);
+    assert!(pinned());
     store.set_folder_pinned(archive, false).unwrap();
-    assert!(store.pinned_folders().unwrap().is_empty());
+    assert!(!pinned());
 }
 
 #[test]
@@ -1313,7 +1325,7 @@ fn tabs_list_and_count_their_own_messages() {
         .unwrap();
 
     let tab = |category| {
-        let rows = list(&store, ListScope::Inbox(category), 10, None);
+        let rows = list(&store, ListScope::Inbox(None, category), 10, None);
         rows.iter().map(|r| r.subject.clone()).collect::<Vec<_>>()
     };
     assert_eq!(tab(Category::People), ["Subject 1"]);
@@ -2157,7 +2169,7 @@ fn removing_an_account_removes_its_mail() {
     let accounts = store.accounts().unwrap();
     assert_eq!(accounts.len(), 1);
     assert_eq!(accounts[0].id, b);
-    let left = list(&store, ListScope::Inbox(Category::People), 10, None);
+    let left = list(&store, ListScope::Inbox(None, Category::People), 10, None);
     assert_eq!(left.len(), 1);
     assert_eq!(left[0].subject, "Subject 2");
     assert_eq!(store.remove_account(a), Err(StoreError::NotFound));
@@ -2198,7 +2210,7 @@ fn keeps_who_a_message_went_to() {
     store
         .save_messages(folder, std::slice::from_ref(&sent))
         .unwrap();
-    let id = list(&store, ListScope::Inbox(Category::People), 1, None)[0].id;
+    let id = list(&store, ListScope::Inbox(None, Category::People), 1, None)[0].id;
     assert_eq!(
         store.correspondents(id).unwrap(),
         Correspondents {
@@ -2215,7 +2227,7 @@ fn reads_who_a_message_went_to_as_saved_before_names() {
     let store = store();
     let folder = inbox(&store, account(&store, "a@example.com"));
     store.save_messages(folder, &[message(1, 100)]).unwrap();
-    let id = list(&store, ListScope::Inbox(Category::People), 1, None)[0].id;
+    let id = list(&store, ListScope::Inbox(None, Category::People), 1, None)[0].id;
     store
         .conn()
         .execute(
@@ -2273,7 +2285,7 @@ fn shows_images_from_people_and_chosen_senders() {
     store
         .save_messages(folder, &[message(1, 100), news])
         .unwrap();
-    let id = |tab| list(&store, ListScope::Inbox(tab), 1, None)[0].id;
+    let id = |tab| list(&store, ListScope::Inbox(None, tab), 1, None)[0].id;
     let (person, letter) = (id(Category::People), id(Category::Newsletters));
     assert!(store.shows_images(person).unwrap());
     assert!(!store.shows_images(letter).unwrap());

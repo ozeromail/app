@@ -54,6 +54,8 @@ pub struct Account {
     pub needs_sign_in: bool,
     /// The account's own signature; empty to use the default one.
     pub signature: String,
+    /// Its inbox is part of the unified inbox, as a new account's is.
+    pub in_all: bool,
 }
 
 /// When the phone looks for an account's new mail while the app is closed; while it is open,
@@ -198,6 +200,7 @@ mod tests {
             new_mail: NewMail::default(),
             needs_sign_in: false,
             signature: String::new(),
+            in_all: true,
         };
         assert_eq!(account.name(), "a@example.com");
         account.display_name = "Anna".into();
