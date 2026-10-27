@@ -167,6 +167,25 @@ enum Settings {
         set { defaults.set(newValue, forKey: "checked") }
     }
 
+    /// The size of mail's text, a place in `textScales`.
+    static var textSize: Int {
+        get { defaults.object(forKey: "text_size") == nil ? usualSize : min(max(defaults.integer(forKey: "text_size"), 0), textScales.count - 1) }
+        set { defaults.set(newValue, forKey: "text_size") }
+    }
+
+    /// How much larger than usual mail's text is.
+    static var textScale: Double { textScales[textSize] }
+
+    /// The sizes of mail's text the person can pick from, against the usual one.
+    static let textScales = [0.9, 1, 1.1, 1.2, 1.35]
+    static let usualSize = 1
+
+    /// An account was held in the accounts sheet, so the tip about it does not show again.
+    static var holdTipSeen: Bool {
+        get { defaults.bool(forKey: "hold_tip_seen") }
+        set { defaults.set(newValue, forKey: "hold_tip_seen") }
+    }
+
     /// The tip about swipes was read, so it does not show again.
     static var swipeTipSeen: Bool {
         get { defaults.bool(forKey: "swipe_tip_seen") }

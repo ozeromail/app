@@ -42,6 +42,9 @@ struct InboxView: View {
                     SearchView(model: model)
                 case .drafts:
                     DraftsView(model: model)
+                case .settings(let page):
+                    SettingsView(page: page, accounts: model.accounts, signature: model.signature, swipes: $model.swipes,
+                                 mail: model.mail, actions: settingsActions)
                 }
             }
         }
@@ -52,11 +55,11 @@ struct InboxView: View {
                 Task { await model.snooze(snoozing.messages, until: until) }
             }
         }
-        .sheet(isPresented: $model.accountsOpen, onDismiss: { model.added = nil }) {
+        .sheet(isPresented: $model.accountsOpen) {
             AccountsSheet(
                 accounts: model.accounts, folders: model.folders, mailbox: model.mailbox, drafts: model.drafts.count,
-                unread: model.peopleUnread, signature: model.signature, swipes: $model.swipes, groups: $model.groups,
-                allBoxes: $model.allBoxes, actions: accountsActions, startOn: model.added)
+                unread: model.peopleUnread, groups: $model.groups, allBoxes: $model.allBoxes, actions: accountsActions,
+                holdTip: model.holdTip)
             .task { await model.loadFolders() }
         }
         .fullScreenCover(isPresented: $model.addingAccount) {
@@ -163,23 +166,31 @@ struct InboxView: View {
                 model.accountsOpen = false
                 model.addingAccount = true
             },
-            onColor: { account, color in model.changeAccount { try await model.mail.setAccountColor(account, color: color) } },
-            onLabel: { account, label in model.changeAccount { try await model.mail.setAccountLabel(account, label: label) } },
-            onSignature: { text in model.changeAccount { try await model.mail.setSignature(text) } },
-            onAccountSignature: { account, text in
-                model.changeAccount { try await model.mail.setAccountSignature(account, signature: text) }
-            },
             onSignIn: { account in
                 model.accountsOpen = false
                 model.signingIn = account
             },
+            onAccount: { model.openSettings(.account($0.id)) },
+            onSettings: { model.openSettings(.home) })
+    }
+
+    private var settingsActions: SettingsActions {
+        SettingsActions(
+            onAdd: { model.addingAccount = true },
+            onInAll: accountsActions.onInAll,
+            onNotify: { account, on in model.changeAccount { try await model.mail.setNotify(account, on) } },
+            onColor: { account, color in model.changeAccount { try await model.mail.setAccountColor(account, color: color) } },
+            onLabel: { account, label in model.changeAccount { try await model.mail.setAccountLabel(account, label: label) } },
+            onSender: { account, name in model.changeAccount { try await model.mail.setSender(account, name: name) } },
+            onSignature: { text in model.changeAccount { try await model.mail.setSignature(text) } },
+            onAccountSignature: { account, text in
+                model.changeAccount { try await model.mail.setAccountSignature(account, signature: text) }
+            },
+            onSignIn: { model.signingIn = $0 },
             onKeepDays: { account, days in model.changeAccount { try await model.mail.setKeepDays(account, days: days) } },
             onNewMail: { account, check in model.changeAccount { try await model.mail.setNewMail(account, check) } },
             onRemove: { account in Task { await model.remove(account) } },
-            onWrite: {
-                model.accountsOpen = false
-                model.composing = Composing(draft: authorDraft())
-            })
+            onWrite: { model.composing = Composing(draft: authorDraft()) })
     }
 }
 
@@ -595,10 +606,7 @@ private struct Mailboxes: View {
                 accounts: model.accounts, folders: model.folders, mailbox: model.mailbox, drafts: model.drafts.count,
                 unread: model.peopleUnread, allBoxes: $model.allBoxes, groups: $model.groups, actions: actions)
             Section {
-                SheetAction(icon: "gear", text: "settings_title", color: .primary) {
-                    model.added = .settings
-                    model.accountsOpen = true
-                }
+                SheetAction(icon: "gear", text: "settings_title", color: .primary) { model.openSettings(.home) }
             }
         }
         .listStyle(.sidebar)

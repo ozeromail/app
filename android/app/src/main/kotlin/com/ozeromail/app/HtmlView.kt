@@ -13,6 +13,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import java.io.ByteArrayInputStream
+import kotlin.math.roundToInt
 import uniffi.ozero_api.RemoteImage
 
 /**
@@ -58,6 +59,8 @@ private fun WebView.configure(images: List<RemoteImage?>, onShown: () -> Unit) {
         useWideViewPort = true
         builtInZoomControls = true
         displayZoomControls = false
+        // Mail's text at the size the person picked.
+        textZoom = (Settings(context).textScale * 100).roundToInt()
     }
     webViewClient = object : WebViewClient() {
         override fun onPageCommitVisible(view: WebView, url: String?) = onShown()

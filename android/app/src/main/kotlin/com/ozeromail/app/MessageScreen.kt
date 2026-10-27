@@ -858,7 +858,7 @@ private fun PlainText(text: String, quote: String, modifier: Modifier) {
     val colors = MaterialTheme.colorScheme
     SelectionContainer(modifier.padding(start = Gap.screen, end = Gap.screen, top = 6.dp, bottom = 18.dp)) {
         Column(Modifier.widthIn(max = 620.dp)) {
-            if (text.isNotEmpty()) Text(text, style = Type.Reading)
+            if (text.isNotEmpty()) Text(text, style = readingStyle())
             if (quote.isNotEmpty()) {
                 val label = stringResource(R.string.message_quote)
                 Text(
@@ -876,7 +876,7 @@ private fun PlainText(text: String, quote: String, modifier: Modifier) {
                         .padding(horizontal = 10.dp, vertical = 1.dp),
                 )
                 Reveal(quote.takeIf { showQuote }) {
-                    Text(it, color = colors.onSurfaceVariant, style = Type.Quote, modifier = Modifier.padding(top = 10.dp))
+                    Text(it, color = colors.onSurfaceVariant, style = readingStyle(Type.Quote), modifier = Modifier.padding(top = 10.dp))
                 }
             }
         }

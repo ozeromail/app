@@ -24,6 +24,15 @@ private struct Page: UIViewRepresentable {
     let message: Int64
     @Binding var height: CGFloat
 
+    /// The page with its text at the size the person picked.
+    private func sized(_ html: String) -> String {
+        let percent = Int((Settings.textScale * 100).rounded())
+        guard percent != 100 else { return html }
+        return html.replacingOccurrences(
+            of: "</head>", with: "<style>html{-webkit-text-size-adjust:\(percent)%}</style></head>",
+            options: [], range: html.range(of: "</head>"))
+    }
+
     /// The page with its image addresses, `https://images.ozero.invalid/<message>/<n>`, made
     /// inline data, and the reading font left to the system's serif.
     private func inline(_ html: String) -> String {
@@ -61,7 +70,7 @@ private struct Page: UIViewRepresentable {
                 view.configuration.userContentController.add(rules)
             }
             // Once per web view: it loads its page only once.
-            view.loadHTMLString(inline(html), baseURL: nil)
+            view.loadHTMLString(sized(inline(html)), baseURL: nil)
         }
         return view
     }

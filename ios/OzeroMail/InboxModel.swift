@@ -6,6 +6,7 @@ enum Route: Hashable {
     case message(MessageItem)
     case search
     case drafts
+    case settings(SettingsPage)
 }
 
 /// A toast low on the screen: words, and for a while Undo; a move can also show the folder the
@@ -81,8 +82,8 @@ final class InboxModel {
     /// The account being signed in to again.
     var signingIn: AccountItem?
     var accountsOpen = false
-    /// The page the sheet opens on: an account just added, its name and when its mail comes, or the settings.
-    var added: SheetPage?
+    /// The accounts sheet says holding an account opens its settings, until that was done.
+    var holdTip = !Settings.holdTipSeen
     /// Messages chosen to act on together.
     var chosen: Set<Int64> = []
     /// Messages waiting on the snooze sheet for a time.
@@ -682,7 +683,7 @@ final class InboxModel {
     }
 
     func remove(_ account: AccountItem) async {
-        accountsOpen = false
+        closeSettings()
         do {
             try await mail.removeAccount(account)
         } catch {
@@ -787,12 +788,26 @@ final class InboxModel {
         if new { everSynced = everSynced.filter { !$0.hasPrefix(Mailbox.unifiedKey) } }
         Task {
             await loadAccounts()
+            // Its page opens, for its name and when its mail comes.
             if new, let newest = accounts.map(\.id).max() {
-                added = .account(newest)
-                accountsOpen = true
+                path.append(.settings(.account(newest)))
             }
             await sync()
         }
+    }
+
+    /// Opens the settings on `page`, over the inbox.
+    func openSettings(_ page: SettingsPage) {
+        accountsOpen = false
+        if case .account = page {
+            holdTip = false
+            Settings.holdTipSeen = true
+        }
+        path.append(.settings(page))
+    }
+
+    func closeSettings() {
+        path.removeAll { if case .settings = $0 { true } else { false } }
     }
 
     func closeSwipeTip() {
