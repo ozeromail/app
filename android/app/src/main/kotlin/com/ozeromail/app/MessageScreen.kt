@@ -94,6 +94,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.filterNotNull
@@ -158,6 +160,8 @@ fun MessageScreen(
     val people = remember(message.id) { mutableStateMapOf<Long, PeopleItem>() }
     val details = remember(message.id) { mutableStateMapOf<Long, Boolean>() }
     var replying by remember(message.id) { mutableStateOf<Replying?>(null) }
+    // A reply on its way to the page: a second tap meanwhile starts nothing more.
+    var answering by remember(message.id) { mutableStateOf(false) }
     DisposableEffect(bodies) { onDispose { expectGone(bodies, "bodies of a closed conversation") } }
     LaunchedEffect(message.id) {
         try {
@@ -166,6 +170,10 @@ fun MessageScreen(
             thread = first
             known = first.mapTo(mutableSetOf()) { it.id }
             unread = first.filter { !it.seen }.mapTo(mutableSetOf()) { it.id }
+        } catch (e: CoreException) {
+            error = e.text()
+        }
+        try {
             if (message.threadUnread > 0u) mail.markRead(listOf(message))
         } catch (e: CoreException) {
             error = e.text()
@@ -191,7 +199,8 @@ fun MessageScreen(
 
     fun reply(to: MessageItem, all: Boolean) {
         sheet = null
-        if (replying != null) return
+        if (replying != null || answering) return
+        answering = true
         scope.launch {
             try {
                 // A failure of either lands in the catch, not in the screen's scope.
@@ -202,6 +211,8 @@ fun MessageScreen(
                 }
             } catch (e: CoreException) {
                 error = e.text()
+            } finally {
+                answering = false
             }
         }
     }
@@ -798,7 +809,7 @@ private fun From(
 ) {
     val colors = MaterialTheme.colorScheme
     val context = LocalContext.current
-    val author = PersonItem(message.sender, message.fromEmail, message.sent)
+    val author = PersonItem(name = message.sender, first = message.sender, email = message.fromEmail, me = message.sent)
     Column(Modifier.fillMaxWidth().then(if (onToggle == null) Modifier else Modifier.clickable(onClick = onToggle))) {
         Row(Modifier.fillMaxWidth().padding(start = Gap.screen, end = Gap.screen, top = 12.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.weight(1f)) {
@@ -976,6 +987,10 @@ private fun QuickReply(
     var error by remember(start) { mutableStateOf<Int?>(null) }
     fun current() = start.copy(text = text, cc = replying.copied.joinToString(", "))
     SaveOnPause(keeper, ::current)
+    // Leaving the page, or the app put away, keeps what is written; after a send this does nothing.
+    fun keep() = current().let { if (!it.isBlank()) keeper.save(it) }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { keep() }
+    DisposableEffect(keeper) { onDispose { keep() } }
     fun close() {
         val draft = current()
         if (draft.isBlank()) {
@@ -1051,6 +1066,7 @@ private fun QuickReply(
                 },
                 shape = CircleShape,
                 size = 44.dp,
+                enabled = !busy,
             )
             Spacer(Modifier.weight(1f))
             IconTile(

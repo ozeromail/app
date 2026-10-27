@@ -32,6 +32,8 @@ struct MessageView: View {
     @State private var person: PersonItem?
     @State private var replying: Replying?
     @State private var barShown = true
+    /// A reply on its way to the page: a second tap meanwhile starts nothing more.
+    @State private var answering = false
 
     private var mail: Mail { model.mail }
 
@@ -112,7 +114,7 @@ struct MessageView: View {
             // The list's toast, over the message: Undo for a reply, or where a draft went.
             if !pane, let toast = model.toast {
                 ToastView(toast: toast, onUndo: model.tapUndo, onGo: model.tapGo)
-                    .padding(.bottom, replying == nil && !pane ? barHeight : 12)
+                    .padding(.bottom, replying == nil && barShown ? barHeight : 12)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
@@ -170,6 +172,10 @@ struct MessageView: View {
                 thread = first
                 known = Set(first.map(\.id))
                 unread = Set(first.filter { !$0.seen }.map(\.id))
+            } catch {
+                self.error = error.text()
+            }
+            do {
                 if message.threadUnread > 0 { try await mail.markRead([message]) }
             } catch {
                 self.error = error.text()
@@ -265,8 +271,10 @@ struct MessageView: View {
 
     /// A reply low on the page, to the sender; with `all` the others it went to are copied.
     private func reply(_ to: MessageItem, all: Bool) {
-        guard replying == nil else { return }
+        guard replying == nil, !answering else { return }
+        answering = true
         Task {
+            defer { answering = false }
             do {
                 async let draft = mail.reply(to: to, all: all)
                 let others: [PersonItem]
@@ -651,7 +659,7 @@ private struct From: View {
     let onPerson: (PersonItem) -> Void
 
     var body: some View {
-        let author = PersonItem(name: message.sender, email: message.fromEmail, me: message.sent)
+        let author = PersonItem(name: message.sender, first: message.sender, email: message.fromEmail, me: message.sent)
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -810,6 +818,7 @@ private struct QuickReply: View {
     @State private var busy = false
     @State private var error: LocalizedStringKey?
     @FocusState private var focused: Bool
+    @Environment(\.scenePhase) private var scenePhase
 
     private var start: DraftItem { replying.draft }
 
@@ -852,6 +861,7 @@ private struct QuickReply: View {
             HStack(spacing: 8) {
                 RoundButton(icon: "xmark", label: "action_close", size: 44, action: close)
                 RoundButton(icon: "arrow.up.left.and.arrow.down.right", label: "message_full_screen", size: 44, action: expand)
+                    .disabled(busy)
                 Spacer()
                 RoundButton(icon: "arrow.up", label: "compose_send", size: 44, tint: .white, background: .ozeroFill, action: send)
                     .disabled(busy)
@@ -864,6 +874,13 @@ private struct QuickReply: View {
             text = start.text
             keeper = DraftKeeper(mail: mail, id: start.id)
             focused = true
+        }
+        // Leaving the page keeps what is written; after a send this does nothing.
+        .onDisappear {
+            if !current.isBlank { keeper?.save(current) }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active, !current.isBlank { keeper?.save(current) }
         }
         // A pause in typing saves the draft, so each key does not.
         .task(id: current) {

@@ -2282,7 +2282,7 @@ val MessageItem.sender: String
 fun MessageItem.participants(): String {
     if (senders.size < 2) return sender
     val me = stringResource(R.string.message_me)
-    return senders.joinToString(", ") { if (it.me) me else firstName(it.name) }
+    return senders.joinToString(", ") { if (it.me) me else it.first }
 }
 
 /** "Anna", "Anna and Oleg", "Anna, Oleg and Maria". */
@@ -2290,11 +2290,6 @@ fun MessageItem.participants(): String {
 fun joinNames(names: List<String>): String =
     if (names.size < 2) names.joinToString() else stringResource(R.string.message_and, names.dropLast(1).joinToString(", "), names.last())
 
-/** "Anna" of "Anna Lee", "Lee, Anna" or "anna@x.com". */
-private fun firstName(name: String): String {
-    val given = name.substringBefore('@').substringAfter(", ").trim()
-    return given.substringBefore(' ').ifEmpty { name }
-}
 
 @Composable
 fun MessageItem.subjectText(): String = subject.ifBlank { stringResource(R.string.inbox_no_subject) }
