@@ -1,0 +1,940 @@
+{
+ "name": "flick",
+ "frames": [
+  {
+   "ms": 48,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     0,
+     398,
+     1080,
+     602
+    ]
+   }
+  },
+  {
+   "ms": 64,
+   "finger": [
+    810,
+    500
+   ],
+   "seen": null,
+   "at": {
+    "a": [
+     0,
+     398,
+     1080,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 96,
+   "finger": [
+    737.9999389648438,
+    500
+   ],
+   "seen": null,
+   "at": {
+    "a": [
+     -51,
+     398,
+     1029,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 128,
+   "finger": [
+    666,
+    500
+   ],
+   "seen": null,
+   "at": {
+    "a": [
+     -123,
+     398,
+     957,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 160,
+   "finger": [
+    594,
+    500
+   ],
+   "seen": null,
+   "at": {
+    "a": [
+     -195,
+     398,
+     885,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 176,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     -195,
+     398,
+     885,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 192,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     -328,
+     398,
+     752,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 208,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     -527,
+     398,
+     553,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 224,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     -703,
+     398,
+     377,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 240,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     -834,
+     398,
+     246,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 256,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     -924,
+     398,
+     156,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 272,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     -984,
+     398,
+     96,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 288,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     -1022,
+     398,
+     58,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 304,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     -1045,
+     398,
+     35,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 320,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     -1059,
+     398,
+     21,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 336,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     -1068,
+     398,
+     12,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 352,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     -1073,
+     398,
+     7,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 368,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     -1076,
+     398,
+     4,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 384,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     -1078,
+     398,
+     2,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 400,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     -1079,
+     398,
+     1,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 416,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     -1079,
+     398,
+     1,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 432,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     -1080,
+     398,
+     0,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 448,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     -1080,
+     398,
+     0,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 464,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     -1080,
+     398,
+     0,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 480,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     -1080,
+     398,
+     0,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 496,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     -1080,
+     398,
+     0,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 512,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     -1080,
+     398,
+     0,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 528,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     -1080,
+     398,
+     0,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 544,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     -1080,
+     398,
+     0,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 560,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     -1080,
+     398,
+     0,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 576,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": [
+     -1080,
+     398,
+     0,
+     719
+    ]
+   }
+  },
+  {
+   "ms": 592,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 608,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 624,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 640,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 656,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 672,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 688,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 704,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 720,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 736,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 752,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 768,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 784,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 800,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 816,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 832,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 848,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 864,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 880,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 896,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 912,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 928,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 944,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 960,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 976,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 992,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1008,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1024,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1040,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1056,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1072,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1088,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1104,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1120,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1136,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1152,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1168,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1184,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1200,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1216,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1232,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1248,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1264,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1280,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1296,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1312,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1328,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1344,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1360,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1376,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1392,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1408,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1424,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1440,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1456,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1472,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1488,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1504,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1520,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1536,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1552,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1568,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1584,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1600,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  },
+  {
+   "ms": 1616,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "a": null
+   }
+  }
+ ]
+}
