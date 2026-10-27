@@ -7,6 +7,13 @@ struct Snoozing: Identifiable {
     var then: @MainActor () -> Void = {}
 }
 
+/// A swiped message waiting for a folder from `targets`.
+struct Moving: Identifiable {
+    let id = UUID()
+    let message: MessageItem
+    let targets: [(folder: FolderItem, title: String)]
+}
+
 /// The times to snooze to, from `now` on: later today and this evening while there is time
 /// left, tomorrow morning, the weekend from a weekday, and next week unless that is tomorrow.
 func snoozeChoices(now: Date = .now, calendar: Calendar = .current) -> [(label: String, date: Date)] {

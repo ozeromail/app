@@ -90,6 +90,8 @@ final class InboxModel {
     var chosen: Set<Int64> = []
     /// Messages waiting on the snooze sheet for a time.
     var snoozing: Snoozing?
+    /// A message swiped to another folder, while the folder is picked.
+    var moving: Moving?
     var swipes = Settings.swipes {
         didSet { Settings.swipes = swipes }
     }
@@ -631,6 +633,15 @@ final class InboxModel {
             case .read: await setRead([message], read: message.threadUnread > 0)
             // The sheet asks until when.
             case .snooze: snoozing = Snoozing(messages: [message])
+            case .flag: await flag(message, flagged: !message.flagged)
+            case .spam: await spam([message])
+            // The same: a list asks where to.
+            case .move:
+                do {
+                    moving = Moving(message: message, targets: moveOrder(try await mail.moveTargets(of: message)))
+                } catch {
+                    self.error = error.textKey()
+                }
             }
         }
     }

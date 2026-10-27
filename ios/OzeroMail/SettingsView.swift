@@ -189,29 +189,34 @@ extension AccountKind {
 private let sizeNames = ["reading_size_smaller", "reading_size_usual", "reading_size_larger", "reading_size_large",
                          "reading_size_largest"].map { tr($0) }
 
-/// Which action each swipe does, tried on a row each time a side changes.
+/// Which action each swipe does, short and long, tried on a row each time one changes.
 private struct SwipeSettings: View {
     @Binding var swipes: Swipes
     @State private var offset: CGFloat = 0
+    @State private var shown = SwipeAction.done
 
     var body: some View {
         Form {
             Section { preview.listRowInsets(EdgeInsets()) }
             side("swipes_left", $swipes.left)
+            long("swipes_left_long", $swipes.leftLong)
             side("swipes_right", $swipes.right)
+            long("swipes_right_long", $swipes.rightLong)
         }
         .navigationTitle("swipes_title")
-        .onChange(of: swipes.left) { play(-1) }
-        .onChange(of: swipes.right) { play(1) }
-        .onAppear { play(-1) }
+        .onChange(of: swipes.left) { play(-1, swipes.left) }
+        .onChange(of: swipes.right) { play(1, swipes.right) }
+        // A long one turned off shows the short one again.
+        .onChange(of: swipes.leftLong) { play(-1, swipes.leftLong ?? swipes.left, far: swipes.leftLong != nil) }
+        .onChange(of: swipes.rightLong) { play(1, swipes.rightLong ?? swipes.right, far: swipes.rightLong != nil) }
+        .onAppear { play(-1, swipes.left) }
     }
 
     /// A message row: the side it slides from shows that swipe's action.
     private var preview: some View {
-        let action = offset < 0 ? swipes.left : swipes.right
-        return ZStack(alignment: offset < 0 ? .trailing : .leading) {
-            Rectangle().fill(offset == 0 ? Color.clear : action.tint)
-            Image(systemName: action.icon).foregroundStyle(.white).padding(.horizontal, 24)
+        ZStack(alignment: offset < 0 ? .trailing : .leading) {
+            Rectangle().fill(offset == 0 ? Color.clear : shown.tint)
+            Image(systemName: shown.icon).foregroundStyle(.white).padding(.horizontal, 24)
             VStack(alignment: .leading, spacing: 2) {
                 Text("swipes_sample_from").fontWeight(.medium)
                 Text("swipes_sample_subject").font(.subheadline).foregroundStyle(.secondary)
@@ -225,8 +230,9 @@ private struct SwipeSettings: View {
         .clipped()
     }
 
-    private func play(_ way: CGFloat) {
-        withAnimation(.smooth(duration: 0.35)) { offset = way * 96 } completion: {
+    private func play(_ way: CGFloat, _ action: SwipeAction, far: Bool = false) {
+        shown = action
+        withAnimation(.smooth(duration: 0.35)) { offset = way * (far ? 220 : 96) } completion: {
             withAnimation(.smooth(duration: 0.35)) { offset = 0 }
         }
     }
@@ -234,6 +240,15 @@ private struct SwipeSettings: View {
     private func side(_ title: LocalizedStringKey, _ selection: Binding<SwipeAction>) -> some View {
         Picker(title, selection: selection) {
             ForEach(SwipeAction.allCases) { Label($0.label, systemImage: $0.icon).tag($0) }
+        }
+        .pickerStyle(.inline)
+    }
+
+    /// A long swipe's action, or none.
+    private func long(_ title: LocalizedStringKey, _ selection: Binding<SwipeAction?>) -> some View {
+        Picker(title, selection: selection) {
+            Label("swipes_off", systemImage: "xmark").tag(SwipeAction?.none)
+            ForEach(SwipeAction.allCases) { Label($0.label, systemImage: $0.icon).tag(Optional($0)) }
         }
         .pickerStyle(.inline)
     }
