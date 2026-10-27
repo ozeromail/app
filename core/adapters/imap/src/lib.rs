@@ -839,6 +839,26 @@ impl MailProvider for ImapSession {
         .map(drop)
     }
 
+    async fn set_flagged(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_ids: &[String],
+        flagged: bool,
+    ) -> Result<(), ProviderError> {
+        let kind = if flagged {
+            StoreType::Add
+        } else {
+            StoreType::Remove
+        };
+        self.each_chunk(folder, validity, remote_ids, |uids| {
+            CommandBody::store(uids, kind, StoreResponse::Silent, vec![Flag::Flagged], true)
+                .map_err(|_| protocol("bad STORE"))
+        })
+        .await
+        .map(drop)
+    }
+
     async fn move_to(
         &mut self,
         folder: &str,

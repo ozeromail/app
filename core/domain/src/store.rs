@@ -290,6 +290,8 @@ pub enum StoreError {
     NoTrash,
     /// The message's account has no snoozed folder yet.
     NoSnoozed,
+    /// The message's account has no folder with the spam role.
+    NoSpam,
     /// The action does not apply in the message's folder, like archiving from the archive.
     NotAllowed,
     /// Anything else from the storage engine, without message contents.
@@ -307,6 +309,7 @@ impl fmt::Display for StoreError {
             Self::NoArchive => write!(f, "the account has no archive folder"),
             Self::NoTrash => write!(f, "the account has no trash folder"),
             Self::NoSnoozed => write!(f, "the account has no snoozed folder"),
+            Self::NoSpam => write!(f, "the account has no spam folder"),
             Self::NotAllowed => write!(f, "the action does not apply in this folder"),
             Self::Storage(e) => write!(f, "storage error: {e}"),
         }

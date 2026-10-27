@@ -541,6 +541,33 @@ SuppressReadReceipts=\"true\"><m:ItemChanges>{changes}</m:ItemChanges></m:Update
         .map(drop)
     }
 
+    async fn set_flagged(
+        &mut self,
+        _folder: &str,
+        _validity: u32,
+        remote_ids: &[String],
+        flagged: bool,
+    ) -> Result<(), ProviderError> {
+        let status = if flagged { "Flagged" } else { "NotFlagged" };
+        let change = |id: &String| {
+            format!(
+                "<t:ItemChange><t:ItemId Id=\"{}\"/><t:Updates><t:SetItemField>\
+<t:FieldURI FieldURI=\"item:Flag\"/><t:Message><t:Flag><t:FlagStatus>{status}</t:FlagStatus></t:Flag>\
+</t:Message></t:SetItemField></t:Updates></t:ItemChange>",
+                escape(id)
+            )
+        };
+        self.each_chunk(remote_ids, true, |ids| {
+            let changes: String = ids.iter().map(change).collect();
+            format!(
+                "<m:UpdateItem MessageDisposition=\"SaveOnly\" ConflictResolution=\"AlwaysOverwrite\">\
+<m:ItemChanges>{changes}</m:ItemChanges></m:UpdateItem>"
+            )
+        })
+        .await
+        .map(drop)
+    }
+
     async fn move_to(
         &mut self,
         _folder: &str,

@@ -139,6 +139,15 @@ pub trait MailProvider: Send {
         seen: bool,
     ) -> impl Future<Output = Result<(), ProviderError>> + Send;
 
+    /// Flags messages of a folder or takes their flags off, like `set_seen` otherwise.
+    fn set_flagged(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_ids: &[String],
+        flagged: bool,
+    ) -> impl Future<Output = Result<(), ProviderError>> + Send;
+
     /// Moves messages of a folder into folder `to`, like `set_seen` otherwise, and returns
     /// the ids they have there, as far as the server tells.
     fn move_to(

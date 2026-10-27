@@ -5,10 +5,14 @@ use crate::MessageLocation;
 pub enum Action {
     /// Marks the message read (`true`) or unread.
     Seen(bool),
+    /// Flags the message (`true`) or takes its flag off.
+    Flagged(bool),
     /// Moves the message out of its folder into the account's archive.
     Archive,
     /// Moves the message out of its folder into the account's trash.
     Trash,
+    /// Moves the message out of its folder into the account's spam.
+    Spam,
     /// Moves the message back into the account's inbox, out of the archive, trash, spam or
     /// snoozed folder.
     Inbox,
@@ -23,9 +27,9 @@ pub enum Action {
 }
 
 impl Action {
-    /// Whether the message leaves its folder: everything but marking it read or unread.
+    /// Whether the message leaves its folder: everything but marking it read or flagged.
     pub fn removes(self) -> bool {
-        !matches!(self, Action::Seen(_))
+        !matches!(self, Action::Seen(_) | Action::Flagged(_))
     }
 }
 

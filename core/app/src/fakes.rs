@@ -143,6 +143,16 @@ impl MailProvider for Server {
         ready(self.apply(folder, validity, remote_ids, Action::Seen(seen)))
     }
 
+    fn set_flagged(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_ids: &[String],
+        flagged: bool,
+    ) -> impl Future<Output = Result<(), ProviderError>> + Send {
+        ready(self.apply(folder, validity, remote_ids, Action::Flagged(flagged)))
+    }
+
     fn move_to(
         &mut self,
         folder: &str,
