@@ -76,6 +76,7 @@ pub async fn forwarded_files(
         .zip(found)
         .filter_map(|(file, data)| {
             Some(OutgoingFile {
+                id: None,
                 name: file.name,
                 mime: file.mime,
                 data: data?,

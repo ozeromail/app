@@ -293,6 +293,9 @@ pub trait Store: Send + Sync {
     fn recent_files(&self, limit: usize) -> Result<Vec<RecentFile>, StoreError>;
     /// Takes a file off its draft; one already gone, or sent with its message, is left be.
     fn detach(&self, file: FileId) -> Result<(), StoreError>;
+    /// The contents of a file added to a draft, for the editor to show; `NotFound` once it
+    /// is gone.
+    fn file_data(&self, file: FileId) -> Result<Vec<u8>, StoreError>;
     /// The files added to a queued message, whole, in the order they were added.
     fn outbox_files(&self, id: OutboxId) -> Result<Vec<OutgoingFile>, StoreError>;
     /// The messages the server refused, newest first.

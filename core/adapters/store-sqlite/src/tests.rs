@@ -2292,7 +2292,7 @@ fn a_taken_back_answer_keeps_its_quote() {
     let id = store.queue_send(&draft, None, "1@x", 0, 100).unwrap();
     assert_eq!(
         store.due_sends(a, 100).unwrap()[0].text,
-        "Hello\n\nBob wrote:\n> Hi"
+        "Hello\n\nBob wrote:\n\\> Hi"
     );
     assert_eq!(taken_back(&store, id, 50), Some(saved(&draft, 50)));
 }
@@ -2423,6 +2423,7 @@ fn a_draft_outlives_its_answered_message_but_not_its_account() {
 
 fn file(name: &str, data: &[u8]) -> OutgoingFile {
     OutgoingFile {
+        id: None,
         name: name.into(),
         mime: "application/pdf".into(),
         data: data.to_vec(),
@@ -2466,7 +2467,10 @@ fn files_go_with_a_draft_to_the_outbox_and_back() {
         .unwrap();
     assert_eq!(
         store.outbox_files(sent).unwrap(),
-        [file("bill.pdf", b"pdf")]
+        [OutgoingFile {
+            id: Some(bill.id),
+            ..file("bill.pdf", b"pdf")
+        }]
     );
     // A late tap on the chip cannot take it off the message on its way.
     store.detach(bill.id).unwrap();
@@ -2755,7 +2759,7 @@ fn a_draft_keeps_one_copy_on_its_server() {
     let push = store.drafts_to_push(a).unwrap();
     assert_eq!(push.len(), 1);
     assert_eq!(push[0].message.to, ["bob@example.org"]);
-    assert_eq!(push[0].message.text, "Hello\n\n--\nAnna");
+    assert_eq!(push[0].message.text, "Hello\n\n\\-\\-\nAnna");
     assert_eq!(push[0].message.message_id, "");
     store
         .pushed_draft(a, id, 100, "m1@x", Some(&copy(1)))
@@ -2784,6 +2788,7 @@ fn a_draft_keeps_one_copy_on_its_server() {
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].copy, copy(3));
     let file = OutgoingFile {
+        id: None,
         name: "a.txt".into(),
         mime: "text/plain".into(),
         data: b"hi".to_vec(),
@@ -2804,7 +2809,9 @@ fn a_draft_keeps_one_copy_on_its_server() {
         .unwrap();
     assert!(store.server_drafts(a).unwrap().is_empty());
     assert!(store.drafts_to_push(a).unwrap().is_empty());
-    assert_eq!(store.draft_files(other).unwrap(), [file]);
+    let files = store.draft_files(other).unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!((&files[0].name, &files[0].data), (&file.name, &file.data));
 
     // Another copy with the draft's Message-ID: an older one, left by a push that broke off,
     // goes; a newer one, another app's edit, stays and is not brought in twice.

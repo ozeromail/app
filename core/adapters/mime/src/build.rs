@@ -1,7 +1,8 @@
-//! `MessageBuilder`: plain text messages, with files if any, written by hand. All output is
-//! 7-bit ASCII with CRLF.
+//! `MessageBuilder`: messages in plain text, and in HTML too when the text has styles or
+//! images (`rich`), with files if any, written by hand. All output is 7-bit ASCII with CRLF.
 
-use ozero_domain::{Address, MessageBuilder, Outgoing, OutgoingFile, base64};
+use ozero_domain::rich::{self, HtmlImage};
+use ozero_domain::{Address, FileId, MessageBuilder, Outgoing, OutgoingFile, base64};
 
 #[derive(Debug, Default)]
 pub struct MimeBuilder;
@@ -24,24 +25,103 @@ impl MessageBuilder for MimeBuilder {
             header(&mut out, "References", &parent);
         }
         header(&mut out, "MIME-Version", "1.0");
-        if message.files.is_empty() {
-            text(&mut out, &message.text);
-            return out.into_bytes();
-        }
+        let text = &message.text;
+        // The images the text shows, each a file of the draft, and the files that go below.
+        let shown = rich::images(text);
+        let (inline, files): (Vec<&OutgoingFile>, Vec<&OutgoingFile>) =
+            message.files.iter().partition(|f| {
+                f.mime.starts_with("image/")
+                    && f.id.is_some_and(|id| shown.iter().any(|&(s, _)| s == id))
+            });
+        let image = |id: FileId| inline.iter().find(|f| f.id == Some(id));
+        let cid = |id: FileId| format!("f{}.{}", id.0, one_line(&message.message_id));
+        let plain = rich::to_plain(text, &|id| image(id).map(|f| f.name.clone()));
+        let html = rich::is_rich(text).then(|| {
+            rich::to_html(text, &|id| {
+                image(id).map(|f| HtmlImage {
+                    cid: cid(id),
+                    name: f.name.clone(),
+                })
+            })
+        });
+        let inline: Vec<(String, &OutgoingFile)> = inline
+            .into_iter()
+            .filter_map(|f| Some((cid(f.id?), f)))
+            .collect();
         // Unique as the message id, and never in base64, which has no `=_`.
         let local = message.message_id.split('@').next().unwrap_or_default();
-        let boundary = format!("=_{}", one_line(local).replace('"', ""));
+        let local = one_line(local).replace('"', "");
+        let body = Body {
+            plain: &plain,
+            html: html.as_deref(),
+            inline: &inline,
+            local: &local,
+        };
+        if files.is_empty() {
+            body.write(&mut out);
+            return out.into_bytes();
+        }
+        let boundary = format!("=_m.{local}");
         let content = format!("multipart/mixed; boundary=\"{boundary}\"");
         header(&mut out, "Content-Type", &content);
         out.push_str("\r\n");
         out.push_str(&format!("--{boundary}\r\n"));
-        text(&mut out, &message.text);
-        for file in &message.files {
+        body.write(&mut out);
+        for file in files {
             out.push_str(&format!("--{boundary}\r\n"));
-            attachment(&mut out, file);
+            attachment(&mut out, file, None);
         }
         out.push_str(&format!("--{boundary}--\r\n"));
         out.into_bytes()
+    }
+}
+
+/// What the message says: plain text, and HTML with the images it shows when it has more
+/// than plain text can.
+struct Body<'a> {
+    plain: &'a str,
+    html: Option<&'a str>,
+    /// The images with their `Content-ID`s.
+    inline: &'a [(String, &'a OutgoingFile)],
+    /// Makes the boundaries.
+    local: &'a str,
+}
+
+impl Body<'_> {
+    fn write(&self, out: &mut String) {
+        if self.inline.is_empty() {
+            return self.alternatives(out);
+        }
+        let boundary = format!("=_r.{}", self.local);
+        let content =
+            format!("multipart/related; type=\"multipart/alternative\"; boundary=\"{boundary}\"");
+        header(out, "Content-Type", &content);
+        out.push_str("\r\n");
+        out.push_str(&format!("--{boundary}\r\n"));
+        self.alternatives(out);
+        for (cid, file) in self.inline {
+            out.push_str(&format!("--{boundary}\r\n"));
+            attachment(out, file, Some(cid));
+        }
+        out.push_str(&format!("--{boundary}--\r\n"));
+    }
+
+    fn alternatives(&self, out: &mut String) {
+        let Some(html) = self.html else {
+            return text(out, "text/plain", self.plain);
+        };
+        let boundary = format!("=_a.{}", self.local);
+        header(
+            out,
+            "Content-Type",
+            &format!("multipart/alternative; boundary=\"{boundary}\""),
+        );
+        out.push_str("\r\n");
+        out.push_str(&format!("--{boundary}\r\n"));
+        text(out, "text/plain", self.plain);
+        out.push_str(&format!("--{boundary}\r\n"));
+        text(out, "text/html", html);
+        out.push_str(&format!("--{boundary}--\r\n"));
     }
 }
 
@@ -52,16 +132,16 @@ fn header(out: &mut String, name: &str, value: &str) {
     out.push_str("\r\n");
 }
 
-/// The text part: its headers, then the text.
-fn text(out: &mut String, text: &str) {
-    header(out, "Content-Type", "text/plain; charset=utf-8");
+/// A text part: its headers, then the text.
+fn text(out: &mut String, mime: &str, text: &str) {
+    header(out, "Content-Type", &format!("{mime}; charset=utf-8"));
     header(out, "Content-Transfer-Encoding", "base64");
     out.push_str("\r\n");
     lines(out, crlf(text).as_bytes());
 }
 
-/// A file part: its headers, then the file.
-fn attachment(out: &mut String, file: &OutgoingFile) {
+/// A file part: its headers, then the file; shown in the text when it has a `cid`.
+fn attachment(out: &mut String, file: &OutgoingFile, cid: Option<&str>) {
     let mime = one_line(&file.mime).replace([';', '"', ' '], "");
     let mime = if mime.contains('/') {
         mime
@@ -81,11 +161,19 @@ fn attachment(out: &mut String, file: &OutgoingFile) {
         "Content-Type",
         &format!("{mime}{charset}; name=\"{name}\""),
     );
+    let disposition = if cid.is_some() {
+        "inline"
+    } else {
+        "attachment"
+    };
     header(
         out,
         "Content-Disposition",
-        &format!("attachment; filename=\"{name}\""),
+        &format!("{disposition}; filename=\"{name}\""),
     );
+    if let Some(cid) = cid {
+        header(out, "Content-ID", &format!("<{cid}>"));
+    }
     header(out, "Content-Transfer-Encoding", "base64");
     out.push_str("\r\n");
     lines(out, &file.data);
@@ -258,11 +346,13 @@ mod tests {
         let message = Outgoing {
             files: vec![
                 OutgoingFile {
+                    id: None,
                     name: "Счёт \"октябрь\".pdf".into(),
                     mime: "application/pdf".into(),
                     data: pdf.clone(),
                 },
                 OutgoingFile {
+                    id: None,
                     name: "notes.txt".into(),
                     mime: String::new(),
                     data: b"hi".to_vec(),
@@ -280,5 +370,67 @@ mod tests {
         assert_eq!(files[0].contents(), pdf);
         assert_eq!(files[1].attachment_name(), Some("notes.txt"));
         assert_eq!(files[1].contents(), b"hi");
+    }
+
+    #[test]
+    fn sends_styles_and_images_as_html() {
+        let from = Address {
+            name: None,
+            email: "anna@example.com".into(),
+        };
+        let jpeg = vec![0xff, 0xd8, 0xff, 0xe0, 1, 2, 3];
+        let message = Outgoing {
+            files: vec![
+                OutgoingFile {
+                    id: Some(FileId(7)),
+                    name: "IMG_1.jpg".into(),
+                    mime: "image/jpeg".into(),
+                    data: jpeg.clone(),
+                },
+                OutgoingFile {
+                    id: Some(FileId(8)),
+                    name: "bill.pdf".into(),
+                    mime: "application/pdf".into(),
+                    data: b"pdf".to_vec(),
+                },
+            ],
+            ..outgoing("Dacha", "Look **here**:\n![](file:7)\n![](file:9)\nBye")
+        };
+        let raw = MimeBuilder.build(&from, &message);
+        assert!(raw.is_ascii());
+        let parsed = MessageParser::default().parse(&raw).unwrap();
+        assert_eq!(
+            parsed.body_text(0).as_deref(),
+            Some("Look *here*:\r\n[IMG_1.jpg]\r\nBye")
+        );
+        let html = parsed.body_html(0).unwrap();
+        assert!(html.contains("<b>here</b>"));
+        assert!(html.contains("<img src=\"cid:f7.1.2@example.com\""));
+        let image = parsed
+            .parts
+            .iter()
+            .find(|p| p.content_id() == Some("f7.1.2@example.com"))
+            .unwrap();
+        assert_eq!(image.contents(), jpeg);
+        let files: Vec<_> = parsed
+            .attachments()
+            .filter(|a| a.content_id().is_none())
+            .collect();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].attachment_name(), Some("bill.pdf"));
+    }
+
+    #[test]
+    fn sends_plain_text_without_marks_as_before() {
+        let from = Address {
+            name: None,
+            email: "anna@example.com".into(),
+        };
+        let raw = MimeBuilder.build(&from, &outgoing("Hi", "a\\_b\n\\> c"));
+        let text = String::from_utf8(raw.clone()).unwrap();
+        assert!(text.contains("Content-Type: text/plain; charset=utf-8\r\n"));
+        assert!(!text.contains("multipart"));
+        let parsed = MessageParser::default().parse(&raw).unwrap();
+        assert_eq!(parsed.body_text(0).as_deref(), Some("a_b\r\n> c"));
     }
 }

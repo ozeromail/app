@@ -706,6 +706,7 @@ impl Store for Memory {
     /// One file, named after the draft.
     fn draft_files(&self, id: DraftId) -> Result<Vec<OutgoingFile>, StoreError> {
         Ok(vec![OutgoingFile {
+            id: None,
             name: format!("{}.txt", id.0),
             mime: "text/plain".into(),
             data: vec![],
@@ -771,6 +772,10 @@ impl Store for Memory {
 
     fn detach(&self, _: FileId) -> Result<(), StoreError> {
         Ok(())
+    }
+
+    fn file_data(&self, _: FileId) -> Result<Vec<u8>, StoreError> {
+        Err(StoreError::NotFound)
     }
 
     fn outbox_files(&self, _: OutboxId) -> Result<Vec<OutgoingFile>, StoreError> {

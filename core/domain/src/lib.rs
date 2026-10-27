@@ -8,6 +8,7 @@ mod message;
 mod op;
 mod outbox;
 mod provider;
+pub mod rich;
 mod sort;
 mod store;
 mod unsubscribe;

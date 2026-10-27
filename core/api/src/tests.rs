@@ -838,7 +838,8 @@ fn signs_with_the_accounts_signature_else_the_default_one() {
     assert_eq!(back.signature, "--\nA.");
     core.send(back).unwrap();
     let due = core.store.due_sends(AccountId(home), i64::MAX).unwrap();
-    assert_eq!(due[0].text, "Text\n\n--\nA.\n\nYou wrote:\n> Hi");
+    let text = ozero_domain::rich::to_plain(&due[0].text, &|_| None);
+    assert_eq!(text, "Text\n\n--\nA.\n\nYou wrote:\n> Hi");
 }
 
 #[test]

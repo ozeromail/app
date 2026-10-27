@@ -1484,7 +1484,7 @@ impl Store for SqliteStore {
         let conn = self.conn();
         let rows = conn
             .prepare_cached(
-                "SELECT f.name, f.mime, d.data FROM draft_file f JOIN file_data d ON d.file = f.id
+                "SELECT f.name, f.mime, d.data, f.id FROM draft_file f JOIN file_data d ON d.file = f.id
                  WHERE f.draft = ?1 ORDER BY f.id",
             )
             .and_then(|mut s| s.query_map([id.0], outgoing_file)?.collect());
@@ -1772,11 +1772,23 @@ impl Store for SqliteStore {
             .map_err(storage)
     }
 
+    fn file_data(&self, file: FileId) -> Result<Vec<u8>, StoreError> {
+        self.conn()
+            .query_row(
+                "SELECT data FROM file_data WHERE file = ?1",
+                [file.0],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(storage)?
+            .ok_or(StoreError::NotFound)
+    }
+
     fn outbox_files(&self, id: OutboxId) -> Result<Vec<OutgoingFile>, StoreError> {
         let conn = self.conn();
         let rows = conn
             .prepare_cached(
-                "SELECT f.name, f.mime, d.data FROM draft_file f JOIN file_data d ON d.file = f.id
+                "SELECT f.name, f.mime, d.data, f.id FROM draft_file f JOIN file_data d ON d.file = f.id
                  WHERE f.outbox = ?1 ORDER BY f.id",
             )
             .and_then(|mut s| s.query_map([id.0], outgoing_file)?.collect());
@@ -3137,9 +3149,10 @@ fn copies_gone(tx: &Transaction<'_>, folder: FolderId, gone: &[String]) -> Resul
     Ok(())
 }
 
-/// A file to send, from its name, type and contents.
+/// A file to send, from its name, type, contents and id.
 fn outgoing_file(r: &Row<'_>) -> rusqlite::Result<OutgoingFile> {
     Ok(OutgoingFile {
+        id: Some(FileId(r.get(3)?)),
         name: r.get(0)?,
         mime: r.get(1)?,
         data: r.get(2)?,
