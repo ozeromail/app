@@ -149,6 +149,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.LifecycleStartEffect
@@ -210,13 +211,26 @@ private const val PAGE_ROWS = 12
 
 private val MailboxSaver = Saver<Mailbox, Long>(
     save = { it.key() },
-    restore = { if (it >= 0) Mailbox.Folder(it) else Mailbox.Unified(FolderRole.entries[(-1L - it).toInt()]) },
+    restore = {
+        when {
+            it >= 0 -> Mailbox.Folder(it)
+            it == UNREAD_KEY -> Mailbox.Unread
+            it == FILES_KEY -> Mailbox.Files
+            else -> Mailbox.Unified(FolderRole.entries[(-1L - it).toInt()])
+        }
+    },
 )
 
-/** A folder by its id, which is positive; the unified mailboxes as their role below zero. */
+/** Below every role's key. */
+private const val UNREAD_KEY = -100L
+private const val FILES_KEY = -101L
+
+/** A folder by its id, which is positive; the unified mailboxes as their role below zero, then unread and files. */
 fun Mailbox.key(): Long = when (this) {
     is Mailbox.Folder -> id
     is Mailbox.Unified -> -1L - role.ordinal
+    Mailbox.Unread -> UNREAD_KEY
+    Mailbox.Files -> FILES_KEY
 }
 
 /**
@@ -273,6 +287,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var writing by remember { mutableStateOf(false) }
     var tab by rememberSaveable { mutableStateOf(Category.PEOPLE) }
     var tabs by remember { mutableStateOf(emptyList<InboxTab>()) }
+    // Unread People mail of each account's inbox, by account id.
+    var peopleUnread by remember { mutableStateOf(emptyMap<Long, Int>()) }
     // The first rows of the other tabs, so a tab glides in with its mail already there.
     var others by remember { mutableStateOf(emptyMap<Category, List<MessageItem>>()) }
     // The list shown is the next tab's first rows, until its saved list is read: it has no end to scroll to yet.
@@ -285,7 +301,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     // The account being signed in to again, by id.
     var signingIn by rememberSaveable { mutableStateOf<Long?>(null) }
     var accountsOpen by rememberSaveable { mutableStateOf(false) }
-    // An account just added, whose settings the sheet opens on: its name, when its mail comes.
+    // The page the sheet opens on: an account just added, its name and when its mail comes, or the settings.
     var added by rememberSaveable { mutableStateOf<Long?>(null) }
     LaunchedEffect(accountsOpen) { if (!accountsOpen) added = null }
     var accounts by remember { mutableStateOf(emptyList<AccountItem>()) }
@@ -302,6 +318,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     }
     var swipes by remember { mutableStateOf(settings.swipes) }
     var groups by remember { mutableStateOf(settings.groups) }
+    var allBoxes by remember { mutableStateOf(settings.allBoxes) }
     var swipeTip by remember { mutableStateOf(!settings.swipeTipSeen) }
     var query by rememberSaveable { mutableStateOf("") }
     // Messages chosen to act on together, in the order they were chosen.
@@ -330,14 +347,23 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     val sending = stringResource(R.string.inbox_sending)
     val draftSaved = stringResource(R.string.draft_saved)
     val draftDeleted = stringResource(R.string.draft_deleted)
+    val folderPinned = stringResource(R.string.folder_pinned)
+    val folderUnpinned = stringResource(R.string.folder_unpinned)
 
     val drafts by mail.drafts.collectAsState()
+
+    // The account whose inbox is open, which keeps its tabs; null in the unified inbox and elsewhere.
+    fun inboxAccount(): Long? = (mailbox as? Mailbox.Folder)?.let { box ->
+        folders.find { it.id == box.id && it.role == FolderRole.INBOX }?.accountId
+    }
+
+    fun tabbed() = mailbox == Mail.INBOX || inboxAccount() != null
 
     suspend fun loadList() {
         val shown = tab to mailbox
         try {
             val size = listSize
-            val found = if (mailbox == Mail.INBOX) mail.inbox(tab, size) else mail.mailbox(mailbox, size)
+            val found = if (tabbed()) mail.inbox(inboxAccount(), tab, size) else mail.mailbox(mailbox, size)
             // A tab or mailbox picked meanwhile loads its own list.
             if (tab to mailbox == shown) {
                 // Beside the list, the message goes when its row does, as when it moved on another device.
@@ -357,9 +383,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
 
     suspend fun counts() {
         try {
-            tabs = mail.tabs()
+            tabs = mail.tabs(inboxAccount())
             unsent = mail.unsent()
-            inboxEmpty = mail.inboxEmpty()
+            inboxEmpty = mail.inboxEmpty(inboxAccount())
+            peopleUnread = mail.peopleUnread()
         } catch (e: CoreException) {
             fail(e)
         }
@@ -375,11 +402,12 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     }
 
     suspend fun loadOthers() {
-        if (mailbox != Mail.INBOX) return
+        if (!tabbed()) return
         val showing = tab
+        val account = inboxAccount()
         try {
             val read = coroutineScope {
-                Category.entries.filter { it != showing }.map { it to async { mail.inbox(it, PAGE_ROWS) } }
+                Category.entries.filter { it != showing }.map { it to async { mail.inbox(account, it, PAGE_ROWS) } }
             }.map { (category, rows) -> category to rows.await() }
             others = others + read
         } catch (e: CoreException) {
@@ -561,8 +589,12 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         }.first { it }
         loadMore()
     }
-    // Another mailbox brings in what changed in it; the inbox keeps itself up to date.
+    // Another mailbox brings in what changed in it; the inbox keeps itself up to date. An
+    // account's inbox has tabs and counts of its own.
     LaunchedEffect(mailbox) {
+        others = emptyMap()
+        counts()
+        loadOthers()
         if (mailbox != Mail.INBOX) sync(mailbox)
     }
     // Folders show once a sync has listed them: they are read after each sync, and each time the sheet opens.
@@ -888,13 +920,107 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         }
     }
 
-    val openFolder = (mailbox as? Mailbox.Folder)?.let { box -> folders.find { it.id == box.id } }
-
     /** Which groups of mailboxes are open, kept for next time. */
     fun keepGroups(next: Groups) {
         groups = next
         settings.groups = next
     }
+
+    val openFolder = (mailbox as? Mailbox.Folder)?.let { box -> folders.find { it.id == box.id } }
+    val mailboxesState = MailboxesState(accounts, folders, mailbox, drafts.size, peopleUnread, allBoxes, groups)
+    // The sheet's and the wide screen's mailboxes do the same; going somewhere closes the sheet.
+    val accountsActions = AccountsActions(
+        onDrafts = {
+            accountsOpen = false
+            draftsOpen = true
+        },
+        onMailbox = {
+            accountsOpen = false
+            mailbox = it
+        },
+        onAllBoxes = {
+            allBoxes = it
+            settings.allBoxes = it
+        },
+        onInAll = { account, inAll ->
+            changeAccount { mail.setInAll(account, inAll) }
+        },
+        onOrder = { order ->
+            accounts = order
+            changeAccount { mail.setAccountOrder(order) }
+        },
+        onPin = { folder, pinned ->
+            scope.launch {
+                try {
+                    mail.setPinned(folder, pinned)
+                    loadFolders()
+                    note(if (pinned) folderPinned else folderUnpinned)
+                } catch (e: CoreException) {
+                    fail(e)
+                }
+            }
+        },
+        onSwipes = {
+            swipes = it
+            settings.swipes = it
+        },
+        onGroups = ::keepGroups,
+        onAdd = {
+            accountsOpen = false
+            addingAccount = true
+        },
+        onColor = { account, color ->
+            changeAccount { mail.setAccountColor(account, color) }
+        },
+        onLabel = { account, label ->
+            changeAccount { mail.setAccountLabel(account, label) }
+        },
+        onSignature = {
+            signature = it.trimEnd()
+            changeAccount { mail.setSignature(it) }
+        },
+        onAccountSignature = { account, text ->
+            changeAccount { mail.setAccountSignature(account, text) }
+        },
+        onSignIn = { account ->
+            accountsOpen = false
+            signingIn = account.id
+        },
+        onKeepDays = { account, days ->
+            changeAccount { mail.setKeepDays(account, days) }
+        },
+        onNewMail = { account, check ->
+            changeAccount { mail.setNewMail(account, check) }
+        },
+        onRemove = { account ->
+            accountsOpen = false
+            scope.launch {
+                try {
+                    mail.removeAccount(account)
+                } catch (e: CoreException) {
+                    fail(e)
+                    return@launch
+                }
+                MailWorker.clearNotifications(context)
+                // Gone also when the list cannot be read again.
+                accounts = accounts.filterNot { it.id == account.id }
+                folders = folders.filterNot { it.accountId == account.id }
+                // Its folders, and with them the mailboxes together, may be gone.
+                mailbox = Mail.INBOX
+                loadAccounts()
+                if (accounts.isEmpty()) {
+                    keepSynced(emptySet())
+                    onNoAccounts()
+                } else {
+                    load()
+                }
+            }
+        },
+        onWrite = {
+            accountsOpen = false
+            composing = Composing(authorDraft(context))
+        },
+    )
 
     // Back from another mailbox leads to the inbox.
     BackHandler(enabled = screen == Screen.Inbox && mailbox != Mail.INBOX && !accountsOpen) { mailbox = Mail.INBOX }
@@ -1039,15 +1165,12 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         ) {
                             Row {
                                 Mailboxes(
-                                    accounts = accounts,
-                                    folders = folders,
-                                    mailbox = mailbox,
-                                    drafts = drafts.size,
-                                    onDrafts = { draftsOpen = true },
-                                    groups = groups,
-                                    onGroups = ::keepGroups,
-                                    onMailbox = { mailbox = it },
-                                    onMore = { accountsOpen = true },
+                                    state = mailboxesState,
+                                    actions = accountsActions,
+                                    onSettings = {
+                                        added = SETTINGS
+                                        accountsOpen = true
+                                    },
                                     modifier = Modifier.width(MAILBOXES).fillMaxHeight(),
                                 )
                                 VerticalDivider(color = colors.outlineVariant)
@@ -1089,6 +1212,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                     scope.launch { sync(mailbox) }
                                 },
                                 mailbox = mailbox,
+                                tabbed = mailbox == Mail.INBOX || openFolder?.role == FolderRole.INBOX,
+                                scope = scopeAccounts(mailbox, openFolder, accounts),
                                 title = mailboxTitle(mailbox, openFolder),
                                 owner = mailboxOwner(mailbox, openFolder, accounts),
                                 accounts = accounts,
@@ -1164,82 +1289,11 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         }
         AccountsSheet(
             visible = accountsOpen,
-            accounts = accounts,
-            folders = folders,
-            mailbox = mailbox,
-            drafts = drafts.size,
-            onDrafts = {
-                accountsOpen = false
-                draftsOpen = true
-            },
+            state = mailboxesState,
             swipes = swipes,
-            onMailbox = {
-                accountsOpen = false
-                mailbox = it
-            },
-            onSwipes = {
-                swipes = it
-                settings.swipes = it
-            },
-            groups = groups,
-            onGroups = ::keepGroups,
-            onAdd = {
-                accountsOpen = false
-                addingAccount = true
-            },
-            onColor = { account, color ->
-                changeAccount { mail.setAccountColor(account, color) }
-            },
-            onLabel = { account, label ->
-                changeAccount { mail.setAccountLabel(account, label) }
-            },
             signature = signature,
-            onSignature = {
-                signature = it.trimEnd()
-                changeAccount { mail.setSignature(it) }
-            },
-            onAccountSignature = { account, text ->
-                changeAccount { mail.setAccountSignature(account, text) }
-            },
-            onSignIn = { account ->
-                accountsOpen = false
-                signingIn = account.id
-            },
-            onKeepDays = { account, days ->
-                changeAccount { mail.setKeepDays(account, days) }
-            },
+            actions = accountsActions,
             startOn = added,
-            onNewMail = { account, check ->
-                changeAccount { mail.setNewMail(account, check) }
-            },
-            onRemove = { account ->
-                accountsOpen = false
-                scope.launch {
-                    try {
-                        mail.removeAccount(account)
-                    } catch (e: CoreException) {
-                        fail(e)
-                        return@launch
-                    }
-                    MailWorker.clearNotifications(context)
-                    // Gone also when the list cannot be read again.
-                    accounts = accounts.filterNot { it.id == account.id }
-                    folders = folders.filterNot { it.accountId == account.id }
-                    // Its folders, and with them the mailboxes together, may be gone.
-                    mailbox = Mail.INBOX
-                    loadAccounts()
-                    if (accounts.isEmpty()) {
-                        keepSynced(emptySet())
-                        onNoAccounts()
-                    } else {
-                        load()
-                    }
-                }
-            },
-            onWrite = {
-                accountsOpen = false
-                composing = Composing(authorDraft(context))
-            },
             onClose = { accountsOpen = false },
         )
         SnoozeSheet(
@@ -1357,6 +1411,10 @@ private fun InboxList(
     /** A pull asks for a sync; the empty list answers it with its own water. */
     onSync: () -> Unit,
     mailbox: Mailbox,
+    /** The unified inbox or an account's: the list has tabs. */
+    tabbed: Boolean,
+    /** Whose mail the list is, for the accounts button. */
+    scope: List<AccountItem>,
     title: String,
     owner: String?,
     accounts: List<AccountItem>,
@@ -1420,7 +1478,7 @@ private fun InboxList(
     // Right after a switch the list is still the old tab's, so it does not count.
     val oldTabList = remember(tab, mailbox) { messages }
     // With nothing in any tab there is one lake under them all, which stays put as they change.
-    val inbox = mailbox == Mail.INBOX
+    val inbox = tabbed
     val allEmpty = inbox && inboxEmpty
     var hadMail by remember(tab, mailbox) { mutableStateOf(false) }
     LaunchedEffect(messages) { hadMail = messages.isNotEmpty() && messages !== oldTabList }
@@ -1720,7 +1778,7 @@ private fun InboxList(
                 tabs = tabs.takeIf { inbox },
                 glide = glide,
                 thumb = thumb,
-                accounts = accounts,
+                accounts = scope,
                 onTab = pick,
                 onAccounts = onAccounts,
                 onSearch = onSearch,
@@ -1770,12 +1828,15 @@ private fun InboxList(
 private fun mailboxTitle(mailbox: Mailbox, folder: FolderItem?): String = when (mailbox) {
     is Mailbox.Unified -> mailbox.role.title("")
     is Mailbox.Folder -> folder?.title().orEmpty()
+    Mailbox.Unread -> stringResource(R.string.folder_unread)
+    Mailbox.Files -> stringResource(R.string.folder_files)
 }
 
 /** What the mailbox holds: its role, or [folder]'s. */
 private fun mailboxRole(mailbox: Mailbox, folder: FolderItem?): FolderRole? = when (mailbox) {
     is Mailbox.Unified -> mailbox.role
     is Mailbox.Folder -> folder?.role
+    Mailbox.Unread, Mailbox.Files -> null
 }
 
 /** Whose mail it is, when there are several accounts: all of theirs, or [folder]'s account's. */
@@ -1783,9 +1844,16 @@ private fun mailboxRole(mailbox: Mailbox, folder: FolderItem?): FolderRole? = wh
 private fun mailboxOwner(mailbox: Mailbox, folder: FolderItem?, accounts: List<AccountItem>): String? {
     if (accounts.size < 2) return null
     return when (mailbox) {
-        is Mailbox.Unified -> stringResource(R.string.inbox_all_accounts)
         is Mailbox.Folder -> accounts.find { it.id == folder?.accountId }?.name
+        else -> stringResource(R.string.inbox_all_accounts)
     }
+}
+
+/** Whose mail the mailbox is: [folder]'s account, the accounts in the unified inbox, or all. */
+private fun scopeAccounts(mailbox: Mailbox, folder: FolderItem?, accounts: List<AccountItem>): List<AccountItem> = when {
+    mailbox is Mailbox.Folder -> accounts.filter { it.id == folder?.accountId }.ifEmpty { accounts }
+    mailbox == Mail.INBOX -> accounts.filter { it.inAll }
+    else -> accounts
 }
 
 /** The large title at the top of the list, where it does not need the thumb. */
@@ -1972,10 +2040,27 @@ private fun AccountsButton(accounts: List<AccountItem>, onClick: () -> Unit) {
         if (one != null) {
             AccountInitial(one.name, one.tint, 24.dp)
         } else {
+            // Past four, the fourth place says how many more there are.
+            val shown = if (accounts.size > 4) accounts.take(3) else accounts
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                accounts.take(4).chunked(2).forEach { pair ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        pair.forEach { AccountDot(it.tint) }
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    shown.take(2).forEach { AccountDot(it.tint) }
+                }
+                if (shown.size > 2) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        shown.drop(2).forEach { AccountDot(it.tint) }
+                        if (accounts.size > 4) {
+                            Box(Modifier.size(10.dp), contentAlignment = Alignment.Center) {
+                                Text(
+                                    "+${accounts.size - 3}",
+                                    color = colors.onSurfaceVariant,
+                                    style = Type.Caption.copy(fontSize = 9.sp, lineHeight = 10.sp),
+                                    fontWeight = Weight.Strong,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                )
+                            }
+                        }
                     }
                 }
             }

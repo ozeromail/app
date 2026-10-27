@@ -1,17 +1,19 @@
 package com.ozeromail.app
 
 import androidx.annotation.DrawableRes
+import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
-import androidx.compose.animation.fadeIn
 import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +21,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
@@ -37,6 +40,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -54,7 +58,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.ImeAction
@@ -68,47 +74,67 @@ import uniffi.ozero_api.Mailbox
 import uniffi.ozero_api.NewMail
 import uniffi.ozero_api.accountColors
 
+/** What the accounts sheet does, besides going to a mailbox. */
+class AccountsActions(
+    val onDrafts: () -> Unit,
+    val onMailbox: (Mailbox) -> Unit,
+    val onAllBoxes: (AllBoxes) -> Unit,
+    val onInAll: (AccountItem, Boolean) -> Unit,
+    val onOrder: (List<AccountItem>) -> Unit,
+    val onPin: (FolderItem, Boolean) -> Unit,
+    val onSwipes: (Swipes) -> Unit,
+    val onGroups: (Groups) -> Unit,
+    val onAdd: () -> Unit,
+    val onColor: (AccountItem, Int) -> Unit,
+    val onLabel: (AccountItem, String) -> Unit,
+    val onSignature: (String) -> Unit,
+    val onAccountSignature: (AccountItem, String) -> Unit,
+    val onSignIn: (AccountItem) -> Unit,
+    val onKeepDays: (AccountItem, Int) -> Unit,
+    val onNewMail: (AccountItem, NewMail) -> Unit,
+    val onRemove: (AccountItem) -> Unit,
+    val onWrite: () -> Unit,
+)
+
+/** What the mailboxes list shows. */
+class MailboxesState(
+    val accounts: List<AccountItem>,
+    val folders: List<FolderItem>,
+    val mailbox: Mailbox,
+    val drafts: Int,
+    /** Unread People mail of each account's inbox, by account id. */
+    val unread: Map<Long, Int>,
+    val allBoxes: AllBoxes,
+    val groups: Groups,
+)
+
 /**
- * The drafts on the phone, if there are any, the mailboxes of all accounts together, then each
- * account's folders, and below them the swipes and a way to add an account. A tap on a group's name hides or shows its folders; its
- * More button, or Swipes, opens the settings in the same sheet, which grows or shrinks to fit.
+ * The mailboxes, for going places: the inboxes, all accounts' and each one's, the mailboxes of
+ * all accounts together, then each account's folders. At the bottom, the settings and a way to
+ * add an account. Holding an account opens its settings, in the same sheet, which grows or
+ * shrinks to fit.
  */
 @Composable
 fun AccountsSheet(
     visible: Boolean,
-    accounts: List<AccountItem>,
-    folders: List<FolderItem>,
-    mailbox: Mailbox,
-    drafts: Int,
-    onDrafts: () -> Unit,
+    state: MailboxesState,
     swipes: Swipes,
-    onMailbox: (Mailbox) -> Unit,
-    onSwipes: (Swipes) -> Unit,
-    groups: Groups,
-    onGroups: (Groups) -> Unit,
-    onAdd: () -> Unit,
-    onColor: (AccountItem, Int) -> Unit,
-    onLabel: (AccountItem, String) -> Unit,
     signature: String,
-    onSignature: (String) -> Unit,
-    onAccountSignature: (AccountItem, String) -> Unit,
-    onSignIn: (AccountItem) -> Unit,
-    onKeepDays: (AccountItem, Int) -> Unit,
-    /** The account whose page the sheet opens on, as after adding it. */
+    actions: AccountsActions,
+    /** The page the sheet opens on: an account's, as after adding it, or [SETTINGS]. */
     startOn: Long?,
-    onNewMail: (AccountItem, NewMail) -> Unit,
-    onRemove: (AccountItem) -> Unit,
-    onWrite: () -> Unit,
     onClose: () -> Unit,
 ) {
-    val colors = MaterialTheme.colorScheme
+    val accounts = state.accounts
     Sheet(visible, onClose) {
-        // Inside the sheet, so it opens on the list again next time: an account's id, SWIPES
-        // or SIGNATURE.
+        // Inside the sheet, so it opens on the list again next time: an account's id, SETTINGS,
+        // SWIPES or SIGNATURE.
         var page by rememberSaveable { mutableStateOf<Long?>(null) }
+        // Where an account's page goes back to: the list or the settings.
+        var from by rememberSaveable { mutableStateOf<Long?>(null) }
         LaunchedEffect(startOn) { if (startOn != null) page = startOn }
         AnimatedContent(
-            page.takeIf { it == SWIPES || it == SIGNATURE || accounts.any { a -> a.id == it } },
+            page.takeIf { it == SETTINGS || it == SWIPES || it == SIGNATURE || accounts.any { a -> a.id == it } },
             transitionSpec = {
                 (fadeIn(Motion.calm(Motion.SMALL)) togetherWith fadeOut(Motion.calm(Motion.SMALL)))
                     .using(SizeTransform { _, _ -> Motion.settle() })
@@ -117,50 +143,49 @@ fun AccountsSheet(
         ) { shown ->
             Column {
                 val account = accounts.find { it.id == shown }
+                fun openAccount(it: AccountItem, back: Long?) {
+                    from = back
+                    page = it.id
+                }
                 when {
+                    shown == SETTINGS -> AppSettings(
+                        accounts,
+                        swipes,
+                        signature,
+                        onBack = { page = null },
+                        onAccount = { openAccount(it, SETTINGS) },
+                        onOrder = actions.onOrder,
+                        onSwipes = { page = SWIPES },
+                        onSignature = { page = SIGNATURE },
+                        onAdd = actions.onAdd,
+                        onWrite = actions.onWrite,
+                    )
                     shown == SWIPES -> {
-                        SubPage(stringResource(R.string.swipes_title), onBack = { page = null })
-                        SwipeSettings(swipes, onSwipes)
+                        SubPage(stringResource(R.string.swipes_title), onBack = { page = SETTINGS })
+                        SwipeSettings(swipes, actions.onSwipes)
                     }
                     shown == SIGNATURE -> {
-                        SubPage(stringResource(R.string.signature_title), onBack = { page = null })
-                        SignatureField(signature, stringResource(R.string.signature_title), "", stringResource(R.string.signature_hint), onSignature)
+                        SubPage(stringResource(R.string.signature_title), onBack = { page = SETTINGS })
+                        SignatureField(signature, stringResource(R.string.signature_title), "", stringResource(R.string.signature_hint), actions.onSignature)
                     }
                     account != null -> AccountSettings(
                         account,
-                        onBack = { page = null },
-                        onColor = { onColor(account, it) },
-                        onLabel = { onLabel(account, it) },
+                        onBack = { page = from },
+                        inAll = account.inAll.takeIf { accounts.size > 1 },
+                        onInAll = { actions.onInAll(account, it) },
+                        onColor = { actions.onColor(account, it) },
+                        onLabel = { actions.onLabel(account, it) },
                         signature = signature,
-                        onSignature = { onAccountSignature(account, it) },
-                        onSignIn = { onSignIn(account) },
-                        onKeepDays = { onKeepDays(account, it) },
-                        onNewMail = { onNewMail(account, it) },
-                        onRemove = { onRemove(account) },
+                        onSignature = { actions.onAccountSignature(account, it) },
+                        onSignIn = { actions.onSignIn(account) },
+                        onKeepDays = { actions.onKeepDays(account, it) },
+                        onNewMail = { actions.onNewMail(account, it) },
+                        onRemove = { actions.onRemove(account) },
                     )
                     else -> {
                         SheetTitle(stringResource(R.string.folders_title))
-                        MailboxList(accounts, folders, mailbox, drafts, onDrafts, groups, onGroups, onMailbox, onAccount = { page = it.id })
-                        SheetRow(onClick = { page = SWIPES }, lead = { Glyph(R.drawable.ic_swipe, null, colors.primary) }) {
-                            Column(Modifier.weight(1f)) {
-                                Text(stringResource(R.string.swipes_title), style = Type.Row)
-                                Text(swipes.summary(), color = colors.onSurfaceVariant, style = Type.Caption)
-                            }
-                        }
-                        SheetRow(onClick = { page = SIGNATURE }, lead = { Glyph(R.drawable.ic_compose, null, colors.primary) }) {
-                            Column(Modifier.weight(1f)) {
-                                Text(stringResource(R.string.signature_title), style = Type.Row)
-                                Text(
-                                    signature.lines().firstOrNull { it.isNotBlank() } ?: stringResource(R.string.signature_none),
-                                    color = colors.onSurfaceVariant,
-                                    style = Type.Caption,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-                        SheetAction(R.drawable.ic_add, stringResource(R.string.inbox_add_account), colors.primary, onAdd)
-                        SheetAction(R.drawable.ic_compose, stringResource(R.string.feedback_write), colors.onSurface, onWrite)
+                        MailboxList(state, actions, onAccount = { openAccount(it, null) })
+                        SheetFoot(onSettings = { page = SETTINGS }, onAdd = actions.onAdd)
                     }
                 }
             }
@@ -170,19 +195,13 @@ fun AccountsSheet(
 
 /**
  * The mailboxes down the side of a wide screen: the sheet's list of them, always there. The
- * rest of the sheet, the accounts' and the swipes' settings, opens with [onMore].
+ * settings open in the sheet with [onSettings].
  */
 @Composable
 fun Mailboxes(
-    accounts: List<AccountItem>,
-    folders: List<FolderItem>,
-    mailbox: Mailbox,
-    drafts: Int,
-    onDrafts: () -> Unit,
-    groups: Groups,
-    onGroups: (Groups) -> Unit,
-    onMailbox: (Mailbox) -> Unit,
-    onMore: () -> Unit,
+    state: MailboxesState,
+    actions: AccountsActions,
+    onSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -193,96 +212,325 @@ fun Mailboxes(
             .verticalScroll(rememberScrollState())
             .padding(vertical = 8.dp),
     ) {
-        MailboxList(accounts, folders, mailbox, drafts, onDrafts, groups, onGroups, onMailbox, onAccount = null)
-        SheetAction(R.drawable.ic_more, stringResource(R.string.mailboxes_more), colors.onSurface, onMore)
+        MailboxList(state, actions, onAccount = null)
+        HorizontalDivider(Modifier.padding(vertical = 6.dp), color = colors.outlineVariant)
+        SheetAction(R.drawable.ic_settings, stringResource(R.string.settings_title), colors.onSurface, onSettings)
     }
 }
 
-/** The drafts, if any, and the mailboxes of all accounts and of each, with a line under them. */
-@Composable
-private fun MailboxList(
-    accounts: List<AccountItem>,
-    folders: List<FolderItem>,
-    mailbox: Mailbox,
-    drafts: Int,
-    onDrafts: () -> Unit,
-    groups: Groups,
-    onGroups: (Groups) -> Unit,
-    onMailbox: (Mailbox) -> Unit,
-    /** An account's settings; null leaves the button out. */
-    onAccount: ((AccountItem) -> Unit)?,
-) {
-    if (drafts > 0) FolderRow(R.drawable.ic_compose, stringResource(R.string.folder_drafts), open = false, count = drafts, onClick = onDrafts)
-    Folders(
-        accounts,
-        folders,
-        mailbox,
-        groups,
-        onMailbox,
-        onToggle = { group -> onGroups(groups.toggle(group, accounts.size > 1)) },
-        onAccount = onAccount,
-    )
-    HorizontalDivider(Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.outlineVariant)
-}
-
-/** The page of the sheet with the swipes; account pages are named by their ids, which are positive. */
+/** The pages of the sheet besides the list; account pages are named by their ids, which are positive. */
+const val SETTINGS = -3L
 private const val SWIPES = -1L
 private const val SIGNATURE = -2L
 
 /**
- * With several accounts, their mailboxes together first; then each account under its name.
- * A closed group shows only its name; [groups] says which are open. The open mailbox is in the
- * accent colour.
+ * The drafts, if any, then the inboxes, the mailboxes of all accounts and each account's
+ * folders. With one account, its inbox and folders. [onAccount], when held, opens an
+ * account's settings; null leaves that out.
  */
 @Composable
-private fun Folders(
-    accounts: List<AccountItem>,
-    folders: List<FolderItem>,
-    mailbox: Mailbox,
-    groups: Groups,
-    onMailbox: (Mailbox) -> Unit,
-    onToggle: (Long) -> Unit,
-    onAccount: ((AccountItem) -> Unit)?,
-) {
-    fun open(group: Long) = groups.open(group, accounts.size > 1)
-    if (accounts.size > 1) {
-        Group(
-            stringResource(R.string.inbox_all_accounts),
-            open(Settings.ALL_ACCOUNTS),
-            lead = { StackedDots(accounts) },
-            onToggle = { onToggle(Settings.ALL_ACCOUNTS) },
-            settings = onAccount != null,
-        ) {
-            UNIFIED.filter { role -> role == FolderRole.INBOX || folders.any { it.role == role } }.forEach { role ->
-                val box = Mailbox.Unified(role)
-                FolderRow(role.icon(), role.allTitle(), box == mailbox) { onMailbox(box) }
-            }
-        }
+private fun MailboxList(state: MailboxesState, actions: AccountsActions, onAccount: ((AccountItem) -> Unit)?) {
+    val accounts = state.accounts
+    val mailbox = state.mailbox
+    val inboxes = state.folders.filter { it.role == FolderRole.INBOX }.associateBy { it.accountId }
+    if (state.drafts > 0) {
+        FolderRow(R.drawable.ic_compose, stringResource(R.string.folder_drafts), open = false, count = state.drafts, onClick = actions.onDrafts)
     }
+    val one = accounts.singleOrNull()
+    if (one != null) {
+        FolderRow(R.drawable.ic_inbox, stringResource(R.string.inbox_title), mailbox == Mail.INBOX, count = state.unread[one.id] ?: 0) {
+            actions.onMailbox(Mail.INBOX)
+        }
+        SignInAgain(one, actions)
+        AccountFolders(one, state, actions, inbox = false)
+        return
+    }
+    Caption(stringResource(R.string.inboxes_title))
+    val inAll = accounts.filter { it.inAll }
+    FolderRow(
+        lead = { StackedDots(inAll) },
+        title = stringResource(R.string.folder_all_inbox),
+        open = mailbox == Mail.INBOX,
+        count = inAll.sumOf { state.unread[it.id] ?: 0 },
+    ) { actions.onMailbox(Mail.INBOX) }
+    accounts.forEach { account ->
+        val box = inboxes[account.id]?.let { Mailbox.Folder(it.id) }
+        FolderRow(
+            lead = { AccountDot(account.tint, size = 12.dp) },
+            title = account.name,
+            open = box != null && box == mailbox,
+            count = state.unread[account.id] ?: 0,
+            onLongClick = onAccount?.let { { it(account) } },
+            longClickLabel = stringResource(R.string.account_settings),
+        ) { if (box != null) actions.onMailbox(box) }
+        SignInAgain(account, actions)
+    }
+    AllAccounts(state, actions)
+    Caption(stringResource(R.string.account_folders))
     accounts.forEach { account ->
         Group(
             account.name,
-            open(account.id),
+            state.groups.open(account.id, many = true),
             lead = { AccountDot(account.tint, size = 12.dp) },
-            onToggle = { onToggle(account.id) },
-            onSettings = onAccount?.let { { it(account) } },
-            settings = onAccount != null,
+            onToggle = { actions.onGroups(state.groups.toggle(account.id, many = true)) },
+            onLongClick = onAccount?.let { { it(account) } },
+        ) { AccountFolders(account, state, actions, inbox = false) }
+    }
+}
+
+/** Under an account the server signed out, a way to sign in again. */
+@Composable
+private fun SignInAgain(account: AccountItem, actions: AccountsActions) {
+    if (!account.needsSignIn) return
+    SheetAction(R.drawable.ic_next, stringResource(R.string.signin_again_title), MaterialTheme.colorScheme.error) { actions.onSignIn(account) }
+}
+
+/**
+ * The mailboxes of all accounts together the person chose, in their order; Edit turns them all
+ * into switches with handles to move them, and the accounts the unified inbox takes in.
+ */
+@Composable
+private fun AllAccounts(state: MailboxesState, actions: AccountsActions) {
+    var editing by rememberSaveable { mutableStateOf(false) }
+    val boxes = state.allBoxes
+    val colors = MaterialTheme.colorScheme
+    Caption(stringResource(R.string.inbox_all_accounts)) {
+        TextButton(onClick = { editing = !editing }) {
+            Text(stringResource(if (editing) R.string.action_done else R.string.action_edit), style = Type.Text, fontWeight = Weight.SemiBold)
+        }
+    }
+    if (!editing) {
+        boxes.order.filter { it in boxes.shown && it.listed(state.folders) }.forEach { box ->
+            FolderRow(box.icon, stringResource(box.title), box.mailbox == state.mailbox) { actions.onMailbox(box.mailbox) }
+        }
+        return
+    }
+    Reorderable(boxes.order, key = { it }, onMove = { actions.onAllBoxes(boxes.copy(order = it)) }) { box, handle ->
+        val on = box in boxes.shown
+        SheetRow(
+            onClick = { actions.onAllBoxes(boxes.copy(shown = if (on) boxes.shown - box else boxes.shown + box)) },
+            lead = { Glyph(box.icon, null, colors.primary) },
         ) {
-            folders.filter { it.accountId == account.id && it.role != FolderRole.DRAFTS }.sortedWith(FOLDER_ORDER).forEach { folder ->
-                // With one account its inbox is the unified one, which keeps the tabs.
-                val box = if (folder.role == FolderRole.INBOX && accounts.size == 1) Mail.INBOX else Mailbox.Folder(folder.id)
-                FolderRow(folder.role.icon(), folder.title(), box == mailbox) { onMailbox(box) }
-            }
+            Text(stringResource(box.title), style = Type.Row, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Switch(on, onCheckedChange = null)
+            Handle(handle)
+        }
+    }
+    Caption(stringResource(R.string.all_in))
+    state.accounts.forEach { account ->
+        SheetRow(onClick = { actions.onInAll(account, !account.inAll) }, lead = { AccountDot(account.tint, size = 12.dp) }) {
+            Text(account.name, style = Type.Row, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Switch(account.inAll, onCheckedChange = null)
         }
     }
 }
 
-/** The mailboxes shared by all accounts, in order. */
-private val UNIFIED = listOf(FolderRole.INBOX, FolderRole.SNOOZED, FolderRole.FLAGGED, FolderRole.SENT, FolderRole.ARCHIVE, FolderRole.TRASH)
+/** What a row is dragged by to move it. */
+@Composable
+private fun Handle(modifier: Modifier) {
+    Box(modifier.padding(start = 12.dp).size(40.dp), contentAlignment = Alignment.Center) {
+        Glyph(R.drawable.ic_drag, stringResource(R.string.action_move), MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
 
-/** System folders first in the usual order, then the account's own by name. */
-private val FOLDER_ORDER = compareBy<FolderItem>({ it.role.rank() }, { it.name.lowercase() })
+/**
+ * An account's folders: its system ones in the usual order, then its own. Of those, the pinned
+ * ones show, or all while the account has few and none pinned; Other folders shows the rest,
+ * each inside the one it is in. Holding one of its own pins or unpins it.
+ */
+@Composable
+private fun AccountFolders(account: AccountItem, state: MailboxesState, actions: AccountsActions, inbox: Boolean) {
+    val colors = MaterialTheme.colorScheme
+    val haptics = LocalHapticFeedback.current
+    val mine = state.folders.filter { it.accountId == account.id && it.role != FolderRole.DRAFTS }
+    mine.filter { it.role != FolderRole.CUSTOM && (inbox || it.role != FolderRole.INBOX) }.sortedBy { it.role.rank() }.forEach { folder ->
+        val box = Mailbox.Folder(folder.id)
+        FolderRow(folder.role.icon(), folder.title(), box == state.mailbox) { actions.onMailbox(box) }
+    }
+    val own = mine.filter { it.role == FolderRole.CUSTOM }.sortedBy { it.name.lowercase() }
+    if (own.isEmpty()) return
+    var all by rememberSaveable(account.id) { mutableStateOf(false) }
+    val few = own.none { it.pinned } && own.size <= FEW_FOLDERS
+    val shown = if (all || few) own else own.filter { it.pinned }
+    val ids = shown.map { it.id }.toSet()
+    shown.forEach { folder ->
+        val box = Mailbox.Folder(folder.id)
+        // Inside a folder that shows too, it goes under it by its own name.
+        val nested = folder.parent in ids
+        FolderRow(
+            lead = { Glyph(if (folder.pinned && (all || few)) R.drawable.ic_pin else R.drawable.ic_folder, null, colors.primary) },
+            title = if (nested || folder.parent == null) folder.shortName else folder.name,
+            open = box == state.mailbox,
+            indent = nested,
+            onLongClick = { actions.onPin(folder, !folder.pinned) },
+            longClickLabel = stringResource(if (folder.pinned) R.string.folder_unpinned else R.string.folder_pinned),
+        ) { actions.onMailbox(box) }
+    }
+    if (few) return
+    SheetRow(
+        onClick = {
+            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            all = !all
+        },
+        lead = { Glyph(if (all) R.drawable.ic_expand else R.drawable.ic_more, null, colors.onSurfaceVariant) },
+    ) {
+        Text(
+            stringResource(if (all) R.string.folders_pinned_only else R.string.folders_other),
+            color = colors.onSurfaceVariant,
+            style = Type.Row,
+            modifier = Modifier.weight(1f),
+        )
+        if (!all) Text((own.size - shown.size).toString(), color = colors.onSurfaceVariant, style = Type.Caption)
+    }
+    if (all) {
+        Text(
+            stringResource(R.string.folders_pin_hint),
+            color = colors.onSurfaceVariant,
+            style = Type.Caption,
+            modifier = Modifier.padding(start = Gap.sheet + Gap.slot + Gap.afterSlot, end = Gap.sheet, bottom = 8.dp),
+        )
+    }
+}
 
+/** An account with no more own folders than this and none pinned shows them all. */
+private const val FEW_FOLDERS = 5
+
+/** A small heading over a part of the list, with [action] at its end. */
+@Composable
+private fun Caption(text: String, action: (@Composable () -> Unit)? = null) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(40.dp)
+            .padding(start = Gap.sheet, end = Gap.sheet - 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant, style = Type.Label, modifier = Modifier.weight(1f))
+        action?.invoke()
+    }
+}
+
+/** At the bottom of the sheet: the settings, and a way to add an account. */
+@Composable
+private fun SheetFoot(onSettings: () -> Unit, onAdd: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(start = Gap.sheet - 6.dp, end = Gap.sheet - 6.dp, top = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        FootButton(R.drawable.ic_settings, stringResource(R.string.settings_title), onSettings, Modifier.weight(1f))
+        FootButton(R.drawable.ic_add, stringResource(R.string.account_add_short), onAdd, Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun FootButton(@DrawableRes icon: Int, text: String, onClick: () -> Unit, modifier: Modifier) {
+    val colors = MaterialTheme.colorScheme
+    Row(
+        modifier
+            .height(48.dp)
+            .clip(RoundedCornerShape(Radius.medium))
+            .background(colors.surfaceVariant)
+            .clickable(role = Role.Button, onClick = onClick),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Glyph(icon, null, colors.onSurface, size = 20.dp)
+        Text(text, style = Type.Body, fontWeight = Weight.Medium, modifier = Modifier.padding(start = 8.dp))
+    }
+}
+
+/**
+ * The settings: the accounts, in an order of the person's, each opening its own page; the
+ * swipes, the signature and a letter to the author.
+ */
+@Composable
+private fun AppSettings(
+    accounts: List<AccountItem>,
+    swipes: Swipes,
+    signature: String,
+    onBack: () -> Unit,
+    onAccount: (AccountItem) -> Unit,
+    onOrder: (List<AccountItem>) -> Unit,
+    onSwipes: () -> Unit,
+    onSignature: () -> Unit,
+    onAdd: () -> Unit,
+    onWrite: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    SubPage(stringResource(R.string.settings_title), onBack)
+    Caption(stringResource(R.string.accounts_title))
+    Reorderable(accounts, key = { it.id }, onMove = { if (it != accounts) onOrder(it) }) { account, handle ->
+        SheetRow(onClick = { onAccount(account) }, lead = { AccountDot(account.tint, size = 12.dp) }) {
+            Column(Modifier.weight(1f)) {
+                Text(account.name, style = Type.Row, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (account.name != account.email) {
+                    Text(account.email, color = colors.onSurfaceVariant, style = Type.Caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            if (accounts.size > 1) Handle(handle)
+        }
+    }
+    SheetAction(R.drawable.ic_add, stringResource(R.string.inbox_add_account), colors.primary, onAdd)
+    if (accounts.size > 1) {
+        Text(
+            stringResource(R.string.account_settings_hint),
+            color = colors.onSurfaceVariant,
+            style = Type.Caption,
+            modifier = Modifier.padding(horizontal = Gap.sheet).padding(bottom = 8.dp),
+        )
+    }
+    Caption(stringResource(R.string.mail_settings))
+    SheetRow(onClick = onSwipes, lead = { Glyph(R.drawable.ic_swipe, null, colors.primary) }) {
+        Column(Modifier.weight(1f)) {
+            Text(stringResource(R.string.swipes_title), style = Type.Row)
+            Text(swipes.summary(), color = colors.onSurfaceVariant, style = Type.Caption)
+        }
+    }
+    SheetRow(onClick = onSignature, lead = { Glyph(R.drawable.ic_compose, null, colors.primary) }) {
+        Column(Modifier.weight(1f)) {
+            Text(stringResource(R.string.signature_title), style = Type.Row)
+            Text(
+                signature.lines().firstOrNull { it.isNotBlank() } ?: stringResource(R.string.signature_none),
+                color = colors.onSurfaceVariant,
+                style = Type.Caption,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+    SheetAction(R.drawable.ic_compose, stringResource(R.string.feedback_write), colors.onSurface, onWrite)
+}
+
+/**
+ * A mailbox of all accounts the sheet can show under the inboxes; [SHOWN] are the ones it
+ * shows until the person picks.
+ */
+enum class AllBox(val mailbox: Mailbox, @DrawableRes val icon: Int, @StringRes val title: Int) {
+    UNREAD(Mailbox.Unread, R.drawable.ic_unread, R.string.folder_unread),
+    SNOOZED(Mailbox.Unified(FolderRole.SNOOZED), R.drawable.ic_snooze, R.string.folder_all_snoozed),
+    FLAGGED(Mailbox.Unified(FolderRole.FLAGGED), R.drawable.ic_flag, R.string.folder_all_flagged),
+    SENT(Mailbox.Unified(FolderRole.SENT), R.drawable.ic_send, R.string.folder_all_sent),
+    ARCHIVE(Mailbox.Unified(FolderRole.ARCHIVE), R.drawable.ic_archive, R.string.folder_all_archive),
+    FILES(Mailbox.Files, R.drawable.ic_attach, R.string.folder_files),
+    JUNK(Mailbox.Unified(FolderRole.JUNK), R.drawable.ic_spam, R.string.folder_all_junk),
+    TRASH(Mailbox.Unified(FolderRole.TRASH), R.drawable.ic_delete, R.string.folder_all_trash),
+    ;
+
+    /** Shown in the list: a role's mailbox once some account has such a folder. */
+    fun listed(folders: List<FolderItem>): Boolean = when (val box = mailbox) {
+        is Mailbox.Unified -> folders.any { it.role == box.role }
+        else -> true
+    }
+
+    companion object {
+        val SHOWN = setOf(UNREAD, SNOOZED, FLAGGED, SENT, ARCHIVE)
+    }
+}
+
+/** The mailboxes of all accounts in the person's order, and which of them show. */
+data class AllBoxes(val order: List<AllBox>, val shown: Set<AllBox>)
+
+/** System folders first in the usual order, then the account's own. */
 private fun FolderRole.rank(): Int = when (this) {
     FolderRole.INBOX -> 0
     FolderRole.SNOOZED -> 1
@@ -325,20 +573,8 @@ fun FolderRole.title(name: String): String = when (this) {
 @Composable
 fun FolderItem.title(): String = role.title(name)
 
-/** A mailbox of all accounts together, told apart from one account's folder. */
-@Composable
-private fun FolderRole.allTitle(): String = when (this) {
-    FolderRole.SNOOZED -> stringResource(R.string.folder_all_snoozed)
-    FolderRole.FLAGGED -> stringResource(R.string.folder_all_flagged)
-    FolderRole.SENT -> stringResource(R.string.folder_all_sent)
-    FolderRole.ARCHIVE -> stringResource(R.string.folder_all_archive)
-    FolderRole.TRASH -> stringResource(R.string.folder_all_trash)
-    else -> stringResource(R.string.folder_all_inbox)
-}
-
 /**
- * A group's name, which hides or shows its folders, and with [onSettings] a way to its settings.
- * Where groups have [settings], one without keeps the room, so the names line up.
+ * A group's name, which hides or shows its folders; held, it does [onLongClick].
  */
 @Composable
 private fun Group(
@@ -346,20 +582,29 @@ private fun Group(
     open: Boolean,
     lead: @Composable () -> Unit,
     onToggle: () -> Unit,
-    onSettings: (() -> Unit)? = null,
-    settings: Boolean = true,
+    onLongClick: (() -> Unit)?,
     folders: @Composable () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
+    val haptics = LocalHapticFeedback.current
     Row(
         Modifier
             .fillMaxWidth()
-            .clickable(onClickLabel = stringResource(if (open) R.string.action_collapse else R.string.action_expand), onClick = onToggle)
-            .padding(start = Gap.sheet, end = Gap.sheet - 12.dp, top = 6.dp),
+            .combinedClickable(
+                onClickLabel = stringResource(if (open) R.string.action_collapse else R.string.action_expand),
+                onLongClickLabel = stringResource(R.string.account_settings),
+                onLongClick = onLongClick?.let { held ->
+                    {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        held()
+                    }
+                },
+                onClick = onToggle,
+            )
+            .padding(horizontal = Gap.sheet, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(Gap.slot), contentAlignment = Alignment.Center) { lead() }
-        // The name and its arrow take the free width, so the button keeps to the edge.
         Row(Modifier.weight(1f).padding(start = Gap.afterSlot), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text,
@@ -371,11 +616,6 @@ private fun Group(
             )
             // Points down while the folders show, to the side while they are hidden.
             Glyph(R.drawable.ic_next, null, colors.onSurfaceVariant, Modifier.padding(start = 4.dp).rotate(if (open) 90f else 0f), size = 16.dp)
-        }
-        if (onSettings != null) {
-            IconTile(R.drawable.ic_more, stringResource(R.string.account_settings), onSettings, tint = colors.onSurfaceVariant, size = 40.dp)
-        } else if (settings) {
-            Box(Modifier.size(40.dp))
         }
     }
     AnimatedVisibility(
@@ -390,7 +630,29 @@ private fun Group(
 @Composable
 private fun FolderRow(@DrawableRes icon: Int, title: String, open: Boolean, count: Int = 0, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
-    SheetRow(onClick, lead = { Glyph(icon, null, colors.primary) }) {
+    FolderRow(lead = { Glyph(icon, null, colors.primary) }, title = title, open = open, count = count, onClick = onClick)
+}
+
+/**
+ * A mailbox: the open one in the accent colour, with its unread [count] at the end, none for 0.
+ * [indent] puts it under the folder it is inside of.
+ */
+@Composable
+private fun FolderRow(
+    lead: @Composable () -> Unit,
+    title: String,
+    open: Boolean,
+    count: Int = 0,
+    indent: Boolean = false,
+    onLongClick: (() -> Unit)? = null,
+    longClickLabel: String? = null,
+    onClick: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    SheetRow(onClick, lead = { if (indent) Box(Modifier.size(Gap.slot)) else lead() }, onLongClick = onLongClick, longClickLabel = longClickLabel) {
+        if (indent) {
+            Box(Modifier.padding(end = Gap.afterSlot).size(Gap.slot), contentAlignment = Alignment.Center) { lead() }
+        }
         Text(
             title,
             color = if (open) colors.primary else colors.onSurface,
@@ -400,7 +662,7 @@ private fun FolderRow(@DrawableRes icon: Int, title: String, open: Boolean, coun
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        if (count > 0) Text(count.toString(), color = colors.onSurfaceVariant, style = Type.Caption)
+        if (count > 0) Text(count.toString(), color = colors.primary, style = Type.Caption, fontWeight = Weight.SemiBold)
     }
 }
 
@@ -428,13 +690,17 @@ private fun SubPage(title: String, onBack: () -> Unit) {
 }
 
 /**
- * One account: its name and colour, when new mail comes, how much of its mail the phone keeps,
+ * One account: its name, whether it is in All inboxes, its colour, when new mail comes, how
+ * much of its mail the phone keeps,
  * and a way to remove it. One the server signed out offers to sign in again first.
  */
 @Composable
 private fun AccountSettings(
     account: AccountItem,
     onBack: () -> Unit,
+    /** Whether its inbox is part of the unified one; null with one account. */
+    inAll: Boolean?,
+    onInAll: (Boolean) -> Unit,
     onColor: (Int) -> Unit,
     onLabel: (String) -> Unit,
     signature: String,
@@ -457,6 +723,12 @@ private fun AccountSettings(
         SheetAction(R.drawable.ic_next, stringResource(R.string.signin_again_title), colors.primary, onSignIn)
     }
     LabelField(account, onLabel)
+    if (inAll != null) {
+        SheetRow(onClick = { onInAll(!inAll) }, lead = { Glyph(R.drawable.ic_inbox, null, colors.primary) }) {
+            Text(stringResource(R.string.all_in), style = Type.Row, modifier = Modifier.weight(1f))
+            Switch(inAll, onCheckedChange = null)
+        }
+    }
     // Empty, it shows the default signature it goes out with.
     SignatureField(account.signature, stringResource(R.string.account_signature), signature, stringResource(R.string.account_signature_hint), onSignature)
     Text(

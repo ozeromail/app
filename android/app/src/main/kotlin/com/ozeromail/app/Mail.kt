@@ -134,8 +134,11 @@ class Mail(private val context: Context) {
         vault.forgetPassword(account.email)
     }
 
-    /** The newest [limit] conversations of a tab; fewer once the saved mail ends, see [older]. */
-    suspend fun inbox(tab: Category, limit: Int): List<MessageItem> = io { core.unifiedInbox(tab, limit.toUInt()) }
+    /**
+     * The newest [limit] conversations of a tab of [account]'s inbox, or with null of the
+     * unified inbox; fewer once the saved mail ends, see [older].
+     */
+    suspend fun inbox(account: Long?, tab: Category, limit: Int): List<MessageItem> = io { core.inbox(account, tab, limit.toUInt()) }
 
     /** A mailbox other than the unified inbox, which [inbox] shows by tab. */
     suspend fun mailbox(mailbox: Mailbox, limit: Int): List<MessageItem> = io { core.mailbox(mailbox, limit.toUInt()) }
@@ -163,11 +166,23 @@ class Mail(private val context: Context) {
     /** The mail synced so far is on screen, so it is not announced later. */
     suspend fun forgetNewMail() = io { core.forgetNewMail() }
 
-    /** The inbox tabs in order, with their unread counts. */
-    suspend fun tabs(): List<InboxTab> = io { core.inboxTabs() }
+    /** The tabs of [account]'s inbox, or of the unified one, in order, with their unread counts. */
+    suspend fun tabs(account: Long?): List<InboxTab> = io { core.inboxTabs(account) }
 
-    /** Whether every inbox tab is empty. */
-    suspend fun inboxEmpty(): Boolean = io { core.inboxIsEmpty() }
+    /** Whether every tab of [account]'s inbox, or of the unified one, is empty. */
+    suspend fun inboxEmpty(account: Long?): Boolean = io { core.inboxIsEmpty(account) }
+
+    /** Unread People mail in each account's inbox, by account id; none for an account without. */
+    suspend fun peopleUnread(): Map<Long, Int> = io { core.peopleUnread().associate { it.account to it.unread.toInt() } }
+
+    /** Puts the accounts in this order. */
+    suspend fun setAccountOrder(accounts: List<AccountItem>) = io { core.setAccountOrder(accounts.map { it.id }) }
+
+    /** Takes [account]'s inbox into the unified one, or leaves it out. */
+    suspend fun setInAll(account: AccountItem, inAll: Boolean) = io { core.setAccountInAll(account.id, inAll) }
+
+    /** Pins [folder] among its account's usual folders, or unpins it. */
+    suspend fun setPinned(folder: FolderItem, pinned: Boolean) = io { core.setFolderPinned(folder.id, pinned) }
 
     /**
      * The core saves the account only after the server has accepted the login.

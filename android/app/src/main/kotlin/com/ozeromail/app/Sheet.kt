@@ -9,6 +9,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
@@ -48,6 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -55,6 +57,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
@@ -197,16 +200,35 @@ fun SheetTitle(text: String, modifier: Modifier = Modifier.padding(start = Gap.s
     )
 }
 
-/** A row of a sheet: a dot or an icon in a slot of its own, so every label starts at the same place. */
+/**
+ * A row of a sheet: a dot or an icon in a slot of its own, so every label starts at the same
+ * place. A row with [onLongClick] does more when held, as [longClickLabel] says.
+ */
 @Composable
-fun SheetRow(onClick: () -> Unit, lead: @Composable () -> Unit, content: @Composable RowScope.() -> Unit) {
+fun SheetRow(
+    onClick: () -> Unit,
+    lead: @Composable () -> Unit,
+    onLongClick: (() -> Unit)? = null,
+    longClickLabel: String? = null,
+    content: @Composable RowScope.() -> Unit,
+) {
     // On its side the rows are lower, so more of them fit the short height.
     val short = LocalRoom.current.short
+    val haptics = LocalHapticFeedback.current
     Row(
         Modifier
             .fillMaxWidth()
             .heightIn(min = if (short) 40.dp else 52.dp)
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onLongClickLabel = longClickLabel,
+                onLongClick = onLongClick?.let { held ->
+                    {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        held()
+                    }
+                },
+                onClick = onClick,
+            )
             .padding(horizontal = Gap.sheet, vertical = if (short) 6.dp else 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

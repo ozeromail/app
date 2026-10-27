@@ -91,6 +91,19 @@ class Settings(context: Context) {
         get() = Groups(ids(COLLAPSED), ids(EXPANDED))
         set(value) = prefs.edit().putStringSet(COLLAPSED, value.collapsed.strings()).putStringSet(EXPANDED, value.expanded.strings()).apply()
 
+    /** The mailboxes of all accounts below the inboxes in the accounts sheet: their order and which show. */
+    var allBoxes: AllBoxes
+        get() {
+            fun boxes(key: String) = prefs.getString(key, null)?.split(',')?.mapNotNull { name -> AllBox.entries.find { it.name == name } }
+            // One added later goes at the end.
+            val order = boxes(ALL_ORDER).orEmpty().let { saved -> saved + AllBox.entries.filter { it !in saved } }
+            return AllBoxes(order, boxes(ALL_SHOWN)?.toSet() ?: AllBox.SHOWN)
+        }
+        set(value) = prefs.edit()
+            .putString(ALL_ORDER, value.order.joinToString(",") { it.name })
+            .putString(ALL_SHOWN, value.shown.joinToString(",") { it.name })
+            .apply()
+
     private fun ids(key: String) = prefs.getStringSet(key, null).orEmpty().mapNotNull { it.toLongOrNull() }.toSet()
 
     private fun Set<Long>.strings() = map { it.toString() }.toSet()
@@ -107,6 +120,8 @@ class Settings(context: Context) {
         private const val COLLAPSED = "collapsed_groups"
         private const val EXPANDED = "expanded_groups"
         private const val SYNCED = "synced_boxes"
+        private const val ALL_ORDER = "all_boxes_order"
+        private const val ALL_SHOWN = "all_boxes_shown"
     }
 }
 
