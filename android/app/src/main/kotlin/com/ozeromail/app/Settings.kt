@@ -119,6 +119,27 @@ fun SettingsScreen(
         NOTIFICATIONS -> stringResource(R.string.notify_title)
         else -> account?.name ?: stringResource(R.string.settings_title)
     }
+    // Whether images load without asking, shared by the first page and Reading, and saved in a
+    // scope that outlives the page it was picked on.
+    val scope = rememberCoroutineScope()
+    var imagesAlways by remember { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(Unit) {
+        imagesAlways = try {
+            mail.imagesAlways()
+        } catch (_: CoreException) {
+            null
+        }
+    }
+    val images = ImagesAlways(imagesAlways) { on ->
+        imagesAlways = on
+        scope.launch {
+            try {
+                mail.setImagesAlways(on)
+            } catch (_: CoreException) {
+                imagesAlways = !on
+            }
+        }
+    }
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
         Hero(title, null, onBack)
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(bottom = 32.dp)) {
@@ -134,7 +155,7 @@ fun SettingsScreen(
                     stringResource(R.string.signature_hint),
                     actions.onSignature,
                 )
-                page == READING -> ReadingSettings(mail)
+                page == READING -> ReadingSettings(mail, images)
                 page == NOTIFICATIONS -> NotificationSettings(accounts, actions)
                 account != null -> AccountSettings(
                     account,
@@ -142,7 +163,7 @@ fun SettingsScreen(
                     signature = signature,
                     actions = actions,
                 )
-                else -> AppSettings(accounts, swipes, signature, actions, onOpen)
+                else -> AppSettings(images.on, accounts, swipes, signature, actions, onOpen)
             }
         }
     }
@@ -154,6 +175,7 @@ fun SettingsScreen(
  */
 @Composable
 private fun AppSettings(
+    imagesAlways: Boolean?,
     accounts: List<AccountItem>,
     swipes: Swipes,
     signature: String,
@@ -165,12 +187,13 @@ private fun AppSettings(
     val textSize = remember { Settings(context).textSize }
     Section(stringResource(R.string.accounts_title)) {
         accounts.forEach { account ->
-            val kind = stringResource(account.kind.title())
+            // The address, or what the account is when its name is the address.
+            val place = if (account.name.trim().equals(account.email, ignoreCase = true)) stringResource(account.kind.title()) else account.email
             val quiet = if (account.notify) "" else " · " + stringResource(R.string.account_quiet)
             SettingRow(
                 lead = { AccountDot(account.tint, size = 12.dp) },
                 title = account.name,
-                caption = "$kind · ${account.email}$quiet",
+                caption = place + quiet,
                 onClick = { onOpen(account.id) },
             )
         }
@@ -193,22 +216,23 @@ private fun AppSettings(
     }
     Section(stringResource(R.string.settings_reading)) {
         SettingRow(R.drawable.ic_text_size, stringResource(R.string.reading_size), stringResource(SIZE_NAMES[textSize])) { onOpen(READING) }
-        SettingRow(R.drawable.ic_photo, stringResource(R.string.images_title)) { onOpen(READING) }
-    }
-    Section(stringResource(R.string.app_name)) {
         SettingRow(
-            lead = { Glyph(R.drawable.ic_compose, null, colors.primary) },
+            R.drawable.ic_photo,
+            stringResource(R.string.images_title),
+            imagesAlways?.let { stringResource(if (it) R.string.images_always else R.string.images_ask) },
+        ) { onOpen(READING) }
+    }
+    Spacer(Modifier.height(16.dp))
+    Section(null) {
+        SettingRow(
+            lead = { Glyph(R.drawable.ic_letter, null, colors.primary) },
             title = stringResource(R.string.feedback_write),
+            color = colors.primary,
             next = false,
             onClick = actions.onWrite,
         )
-        SettingRow(
-            lead = { Glyph(R.drawable.ic_info, null, colors.primary) },
-            title = stringResource(R.string.settings_version),
-            value = remember { appVersion(context) },
-            next = false,
-        )
     }
+    Hint("${stringResource(R.string.app_name)} ${remember { appVersion(context) }}", top = 20.dp, align = TextAlign.Center)
 }
 
 /** Which accounts notify, in a few words. */
@@ -430,17 +454,15 @@ private fun ChoiceText(text: String, on: Boolean) {
  * without asking, and the senders whose images do.
  */
 @Composable
-private fun ReadingSettings(mail: Mail) {
+private fun ReadingSettings(mail: Mail, images: ImagesAlways) {
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
     val scope = rememberCoroutineScope()
     val prefs = remember { Settings(context) }
     var size by rememberSaveable { mutableStateOf(prefs.textSize) }
-    var always by remember { mutableStateOf<Boolean?>(null) }
     var senders by remember { mutableStateOf(emptyList<String>()) }
     LaunchedEffect(Unit) {
         try {
-            always = mail.imagesAlways()
             senders = mail.imageSenders()
         } catch (_: CoreException) {
             // Without them the page still sets the text size.
@@ -453,7 +475,7 @@ private fun ReadingSettings(mail: Mail) {
             .padding(horizontal = Gap.screen)
             .clip(RoundedCornerShape(Radius.tile))
             .background(colors.surfaceVariant)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .padding(horizontal = Gap.card, vertical = 14.dp),
     ) {
         Text(stringResource(R.string.reading_sample_from), color = colors.onSurfaceVariant, style = Type.Caption, fontWeight = Weight.SemiBold)
         Text(stringResource(R.string.reading_sample), style = Type.Reading.scaled(TEXT_SCALES[size]), modifier = Modifier.padding(top = 6.dp))
@@ -475,17 +497,8 @@ private fun ReadingSettings(mail: Mail) {
         Text("A", style = Type.Reading.scaled(1.2f), color = colors.onSurfaceVariant)
     }
     Hint("${stringResource(SIZE_NAMES[size])}. ${stringResource(R.string.reading_size_hint)}")
-    val shown = always ?: return
-    Choices(R.string.images_title, listOf(false, true), shown, { on ->
-        always = on
-        scope.launch {
-            try {
-                mail.setImagesAlways(on)
-            } catch (_: CoreException) {
-                always = !on
-            }
-        }
-    }) { option, on ->
+    val shown = images.on ?: return
+    Choices(R.string.images_title, listOf(false, true), shown, images.onPick) { option, on ->
         ChoiceText(stringResource(if (option) R.string.images_always else R.string.images_ask), on)
     }
     Hint(stringResource(if (shown) R.string.images_always_hint else R.string.images_ask_hint))
@@ -493,7 +506,7 @@ private fun ReadingSettings(mail: Mail) {
     Caption(stringResource(R.string.images_allowed))
     Section(null) {
         senders.forEach { email ->
-            SettingRow(lead = { Glyph(R.drawable.ic_photo, null, colors.primary) }, title = email, next = false) {
+            SettingRow(lead = { Glyph(R.drawable.ic_photo, null, colors.onSurfaceVariant) }, title = email, next = false) {
                 IconTile(R.drawable.ic_close, stringResource(R.string.images_forbid), {
                     senders = senders - email
                     scope.launch {
@@ -508,6 +521,9 @@ private fun ReadingSettings(mail: Mail) {
         }
     }
 }
+
+/** Whether images load without asking, null until read, and how to change it. */
+private class ImagesAlways(val on: Boolean?, val onPick: (Boolean) -> Unit)
 
 /** [this] a [scale] larger, line height and all. */
 fun TextStyle.scaled(scale: Float): TextStyle = copy(fontSize = fontSize * scale, lineHeight = lineHeight * scale)
@@ -559,7 +575,7 @@ private fun SwipePreview(swipes: Swipes) {
                 .fillMaxSize()
                 .offset { IntOffset(offset.value.roundToInt(), 0) }
                 .background(colors.surfaceVariant)
-                .padding(horizontal = 16.dp),
+                .padding(horizontal = Gap.card),
             verticalArrangement = Arrangement.Center,
         ) {
             Text(stringResource(R.string.swipes_sample_from), style = Type.Row, maxLines = 1)
@@ -575,7 +591,7 @@ private fun Section(title: String?, rows: @Composable ColumnScope.() -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = Gap.bar)
+            .padding(horizontal = Gap.screen)
             .padding(bottom = 4.dp)
             .clip(RoundedCornerShape(Radius.tile))
             .background(MaterialTheme.colorScheme.surfaceVariant),
@@ -589,18 +605,19 @@ private fun Caption(text: String) {
         text,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         style = Type.Label,
-        modifier = Modifier.padding(start = Gap.screen, end = Gap.screen, top = 18.dp, bottom = 8.dp),
+        modifier = Modifier.padding(start = Gap.inset, end = Gap.inset, top = 18.dp, bottom = 8.dp),
     )
 }
 
 /** A line or two on what a setting does, under it. */
 @Composable
-private fun Hint(text: String, top: Dp = 0.dp) {
+private fun Hint(text: String, top: Dp = 0.dp, align: TextAlign = TextAlign.Start) {
     Text(
         text,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         style = Type.Caption,
-        modifier = Modifier.padding(start = Gap.screen, end = Gap.screen, top = top, bottom = 8.dp),
+        textAlign = align,
+        modifier = Modifier.fillMaxWidth().padding(start = Gap.inset, end = Gap.inset, top = top, bottom = 8.dp),
     )
 }
 
@@ -615,7 +632,7 @@ private fun SettingRow(
     onClick: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
-    SettingRow(lead = { Glyph(icon, null, colors.primary) }, title = title, caption = caption, value = value, next = next, onClick = onClick, end = end)
+    SettingRow(lead = { Glyph(icon, null, colors.onSurfaceVariant) }, title = title, caption = caption, value = value, next = next, onClick = onClick, end = end)
 }
 
 /**
@@ -639,7 +656,7 @@ private fun SettingRow(
             .fillMaxWidth()
             .heightIn(min = 52.dp)
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(start = 16.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
+            .padding(start = Gap.card, end = 12.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(Gap.slot), contentAlignment = Alignment.Center) { lead() }

@@ -328,7 +328,7 @@ fun SwipeAction.colors(): Pair<Color, Color> = with(MaterialTheme.colorScheme) {
     }
 }
 
-/** "Left: Done, right: Read". */
+/** "← Done · Read →". */
 @Composable
 fun Swipes.summary(): String = stringResource(R.string.swipes_summary, stringResource(left.label), stringResource(right.label))
 
@@ -354,7 +354,7 @@ fun SwipeTip(swipes: Swipes, onDismiss: () -> Unit) {
     }
 }
 
-/** The choice for each side, inside the accounts sheet. */
+/** The choice for each side, on its page of the settings. */
 @Composable
 fun SwipeSettings(swipes: Swipes, onChange: (Swipes) -> Unit) {
     Side(R.string.swipes_left, swipes.left) { onChange(swipes.copy(left = it)) }
@@ -393,7 +393,7 @@ fun <T> Choices(
         stringResource(title),
         color = colors.onSurfaceVariant,
         style = Type.Caption,
-        modifier = Modifier.padding(start = Gap.screen, end = Gap.screen, top = 8.dp, bottom = 8.dp),
+        modifier = Modifier.padding(start = Gap.inset, end = Gap.inset, top = 8.dp, bottom = 8.dp),
     )
     // More than four take two rows, so each keeps room for its words.
     val perRow = (if (options.size > 4) (options.size + 1) / 2 else options.size).coerceAtLeast(1)

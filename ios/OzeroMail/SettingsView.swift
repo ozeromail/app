@@ -41,7 +41,7 @@ struct SettingsView: View {
     var body: some View {
         switch page {
         case .home:
-            AppSettings(accounts: accounts, swipes: swipes, signature: signature, actions: actions)
+            AppSettings(accounts: accounts, swipes: swipes, signature: signature, mail: mail, actions: actions)
         case .notifications:
             NotificationSettings(accounts: accounts, actions: actions)
         case .swipes:
@@ -68,10 +68,12 @@ private struct AppSettings: View {
     let accounts: [AccountItem]
     let swipes: Swipes
     let signature: String
+    let mail: Mail
     let actions: SettingsActions
 
     // Watched, so the row shows the size picked on the Reading page.
     @AppStorage("text_size") private var textSize = Settings.usualSize
+    @State private var imagesAlways: Bool?
 
     var body: some View {
         List {
@@ -81,8 +83,11 @@ private struct AppSettings: View {
                         Label {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(verbatim: account.name).lineLimit(1)
+                                // The address, or what the account is when its name is the address.
+                                let isAddress = account.name.trimmingCharacters(in: .whitespaces).caseInsensitiveCompare(account.email) == .orderedSame
+                                let place = isAddress ? account.kind.title : account.email
                                 let quiet = account.notify ? "" : " · " + tr("account_quiet")
-                                Text(verbatim: "\(account.kind.title) · \(account.email)\(quiet)")
+                                Text(verbatim: place + quiet)
                                     .font(.footnote).foregroundStyle(.secondary).lineLimit(1)
                             }
                         } icon: {
@@ -101,18 +106,19 @@ private struct AppSettings: View {
             }
             Section("settings_reading") {
                 ValueLink(page: .reading, icon: "textformat.size", title: "reading_size", value: sizeNames[min(max(textSize, 0), sizeNames.count - 1)])
-                ValueLink(page: .reading, icon: "photo", title: "images_title", value: nil)
+                ValueLink(page: .reading, icon: "photo", title: "images_title",
+                          value: imagesAlways.map { tr($0 ? "images_always" : "images_ask") })
             }
-            Section("app_name") {
-                SheetAction(icon: "square.and.pencil", text: "feedback_write", color: .primary, action: actions.onWrite)
-                LabeledContent {
-                    Text(verbatim: appVersion)
-                } label: {
-                    Label { Text("settings_version") } icon: { Image(systemName: "info.circle").foregroundStyle(Color.ozeroAccent) }
-                }
+            Section {
+                SheetAction(icon: "envelope", text: "feedback_write", color: .ozeroAccent, action: actions.onWrite)
+            } footer: {
+                Text(verbatim: "\(tr("app_name")) \(appVersion)")
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 12)
             }
         }
         .listStyle(.insetGrouped)
+        .task { imagesAlways = try? await mail.imagesAlways() }
         .navigationTitle("settings_title")
     }
 }
@@ -129,7 +135,8 @@ private struct ValueLink: View {
             LabeledContent {
                 if let value { Text(verbatim: value).lineLimit(1) }
             } label: {
-                Label { Text(title) } icon: { Image(systemName: icon).foregroundStyle(Color.ozeroAccent) }
+                // Quiet, so the accent marks what acts.
+                Label { Text(title) } icon: { Image(systemName: icon).foregroundStyle(.secondary) }
             }
         }
     }
@@ -408,7 +415,7 @@ private struct AccountSettings: View {
                                 }
                             }
                         } icon: {
-                            Image(systemName: "key").foregroundStyle(Color.ozeroAccent)
+                            Image(systemName: "key").foregroundStyle(.secondary)
                         }
                     }
                     .tint(.primary)
