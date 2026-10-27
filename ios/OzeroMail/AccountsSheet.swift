@@ -149,7 +149,7 @@ struct MailboxRows: View {
                             // The unified inbox keeps one account at least; the row still moves.
                             Toggle(account.name, isOn: Binding(get: { account.inAll }, set: { actions.onInAll(account, $0) }))
                                 .labelsHidden()
-                                .disabled(account.inAll && inAll.count == 1)
+                                .disabled(account.inAllFixed)
                         }
                     }
                     .onMove { from, to in
