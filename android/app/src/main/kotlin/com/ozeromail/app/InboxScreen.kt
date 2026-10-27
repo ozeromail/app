@@ -2219,7 +2219,7 @@ private fun MessageLine(message: MessageItem, unread: Boolean, dot: Float, accou
     Row(
         modifier
             .fillMaxWidth()
-            .padding(start = Gap.row + shift, end = 18.dp, top = 16.dp, bottom = 16.dp),
+            .padding(start = Gap.row + shift, end = Gap.screen, top = 16.dp, bottom = 16.dp),
         verticalAlignment = Alignment.Top,
     ) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -2237,7 +2237,7 @@ private fun MessageLine(message: MessageItem, unread: Boolean, dot: Float, accou
                             // The unread dot hangs in the margin before the text.
                             .drawBehind {
                                 if (dot > 0f) {
-                                    val x = if (layoutDirection == LayoutDirection.Ltr) -13.5.dp.toPx() else size.width + 13.5.dp.toPx()
+                                    val x = if (layoutDirection == LayoutDirection.Ltr) -11.dp.toPx() else size.width + 11.dp.toPx()
                                     drawCircle(colors.accent.copy(alpha = dot), 3.5.dp.toPx() * (0.4f + 0.6f * dot), Offset(x, size.height / 2))
                                 }
                             },
