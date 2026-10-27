@@ -441,15 +441,30 @@ impl Core {
     pub fn people(&self, message: MessageItem) -> Result<PeopleItem, CoreError> {
         let own = self.account(AccountId(message.account_id))?.email;
         let saved = self.store.correspondents(MessageId(message.id))?;
-        let person = |a: &Address| PersonItem {
-            name: shown_name(a.name.as_deref()).unwrap_or(&a.email).to_owned(),
-            email: a.email.clone(),
-            me: a.email.eq_ignore_ascii_case(&own),
+        let person = |a: &Address| {
+            let name = shown_name(a.name.as_deref()).unwrap_or(&a.email);
+            PersonItem {
+                first: first_name(name).to_owned(),
+                name: name.to_owned(),
+                email: a.email.clone(),
+                me: a.email.eq_ignore_ascii_case(&own),
+            }
         };
+        let to: Vec<PersonItem> = saved.to.iter().map(person).collect();
+        let cc: Vec<PersonItem> = saved.cc.iter().map(person).collect();
+        let mut shown: Vec<PersonItem> = Vec::new();
+        for p in to.iter().chain(&cc) {
+            if !shown.iter().any(|s| s.email.eq_ignore_ascii_case(&p.email)) {
+                shown.push(p.clone());
+            }
+        }
+        // The user first: "To you, Oleg and Maria".
+        shown.sort_by_key(|p| !p.me);
         let others = saved.others(&own).into_iter().map(person).collect();
         Ok(PeopleItem {
-            to: saved.to.iter().map(person).collect(),
-            cc: saved.cc.iter().map(person).collect(),
+            to,
+            cc,
+            shown,
             others,
         })
     }
@@ -2792,6 +2807,8 @@ pub struct PeopleItem {
     pub to: Vec<PersonItem>,
     /// Copies (`Cc`).
     pub cc: Vec<PersonItem>,
+    /// Everyone in To and Cc once, the user first: the line under the sender.
+    pub shown: Vec<PersonItem>,
     /// Who `Core::reply` with `all` copies besides those it answers: never the user.
     pub others: Vec<PersonItem>,
 }
@@ -2801,6 +2818,8 @@ pub struct PeopleItem {
 pub struct PersonItem {
     /// The name, or the address when there is none.
     pub name: String,
+    /// What the name starts with, as said to them: "Anna" of "Anna Lee" or "Lee, Anna".
+    pub first: String,
     pub email: String,
     /// The account the message is in.
     pub me: bool,
@@ -2985,6 +3004,19 @@ impl From<RecentFile> for RecentFileItem {
             size: f.file.size,
             sender,
         }
+    }
+}
+
+/// "Anna" of "Anna Lee", "Lee, Anna" or "anna@x.com"; the name itself when that leaves nothing.
+fn first_name(name: &str) -> &str {
+    let given = name.split('@').next().unwrap_or(name);
+    let given = given
+        .split_once(", ")
+        .map_or(given, |(_, after)| after)
+        .trim();
+    match given.split(' ').next() {
+        Some(first) if !first.is_empty() => first,
+        _ => name,
     }
 }
 

@@ -615,6 +615,12 @@ fn tells_who_a_message_went_to_and_copies_the_others_on_reply_all() {
         [("ME@example.com".into(), true), ("Bob".into(), false)]
     );
     assert_eq!(names(&people.cc), [("cat@example.com".into(), false)]);
+    let firsts = people
+        .shown
+        .iter()
+        .map(|p| p.first.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(firsts, ["ME", "Bob", "cat"]);
     assert_eq!(
         names(&people.others),
         [("Bob".into(), false), ("cat@example.com".into(), false)]
@@ -970,4 +976,12 @@ fn reads_back_a_fingerprint_it_shows() {
     assert_eq!(unhex(&shown), Some(fingerprint));
     assert_eq!(unhex("00:08"), None);
     assert_eq!(unhex(&shown.replace(':', "")), None);
+}
+
+#[test]
+fn says_a_first_name() {
+    assert_eq!(first_name("Anna Lee"), "Anna");
+    assert_eq!(first_name("Lee, Anna"), "Anna");
+    assert_eq!(first_name("anna@x.com"), "anna");
+    assert_eq!(first_name(" "), " ");
 }
