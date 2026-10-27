@@ -1225,6 +1225,10 @@ fn an_account_left_out_of_the_unified_inbox_keeps_its_own_tabs() {
     store.set_account_in_all(a, false).unwrap();
     assert!(store.inbox_is_empty(None).unwrap());
     assert!(!store.inbox_is_empty(Some(b)).unwrap());
+
+    // With the last account in it gone, the unified inbox takes in all the others.
+    store.remove_account(b).unwrap();
+    assert!(store.accounts().unwrap()[0].in_all);
 }
 
 #[test]

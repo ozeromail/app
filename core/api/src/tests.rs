@@ -996,27 +996,38 @@ fn folders_sit_inside_the_folder_their_name_continues() {
         role,
         pinned: false,
     };
-    let folders = [
+    let tree = |folders: &[Folder]| -> Vec<(Option<i64>, String)> {
+        folder_tree(folders)
+            .into_iter()
+            .map(|(parent, name)| (parent.map(|p| p.0), name))
+            .collect()
+    };
+    let slashes = [
         folder(1, "INBOX", FolderRole::Inbox),
         folder(2, "Trips", FolderRole::Custom),
         folder(3, "Trips/2026", FolderRole::Custom),
         folder(4, "Trips/2026/Kazan", FolderRole::Custom),
-        folder(5, "INBOX.Bills", FolderRole::Custom),
-        folder(6, "Tripsy", FolderRole::Custom),
-        folder(7, "Mr. Lee", FolderRole::Custom),
+        folder(5, "Tripsy", FolderRole::Custom),
+        folder(6, "Dr", FolderRole::Custom),
+        folder(7, "Dr. Who", FolderRole::Custom),
     ];
-    let tree: Vec<(Option<i64>, String)> = folder_tree(&folders)
-        .into_iter()
-        .map(|(parent, name)| (parent.map(|p| p.0), name))
-        .collect();
     let expected = [
         (None, "INBOX"),
         (None, "Trips"),
         (Some(2), "2026"),
         (Some(3), "Kazan"),
-        (None, "Bills"),
         (None, "Tripsy"),
-        (None, "Mr. Lee"),
+        (None, "Dr"),
+        (None, "Dr. Who"),
     ];
-    assert_eq!(tree, expected.map(|(p, n)| (p, n.to_owned())));
+    assert_eq!(tree(&slashes), expected.map(|(p, n)| (p, n.to_owned())));
+
+    // Kept under INBOX and split with dots, as on some servers.
+    let dots = [
+        folder(1, "INBOX", FolderRole::Inbox),
+        folder(2, "INBOX.Bills", FolderRole::Custom),
+        folder(3, "INBOX.Bills.2026", FolderRole::Custom),
+    ];
+    let expected = [(None, "INBOX"), (None, "Bills"), (Some(2), "2026")];
+    assert_eq!(tree(&dots), expected.map(|(p, n)| (p, n.to_owned())));
 }
