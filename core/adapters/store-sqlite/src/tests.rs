@@ -1609,6 +1609,44 @@ fn conversations_stay_in_their_account() {
 }
 
 #[test]
+fn a_message_alone_leaves_its_conversation() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let folder = inbox(&store, account);
+    store
+        .save_folders(
+            account,
+            &[
+                NewFolder {
+                    remote_id: "INBOX".into(),
+                    name: "Inbox".into(),
+                    role: FolderRole::Inbox,
+                },
+                NewFolder {
+                    remote_id: "Trash".into(),
+                    name: "Trash".into(),
+                    role: FolderRole::Trash,
+                },
+            ],
+        )
+        .unwrap();
+    store
+        .save_messages(folder, &[message(1, 100), reply(2, 200, &[1])])
+        .unwrap();
+    let thread = store
+        .thread(list(&store, ListScope::Folder(folder), 10, None)[0].id)
+        .unwrap();
+    let newest = thread[1].id;
+
+    let ops = store.queue_alone(&[(newest, Action::Trash)], 50).unwrap();
+    assert_eq!(ops.len(), 1);
+    let left = store.thread(thread[0].id).unwrap();
+    assert_eq!(subjects(&left), ["Subject 1"]);
+    assert!(store.undo(&ops, 49).unwrap());
+    assert_eq!(store.thread(thread[0].id).unwrap().len(), 2);
+}
+
+#[test]
 fn actions_apply_to_the_whole_conversation() {
     let store = store();
     let account = account(&store, "a@example.com");

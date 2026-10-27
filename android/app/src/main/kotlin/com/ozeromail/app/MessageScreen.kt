@@ -250,6 +250,24 @@ fun MessageScreen(
     }
     val sending = stringResource(R.string.inbox_sending)
     val undo = stringResource(R.string.action_undo)
+    val trashed = stringResource(R.string.inbox_trashed)
+    val deleted = stringResource(R.string.inbox_deleted)
+    // One message of the conversation; the last one left goes as the conversation does.
+    fun deleteAlone(m: MessageItem) {
+        val rest = thread.filter { it.id != m.id }
+        if (rest.isEmpty()) return onDelete()
+        scope.launch {
+            try {
+                val actions = mail.deleteAlone(m)
+                thread = mail.thread(rest.first()).ifEmpty { rest }
+                if (!snackbar.offerUndo(if (m.canTrash) trashed else deleted, undo)) return@launch
+                if (!mail.undo(actions)) error = R.string.inbox_undo_late
+                thread = mail.thread(rest.first()).ifEmpty { rest }
+            } catch (e: CoreException) {
+                error = e.text()
+            }
+        }
+    }
     fun sent(id: Long, reply: Replying) {
         replying = null
         scope.launch {
@@ -327,6 +345,7 @@ fun MessageScreen(
                                         onPerson = { sheet = ReaderSheet.Person(it) },
                                         onReply = { reply(m, all = false) },
                                         onForward = { onForward(m) },
+                                        onDelete = { deleteAlone(m) },
                                         modifier = modifier,
                                     )
                                 }
@@ -506,6 +525,7 @@ private fun Letter(
     onPerson: (PersonItem) -> Unit,
     onReply: () -> Unit,
     onForward: () -> Unit,
+    onDelete: () -> Unit,
     modifier: Modifier,
 ) {
     val filesAt = remember { BringIntoViewRequester() }
@@ -526,6 +546,7 @@ private fun Letter(
                     Row(Modifier.padding(start = Gap.screen, end = Gap.screen, bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (!message.sent) Chip(R.drawable.ic_reply, stringResource(R.string.message_reply), onReply)
                         Chip(R.drawable.ic_forward, stringResource(R.string.message_forward), onForward)
+                        Chip(R.drawable.ic_delete, stringResource(R.string.action_delete), onDelete, MaterialTheme.colorScheme.error)
                     }
                 }
             }
@@ -535,7 +556,7 @@ private fun Letter(
 
 /** A small rounded button under a message. */
 @Composable
-private fun Chip(@DrawableRes icon: Int, label: String, onClick: () -> Unit) {
+private fun Chip(@DrawableRes icon: Int, label: String, onClick: () -> Unit, tint: Color = MaterialTheme.colorScheme.primary) {
     val colors = MaterialTheme.colorScheme
     Row(
         Modifier
@@ -547,8 +568,8 @@ private fun Chip(@DrawableRes icon: Int, label: String, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Glyph(icon, null, colors.primary, size = 17.dp)
-        Text(label, color = colors.primary, style = Type.Caption, fontWeight = Weight.SemiBold)
+        Glyph(icon, null, tint, size = 17.dp)
+        Text(label, color = tint, style = Type.Caption, fontWeight = Weight.SemiBold)
     }
 }
 

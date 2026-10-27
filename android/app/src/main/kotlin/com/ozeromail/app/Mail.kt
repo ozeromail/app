@@ -345,6 +345,11 @@ class Mail(private val context: Context) {
         return move(messages) { core.delete(toTrash.map { it.id }, forever.map { it.id }) }
     }
 
+    /** As [delete], [message] alone: the rest of its conversation stays. */
+    suspend fun deleteAlone(message: MessageItem): List<Long> = move(listOf(message)) {
+        if (message.canTrash) core.deleteAlone(it, emptyList()) else core.deleteAlone(emptyList(), it)
+    }
+
     /** Empties a trash or spam [mailbox] for good, mail not loaded included, held like [archive]. */
     suspend fun emptyMailbox(mailbox: Mailbox): List<Long> {
         val actions = io { core.emptyMailbox(mailbox) }

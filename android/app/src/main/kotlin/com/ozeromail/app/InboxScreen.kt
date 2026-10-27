@@ -322,6 +322,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     val trashed = stringResource(R.string.inbox_trashed)
     val undoLate = stringResource(R.string.inbox_undo_late)
     val deleted = stringResource(R.string.inbox_deleted)
+    val threadTrashed = stringResource(R.string.inbox_thread_trashed)
+    val threadDeleted = stringResource(R.string.inbox_thread_deleted)
     val emptied = stringResource(R.string.inbox_emptied)
     val reverted = stringResource(R.string.inbox_reverted)
     val undo = stringResource(R.string.action_undo)
@@ -760,7 +762,13 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     /** Delete: into the trash, or for good from there. */
     fun delete(gone: List<MessageItem>, reset: () -> Unit = {}) {
         val forever = gone.none { it.canTrash }
-        remove(gone, if (forever) deleted else trashed, FolderRole.TRASH.takeUnless { forever }, mail::delete, reset)
+        // A conversation goes whole, and the toast says so.
+        val whole = gone.any { it.threadCount > 1u }
+        val toast = when {
+            forever -> if (whole) threadDeleted else deleted
+            else -> if (whole) threadTrashed else trashed
+        }
+        remove(gone, toast, FolderRole.TRASH.takeUnless { forever }, mail::delete, reset)
     }
 
     /** Empties the open trash or spam for good, on the server too; the toast can take it back for a moment. */

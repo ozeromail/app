@@ -382,6 +382,14 @@ final class Mail: Sendable {
         return try move(messages) { _ in try core.delete(messages: toTrash, forever: forever) }
     }
 
+    /// As `delete`, `message` alone: the rest of its conversation stays.
+    func deleteAlone(_ message: MessageItem) async throws -> [Int64] {
+        let ids = [message.id]
+        return try move([message]) { _ in
+            try message.canTrash ? core.deleteAlone(messages: ids, forever: []) : core.deleteAlone(messages: [], forever: ids)
+        }
+    }
+
     /// Empties a trash or spam `mailbox` for good, mail not loaded included, held like `archive`.
     func emptyMailbox(_ mailbox: Mailbox) async throws -> [Int64] {
         let actions = try core.emptyMailbox(mailbox: mailbox)

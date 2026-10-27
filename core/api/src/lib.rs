@@ -529,6 +529,17 @@ impl Core {
         Ok(ids(self.store.queue_all(&actions, now() + HOLD)?))
     }
 
+    /// As `delete`, each message alone: the rest of its conversation stays.
+    pub fn delete_alone(
+        &self,
+        messages: Vec<i64>,
+        forever: Vec<i64>,
+    ) -> Result<Vec<i64>, CoreError> {
+        let mut actions = with(messages, Action::Trash);
+        actions.extend(with(forever, Action::Delete));
+        Ok(ids(self.store.queue_alone(&actions, now() + HOLD)?))
+    }
+
     /// Empties a trash or spam mailbox for good, every account's for a unified one, held like
     /// `archive`: on the server too, mail the app has not loaded included. Returns the actions
     /// for `undo`.

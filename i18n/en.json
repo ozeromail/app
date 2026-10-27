@@ -92,6 +92,8 @@
   "message_quote": "Show the quoted text",
   "error_no_trash": "This account has no Trash folder.",
   "inbox_trashed": "Moved to Trash",
+  "inbox_thread_trashed": "Conversation moved to Trash",
+  "inbox_thread_deleted": "Conversation deleted forever",
   "inbox_undo_late": "Too late to undo: the server already has it",
   "action_delete": "Delete",
   "action_more": "More",

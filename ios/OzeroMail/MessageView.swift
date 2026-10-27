@@ -241,7 +241,8 @@ struct MessageView: View {
             },
             onPerson: { person = $0 },
             onReply: { reply(m, all: false) },
-            onForward: { forward(m) })
+            onForward: { forward(m) },
+            onDelete: { deleteAlone(m) })
         .id(m.id)
         .task(id: isOpen(m)) {
             guard isOpen(m), people[m.id] == nil else { return }
@@ -353,6 +354,25 @@ struct MessageView: View {
 
     private func delete() {
         leave { await model.delete([message]) }
+    }
+
+    /// One message of the conversation; the last one left goes as the conversation does.
+    private func deleteAlone(_ m: MessageItem) {
+        let rest = thread.filter { $0.id != m.id }
+        guard let other = rest.first else { return delete() }
+        Task {
+            do {
+                let actions = try await mail.deleteAlone(m)
+                let found = try await mail.thread(of: other)
+                thread = found.isEmpty ? rest : found
+                guard await model.offerUndo(tr(m.canTrash ? "inbox_trashed" : "inbox_deleted")) else { return }
+                if (try? await mail.undo(actions)) != true { self.error = "inbox_undo_late" }
+                let back = try await mail.thread(of: other)
+                if !back.isEmpty { thread = back }
+            } catch {
+                self.error = error.text()
+            }
+        }
     }
 
     /// Back to the list, where the toast can undo it.
@@ -475,6 +495,7 @@ private struct Letter: View {
     let onPerson: (PersonItem) -> Void
     let onReply: () -> Void
     let onForward: () -> Void
+    let onDelete: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -489,6 +510,7 @@ private struct Letter: View {
                     HStack(spacing: 8) {
                         if !message.sent { Chip(icon: "arrowshape.turn.up.left", label: "message_reply", action: onReply) }
                         Chip(icon: "arrowshape.turn.up.right", label: "message_forward", action: onForward)
+                        Chip(icon: "trash", label: "action_delete", tint: .red, action: onDelete)
                     }
                     .padding(.horizontal, 20)
                     .padding(.bottom, 14)
@@ -504,13 +526,14 @@ private struct Letter: View {
 private struct Chip: View {
     let icon: String
     let label: LocalizedStringKey
+    var tint = Color.ozeroAccent
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Label(label, systemImage: icon)
                 .font(.footnote.weight(.semibold))
-                .foregroundStyle(Color.ozeroAccent)
+                .foregroundStyle(tint)
                 .padding(.horizontal, 12)
                 .frame(minHeight: 36)
                 .background(Color.ozeroCard, in: .capsule)

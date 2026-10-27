@@ -854,6 +854,24 @@ impl Store for SqliteStore {
         Ok(ops)
     }
 
+    fn queue_alone(
+        &self,
+        actions: &[(MessageId, Action)],
+        not_before: i64,
+    ) -> Result<Vec<OpId>, StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        let mut ops = vec![];
+        for &(message, action) in actions {
+            if !folder_role(&tx, message)?.allows(action) {
+                return Err(StoreError::NotAllowed);
+            }
+            ops.push(queue_one(&tx, message, action, not_before)?);
+        }
+        tx.commit().map_err(storage)?;
+        Ok(ops)
+    }
+
     fn snooze(
         &self,
         messages: &[MessageId],
