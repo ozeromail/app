@@ -3372,7 +3372,10 @@ fn sandboxed(html: &str, styled: bool) -> String {
         "<meta name=\"viewport\" content=\"width=device-width,minimum-scale=0.48\">",
         // With the 10 dp around a styled page's card, its text lines up with the 20 dp of the
         // header above.
-        "<style>body{margin:0;padding:0 10px 16px;overflow-wrap:break-word}",
+        // A page wider than the screen widens the body with it, so its backgrounds reach as far
+        // as what is on them.
+        "<style>body{margin:0;padding:0 10px 16px;overflow-wrap:break-word;",
+        "width:fit-content;min-width:100%;box-sizing:border-box}",
         "img{max-width:100%;height:auto}",
         "details.ozero-quote>summary{list-style:none;display:inline-block;margin:10px 0;",
         "padding:0 10px;border-radius:9px;background:#e9eef5;color:#6c7890;",
