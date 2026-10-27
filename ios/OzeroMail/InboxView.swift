@@ -782,52 +782,53 @@ struct MessageRow: View {
 
     var body: some View {
         let unread = message.threadUnread > 0
-        HStack(alignment: .top, spacing: 8) {
+        // The text lines up with the title; the unread dot hangs in the margin before it.
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(verbatim: message.participants)
+                    .font(.body.weight(unread ? .semibold : .medium))
+                    .lineLimit(1)
+                if message.threadCount > 1 {
+                    Text(verbatim: "\(message.threadCount)")
+                        .font(.caption2.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(.quaternary, in: .capsule)
+                }
+                Spacer(minLength: 4)
+                if let account = message.account {
+                    AccountDot(color: account.tint, size: 6)
+                    Text(verbatim: account.name)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .frame(maxWidth: 70, alignment: .leading)
+                }
+                // Not out yet: once the server has it, its date shows.
+                Text(verbatim: message.sending ? tr("inbox_sending") : shortDate(message.date))
+                    .font(.footnote.monospacedDigit())
+                    .foregroundStyle(unread ? .primary : .secondary)
+            }
+            message.subjectText
+                .font(.subheadline.weight(unread ? .medium : .regular))
+                .lineLimit(1)
+            if !message.snippet.isBlank {
+                Text(verbatim: message.snippet)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            if !message.attachments.isEmpty {
+                AttachmentChips(names: message.attachments)
+            }
+        }
+        .overlay(alignment: .topLeading) {
             Circle()
                 .fill(unread ? Color.ozeroFill : .clear)
                 .frame(width: 7, height: 7)
-                .padding(.top, 7)
+                .offset(x: -13, y: 7)
                 .animation(.easeOut(duration: 0.15), value: unread)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(verbatim: message.participants)
-                        .font(.body.weight(unread ? .semibold : .medium))
-                        .lineLimit(1)
-                    if message.threadCount > 1 {
-                        Text(verbatim: "\(message.threadCount)")
-                            .font(.caption2.weight(.semibold).monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1)
-                            .background(.quaternary, in: .capsule)
-                    }
-                    Spacer(minLength: 4)
-                    if let account = message.account {
-                        AccountDot(color: account.tint, size: 6)
-                        Text(verbatim: account.name)
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .frame(maxWidth: 70, alignment: .leading)
-                    }
-                    // Not out yet: once the server has it, its date shows.
-                    Text(verbatim: message.sending ? tr("inbox_sending") : shortDate(message.date))
-                        .font(.footnote.monospacedDigit())
-                        .foregroundStyle(unread ? .primary : .secondary)
-                }
-                message.subjectText
-                    .font(.subheadline.weight(unread ? .medium : .regular))
-                    .lineLimit(1)
-                if !message.snippet.isBlank {
-                    Text(verbatim: message.snippet)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-                if !message.attachments.isEmpty {
-                    AttachmentChips(names: message.attachments)
-                }
-            }
         }
         .padding(.vertical, 6)
     }
