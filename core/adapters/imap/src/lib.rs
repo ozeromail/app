@@ -1,5 +1,7 @@
 //! `MailProvider` over IMAP4rev1. Parsing is imap-codec's; the session flow is ours.
 
+#[cfg(any(target_os = "android", test))]
+mod crl;
 mod utf7;
 mod verify;
 
@@ -117,7 +119,7 @@ pub fn platform_checks(
             .map_err(|e| ProviderError::Network(e.to_string()))?,
     );
     #[cfg(target_os = "android")]
-    let os = Arc::new(verify::RecheckRevoked(os));
+    let os = Arc::new(verify::Revocation(os));
     Ok(Arc::new(verify::Trusting {
         checks: os,
         trusted,
