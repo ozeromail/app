@@ -19,8 +19,6 @@ log = "0.4"
 # Already in the tree through rustls; hashes a trusted server certificate.
 ring = { version = "0.17", default-features = false }
 rustls-platform-verifier.workspace = true
-# Already in the tree through rustls; checks a certificate against its CA's revocation list.
-rustls-webpki = { version = "0.103", default-features = false, features = ["alloc", "ring"] }
 tokio = { version = "1.53", default-features = false, features = ["net", "io-util", "time"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 
