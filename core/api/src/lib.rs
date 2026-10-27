@@ -469,6 +469,19 @@ impl Core {
         })
     }
 
+    /// Flags the messages, or takes their flags off, on the device at once; `push_actions`
+    /// tells the server. Only the messages themselves, not the rest of their conversations.
+    pub fn flag(&self, messages: Vec<i64>, flagged: bool) -> Result<(), CoreError> {
+        self.store
+            .queue_all(&with(messages, Action::Flagged(flagged)), now())?;
+        Ok(())
+    }
+
+    /// As `archive`, into the account's spam. Fails with `NoSpam` if an account has none.
+    pub fn spam(&self, messages: Vec<i64>) -> Result<Vec<i64>, CoreError> {
+        self.hold_move(messages, Action::Spam)
+    }
+
     /// Marks the messages' conversations read, or the messages alone unread, on the device at
     /// once and in one go; `push_actions` tells the server.
     pub fn mark_read(&self, messages: Vec<i64>, seen: bool) -> Result<(), CoreError> {
@@ -2458,6 +2471,21 @@ impl MailProvider for Remote {
         }
     }
 
+    async fn set_flagged(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_ids: &[String],
+        flagged: bool,
+    ) -> Result<(), ProviderError> {
+        match self {
+            Self::Imap(p) => p.set_flagged(folder, validity, remote_ids, flagged).await,
+            Self::Gmail(p) => p.set_flagged(folder, validity, remote_ids, flagged).await,
+            Self::Ews(p) => p.set_flagged(folder, validity, remote_ids, flagged).await,
+            Self::Eas(p) => p.set_flagged(folder, validity, remote_ids, flagged).await,
+        }
+    }
+
     async fn move_to(
         &mut self,
         folder: &str,
@@ -3269,6 +3297,8 @@ pub struct MessageItem {
     pub can_move_to_inbox: bool,
     /// It can be snoozed: its folder holds mail not filed yet.
     pub can_snooze: bool,
+    /// It can go to spam: from the inbox, the archive or the user's folders.
+    pub can_spam: bool,
     /// In mixed lists (the unified inbox, search), set when there is more than one account.
     pub account: Option<AccountMark>,
     /// The names of its attachments, once its body is downloaded; a name may be empty.
@@ -3298,6 +3328,7 @@ impl From<MessageRow> for MessageItem {
             can_trash: allows(Action::Trash),
             can_move_to_inbox: allows(Action::Inbox),
             can_snooze: allows(Action::Snooze),
+            can_spam: allows(Action::Spam),
             account: None,
             attachments: row.attachments,
             sending: row.sending,
@@ -3336,6 +3367,8 @@ pub enum CoreError {
     NoTrash,
     /// The account has no snoozed folder yet; its next sync makes one.
     NoSnoozed,
+    /// The account has no folder marked as its spam.
+    NoSpam,
     /// A recipient is not an email address, or there is none.
     BadRecipients,
     /// A copy (`Cc`) is not an email address.
@@ -3381,6 +3414,7 @@ impl fmt::Display for CoreError {
             Self::NoArchive => write!(f, "the account has no archive folder"),
             Self::NoTrash => write!(f, "the account has no trash folder"),
             Self::NoSnoozed => write!(f, "the account has no snoozed folder"),
+            Self::NoSpam => write!(f, "the account has no spam folder"),
             Self::BadRecipients => write!(f, "a recipient is not an email address"),
             Self::BadCopies => write!(f, "a copy is not an email address"),
             Self::NoSmtp => write!(f, "the account has no SMTP server"),
@@ -3411,6 +3445,7 @@ impl From<StoreError> for CoreError {
             StoreError::NoArchive => Self::NoArchive,
             StoreError::NoTrash => Self::NoTrash,
             StoreError::NoSnoozed => Self::NoSnoozed,
+            StoreError::NoSpam => Self::NoSpam,
             other => Self::Storage {
                 detail: other.to_string(),
             },

@@ -197,6 +197,13 @@ async fn marks_messages_read_and_unread() {
         let first = &recent(&mut imap, "INBOX", 3).await.new[0];
         assert_eq!((first.remote_id.as_str(), first.flags.seen), ("1", seen));
     }
+    for flagged in [true, false] {
+        imap.set_flagged("INBOX", validity, &ids, flagged)
+            .await
+            .unwrap();
+        let first = &recent(&mut imap, "INBOX", 3).await.new[0];
+        assert_eq!(first.flags.flagged, flagged);
+    }
     let err = imap
         .set_seen("INBOX", validity + 1, &ids, true)
         .await

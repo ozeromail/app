@@ -555,6 +555,76 @@ fn queued_read_state_shows_at_once_and_survives_a_sync() {
 }
 
 #[test]
+fn a_queued_flag_shows_at_once_beside_the_read_state() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let folder = inbox(&store, account);
+    store.save_messages(folder, &[message(1, 100)]).unwrap();
+    let id = list(&store, ListScope::Folder(folder), 10, None)[0].id;
+    let flagged = |store: &SqliteStore| {
+        list(store, ListScope::Folder(folder), 10, None)[0]
+            .flags
+            .flagged
+    };
+
+    store.queue(id, Action::Flagged(true), 0).unwrap();
+    assert!(flagged(&store));
+    // The server has not got it yet; the read state is the server's to say.
+    let read = NewMessage {
+        flags: Flags {
+            seen: true,
+            ..Flags::default()
+        },
+        ..message(1, 100)
+    };
+    store.save_messages(folder, &[read]).unwrap();
+    assert!(flagged(&store));
+    assert_eq!(seen(&store, folder), [true]);
+
+    let due = store.due(account, 0).unwrap();
+    assert_eq!(due[0].action, Action::Flagged(true));
+    store.revert(&due).unwrap();
+    assert!(!flagged(&store));
+}
+
+#[test]
+fn spam_goes_to_the_spam_folder() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let folder = inbox(&store, account);
+    store.save_messages(folder, &[message(1, 100)]).unwrap();
+    let id = list(&store, ListScope::Folder(folder), 10, None)[0].id;
+    assert_eq!(
+        store.queue(id, Action::Spam, 0).unwrap_err(),
+        StoreError::NoSpam
+    );
+
+    store
+        .save_folders(
+            account,
+            &[
+                NewFolder {
+                    remote_id: "INBOX".into(),
+                    name: "Inbox".into(),
+                    role: FolderRole::Inbox,
+                },
+                NewFolder {
+                    remote_id: "Junk".into(),
+                    name: "Junk".into(),
+                    role: FolderRole::Junk,
+                },
+            ],
+        )
+        .unwrap();
+    store.queue(id, Action::Spam, 0).unwrap();
+    assert!(list(&store, ListScope::Folder(folder), 10, None).is_empty());
+    assert_eq!(
+        store.due(account, 0).unwrap()[0].to.as_deref(),
+        Some("Junk")
+    );
+}
+
+#[test]
 fn a_change_made_while_sending_stays_queued() {
     let store = store();
     let account = account(&store, "a@example.com");

@@ -798,6 +798,42 @@ impl MailProvider for EasSession {
         self.change(folder, &[], commands, true).await
     }
 
+    async fn set_flagged(
+        &mut self,
+        folder: &str,
+        _validity: u32,
+        remote_ids: &[String],
+        flagged: bool,
+    ) -> Result<(), ProviderError> {
+        // Status 2 is flagged; an empty flag takes it off.
+        let flag = || {
+            if flagged {
+                Node::new(
+                    "Email:Flag",
+                    vec![
+                        Node::text("Email:Status", "2"),
+                        Node::text("Email:FlagType", "Flag for follow up"),
+                    ],
+                )
+            } else {
+                Node::new("Email:Flag", vec![])
+            }
+        };
+        let commands = remote_ids
+            .iter()
+            .map(|id| {
+                Node::new(
+                    "AirSync:Change",
+                    vec![
+                        Node::text("AirSync:ServerId", id.as_str()),
+                        Node::new("AirSync:ApplicationData", vec![flag()]),
+                    ],
+                )
+            })
+            .collect();
+        self.change(folder, &[], commands, true).await
+    }
+
     async fn move_to(
         &mut self,
         folder: &str,
