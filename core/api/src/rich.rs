@@ -102,16 +102,27 @@ struct Units<'a> {
 
 impl Units<'_> {
     fn of(&self, byte: usize) -> u32 {
-        self.of_range(0, byte)
+        self.all(&[byte])[0]
     }
 
-    fn of_range(&self, from: usize, to: usize) -> u32 {
-        let to = to.min(self.text.len());
-        let units: usize = self.text[from.min(to)..to]
-            .chars()
-            .map(char::len_utf16)
-            .sum();
-        u32::try_from(units).unwrap_or(u32::MAX)
+    /// The offsets of `bytes`, which may come in any order, in one pass over the text.
+    fn all(&self, bytes: &[usize]) -> Vec<u32> {
+        let mut order: Vec<usize> = (0..bytes.len()).collect();
+        order.sort_unstable_by_key(|&i| bytes[i]);
+        let mut offsets = vec![0; bytes.len()];
+        let (mut byte, mut unit) = (0, 0usize);
+        for i in order {
+            let to = bytes[i].min(self.text.len());
+            if to > byte {
+                unit += self.text[byte..to]
+                    .chars()
+                    .map(char::len_utf16)
+                    .sum::<usize>();
+                byte = to;
+            }
+            offsets[i] = u32::try_from(unit).unwrap_or(u32::MAX);
+        }
+        offsets
     }
 
     /// The byte at a UTF-16 offset; one inside a character counts as after it.
@@ -130,31 +141,21 @@ impl Units<'_> {
 /// The marks of a text block, outer ones first.
 #[uniffi::export]
 pub fn rich_marks(text: String) -> Vec<RichMark> {
-    let units = Units { text: &text };
-    // One pass for all of them: the offsets of every byte where a mark starts or ends.
     let marks = rich::marks(&text);
-    let mut at: Vec<usize> = marks
+    let bytes: Vec<usize> = marks
         .iter()
         .flat_map(|m| [m.open.start, m.open.end, m.close.start, m.close.end])
         .collect();
-    at.sort_unstable();
-    at.dedup();
-    let mut offsets = Vec::with_capacity(at.len());
-    let (mut byte, mut unit) = (0, 0u32);
-    for &target in &at {
-        unit += units.of_range(byte, target);
-        byte = target;
-        offsets.push(unit);
-    }
-    let of = |b: usize| offsets[at.binary_search(&b).unwrap_or(0)];
+    let units = Units { text: &text }.all(&bytes);
     marks
         .into_iter()
-        .map(|m| RichMark {
+        .zip(units.chunks_exact(4))
+        .map(|(m, u)| RichMark {
             style: m.style.into(),
-            open_start: of(m.open.start),
-            open_end: of(m.open.end),
-            close_start: of(m.close.start),
-            close_end: of(m.close.end),
+            open_start: u[0],
+            open_end: u[1],
+            close_start: u[2],
+            close_end: u[3],
             url: m.url,
         })
         .collect()
@@ -164,17 +165,26 @@ pub fn rich_marks(text: String) -> Vec<RichMark> {
 /// the text again.
 #[uniffi::export]
 pub fn rich_blocks(text: String) -> Vec<RichBlock> {
-    let units = Units { text: &text };
-    rich::blocks(&text)
+    let blocks = rich::blocks(&text);
+    let bytes: Vec<usize> = blocks
+        .iter()
+        .flat_map(|block| match block {
+            Block::Text(r) => [r.start, r.end],
+            Block::Image { line, .. } => [line.start, line.end],
+        })
+        .collect();
+    let units = Units { text: &text }.all(&bytes);
+    blocks
         .into_iter()
-        .map(|block| match block {
-            Block::Text(r) => RichBlock::Text {
-                start: units.of(r.start),
-                end: units.of(r.end),
+        .zip(units.chunks_exact(2))
+        .map(|(block, u)| match block {
+            Block::Text(_) => RichBlock::Text {
+                start: u[0],
+                end: u[1],
             },
-            Block::Image { line, file, size } => RichBlock::Image {
-                start: units.of(line.start),
-                end: units.of(line.end),
+            Block::Image { file, size, .. } => RichBlock::Image {
+                start: u[0],
+                end: u[1],
                 file: file.0,
                 size,
             },
@@ -200,8 +210,8 @@ pub fn rich_toggle(
         style.into(),
         url.as_deref(),
     );
-    let units = Units { text: &changed };
-    let (start, end) = (units.of(chosen.start), units.of(chosen.end));
+    let units = Units { text: &changed }.all(&[chosen.start, chosen.end]);
+    let (start, end) = (units[0], units[1]);
     RichText {
         text: changed,
         start,
@@ -226,14 +236,16 @@ pub fn rich_fix(before: String, after: String) -> Option<RichText> {
 /// than one at a time are shown smaller.
 #[uniffi::export]
 pub fn rich_insert_images(text: String, at: u32, files: Vec<i64>) -> String {
-    let size = if files.len() > 1 {
-        ImageSize::Medium
-    } else {
-        ImageSize::Full
-    };
-    let files: Vec<(FileId, ImageSize)> = files.into_iter().map(|f| (FileId(f), size)).collect();
+    let files: Vec<FileId> = files.into_iter().map(FileId).collect();
     let at = Units { text: &text }.byte(at);
     rich::insert_images(&text, at, &files)
+}
+
+/// The address of the link the selection is in, if it is in one.
+#[uniffi::export]
+pub fn rich_link_at(text: String, start: u32, end: u32) -> Option<String> {
+    let units = Units { text: &text };
+    rich::link_at(&text, units.byte(start), units.byte(end))
 }
 
 /// The text without the image of `file`.
@@ -284,5 +296,18 @@ mod tests {
         assert_eq!((toggled.start, toggled.end), (4, 7));
         let fixed = rich_fix(text, "😀 **жир*".into()).unwrap();
         assert_eq!((fixed.text.as_str(), fixed.start), ("😀 **жи**", 7));
+        assert_eq!(
+            rich_blocks("😀\n![](file:3)\nб".into()),
+            vec![
+                RichBlock::Text { start: 0, end: 2 },
+                RichBlock::Image {
+                    start: 3,
+                    end: 14,
+                    file: 3,
+                    size: ImageSize::Full
+                },
+                RichBlock::Text { start: 15, end: 16 },
+            ]
+        );
     }
 }

@@ -19,6 +19,7 @@ struct RichBody<ImageMenu: View>: View {
     @ViewBuilder let imageMenu: (Int64, ImageSize) -> ImageMenu
 
     var body: some View {
+        let parts = parts
         VStack(alignment: .leading, spacing: 4) {
             ForEach(parts) { part in
                 switch part.block {
@@ -27,9 +28,7 @@ struct RichBody<ImageMenu: View>: View {
                         text: (text as NSString).substring(with: NSRange(location: Int(start), length: Int(end - start))),
                         focusRequest: part.id == "t0" ? focusRequest : 0,
                         onChange: { segment, caret in change(part.id, to: segment, caret: caret) },
-                        onCaret: { caret in
-                            if let range = span(of: part.id) { onCaret(range.location + caret) }
-                        },
+                        onCaret: { caret in onCaret(Int(start) + caret) },
                         onFocus: onFocus,
                         onLink: onLink
                     )
@@ -194,7 +193,6 @@ private struct RichTextView: UIViewRepresentable {
         /// The characters the layout hides, and the list dashes it shows as bullets.
         private var hidden = IndexSet()
         private var bullets = IndexSet()
-        private var marks: [RichMark] = []
 
         init(_ parent: RichTextView) {
             self.parent = parent
@@ -216,7 +214,7 @@ private struct RichTextView: UIViewRepresentable {
         private func restyle() {
             guard let view else { return }
             let storage = view.textStorage
-            marks = richMarks(text: storage.string)
+            let marks = richMarks(text: storage.string)
             hidden = IndexSet()
             bullets = IndexSet()
             let all = NSRange(location: 0, length: storage.length)
@@ -253,8 +251,10 @@ private struct RichTextView: UIViewRepresentable {
             var shownGlyphs = Array(UnsafeBufferPointer(start: glyphs, count: range.length))
             var shownProperties = Array(UnsafeBufferPointer(start: properties, count: range.length))
             var bullet: CGGlyph = 0
-            var dot: UniChar = 0x2022
-            CTFontGetGlyphsForCharacters(font as CTFont, &dot, &bullet, 1)
+            if !bullets.isEmpty {
+                var dot: UniChar = 0x2022
+                CTFontGetGlyphsForCharacters(font as CTFont, &dot, &bullet, 1)
+            }
             for i in 0..<range.length {
                 let at = characterIndexes[i]
                 if hidden.contains(at) {
@@ -318,9 +318,7 @@ private struct RichTextView: UIViewRepresentable {
             guard let view else { return }
             guard style == .link else { return apply(style, url: nil) }
             let range = view.selectedRange
-            let has = marks.first {
-                $0.style == .link && Int($0.openEnd) <= range.location && range.location + range.length <= Int($0.closeStart)
-            }?.url
+            let has = richLinkAt(text: view.text, start: UInt32(range.location), end: UInt32(range.location + range.length))
             parent.onLink(has) { [weak self] url in self?.apply(.link, url: url, in: range) }
         }
 

@@ -310,24 +310,14 @@ fun ComposeScreen(
 
     /** The photo of [file] as it was taken, or lighter again: the other one takes its place. */
     fun swapPhoto(file: DraftFileItem, photo: Photo, size: ImageSize) {
-        error = null
-        scope.launch {
-            try {
-                val room = fileLimit().toLong() - files.sumOf { it.size.toLong() }
-                val other = if (photo.full) lighterPhoto(context, photo.uri, photo.name) else readPicked(context, photo.uri, photo.name, room)
-                if (other == null || other.data.size > room) throw CoreException.TooLarge()
-                val added = keeper.attach(current(), other)
-                files = files + added
-                photos[added.id] = photo.copy(full = !photo.full)
-                text = richChangeImage(text, file.id, added.id, size)
-                detach(file)
-            } catch (e: CoreException) {
-                error = e.text()
-            } catch (_: IOException) {
-                error = R.string.compose_file_unreadable
-            } catch (_: SecurityException) {
-                error = R.string.compose_file_unreadable
-            }
+        addFiles(
+            { listOf(photo.name) },
+            { _, name, room -> if (photo.full) lighterPhoto(context, photo.uri, name) else readPicked(context, photo.uri, name, room) },
+        ) { added ->
+            val (_, other) = added.firstOrNull() ?: return@addFiles
+            photos[other.id] = photo.copy(full = !photo.full)
+            text = richChangeImage(text, file.id, other.id, size)
+            detach(file)
         }
     }
 
@@ -366,8 +356,8 @@ fun ComposeScreen(
     LaunchedEffect(Unit) { if (to.isBlank() && !folded) toFocus.requestFocus() }
     val original = composing.original
     // The images the text shows, and the files that go under it.
-    val shownImages = remember(text) { richBlocks(text).filterIsInstance<RichBlock.Image>() }.associate { it.file to it.size }
-    val images = rememberImages(mail, shownImages.keys.toList(), LocalContext.current.resources.displayMetrics.widthPixels)
+    val shownImages = remember(text) { richBlocks(text).filterIsInstance<RichBlock.Image>().associate { it.file to it.size } }
+    val images = rememberImages(mail, shownImages.keys.toList(), context.resources.displayMetrics.widthPixels)
     val addresses = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next, autoCorrectEnabled = false)
     val fields = @Composable {
         if (!folded) {

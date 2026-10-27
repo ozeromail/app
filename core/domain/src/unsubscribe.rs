@@ -62,7 +62,7 @@ impl Unsubscribe {
     }
 }
 
-fn is_scheme(link: &str, scheme: &str) -> bool {
+pub(crate) fn is_scheme(link: &str, scheme: &str) -> bool {
     link.get(..scheme.len())
         .is_some_and(|s| s.eq_ignore_ascii_case(scheme))
 }

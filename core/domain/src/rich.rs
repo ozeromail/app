@@ -9,7 +9,8 @@
 
 use std::ops::Range;
 
-use crate::FileId;
+use crate::unsubscribe::is_scheme;
+use crate::{FileId, markup_escape};
 
 /// What a mark does to the text it holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -145,14 +146,20 @@ pub fn marks(text: &str) -> Vec<Mark> {
     marks
 }
 
+/// The line styles with the marks that start their lines.
+const LINE: [(Style, &str); 3] = [
+    (Style::Heading, "# "),
+    (Style::Item, "- "),
+    (Style::Quote, "> "),
+];
+
+/// The line style `line` starts with, and its mark.
+fn line_style(line: &str) -> Option<(Style, &'static str)> {
+    LINE.into_iter().find(|(_, p)| line.starts_with(p))
+}
+
 fn line_marks(text: &str, start: usize, end: usize, marks: &mut Vec<Mark>) {
-    let line = &text[start..end];
-    let style = match line.get(..2) {
-        Some("# ") => Some(Style::Heading),
-        Some("- ") => Some(Style::Item),
-        Some("> ") => Some(Style::Quote),
-        _ => None,
-    };
+    let style = line_style(&text[start..end]).map(|(style, _)| style);
     let from = match style {
         Some(style) => {
             marks.push(Mark {
@@ -379,45 +386,50 @@ fn pieces<'a>(text: &'a str, start: usize, end: usize, marks: &'a [Mark]) -> Vec
 /// The text as plain text: `*bold*`, `_italic_`, a link as its text and address, and each
 /// image as its name in brackets from `name`; an image without one is left out.
 pub fn to_plain(text: &str, name: &dyn Fn(FileId) -> Option<String>) -> String {
+    plain(text, name, true)
+}
+
+/// What the text shows, without its marks and images: for a list of drafts.
+pub fn shown(text: &str) -> String {
+    plain(text, &|_| None, false)
+}
+
+/// The text without its marks; with `marked`, styles and links as plain text has them.
+fn plain(text: &str, name: &dyn Fn(FileId) -> Option<String>, marked: bool) -> String {
     let marks = marks(text);
     let mut out = String::with_capacity(text.len());
     let mut first = true;
     for (start, line) in lines(text) {
-        if let Some((file, _)) = image(line) {
-            match name(file) {
-                Some(name) => {
-                    if !first {
-                        out.push('\n');
-                    }
-                    out.push('[');
-                    out.push_str(&name);
-                    out.push(']');
-                }
-                None => continue,
-            }
-            first = false;
+        let image = image(line);
+        let name = image.and_then(|(file, _)| name(file));
+        if image.is_some() && name.is_none() {
             continue;
         }
         if !first {
             out.push('\n');
         }
         first = false;
-        let end = start + line.len();
+        if let Some(name) = name {
+            out.push('[');
+            out.push_str(&name);
+            out.push(']');
+            continue;
+        }
         let mut from = start;
-        if let Some(m) = marks
-            .iter()
-            .find(|m| m.style.is_line() && m.open.start == start)
-        {
-            out.push_str(match m.style {
-                Style::Item => "• ",
-                Style::Quote => "> ",
-                _ => "",
-            });
+        if let Some(m) = line_mark(&marks, start) {
+            if marked {
+                out.push_str(match m.style {
+                    Style::Item => "• ",
+                    Style::Quote => "> ",
+                    _ => "",
+                });
+            }
             from = m.open.end;
         }
-        for piece in pieces(text, from, end, &marks) {
+        for piece in pieces(text, from, start + line.len(), &marks) {
             match piece {
                 Piece::Text(t) => out.push_str(t),
+                _ if !marked => {}
                 Piece::Open(m) | Piece::Close(m) => match m.style {
                     Style::Bold => out.push('*'),
                     Style::Italic => out.push('_'),
@@ -439,31 +451,11 @@ pub fn to_plain(text: &str, name: &dyn Fn(FileId) -> Option<String>) -> String {
     out
 }
 
-/// What the text shows, without its marks and images: for a list of drafts.
-pub fn shown(text: &str) -> String {
-    let marks = marks(text);
-    let mut out = String::with_capacity(text.len());
-    for (start, line) in lines(text) {
-        if image(line).is_some() {
-            continue;
-        }
-        if !out.is_empty() {
-            out.push('\n');
-        }
-        let mut from = start;
-        if let Some(m) = marks
-            .iter()
-            .find(|m| m.style.is_line() && m.open.start == start)
-        {
-            from = m.open.end;
-        }
-        for piece in pieces(text, from, start + line.len(), &marks) {
-            if let Piece::Text(t) = piece {
-                out.push_str(t);
-            }
-        }
-    }
-    out
+/// The mark of the line starting at `start`, if it has one.
+fn line_mark(marks: &[Mark], start: usize) -> Option<&Mark> {
+    marks
+        .iter()
+        .find(|m| m.style.is_line() && m.open.start == start)
 }
 
 /// An image as the HTML shows it.
@@ -482,9 +474,7 @@ pub fn to_html(text: &str, image_of: &dyn Fn(FileId) -> Option<HtmlImage>) -> St
     let mut open: Option<Style> = None;
     for (start, line) in lines(text) {
         let end = start + line.len();
-        let line_mark = marks
-            .iter()
-            .find(|m| m.style.is_line() && m.open.start == start);
+        let line_mark = line_mark(&marks, start);
         let group = line_mark
             .map(|m| m.style)
             .filter(|s| matches!(s, Style::Item | Style::Quote));
@@ -512,51 +502,42 @@ pub fn to_html(text: &str, image_of: &dyn Fn(FileId) -> Option<HtmlImage>) -> St
                 };
                 out.push_str(&format!(
                     "<div><img src=\"cid:{}\" alt=\"{}\" style=\"{width}max-width:100%;height:auto\"></div>",
-                    html_escape(&img.cid),
-                    html_escape(&img.name)
+                    markup_escape(&img.cid),
+                    markup_escape(&img.name)
                 ));
             }
             continue;
         }
-        let (tag, from) = match line_mark.map(|m| m.style) {
-            Some(Style::Heading) => ("h3 style=\"margin:0\"", start + 2),
-            Some(Style::Item) => ("li", start + 2),
-            Some(Style::Quote) => ("div", start + 2),
-            _ => ("div", start),
+        let (tag, style, from) = match line_mark.map(|m| m.style) {
+            Some(Style::Heading) => ("h3", " style=\"margin:0\"", start + 2),
+            Some(Style::Item) => ("li", "", start + 2),
+            Some(Style::Quote) => ("div", "", start + 2),
+            _ => ("div", "", start),
         };
-        out.push('<');
-        out.push_str(tag);
-        out.push('>');
+        out.push_str(&format!("<{tag}{style}>"));
         if text[from..end].trim().is_empty() {
             out.push_str("<br>");
         }
         for piece in pieces(text, from, end, &marks) {
             match piece {
-                Piece::Text(t) => out.push_str(&html_escape(t)),
-                Piece::Open(m) => match m.style {
-                    Style::Bold => out.push_str("<b>"),
-                    Style::Italic => out.push_str("<i>"),
-                    Style::Strike => out.push_str("<s>"),
-                    Style::Code => out.push_str("<code>"),
-                    Style::Link => {
-                        let url = m.url.as_deref().unwrap_or_default();
-                        out.push_str(&format!("<a href=\"{}\">", html_escape(&href(url))));
+                Piece::Text(t) => out.push_str(&markup_escape(t)),
+                Piece::Open(m) if m.style == Style::Link => {
+                    let url = m.url.as_deref().unwrap_or_default();
+                    out.push_str(&format!("<a href=\"{}\">", markup_escape(&href(url))));
+                }
+                Piece::Open(m) => {
+                    if let Some(tag) = inline_tag(m.style) {
+                        out.push_str(&format!("<{tag}>"));
                     }
-                    _ => {}
-                },
-                Piece::Close(m) => match m.style {
-                    Style::Bold => out.push_str("</b>"),
-                    Style::Italic => out.push_str("</i>"),
-                    Style::Strike => out.push_str("</s>"),
-                    Style::Code => out.push_str("</code>"),
-                    Style::Link => out.push_str("</a>"),
-                    _ => {}
-                },
+                }
+                Piece::Close(m) => {
+                    if let Some(tag) = inline_tag(m.style) {
+                        out.push_str(&format!("</{tag}>"));
+                    }
+                }
             }
         }
-        out.push_str("</");
-        out.push_str(tag.split(' ').next().unwrap_or(tag));
-        out.push('>');
+        out.push_str(&format!("</{tag}>"));
     }
     match open {
         Some(Style::Item) => out.push_str("</ul>"),
@@ -567,36 +548,33 @@ pub fn to_html(text: &str, image_of: &dyn Fn(FileId) -> Option<HtmlImage>) -> St
     out
 }
 
+/// The HTML element of an inline style.
+fn inline_tag(style: Style) -> Option<&'static str> {
+    match style {
+        Style::Bold => Some("b"),
+        Style::Italic => Some("i"),
+        Style::Strike => Some("s"),
+        Style::Code => Some("code"),
+        Style::Link => Some("a"),
+        _ => None,
+    }
+}
+
 /// A link's address as a link can go: web and mail addresses as they are, a bare
 /// `example.com` on the web, anything else nowhere.
 fn href(url: &str) -> String {
-    let lower = url.to_ascii_lowercase();
     if ["https://", "http://", "mailto:", "tel:"]
         .iter()
-        .any(|s| lower.starts_with(s))
+        .any(|s| is_scheme(url, s))
     {
         url.to_owned()
-    } else if lower.contains(':') {
+    } else if url.contains(':') {
         "#".to_owned()
     } else if url.contains('@') {
         format!("mailto:{url}")
     } else {
         format!("https://{url}")
     }
-}
-
-fn html_escape(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            c => out.push(c),
-        }
-    }
-    out
 }
 
 /// Text after a change, with where the caret goes.
@@ -675,11 +653,9 @@ pub fn toggle(
 }
 
 fn prefix(style: Style) -> &'static str {
-    match style {
-        Style::Heading => "# ",
-        Style::Item => "- ",
-        _ => "> ",
-    }
+    LINE.into_iter()
+        .find(|&(s, _)| s == style)
+        .map_or("> ", |(_, p)| p)
 }
 
 fn toggle_lines(text: &str, start: usize, end: usize, style: Style) -> (String, Range<usize>) {
@@ -696,10 +672,7 @@ fn toggle_lines(text: &str, start: usize, end: usize, style: Style) -> (String, 
         }
         let here = out.len();
         let (old, new) = if touched(at, line) {
-            let old = ["# ", "- ", "> "]
-                .into_iter()
-                .find(|p| line.starts_with(p))
-                .map_or(0, str::len);
+            let old = line_style(line).map_or(0, |(_, p)| p.len());
             (old, if all { "" } else { prefix(style) })
         } else {
             (0, "")
@@ -839,8 +812,7 @@ pub fn fix(before: &str, after: &str) -> Option<Edit> {
 /// A web address pasted at `at` in `text` becomes a link, unless it goes into one or into
 /// code.
 fn pasted_link(text: &str, at: usize, put: &str, marks: &[Mark]) -> Option<Edit> {
-    let lower = put.to_ascii_lowercase();
-    let address = (lower.starts_with("https://") || lower.starts_with("http://"))
+    let address = (is_scheme(put, "https://") || is_scheme(put, "http://"))
         && put.len() > "https://".len()
         && !put.contains(char::is_whitespace)
         && !put.contains([')', '[', ']']);
@@ -885,11 +857,17 @@ fn line_break(text: &str, at: usize, marks: &[Mark]) -> Option<Edit> {
     })
 }
 
-/// The text with `files` shown after the line `at` is on, each on a line of its own.
-pub fn insert_images(text: &str, at: usize, files: &[(FileId, ImageSize)]) -> String {
+/// The text with `files` shown after the line `at` is on, each on a line of its own; more
+/// than one at a time are shown smaller.
+pub fn insert_images(text: &str, at: usize, files: &[FileId]) -> String {
+    let size = if files.len() > 1 {
+        ImageSize::Medium
+    } else {
+        ImageSize::Full
+    };
     let at = at.min(text.len());
     let end = text[at..].find('\n').map_or(text.len(), |n| at + n);
-    let lines: Vec<String> = files.iter().map(|&(f, s)| image_line(f, s)).collect();
+    let lines: Vec<String> = files.iter().map(|&f| image_line(f, size)).collect();
     let mut out = String::with_capacity(text.len() + lines.len() * 24);
     out.push_str(&text[..end]);
     for line in &lines {
@@ -935,37 +913,42 @@ pub fn move_image(text: &str, file: FileId, up: bool) -> String {
         return text.to_owned();
     };
     let line = lines.remove(from);
-    let blank = |l: &&str| l.trim().is_empty();
+    // Down is up with the lines the other way round.
     let to = if up {
-        // Over blank lines, then over the paragraph.
-        let mut i = from;
-        while i > 0 && blank(&lines[i - 1]) {
-            i -= 1;
-        }
-        if i > 0 && image(lines[i - 1]).is_some() {
-            i - 1
-        } else {
-            while i > 0 && !blank(&lines[i - 1]) && image(lines[i - 1]).is_none() {
-                i -= 1;
-            }
-            i
-        }
+        above(&lines, from)
     } else {
-        let mut i = from;
-        while i < lines.len() && blank(&lines[i]) {
-            i += 1;
-        }
-        if i < lines.len() && image(lines[i]).is_some() {
-            i + 1
-        } else {
-            while i < lines.len() && !blank(&lines[i]) && image(lines[i]).is_none() {
-                i += 1;
-            }
-            i
-        }
+        lines.reverse();
+        let to = lines.len() - above(&lines, lines.len() - from);
+        lines.reverse();
+        to
     };
     lines.insert(to.min(lines.len()), line);
     lines.join("\n")
+}
+
+/// Where an image put at `at` in `lines` goes up to: over blank lines, then over the
+/// paragraph or the image above.
+fn above(lines: &[&str], at: usize) -> usize {
+    let blank = |l: &str| l.trim().is_empty();
+    let mut i = at;
+    while i > 0 && blank(lines[i - 1]) {
+        i -= 1;
+    }
+    if i > 0 && image(lines[i - 1]).is_some() {
+        return i - 1;
+    }
+    while i > 0 && !blank(lines[i - 1]) && image(lines[i - 1]).is_none() {
+        i -= 1;
+    }
+    i
+}
+
+/// The address of the link the selection `text[start..end]` is in, if it is in one.
+pub fn link_at(text: &str, start: usize, end: usize) -> Option<String> {
+    marks(text)
+        .into_iter()
+        .find(|m| m.style == Style::Link && m.open.end <= start && end <= m.close.start)
+        .and_then(|m| m.url)
 }
 
 #[cfg(test)]

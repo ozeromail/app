@@ -87,7 +87,7 @@ private const val LIGHT_BYTES = 1_000_000L
  */
 suspend fun lighterPhoto(context: Context, uri: Uri, name: String): PickedFile? = withContext(Dispatchers.IO) {
     val resolver = context.contentResolver
-    val mime = resolver.getType(uri).orEmpty()
+    val mime = fileType(name, resolver.getType(uri))
     if (!mime.startsWith("image/") || mime == "image/gif") return@withContext null
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     try {
