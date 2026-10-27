@@ -1,11 +1,14 @@
 import SwiftUI
 
-/// What a swipe on a row does; the person picks one for each side.
+/// What a swipe on a row does; the person picks a short and a long one for each side.
 enum SwipeAction: String, CaseIterable, Identifiable {
     case done = "DONE"
     case read = "READ"
     case delete = "DELETE"
     case snooze = "SNOOZE"
+    case flag = "FLAG"
+    case move = "MOVE"
+    case spam = "SPAM"
 
     var id: Self { self }
 
@@ -15,6 +18,20 @@ enum SwipeAction: String, CaseIterable, Identifiable {
         case .read: tr("action_read")
         case .delete: tr("action_delete")
         case .snooze: tr("action_snooze")
+        case .flag: tr("swipe_flag")
+        case .move: tr("swipe_move")
+        case .spam: tr("action_spam")
+        }
+    }
+
+    /// What the action says on `message`: Read on a read one is Unread, Flag on a flagged one
+    /// takes it off.
+    func label(for message: MessageItem) -> String {
+        switch self {
+        case .read where message.threadUnread == 0: tr("action_unread")
+        case .flag where message.flagged: tr("swipe_unflag")
+        case .delete where !message.canTrash: tr("action_delete_forever")
+        default: label
         }
     }
 
@@ -24,6 +41,9 @@ enum SwipeAction: String, CaseIterable, Identifiable {
         case .read: "envelope.badge"
         case .delete: "trash"
         case .snooze: "clock"
+        case .flag: "flag"
+        case .move: "folder"
+        case .spam: "xmark.bin"
         }
     }
 
@@ -33,6 +53,9 @@ enum SwipeAction: String, CaseIterable, Identifiable {
         case .delete: .ozeroError
         case .read: .gray
         case .snooze: .ozeroSnooze
+        case .flag: .orange
+        case .move: .purple
+        case .spam: .gray
         }
     }
 
@@ -42,18 +65,33 @@ enum SwipeAction: String, CaseIterable, Identifiable {
         switch self {
         case .done: message.canArchive
         case .snooze: message.canSnooze
-        case .read, .delete: true
+        case .move: message.canMove
+        case .spam: message.canSpam
+        case .read, .delete, .flag: true
         }
     }
 }
 
-/// By default left is Done and right is Read, as on Android.
+/// By default left is Done and, further, Delete; right is Read and, further, Snooze, as on
+/// Android. A long swipe can be off, nil.
 struct Swipes: Equatable {
     var left = SwipeAction.done
     var right = SwipeAction.read
+    var leftLong: SwipeAction? = .delete
+    var rightLong: SwipeAction? = .snooze
 
-    /// What a row's menu offers: each side's action, once.
-    var actions: [SwipeAction] { left == right ? [left] : [left, right] }
+    /// What a row's menu offers: each swipe's action, once.
+    var actions: [SwipeAction] {
+        [left, leftLong, right, rightLong].compactMap(\.self).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
+    }
+
+    /// What the tip says the swipes do, with the long ones when they are on.
+    var tip: String {
+        func side(_ short: SwipeAction, _ long: SwipeAction?) -> String {
+            long.map { tr("swipes_further", short.label, $0.label) } ?? short.label
+        }
+        return tr("swipes_tip", side(left, leftLong), side(right, rightLong)) + " " + tr("swipes_tip_lift")
+    }
 
     var summary: String {
         tr("swipes_summary", left.label, right.label)
@@ -151,15 +189,26 @@ enum Settings {
     static var swipes: Swipes {
         get {
             let fallback = Swipes()
+            // A long swipe turned off is kept as OFF, so it does not come back as the default.
+            func long(_ key: String, _ usual: SwipeAction?) -> SwipeAction? {
+                guard let name = defaults.string(forKey: key) else { return usual }
+                return name == off ? nil : SwipeAction(rawValue: name) ?? usual
+            }
             return Swipes(
                 left: defaults.string(forKey: "swipe_left").flatMap(SwipeAction.init) ?? fallback.left,
-                right: defaults.string(forKey: "swipe_right").flatMap(SwipeAction.init) ?? fallback.right)
+                right: defaults.string(forKey: "swipe_right").flatMap(SwipeAction.init) ?? fallback.right,
+                leftLong: long("swipe_left_long", fallback.leftLong),
+                rightLong: long("swipe_right_long", fallback.rightLong))
         }
         set {
             defaults.set(newValue.left.rawValue, forKey: "swipe_left")
             defaults.set(newValue.right.rawValue, forKey: "swipe_right")
+            defaults.set(newValue.leftLong?.rawValue ?? off, forKey: "swipe_left_long")
+            defaults.set(newValue.rightLong?.rawValue ?? off, forKey: "swipe_right_long")
         }
     }
+
+    private static let off = "OFF"
 
     /// When each account was last checked in the background, by its id, in seconds.
     static var checked: [String: Double] {

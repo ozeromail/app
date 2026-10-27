@@ -55,6 +55,16 @@ struct InboxView: View {
                 Task { await model.snooze(snoozing.messages, until: until) }
             }
         }
+        .confirmationDialog(
+            "move_title", isPresented: Binding { model.moving != nil } set: { if !$0 { model.moving = nil } },
+            titleVisibility: .visible, presenting: model.moving
+        ) { moving in
+            ForEach(moving.targets, id: \.folder.id) { target in
+                Button(target.title) {
+                    Task { await model.moveToFolder([moving.message], to: target.folder, title: target.title) }
+                }
+            }
+        }
         .sheet(isPresented: $model.accountsOpen) {
             AccountsSheet(
                 accounts: model.accounts, folders: model.folders, mailbox: model.mailbox, drafts: model.drafts.count,
@@ -317,10 +327,14 @@ private struct InboxList: View {
             ForEach(Array(model.messages.enumerated()), id: \.element.id) { index, message in
                 OpenRow(model: model, message: message)
                 .tag(message.id)
+                // As in the iPhone's own Mail: a full swipe does the long action, a shorter one
+                // shows both to tap. The first is the one at the edge.
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    if let long = model.swipes.leftLong { swipe(long, message) }
                     swipe(model.swipes.left, message)
                 }
                 .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                    if let long = model.swipes.rightLong { swipe(long, message) }
                     swipe(model.swipes.right, message)
                 }
                 .contextMenu {
@@ -502,9 +516,9 @@ private struct InboxList: View {
                 model.swiped(message, action)
             } label: {
                 if action == .read {
-                    Label(unread ? tr("action_read") : tr("action_unread"), systemImage: unread ? "envelope.open" : "envelope.badge")
+                    Label(action.label(for: message), systemImage: unread ? "envelope.open" : "envelope.badge")
                 } else {
-                    Label(action == .delete && !message.canTrash ? tr("action_delete_forever") : action.label, systemImage: action.icon)
+                    Label(action.label(for: message), systemImage: action == .flag && message.flagged ? "flag.slash" : action.icon)
                 }
             }
             .tint(action.tint)
@@ -559,6 +573,15 @@ private struct Dock: View {
         .padding(.top, model.sideways ? 6 : 10)
         .padding(.bottom, 4)
         .background(.bar)
+        // Dragged up, the dock brings up the mailboxes, as the button does. The system's sheet
+        // cannot follow a finger, so it rises once the drag is clearly upward.
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 12).onChanged { drag in
+                let up = -drag.translation.height
+                guard !model.sideways, !choosing, !model.accountsOpen, up > 32, up > abs(drag.translation.width) else { return }
+                model.accountsOpen = true
+            }
+        )
     }
 
     private var tabs: some View {
@@ -789,7 +812,7 @@ private struct SwipeTip: View {
 
     var body: some View {
         HStack {
-            Text(verbatim: tr("swipes_tip", swipes.left.label, swipes.right.label)).font(.subheadline)
+            Text(verbatim: swipes.tip).font(.subheadline)
             Spacer()
             Button("action_got_it", action: onDismiss).font(.subheadline.weight(.semibold))
         }
