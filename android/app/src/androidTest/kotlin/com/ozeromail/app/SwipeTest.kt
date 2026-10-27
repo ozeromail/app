@@ -13,7 +13,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** Swipes on message rows: Done on the left, Read on the right, as set by default. */
+/**
+ * Swipes on message rows, as set by default: Done on the left and, further, Delete; Read on the
+ * right. And the dock, dragged up, raises the mailboxes.
+ */
 @RunWith(AndroidJUnit4::class)
 class SwipeTest : TestMail() {
     @Test
@@ -154,6 +157,81 @@ class SwipeTest : TestMail() {
             frames(60)
             assertTrue("the next row was not drawn along ($drawn px for $held px)", drawn < 0f && drawn > held * 0.5f)
             assertEquals("the next row did not settle", 0f, last("b")!!.left, 1f)
+        }
+    }
+
+    @Test
+    fun longSwipeDeletes() {
+        val (a) = letters()
+        film("long-swipe") {
+            track("a", text(a))
+            frame()
+            val row = last("a")!!
+            drag(row.at(0.95f), row.at(0.15f), ms = 300)
+            frames(20)
+            assertTrue("past the long mark the strip does not say Delete", has(hasText("Delete")))
+            up()
+            val gone = until(150) { last("a") == null }
+            frames(10)
+            assertTrue("a long swipe did not take the row", gone)
+            assertTrue("a long swipe did not delete", has(hasText("Moved to Trash")))
+        }
+    }
+
+    @Test
+    fun longSwipeBackToShortIsDone() {
+        val (a) = letters()
+        film("long-back") {
+            track("a", text(a))
+            frame()
+            val row = last("a")!!
+            drag(row.at(0.95f), row.at(0.15f), ms = 300)
+            frames(10)
+            // Back, slowly, to between the two marks.
+            val steps = 20
+            val from = row.at(0.15f)
+            val to = row.at(0.55f)
+            for (step in 1..steps) moveTo(Offset(from.x + (to.x - from.x) * step / steps, from.y))
+            frames(10)
+            up()
+            val gone = until(150) { last("a") == null }
+            frames(10)
+            assertTrue("the short swipe did not take the row", gone)
+            assertTrue("back from the long mark it did not archive", has(hasText("Moved to Archive")))
+        }
+    }
+
+    @Test
+    fun dockDraggedUpRaisesTheMailboxes() {
+        film("dock-up") {
+            track("sheet", hasText("Mailboxes"))
+            frame()
+            val pill = bounds(hasText("Search mail"))
+            drag(pill.center, Offset(pill.center.x, pill.center.y - screen.height * 0.25f), ms = 300)
+            frames(6)
+            val rising = last("sheet")
+            up()
+            frames(60)
+            val top = last("sheet")?.top
+            frames(6)
+            assertTrue("the sheet did not follow the finger", rising != null)
+            assertTrue("the sheet did not settle open", top != null && abs(last("sheet")!!.top - top) < 1f)
+            assertTrue("the sheet is not up", top!! < pill.top - screen.height * 0.2f)
+        }
+    }
+
+    @Test
+    fun dockDraggedALittleFallsBack() {
+        film("dock-back") {
+            track("sheet", hasText("Mailboxes"))
+            frame()
+            val pill = bounds(hasText("Search mail"))
+            // Slowly, a short way: not enough to open.
+            drag(pill.center, Offset(pill.center.x, pill.center.y - screen.height * 0.08f), ms = 600)
+            frames(10)
+            up()
+            frames(60)
+            assertFalse("a short slow drag left the mailboxes open", has(hasText("Mailboxes")))
         }
     }
 }
