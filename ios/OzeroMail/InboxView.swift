@@ -180,11 +180,11 @@ struct InboxView: View {
             onInAll: accountsActions.onInAll,
             onNotify: { account, on in model.changeAccount { try await model.mail.setNotify(account, on) } },
             onColor: { account, color in model.changeAccount { try await model.mail.setAccountColor(account, color: color) } },
-            onLabel: { account, label in model.changeAccount { try await model.mail.setAccountLabel(account, label: label) } },
-            onSender: { account, name in model.changeAccount { try await model.mail.setSender(account, name: name) } },
+            onLabel: { account, label in model.changeAccount(account) { try await model.mail.setAccountLabel(account, label: label) } },
+            onSender: { account, name in model.changeAccount(account) { try await model.mail.setSender(account, name: name) } },
             onSignature: { text in model.changeAccount { try await model.mail.setSignature(text) } },
             onAccountSignature: { account, text in
-                model.changeAccount { try await model.mail.setAccountSignature(account, signature: text) }
+                model.changeAccount(account) { try await model.mail.setAccountSignature(account, signature: text) }
             },
             onSignIn: { model.signingIn = $0 },
             onKeepDays: { account, days in model.changeAccount { try await model.mail.setKeepDays(account, days: days) } },

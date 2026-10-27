@@ -1157,8 +1157,8 @@ struct BarAction: View {
 extension Font {
     /// A message's text: a serif made for reading, at `scale` times the size it is read at.
     static func reading(scale: Double) -> Font { .system(size: 17.5 * scale, design: .serif) }
-    static func readingQuote(scale: Double) -> Font { .system(size: 15.5 * scale, design: .serif) }
 
     /// Quoted text under a message, a step quieter.
-    static let readingQuote = Font.system(size: 15.5, design: .serif)
+    static func readingQuote(scale: Double) -> Font { .system(size: 15.5 * scale, design: .serif) }
+    static let readingQuote = readingQuote(scale: 1)
 }

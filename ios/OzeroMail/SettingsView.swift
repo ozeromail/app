@@ -70,6 +70,9 @@ private struct AppSettings: View {
     let signature: String
     let actions: SettingsActions
 
+    // Watched, so the row shows the size picked on the Reading page.
+    @AppStorage("text_size") private var textSize = Settings.usualSize
+
     var body: some View {
         List {
             Section("accounts_title") {
@@ -97,7 +100,7 @@ private struct AppSettings: View {
                           value: signature.components(separatedBy: .newlines).first { !$0.isBlank } ?? tr("signature_none"))
             }
             Section("settings_reading") {
-                ValueLink(page: .reading, icon: "textformat.size", title: "reading_size", value: sizeNames[Settings.textSize])
+                ValueLink(page: .reading, icon: "textformat.size", title: "reading_size", value: sizeNames[min(max(textSize, 0), sizeNames.count - 1)])
                 ValueLink(page: .reading, icon: "photo", title: "images_title", value: nil)
             }
             Section("app_name") {

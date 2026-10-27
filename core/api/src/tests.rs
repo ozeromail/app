@@ -1116,6 +1116,13 @@ fn the_sender_name_is_the_users_or_only_the_address() {
     assert_eq!(from(), "Anna Petrova");
     core.set_account_sender(account.0, "  ".into()).unwrap();
     assert_eq!(from(), "");
+    // The address alone is no name, so signing in again does not bring Gmail's back.
+    core.set_account_sender(account.0, "A@example.com".into())
+        .unwrap();
+    assert_eq!(core.account(account).unwrap().display_name, "");
+    core.signed_in_again(account.0, Some("Google Name".into()))
+        .unwrap();
+    assert_eq!(from(), "");
     assert!(core.accounts().unwrap()[0].in_all_fixed);
     assert!(core.set_account_sender(999, "Bob".into()).is_err());
 }
