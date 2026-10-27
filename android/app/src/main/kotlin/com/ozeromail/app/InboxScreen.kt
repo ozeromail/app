@@ -1101,7 +1101,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             onDone = {
                 // The next message in the list opens in its place, and the toast can undo it there;
                 // after the last, or from search, back to the list.
-                val next = messages.dropWhile { it.id != message.id }.getOrNull(1)?.takeUnless { searching }
+                val at = messages.indexOfFirst { it.id == message.id }
+                val next = if (searching || at < 0) null else messages.getOrNull(at + 1)
                 open = next
                 if (next == null) closeSearch()
                 archive(listOf(message))

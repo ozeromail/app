@@ -417,19 +417,17 @@ struct MessageView: View {
     /// the last, or from search, back to the list.
     private func done() {
         let rows = model.messages
-        guard !model.path.contains(.search), let at = rows.firstIndex(where: { $0.id == message.id }),
-              at + 1 < rows.count else {
+        let at = rows.firstIndex { $0.id == message.id }
+        let next = at.flatMap { $0 + 1 < rows.count && !model.path.contains(.search) ? rows[$0 + 1] : nil }
+        let shown = model.path.lastIndex(of: .message(message))
+        guard let next, model.pane?.id == message.id || shown != nil else {
             leave { await model.archive([message]) }
             return
         }
-        let next = rows[at + 1]
         if model.pane?.id == message.id {
             model.pane = next
-        } else if let shown = model.path.lastIndex(of: .message(message)) {
+        } else if let shown {
             model.path[shown] = .message(next)
-        } else {
-            leave { await model.archive([message]) }
-            return
         }
         Task { await model.archive([message]) }
     }
