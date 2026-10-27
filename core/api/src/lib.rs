@@ -269,14 +269,14 @@ impl Core {
         let signature = self.store.signature()?;
         let accounts = self.store.accounts()?;
         // The unified inbox keeps one account at least, so the last one in it stays.
-        let fixed = |a: &Account| {
-            accounts.len() == 1 || a.in_all && accounts.iter().filter(|b| b.in_all).count() == 1
-        };
-        let fixed: Vec<bool> = accounts.iter().map(fixed).collect();
+        let only = accounts.len() == 1;
+        let last = accounts.iter().filter(|a| a.in_all).count() == 1;
         Ok(accounts
             .into_iter()
-            .zip(fixed)
-            .map(|(a, fixed)| AccountItem::new(a, &signature, fixed))
+            .map(|a| {
+                let fixed = only || a.in_all && last;
+                AccountItem::new(a, &signature, fixed)
+            })
             .collect())
     }
 
@@ -310,7 +310,15 @@ impl Core {
 
     /// Sets the name the account's mail goes out under; empty leaves only the address.
     pub fn set_account_sender(&self, account: i64, name: String) -> Result<(), CoreError> {
-        Ok(self.store.set_account_name(AccountId(account), &name)?)
+        let account = self.account(AccountId(account))?;
+        // The address alone is kept as no name, so Gmail's is not read in over it.
+        let name = name.trim();
+        let name = if name.eq_ignore_ascii_case(&account.email) {
+            ""
+        } else {
+            name
+        };
+        Ok(self.store.set_account_name(account.id, name)?)
     }
 
     /// Sets when the phone looks for the account's new mail with the app closed.
@@ -365,11 +373,14 @@ impl Core {
 
     /// The account works again after `check_password` or `google_account` for it, once the
     /// app has kept the new secret: its mail and queued work go on where they stopped. A Gmail
-    /// account takes the sender `name` Gmail has now.
+    /// account takes the sender `name` Gmail has now, unless the person set one.
     pub fn signed_in_again(&self, account: i64, name: Option<String>) -> Result<(), CoreError> {
         let account = AccountId(account);
         if let Some(name) = name {
-            self.store.set_account_name(account, &name)?;
+            let saved = self.account(account)?;
+            if saved.display_name == saved.email {
+                self.store.set_account_name(account, &name)?;
+            }
         }
         self.store.set_needs_sign_in(account, false)?;
         self.tokens
@@ -3042,7 +3053,6 @@ pub struct AccountUnread {
 pub struct AccountItem {
     pub id: i64,
     pub email: String,
-    pub display_name: String,
     /// What to call the account: the user's name for it, else `email`.
     pub name: String,
     /// The user's name for it; empty when none.
@@ -3094,7 +3104,6 @@ impl AccountItem {
             color_index: a.color % ACCOUNT_COLORS.len() as u32,
             name: a.name().to_owned(),
             email: a.email,
-            display_name: a.display_name,
             label: a.label,
             keep_days: a.keep_days,
             new_mail: a.new_mail,

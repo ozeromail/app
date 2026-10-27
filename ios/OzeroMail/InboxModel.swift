@@ -84,6 +84,8 @@ final class InboxModel {
     var accountsOpen = false
     /// The accounts sheet says holding an account opens its settings, until that was done.
     var holdTip = !Settings.holdTipSeen
+    /// Accounts removed while the app runs.
+    private var removed: Set<Int64> = []
     /// Messages chosen to act on together.
     var chosen: Set<Int64> = []
     /// Messages waiting on the snooze sheet for a time.
@@ -682,8 +684,15 @@ final class InboxModel {
         }
     }
 
+    /// The same for a field of `account` that saves as its page closes: not once it is removed.
+    func changeAccount(_ account: AccountItem, _ change: @escaping () async throws -> Void) {
+        if !removed.contains(account.id) { changeAccount(change) }
+    }
+
     func remove(_ account: AccountItem) async {
-        closeSettings()
+        removed.insert(account.id)
+        // Back to the page it was opened from.
+        if path.last == .settings(.account(account.id)) { path.removeLast() }
         do {
             try await mail.removeAccount(account)
         } catch {
@@ -803,6 +812,8 @@ final class InboxModel {
             holdTip = false
             Settings.holdTipSeen = true
         }
+        // A fresh stack, so opening again from the sidebar does not pile pages up.
+        closeSettings()
         path.append(.settings(page))
     }
 

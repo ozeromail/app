@@ -303,6 +303,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var accountsOpen by rememberSaveable { mutableStateOf(false) }
     // The settings' pages open, the top one last; none while they are closed.
     var settingsPages by rememberSaveable { mutableStateOf(emptyList<Long>()) }
+    // Accounts removed while the app runs.
+    val removed = remember { mutableSetOf<Long>() }
     var accounts by remember { mutableStateOf(emptyList<AccountItem>()) }
     // The default signature, for accounts without their own.
     var signature by remember { mutableStateOf("") }
@@ -463,6 +465,11 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 fail(e)
             }
         }
+    }
+
+    /** The same for a field of [account] that saves as its page closes: not once it is removed. */
+    fun changeAccount(account: AccountItem, change: suspend () -> Unit) {
+        if (account.id !in removed) changeAccount(change)
     }
 
     /**
@@ -889,7 +896,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         Screen.Inbox -> null
         Screen.Search, Screen.Drafts -> Screen.Inbox
         // Opened from the settings, they go back there.
-        Screen.AddAccount, is Screen.SignInAgain -> screenOf(null, null, wide, false, null, false, false, settingsPages)
+        is Screen.AddAccount, is Screen.SignInAgain -> screenOf(null, null, wide, false, null, false, false, settingsPages)
         is Screen.SettingsPage -> screenOf(null, null, wide, false, null, false, false, settingsPages.dropLast(1))
         is Screen.Read -> screenOf(null, null, wide, addingAccount, again, searching, draftsOpen, settingsPages)
         is Screen.Write -> screenOf(null, open, wide, addingAccount, again, searching, draftsOpen, settingsPages)
@@ -904,7 +911,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         when (screen) {
             Screen.Inbox -> Unit
             Screen.Search -> closeSearch()
-            Screen.AddAccount -> addingAccount = false
+            is Screen.AddAccount -> addingAccount = false
             is Screen.SignInAgain -> signingIn = null
             Screen.Drafts -> draftsOpen = false
             is Screen.SettingsPage -> settingsPages = settingsPages.dropLast(1)
@@ -1006,17 +1013,17 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             changeAccount { mail.setAccountColor(account, color) }
         },
         onLabel = { account, label ->
-            changeAccount { mail.setAccountLabel(account, label) }
+            changeAccount(account) { mail.setAccountLabel(account, label) }
         },
         onSender = { account, name ->
-            changeAccount { mail.setSender(account, name) }
+            changeAccount(account) { mail.setSender(account, name) }
         },
         onSignature = {
             signature = it.trimEnd()
             changeAccount { mail.setSignature(it) }
         },
         onAccountSignature = { account, text ->
-            changeAccount { mail.setAccountSignature(account, text) }
+            changeAccount(account) { mail.setAccountSignature(account, text) }
         },
         onSwipes = {
             swipes = it
@@ -1030,7 +1037,9 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             changeAccount { mail.setNewMail(account, check) }
         },
         onRemove = { account ->
-            settingsPages = emptyList()
+            removed += account.id
+            // Back to the page it was opened from.
+            settingsPages = settingsPages.dropLast(1)
             scope.launch {
                 try {
                     mail.removeAccount(account)
@@ -1173,7 +1182,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         )
                     }
                     is Screen.Read -> Reader(shown.message, pane = false)
-                    Screen.AddAccount -> Middle(LIST_MAX, Modifier.fillMaxSize()) {
+                    is Screen.AddAccount -> Middle(LIST_MAX, Modifier.fillMaxSize()) {
                         SignInScreen(
                             mail,
                             onSignedIn = {
@@ -1402,8 +1411,8 @@ private fun screenOf(
     settings: List<Long>,
 ): Screen {
     val under = when {
-        addingAccount -> Screen.AddAccount
-        again != null -> Screen.SignInAgain(again)
+        addingAccount -> Screen.AddAccount(settings.size)
+        again != null -> Screen.SignInAgain(again, settings.size)
         searching -> Screen.Search
         drafts -> Screen.Drafts
         settings.isNotEmpty() -> Screen.SettingsPage(settings)
@@ -1413,16 +1422,19 @@ private fun screenOf(
     return composing?.let { Screen.Write(it) } ?: open?.takeIf { !split }?.let { Screen.Read(it) } ?: under
 }
 
+/** Above every other screen, a step apart, so signing in fits between two pages. */
+private fun settingsDepth(pages: Int) = 4 + 2 * pages
+
 /** What fills the screen; a deeper screen slides over the one it came from. */
 private sealed class Screen(val depth: Int) {
     data object Inbox : Screen(0)
     data object Search : Screen(1)
-    // Over the settings too.
-    data object AddAccount : Screen(3)
-    data class SignInAgain(val account: AccountItem) : Screen(3)
+    // Over the settings [over] pages open, and under the one that follows.
+    data class AddAccount(val over: Int) : Screen(settingsDepth(over) + 1)
+    data class SignInAgain(val account: AccountItem, val over: Int) : Screen(settingsDepth(over) + 1)
     data object Drafts : Screen(1)
     /** The settings' [pages] open, the top one last; each one deeper. */
-    data class SettingsPage(val pages: List<Long>) : Screen(pages.size)
+    data class SettingsPage(val pages: List<Long>) : Screen(settingsDepth(pages.size))
     data class Read(val message: MessageItem) : Screen(2)
     data class Write(val composing: Composing) : Screen(3)
 }
