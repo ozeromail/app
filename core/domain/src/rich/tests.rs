@@ -275,3 +275,24 @@ fn finds_the_link_chosen() {
     assert_eq!(link_at(text, 5, 9).as_deref(), Some("https://a.example"));
     assert_eq!(link_at(text, 0, 3), None);
 }
+
+#[test]
+fn shows_escaped_text_as_written() {
+    for plain in [
+        "# a\n- b\n> c",
+        "5*3 = **15** \\o/",
+        "![](file:1)",
+        "[l](u) `c` ~a~ _x_",
+    ] {
+        assert_eq!(shown(&escape(plain)), plain);
+        assert!(!is_rich(&escape(plain)));
+    }
+}
+
+#[test]
+fn takes_out_a_selection_from_a_bullet() {
+    let after = |before: &str, after: &str| fix(before, after).map_or(after.to_owned(), |e| e.text);
+    assert_eq!(after("- milk\n- eggs", ""), "");
+    assert_eq!(after("- milk\n- eggs", "eggs"), "eggs");
+    assert_eq!(after("- milk", "milk"), "milk");
+}

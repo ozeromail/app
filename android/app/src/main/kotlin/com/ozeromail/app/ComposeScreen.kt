@@ -249,7 +249,8 @@ fun ComposeScreen(
     // Photos go into the text after the caret's line, lighter; videos go with the files.
     fun addMedia(uris: List<Uri>) {
         if (uris.isEmpty()) return
-        val lighter = mutableSetOf<Int>()
+        // The names the photos came with, for their originals.
+        val lighter = mutableMapOf<Int, String>()
         addFiles(
             { uris.map { pickedName(context, it) } },
             { index, name, room ->
@@ -257,13 +258,13 @@ fun ComposeScreen(
                 if (light == null) {
                     readPicked(context, uris[index], name, room)
                 } else {
-                    lighter += index
+                    lighter[index] = name
                     light.takeIf { it.data.size <= room }
                 }
             },
         ) { added ->
             val shown = added.filter { (_, file) -> file.mime.startsWith("image/") }
-            shown.forEach { (index, file) -> if (index in lighter) photos[file.id] = Photo(uris[index], file.name, full = false) }
+            shown.forEach { (index, file) -> lighter[index]?.let { photos[file.id] = Photo(uris[index], it, full = false) } }
             if (shown.isNotEmpty()) {
                 text = richInsertImages(text, caret.coerceIn(0, text.length).toUInt(), shown.map { it.second.id })
             }

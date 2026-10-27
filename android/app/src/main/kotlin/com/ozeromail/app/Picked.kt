@@ -104,7 +104,7 @@ suspend fun lighterPhoto(context: Context, uri: Uri, name: String): PickedFile? 
         ImageDecoder.decodeBitmap(ImageDecoder.createSource(resolver, uri)) { decoder, info, _ ->
             val (w, h) = info.size.width to info.size.height
             val long = maxOf(w, h)
-            if (long > PHOTO_EDGE) decoder.setTargetSize(w * PHOTO_EDGE / long, h * PHOTO_EDGE / long)
+            if (long > PHOTO_EDGE) decoder.setTargetSize((w * PHOTO_EDGE / long).coerceAtLeast(1), (h * PHOTO_EDGE / long).coerceAtLeast(1))
             decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
         }
     } catch (_: IOException) {

@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Debug
 import java.io.File
 import uniffi.ozero_api.DraftItem
+import uniffi.ozero_api.richEscape
 
 /** Where letters to the author go: the same address as on the site. */
 private const val AUTHOR = "khizrim@khizrim.ru"
@@ -15,7 +16,8 @@ fun authorDraft(context: Context, crash: String? = null): DraftItem {
     val version = appVersion(context)
     val subject = if (crash == null) R.string.feedback_subject else R.string.crash_subject
     val device = "Ozero Mail $version, Android ${Build.VERSION.RELEASE}, ${Build.MANUFACTURER} ${Build.MODEL}"
-    val text = listOfNotNull("\n\n-- ", device, crash).joinToString("\n")
+    // Plain text: a crash's marks stay as they are.
+    val text = richEscape(listOfNotNull("\n\n-- ", device, crash).joinToString("\n"))
     return NEW_DRAFT.copy(to = AUTHOR, subject = context.getString(subject), text = text)
 }
 

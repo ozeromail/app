@@ -124,6 +124,8 @@ import uniffi.ozero_api.PeopleItem
 import uniffi.ozero_api.PersonItem
 import uniffi.ozero_api.RemoteImage
 import uniffi.ozero_api.Unsubscribed
+import uniffi.ozero_api.richEscape
+import uniffi.ozero_api.richShown
 
 /**
  * A conversation, oldest first, on one page that scrolls title and all. What was unread
@@ -1173,10 +1175,11 @@ private fun QuickReply(
     val scope = rememberCoroutineScope()
     val start = replying.draft
     val keeper = remember(start) { mail.keeper(start.id) }
-    var text by remember(start) { mutableStateOf(start.text) }
+    // Written as plain text, its marks kept as they are.
+    var text by remember(start) { mutableStateOf(richShown(start.text)) }
     var busy by remember { mutableStateOf(false) }
     var error by remember(start) { mutableStateOf<Int?>(null) }
-    fun current() = start.copy(text = text, cc = replying.copied.joinToString(", "))
+    fun current() = start.copy(text = richEscape(text), cc = replying.copied.joinToString(", "))
     SaveOnPause(keeper, ::current)
     // Leaving the page, or the app put away, keeps what is written; after a send this does nothing.
     fun keep() = current().let { if (!it.isBlank()) keeper.save(it) }

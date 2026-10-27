@@ -3004,3 +3004,22 @@ fn a_message_keeps_how_to_leave_its_list() {
     store.leave(rows[1].id, false).unwrap();
     assert!(store.leaves_due(account).unwrap().is_empty());
 }
+
+#[test]
+fn keeps_the_marks_of_text_written_before_styles() {
+    let plain = "5*3 = 15 \\o/ _x_ ~a~ `c` [l](u) # - > !";
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch("CREATE TABLE draft (text TEXT); CREATE TABLE outbox (text TEXT);")
+        .unwrap();
+    conn.execute("INSERT INTO draft VALUES (?1)", [plain])
+        .unwrap();
+    conn.execute("INSERT INTO outbox VALUES (?1)", [plain])
+        .unwrap();
+    conn.execute_batch(schema::MIGRATIONS[39]).unwrap();
+    for table in ["draft", "outbox"] {
+        let text: String = conn
+            .query_row(&format!("SELECT text FROM {table}"), [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(text, ozero_domain::rich::escape(plain));
+    }
+}
