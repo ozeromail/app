@@ -47,7 +47,7 @@ abstract class TestMail {
             // The first sync, waited for here rather than through the screen: the list shows only
             // what is saved, and a slow or failed sync then fails with its own reason.
             withTimeout(SYNC_MS) { app.mail.refresh() }
-            check(app.mail.inbox(Category.PEOPLE, 1).isNotEmpty()) { "The first sync saved no mail" }
+            check(app.mail.inbox(null, Category.PEOPLE, 1).isNotEmpty()) { "The first sync saved no mail" }
         }
         Settings(app).swipeTipSeen = true
         rule.mainClock.autoAdvance = false
