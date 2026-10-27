@@ -1935,8 +1935,12 @@ impl Core {
         let mailed = self.push_mail(account, secret, slot).await;
         // Boxed, as below: connecting inline overflows a debug build's stack.
         Box::pin(self.send_ops(account, secret, slot)).await?;
-        // After the mail, so the copies of drafts just sent go too.
-        let drafted = Box::pin(self.push_drafts(account, secret, slot)).await;
+        // After the mail, so the copies of drafts just sent go too. Drafts stay on the device
+        // until a push goes through, so a failure here is no failure of the sync: the inbox
+        // must not say the account is unreachable for it.
+        if let Err(e) = Box::pin(self.push_drafts(account, secret, slot)).await {
+            log::warn!("drafts not saved to the server: {e:?}");
+        }
         // Moved mail shows in its new folder as a copy; a sync there brings the server's own,
         // so what the person did to the copy meanwhile can go too.
         let unclaimed = self.store.unclaimed(account.id)?;
@@ -1949,7 +1953,7 @@ impl Core {
                 Box::pin(self.send_ops(account, secret, slot)).await?;
             }
         }
-        mailed.and(drafted)
+        mailed
     }
 
     /// Saves the account's drafts into its drafts folder and deletes their stale copies;
