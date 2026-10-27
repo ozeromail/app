@@ -146,9 +146,9 @@ impl Store for SqliteStore {
             .query_row(
                 "INSERT INTO account (id, kind, email, display_name, server_host, server_port,
                                       server_user, server_certificate, smtp_host, smtp_port,
-                                      smtp_user, smtp_certificate, color, label)
+                                      smtp_user, smtp_certificate, new_mail, color, label)
                  VALUES ((SELECT last + 1 FROM account_seq), ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
-                         ?10, ?11,
+                         ?10, ?11, ?13,
                          (SELECT min(c) FROM (SELECT 0 AS c UNION SELECT color + 1 FROM account)
                           WHERE c NOT IN (SELECT color FROM account)),
                          -- A second Gmail goes by its address rather than the same name.
@@ -168,6 +168,7 @@ impl Store for SqliteStore {
                     smtp.map(|s| &s.user),
                     smtp.and_then(|s| s.certificate.as_ref()),
                     default_label(&account.email),
+                    new_mail_value(NewMail::default()),
                 ],
                 |r| r.get(0),
             )
@@ -2886,11 +2887,9 @@ fn kind_str(kind: AccountKind) -> &'static str {
     }
 }
 
-/// The new_mail column of `account`: 0 as soon as it comes, -1 only with the app open, else
-/// every so many minutes.
+/// The new_mail column of `account`: -1 only with the app open, else every so many minutes.
 fn new_mail_value(when: NewMail) -> i64 {
     match when {
-        NewMail::Push => 0,
         NewMail::Every { minutes } => i64::from(minutes.max(1)),
         NewMail::Manually => -1,
     }
@@ -2970,11 +2969,12 @@ impl FromSql for Kind {
 impl FromSql for StoredNewMail {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         match value.as_i64()? {
-            0 => Ok(Self(NewMail::Push)),
             -1 => Ok(Self(NewMail::Manually)),
             m => u32::try_from(m)
-                .map(|minutes| Self(NewMail::Every { minutes }))
-                .map_err(|_| FromSqlError::OutOfRange(m)),
+                .ok()
+                .filter(|&minutes| minutes > 0)
+                .ok_or(FromSqlError::OutOfRange(m))
+                .map(|minutes| Self(NewMail::Every { minutes })),
         }
     }
 }

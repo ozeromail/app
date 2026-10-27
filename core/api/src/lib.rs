@@ -48,8 +48,6 @@ const DAY: i64 = 86_400;
 const PREFETCH: u32 = 20;
 /// Longest wait for new mail on one connection; a mobile network may drop a quiet one sooner.
 const MAIL_WAIT: Duration = Duration::from_secs(5 * 60);
-/// The shortest time, in minutes, between checks with the app closed that phones allow.
-const SOONEST_CHECK: u32 = 15;
 /// How long a Gmail account whose IMAP refused its token waits by asking the API.
 const IDLE_RETRY: Duration = Duration::from_secs(60 * 60);
 /// Mail older than this many seconds is not announced: a day.
@@ -273,15 +271,7 @@ impl Core {
             .store
             .accounts()?
             .into_iter()
-            .map(|a| {
-                let can_push = match a.kind {
-                    AccountKind::Imap | AccountKind::Gmail => true,
-                    // Unreadable, it is not offered Instantly, rather than losing the list.
-                    AccountKind::Exchange => self.speaks_active_sync(a.id).unwrap_or(false),
-                    AccountKind::Graph => false,
-                };
-                AccountItem::new(a, can_push, &signature)
-            })
+            .map(|a| AccountItem::new(a, &signature))
             .collect())
     }
 
@@ -2688,7 +2678,6 @@ pub enum AccountKind {
 /// When the phone looks for an account's new mail while the app is closed.
 #[uniffi::remote(Enum)]
 pub enum NewMail {
-    Push,
     Every { minutes: u32 },
     Manually,
 }
@@ -2732,11 +2721,8 @@ pub struct AccountItem {
     pub color_index: u32,
     /// How many days back its mail is kept on the device; 0 keeps all of it.
     pub keep_days: u32,
-    /// When the phone looks for its new mail with the app closed; never `Push` for an account
-    /// that cannot.
+    /// When the phone looks for its new mail with the app closed.
     pub new_mail: NewMail,
-    /// Whether its server says when mail comes, so it can be `Push`.
-    pub can_push: bool,
     pub kind: AccountKind,
     /// The server refused the saved secret: mail stops until the person signs in again.
     pub needs_sign_in: bool,
@@ -2747,15 +2733,8 @@ pub struct AccountItem {
 }
 
 impl AccountItem {
-    /// `can_push` if its server says when mail comes; one that cannot is never `Push`.
     /// `signature` is the default one, for accounts without their own.
-    fn new(a: Account, can_push: bool, signature: &str) -> Self {
-        let new_mail = match a.new_mail {
-            NewMail::Push if !can_push => NewMail::Every {
-                minutes: SOONEST_CHECK,
-            },
-            when => when,
-        };
+    fn new(a: Account, signature: &str) -> Self {
         Self {
             signs_with: a.signs_with(signature).to_owned(),
             id: a.id.0,
@@ -2766,8 +2745,7 @@ impl AccountItem {
             display_name: a.display_name,
             label: a.label,
             keep_days: a.keep_days,
-            new_mail,
-            can_push,
+            new_mail: a.new_mail,
             kind: a.kind,
             needs_sign_in: a.needs_sign_in,
             signature: a.signature,
