@@ -1424,6 +1424,7 @@ impl Store for SqliteStore {
                  AND d.remote_folder = f.remote_id AND d.remote_validity = f.validity
              JOIN message c ON c.folder_id = m.folder_id AND c.remote_id = d.remote_id
              WHERE f.account_id = ?1 AND f.role = 'drafts' AND m.stand_in = 0
+               AND m.remote_id NOT GLOB '*[^0-9]*' AND c.remote_id NOT GLOB '*[^0-9]*'
                AND CAST(m.remote_id AS INTEGER) < CAST(c.remote_id AS INTEGER)
                AND NOT EXISTS (SELECT 1 FROM draft_gone g WHERE g.account_id = ?1
                                AND g.folder = f.remote_id AND g.remote_id = m.remote_id)",
