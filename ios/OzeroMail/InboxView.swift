@@ -420,7 +420,7 @@ private struct InboxList: View {
             VStack(spacing: 8) {
                 // Low on the screen, in reach of the thumb that swiped.
                 if let toast = model.toast {
-                    ToastView(toast: toast, onUndo: model.tapUndo, onGo: model.tapGo)
+                    ToastView(toast: toast, onUndo: model.tapUndo, onGo: model.tapGo, onExtra: model.tapExtra)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
                 if let status {
@@ -807,6 +807,7 @@ struct ToastView: View {
     let toast: Toast
     let onUndo: () -> Void
     let onGo: (Mailbox) -> Void
+    var onExtra: () -> Void = {}
 
     var body: some View {
         HStack(spacing: 16) {
@@ -814,6 +815,9 @@ struct ToastView: View {
             Spacer()
             if let go = toast.go {
                 Button("action_show") { onGo(go) }.foregroundStyle(Color(rgb: 0x8CC2FF))
+            }
+            if let extra = toast.extra {
+                Button(extra, action: onExtra).foregroundStyle(Color(rgb: 0x8CC2FF))
             }
             if toast.undo {
                 Button("action_undo", action: onUndo).fontWeight(.semibold).foregroundStyle(Color(rgb: 0x8CC2FF))
@@ -864,8 +868,9 @@ struct MessageRow: View {
             message.subjectText
                 .font(.subheadline.weight(unread ? .medium : .regular))
                 .lineLimit(1)
-            if !message.snippet.isBlank {
-                Text(verbatim: message.snippet)
+            let snippet = message.invite.map { inviteLine($0) } ?? message.snippet
+            if !snippet.isBlank {
+                Text(verbatim: snippet)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
