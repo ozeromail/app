@@ -88,8 +88,8 @@ class Settings(context: Context) {
 
     /** The groups of the accounts sheet the person closed or opened. */
     var groups: Groups
-        get() = Groups(ids(COLLAPSED), ids(EXPANDED))
-        set(value) = prefs.edit().putStringSet(COLLAPSED, value.collapsed.strings()).putStringSet(EXPANDED, value.expanded.strings()).apply()
+        get() = Groups(ids(EXPANDED))
+        set(value) = prefs.edit().putStringSet(EXPANDED, value.expanded.strings()).apply()
 
     /** The mailboxes of all accounts below the inboxes in the accounts sheet: their order and which show. */
     var allBoxes: AllBoxes
@@ -111,13 +111,9 @@ class Settings(context: Context) {
     private fun action(name: String?) = SwipeAction.entries.find { it.name == name }
 
     companion object {
-        /** The group of the mailboxes of all accounts together; account ids are positive. */
-        const val ALL_ACCOUNTS = 0L
-
         private const val LEFT = "swipe_left"
         private const val RIGHT = "swipe_right"
         private const val TIP = "swipe_tip_seen"
-        private const val COLLAPSED = "collapsed_groups"
         private const val EXPANDED = "expanded_groups"
         private const val SYNCED = "synced_boxes"
         private const val ALL_ORDER = "all_boxes_order"
@@ -125,20 +121,11 @@ class Settings(context: Context) {
     }
 }
 
-/**
- * Which groups of the accounts sheet show their folders: account ids, or [Settings.ALL_ACCOUNTS].
- * A group the person closed or opened stays so. One never touched starts open, but with
- * [many] accounts each account's starts closed, so the sheet stays short.
- */
-data class Groups(val collapsed: Set<Long>, val expanded: Set<Long>) {
-    fun open(group: Long, many: Boolean) = when (group) {
-        in collapsed -> false
-        in expanded -> true
-        else -> group == Settings.ALL_ACCOUNTS || !many
-    }
+/** The accounts whose folders the accounts sheet shows; the rest stay closed, so the sheet stays short. */
+data class Groups(val expanded: Set<Long>) {
+    fun open(account: Long) = account in expanded
 
-    fun toggle(group: Long, many: Boolean) =
-        if (open(group, many)) Groups(collapsed + group, expanded - group) else Groups(collapsed - group, expanded + group)
+    fun toggle(account: Long) = Groups(if (open(account)) expanded - account else expanded + account)
 }
 
 /** Where an action applies: Done and Snooze only where they file mail; Delete in the trash is for good. */

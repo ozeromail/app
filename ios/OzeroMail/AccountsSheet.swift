@@ -144,9 +144,9 @@ struct MailboxRows: View {
             ForEach(Array(accounts.enumerated()), id: \.element.id) { index, account in
                 FolderGroup(
                     caption: index == 0 ? "account_folders" : nil, title: account.name,
-                    open: groups.open(account.id, many: true),
+                    open: groups.open(account.id),
                     lead: { AccountDot(color: account.tint, size: 12) },
-                    onToggle: { withAnimation(.smooth) { groups = groups.toggled(account.id, many: true) } },
+                    onToggle: { withAnimation(.smooth) { groups = groups.toggled(account.id) } },
                     onHold: onAccount.map { open in { open(account) } }
                 ) {
                     AccountFolders(account: account, folders: folders, mailbox: mailbox, actions: actions)

@@ -13,7 +13,6 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -45,6 +44,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -96,8 +96,9 @@ class AccountsActions(
     val onWrite: () -> Unit,
 )
 
-/** What the mailboxes list shows. */
-class MailboxesState(
+/** What the mailboxes list shows; equal while nothing in it changed, so the list is not drawn again. */
+@Immutable
+data class MailboxesState(
     val accounts: List<AccountItem>,
     val folders: List<FolderItem>,
     val mailbox: Mailbox,
@@ -242,7 +243,7 @@ private fun MailboxList(state: MailboxesState, actions: AccountsActions, onAccou
             actions.onMailbox(Mail.INBOX)
         }
         SignInAgain(one, actions)
-        AccountFolders(one, state, actions, inbox = false)
+        AccountFolders(one, state, actions)
         return
     }
     Caption(stringResource(R.string.inboxes_title))
@@ -270,11 +271,11 @@ private fun MailboxList(state: MailboxesState, actions: AccountsActions, onAccou
     accounts.forEach { account ->
         Group(
             account.name,
-            state.groups.open(account.id, many = true),
+            state.groups.open(account.id),
             lead = { AccountDot(account.tint, size = 12.dp) },
-            onToggle = { actions.onGroups(state.groups.toggle(account.id, many = true)) },
+            onToggle = { actions.onGroups(state.groups.toggle(account.id)) },
             onLongClick = onAccount?.let { { it(account) } },
-        ) { AccountFolders(account, state, actions, inbox = false) }
+        ) { AccountFolders(account, state, actions) }
     }
 }
 
@@ -339,11 +340,11 @@ private fun Handle(modifier: Modifier) {
  * each inside the one it is in. Holding one of its own pins or unpins it.
  */
 @Composable
-private fun AccountFolders(account: AccountItem, state: MailboxesState, actions: AccountsActions, inbox: Boolean) {
+private fun AccountFolders(account: AccountItem, state: MailboxesState, actions: AccountsActions) {
     val colors = MaterialTheme.colorScheme
     val haptics = LocalHapticFeedback.current
     val mine = state.folders.filter { it.accountId == account.id && it.role != FolderRole.DRAFTS }
-    mine.filter { it.role != FolderRole.CUSTOM && (inbox || it.role != FolderRole.INBOX) }.sortedBy { it.role.rank() }.forEach { folder ->
+    mine.filter { it.role != FolderRole.CUSTOM && it.role != FolderRole.INBOX }.sortedBy { it.role.rank() }.forEach { folder ->
         val box = Mailbox.Folder(folder.id)
         FolderRow(folder.role.icon(), folder.title(), box == state.mailbox) { actions.onMailbox(box) }
     }
@@ -363,7 +364,7 @@ private fun AccountFolders(account: AccountItem, state: MailboxesState, actions:
             open = box == state.mailbox,
             indent = nested,
             onLongClick = { actions.onPin(folder, !folder.pinned) },
-            longClickLabel = stringResource(if (folder.pinned) R.string.folder_unpinned else R.string.folder_pinned),
+            longClickLabel = stringResource(if (folder.pinned) R.string.action_unpin else R.string.action_pin),
         ) { actions.onMailbox(box) }
     }
     if (few) return
@@ -505,16 +506,24 @@ private fun AppSettings(
  * A mailbox of all accounts the sheet can show under the inboxes; [SHOWN] are the ones it
  * shows until the person picks.
  */
-enum class AllBox(val mailbox: Mailbox, @DrawableRes val icon: Int, @StringRes val title: Int) {
-    UNREAD(Mailbox.Unread, R.drawable.ic_unread, R.string.folder_unread),
-    SNOOZED(Mailbox.Unified(FolderRole.SNOOZED), R.drawable.ic_snooze, R.string.folder_all_snoozed),
-    FLAGGED(Mailbox.Unified(FolderRole.FLAGGED), R.drawable.ic_flag, R.string.folder_all_flagged),
-    SENT(Mailbox.Unified(FolderRole.SENT), R.drawable.ic_send, R.string.folder_all_sent),
-    ARCHIVE(Mailbox.Unified(FolderRole.ARCHIVE), R.drawable.ic_archive, R.string.folder_all_archive),
-    FILES(Mailbox.Files, R.drawable.ic_attach, R.string.folder_files),
-    JUNK(Mailbox.Unified(FolderRole.JUNK), R.drawable.ic_spam, R.string.folder_all_junk),
-    TRASH(Mailbox.Unified(FolderRole.TRASH), R.drawable.ic_delete, R.string.folder_all_trash),
+enum class AllBox(val mailbox: Mailbox, @StringRes val title: Int) {
+    UNREAD(Mailbox.Unread, R.string.folder_unread),
+    SNOOZED(Mailbox.Unified(FolderRole.SNOOZED), R.string.folder_all_snoozed),
+    FLAGGED(Mailbox.Unified(FolderRole.FLAGGED), R.string.folder_all_flagged),
+    SENT(Mailbox.Unified(FolderRole.SENT), R.string.folder_all_sent),
+    ARCHIVE(Mailbox.Unified(FolderRole.ARCHIVE), R.string.folder_all_archive),
+    FILES(Mailbox.Files, R.string.folder_files),
+    JUNK(Mailbox.Unified(FolderRole.JUNK), R.string.folder_all_junk),
+    TRASH(Mailbox.Unified(FolderRole.TRASH), R.string.folder_all_trash),
     ;
+
+    @get:DrawableRes
+    val icon: Int
+        get() = when (val box = mailbox) {
+            is Mailbox.Unified -> box.role.icon()
+            Mailbox.Unread -> R.drawable.ic_unread
+            else -> R.drawable.ic_attach
+        }
 
     /** Shown in the list: a role's mailbox once some account has such a folder. */
     fun listed(folders: List<FolderItem>): Boolean = when (val box = mailbox) {
@@ -590,16 +599,12 @@ private fun Group(
     Row(
         Modifier
             .fillMaxWidth()
-            .combinedClickable(
+            .holdable(
+                haptics,
+                onToggle,
+                onLongClick,
                 onClickLabel = stringResource(if (open) R.string.action_collapse else R.string.action_expand),
                 onLongClickLabel = stringResource(R.string.account_settings),
-                onLongClick = onLongClick?.let { held ->
-                    {
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        held()
-                    }
-                },
-                onClick = onToggle,
             )
             .padding(horizontal = Gap.sheet, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
