@@ -603,9 +603,10 @@ final class InboxModel {
 
     /// Opens a new message, signed; unsigned rather than not at all. A second tap meanwhile
     /// opens nothing more.
-    func write() {
+    func write(to: String = "") {
         Task {
-            let draft = (try? await mail.newDraft()) ?? newDraft
+            var draft = (try? await mail.newDraft()) ?? newDraft
+            draft.to = to
             if composing == nil { composing = Composing(draft: draft) }
         }
     }

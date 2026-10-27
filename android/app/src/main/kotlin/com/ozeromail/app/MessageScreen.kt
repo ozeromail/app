@@ -53,7 +53,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -97,9 +96,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import uniffi.ozero_api.CoreException
@@ -110,7 +108,6 @@ import uniffi.ozero_api.MessageItem
 import uniffi.ozero_api.PeopleItem
 import uniffi.ozero_api.PersonItem
 import uniffi.ozero_api.RemoteImage
-import uniffi.ozero_api.undoSeconds
 
 /**
  * A conversation, oldest first, on one page that scrolls title and all. What was unread
@@ -129,6 +126,8 @@ fun MessageScreen(
     message: MessageItem,
     /** A message to write on the whole screen: a reply taken there, or one to a person. */
     onWrite: (Composing) -> Unit,
+    /** A new message to someone the message is from or went to. */
+    onWriteTo: (String) -> Unit,
     /** A reply closed with something written: it is in the drafts. */
     onKept: () -> Unit,
     onForward: (MessageItem) -> Unit,
@@ -195,9 +194,12 @@ fun MessageScreen(
         if (replying != null) return
         scope.launch {
             try {
-                val draft = mail.reply(to, all)
-                val others = (people[to.id] ?: mail.people(to).also { people[to.id] = it }).others
-                replying = Replying(draft, to, others, copied = if (all) others.map { it.email } else emptyList())
+                // A failure of either lands in the catch, not in the screen's scope.
+                replying = coroutineScope {
+                    val draft = async { mail.reply(to, all) }
+                    val others = (people[to.id] ?: mail.people(to).also { people[to.id] = it }).others
+                    Replying(draft.await(), to, others, copied = if (all) others.map { it.email } else emptyList())
+                }
             } catch (e: CoreException) {
                 error = e.text()
             }
@@ -208,12 +210,7 @@ fun MessageScreen(
     fun sent(id: Long, reply: Replying) {
         replying = null
         scope.launch {
-            snackbar.currentSnackbarData?.dismiss()
-            // Closes before the core sends, so Undo is never too late.
-            val result = withTimeoutOrNull(undoSeconds().toLong() * 1000) {
-                snackbar.showSnackbar(MovedToast(sending, undo, null))
-            }
-            if (result != SnackbarResult.ActionPerformed) return@launch
+            if (!snackbar.offerUndo(sending, undo)) return@launch
             try {
                 mail.undoSend(id)?.let { replying = reply.copy(draft = it) }
             } catch (e: CoreException) {
@@ -242,12 +239,13 @@ fun MessageScreen(
     val tops = remember(message.id) { mutableStateMapOf<Long, Float>() }
     var landed by remember(message.id) { mutableStateOf(false) }
     val firstUnread = unread?.let { new -> thread.firstOrNull { it.id in new } }
-    LaunchedEffect(firstUnread?.id, firstUnread?.let { tops[it.id] }) {
-        val top = firstUnread?.let { tops[it.id] } ?: return@LaunchedEffect
-        if (landed) return@LaunchedEffect
+    LaunchedEffect(firstUnread?.id) {
+        val id = firstUnread?.id ?: return@LaunchedEffect
+        // Read here, not in the screen, so a message moving on the page does not redraw it all.
+        val top = snapshotFlow { tops[id] }.filterNotNull().first()
         landed = true
         // The first message is under the title: it opens at the top.
-        if (firstUnread.id != thread.first().id) scroll.scrollTo(top.toInt())
+        if (id != thread.first().id) scroll.scrollTo(top.toInt())
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -257,6 +255,7 @@ fun MessageScreen(
                 BackArrow(onBack, Modifier.padding(top = 4.dp))
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     Column(Modifier.fillMaxSize().nestedScroll(hiding).verticalScroll(scroll)) {
+                        val page = this
                         Title(message)
                         // A long run of closed messages in the middle folds into one line.
                         val middle = 1 until thread.size - 2
@@ -266,7 +265,7 @@ fun MessageScreen(
                                 Reveal(middle.count().takeIf { folded }) { count -> More(count, onClick = { showAll = true }) }
                             }
                             key(m.id) {
-                                val at = Modifier.onGloballyPositioned { tops[m.id] = it.positionInParent().y }
+                                val at = if (landed) Modifier else Modifier.onGloballyPositioned { tops[m.id] = it.positionInParent().y }
                                 val letter = @Composable { modifier: Modifier ->
                                     Letter(
                                         mail,
@@ -287,7 +286,7 @@ fun MessageScreen(
                                     )
                                 }
                                 if (i in middle) {
-                                    AnimatedVisibility(!folded, at, enter = opening, exit = closing) { letter(Modifier) }
+                                    page.AnimatedVisibility(!folded, at, enter = opening, exit = closing) { letter(Modifier) }
                                 } else {
                                     letter(at)
                                 }
@@ -298,12 +297,7 @@ fun MessageScreen(
                         Spacer(Modifier.height(12.dp + with(LocalDensity.current) { barHeight.toDp() }))
                     }
                     if (!pane && replying == null) {
-                        AnimatedVisibility(
-                            barShown,
-                            Modifier.align(Alignment.BottomCenter).onSizeChanged { barHeight = it.height },
-                            enter = slideInVertically(Motion.calm(Motion.SMALL)) { it } + fadeIn(Motion.calm(Motion.SMALL)),
-                            exit = slideOutVertically(Motion.calm(Motion.SMALL)) { it } + fadeOut(Motion.calm(Motion.SMALL)),
-                        ) {
+                        Hiding({ barShown }, Modifier.align(Alignment.BottomCenter).onSizeChanged { barHeight = it.height }) {
                             Actions(
                                 onReply = { reply(answer, all = false) },
                                 onAnswers = { sheet = ReaderSheet.Answers },
@@ -350,29 +344,31 @@ fun MessageScreen(
         val colors = MaterialTheme.colorScheme
         val shown = rememberLast(sheet)
         Sheet(visible = sheet != null, onClose = { sheet = null }) {
+            @Composable
+            fun replyAllAndForward() {
+                SheetAction(R.drawable.ic_reply_all, stringResource(R.string.message_reply_all), colors.onSurface) { reply(answer, all = true) }
+                SheetAction(R.drawable.ic_forward, stringResource(R.string.message_forward), colors.onSurface) {
+                    sheet = null
+                    // The newest message is forwarded, the user's own too.
+                    onForward(thread.lastOrNull() ?: message)
+                }
+            }
             when (shown) {
-                ReaderSheet.Answers, ReaderSheet.More -> {
-                    if (shown == ReaderSheet.Answers) {
-                        SheetAction(R.drawable.ic_reply, stringResource(R.string.message_reply), colors.onSurface) { reply(answer, all = false) }
+                ReaderSheet.Answers -> {
+                    SheetAction(R.drawable.ic_reply, stringResource(R.string.message_reply), colors.onSurface) { reply(answer, all = false) }
+                    replyAllAndForward()
+                }
+                ReaderSheet.More -> {
+                    // Beside the list they are in the row already.
+                    if (!pane) replyAllAndForward()
+                    SheetAction(R.drawable.ic_unread, stringResource(R.string.action_mark_unread), colors.onSurface) {
+                        sheet = null
+                        onUnread()
                     }
-                    if (shown == ReaderSheet.Answers || !pane) {
-                        SheetAction(R.drawable.ic_reply_all, stringResource(R.string.message_reply_all), colors.onSurface) { reply(answer, all = true) }
-                        SheetAction(R.drawable.ic_forward, stringResource(R.string.message_forward), colors.onSurface) {
+                    onMoveToInbox?.let { move ->
+                        SheetAction(R.drawable.ic_inbox, stringResource(R.string.action_move_to_inbox), colors.onSurface) {
                             sheet = null
-                            // The newest message is forwarded, the user's own too.
-                            onForward(thread.lastOrNull() ?: message)
-                        }
-                    }
-                    if (shown == ReaderSheet.More) {
-                        SheetAction(R.drawable.ic_unread, stringResource(R.string.action_mark_unread), colors.onSurface) {
-                            sheet = null
-                            onUnread()
-                        }
-                        onMoveToInbox?.let { move ->
-                            SheetAction(R.drawable.ic_inbox, stringResource(R.string.action_move_to_inbox), colors.onSurface) {
-                                sheet = null
-                                move()
-                            }
+                            move()
                         }
                     }
                 }
@@ -380,13 +376,7 @@ fun MessageScreen(
                     shown.person,
                     onWrite = {
                         sheet = null
-                        scope.launch {
-                            try {
-                                onWrite(Composing(mail.newDraft().copy(to = shown.person.email)))
-                            } catch (e: CoreException) {
-                                error = e.text()
-                            }
-                        }
+                        onWriteTo(shown.person.email)
                     },
                     onCopied = { sheet = null },
                 )
@@ -416,6 +406,17 @@ private sealed interface ReaderSheet {
 
 /** A reply being written low on the page: its draft, the message it answers, and who else may get a copy. */
 data class Replying(val draft: DraftItem, val original: MessageItem, val others: List<PersonItem>, val copied: List<String>)
+
+/** The bottom row, stepping aside while [shown] is false; read here, so only the row redraws. */
+@Composable
+private fun Hiding(shown: () -> Boolean, modifier: Modifier, content: @Composable () -> Unit) {
+    AnimatedVisibility(
+        shown(),
+        modifier,
+        enter = slideInVertically(Motion.calm(Motion.SMALL)) { it } + fadeIn(Motion.calm(Motion.SMALL)),
+        exit = slideOutVertically(Motion.calm(Motion.SMALL)) { it } + fadeOut(Motion.calm(Motion.SMALL)),
+    ) { content() }
+}
 
 /** How far a scroll moves before the bottom row steps aside or comes back, in pixels. */
 private const val HIDE_AFTER = 2f
@@ -584,7 +585,7 @@ private fun LetterBody(
     }
     val attachments = loaded?.attachments.orEmpty()
     // A page grows in steps as it lays out; only the short text and notes animate.
-    Column(if (shown is Body.Page) Modifier.fillMaxWidth() else Modifier.fillMaxWidth().animateContentSize(Motion.calm(Motion.NOTE))) {
+    Column(Modifier.fillMaxWidth().then(if (shown is Body.Page) Modifier else Modifier.animateContentSize(Motion.calm(Motion.NOTE)))) {
         Reveal(imagesNote) { note ->
             HiddenImages(note, onShow = onShow@{
                 // The note is closing: the images are here already.
@@ -612,29 +613,28 @@ private fun LetterBody(
             contentKey = { it::class },
             label = "body",
         ) { kind ->
-            val content = Modifier.fillMaxWidth()
-            when (kind) {
+                        when (kind) {
                 // A new web view per page: it loads its page only once.
                 // A newsletter keeps the light page it was made for, as a card on the screen.
                 is Body.Page -> key(kind.withImages) {
                     val page = if (kind.styled) {
-                        content.padding(start = 10.dp, end = 10.dp, top = 4.dp, bottom = 10.dp).clip(RoundedCornerShape(Radius.tile))
+                        Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, top = 4.dp, bottom = 10.dp).clip(RoundedCornerShape(Radius.tile))
                     } else {
-                        content.padding(top = 4.dp)
+                        Modifier.fillMaxWidth().padding(top = 4.dp)
                     }
                     // A long page takes a while to draw: a cover with the spinner stays over it until it
                     // shows. The page itself draws all along, as a hidden web view might not.
                     var drawn by remember { mutableStateOf(false) }
                     val cover by animateFloatAsState(if (drawn) 0f else 1f, Motion.calm(Motion.SMALL), label = "cover")
-                    Box(content) {
+                    Box(Modifier.fillMaxWidth()) {
                         HtmlView(kind.html, kind.images, page, onShown = { drawn = true })
                         if (cover > 0f) {
                             Box(Modifier.graphicsLayer { alpha = cover }.background(MaterialTheme.colorScheme.background)) { BodySpinner() }
                         }
                     }
                 }
-                is Body.Plain -> PlainText(kind.text, kind.quote, content)
-                is Body.Failed -> Text(stringResource(kind.text), color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = content.padding(Gap.screen))
+                is Body.Plain -> PlainText(kind.text, kind.quote, Modifier.fillMaxWidth())
+                is Body.Failed -> Text(stringResource(kind.text), color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth().padding(Gap.screen))
                 Body.Loading -> BodySpinner()
             }
         }
@@ -843,13 +843,8 @@ private fun From(
 @Composable
 private fun toLine(people: PeopleItem): String {
     val you = stringResource(R.string.message_you_to)
-    val names = (people.to + people.cc)
-        .distinctBy { it.email.lowercase() }
-        .sortedByDescending { it.me }
-        .map { if (it.me) you else firstName(it.name) }
-    if (names.isEmpty()) return ""
-    val joined = if (names.size == 1) names[0] else stringResource(R.string.message_and, names.dropLast(1).joinToString(", "), names.last())
-    return stringResource(R.string.message_to_line, joined)
+    val names = people.shown.map { if (it.me) you else it.first }
+    return if (names.isEmpty()) "" else stringResource(R.string.message_to_line, joinNames(names))
 }
 
 /** Every address of a message and its full date, each person a tap away. */
@@ -980,12 +975,7 @@ private fun QuickReply(
     var busy by remember { mutableStateOf(false) }
     var error by remember(start) { mutableStateOf<Int?>(null) }
     fun current() = start.copy(text = text, cc = replying.copied.joinToString(", "))
-    LaunchedEffect(keeper) {
-        snapshotFlow { current() }.drop(1).collectLatest { draft ->
-            delay(SAVE_PAUSE_MS)
-            keeper.save(draft)
-        }
-    }
+    SaveOnPause(keeper, ::current)
     fun close() {
         val draft = current()
         if (draft.isBlank()) {
@@ -1022,9 +1012,7 @@ private fun QuickReply(
             }
             val left = replying.others.filter { it.email !in replying.copied }
             if (left.isNotEmpty()) {
-                val names = left.map { firstName(it.name) }
-                val joined = if (names.size == 1) names[0] else stringResource(R.string.message_and, names.dropLast(1).joinToString(", "), names.last())
-                Person(stringResource(R.string.message_add_people, joined), primary = true, onClick = {
+                Person(stringResource(R.string.message_add_people, joinNames(left.map { it.first })), primary = true, onClick = {
                     onChange(replying.copy(copied = replying.copied + left.map { it.email }))
                 })
             }

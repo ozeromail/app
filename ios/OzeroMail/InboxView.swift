@@ -883,8 +883,14 @@ extension MessageItem {
     }
 }
 
+/// "Anna", "Anna and Oleg", "Anna, Oleg and Maria".
+func joinNames(_ names: [String]) -> String {
+    guard let last = names.last, names.count > 1 else { return names.first ?? "" }
+    return tr("message_and", names.dropLast().joined(separator: ", "), last)
+}
+
 /// "Anna" of "Anna Lee", "Lee, Anna" or "anna@x.com".
-func firstName(_ name: String) -> String {
+private func firstName(_ name: String) -> String {
     var given = String(name.split(separator: "@", maxSplits: 1).first ?? "")
     if let comma = given.range(of: ", ") { given = String(given[comma.upperBound...]) }
     given = given.trimmingCharacters(in: .whitespaces)
