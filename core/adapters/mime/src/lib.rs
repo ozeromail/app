@@ -9,7 +9,7 @@ pub use build::MimeBuilder;
 use mail_parser::{Address as Addresses, Message, MessagePart, MimeHeaders, PartType};
 use ozero_domain::{
     Address, Attachment, Body, Category, MessageParser, NewMessage, RawMessage, Signals,
-    Unsubscribe,
+    Unsubscribe, percent_decode,
 };
 
 #[derive(Debug, Default)]
@@ -22,14 +22,14 @@ impl MessageParser for MimeParser {
         let from = header.and_then(|h| h.from()).and_then(|a| a.first());
         let email = from.and_then(|a| a.address()).unwrap_or_default();
         let raw_header = |name: &'static str| header.and_then(|h| h.header_raw(name));
-        let category = Category::of(&Signals {
+        let signals = Signals {
             from: email,
             list_id: raw_header("List-Id"),
             list_unsubscribe: raw_header("List-Unsubscribe"),
             list_unsubscribe_post: raw_header("List-Unsubscribe-Post"),
             precedence: raw_header("Precedence"),
             auto_submitted: raw_header("Auto-Submitted"),
-        });
+        };
         NewMessage {
             remote_id: raw.remote_id,
             message_id: header.and_then(|h| h.message_id()).map(str::to_owned),
@@ -51,11 +51,8 @@ impl MessageParser for MimeParser {
             snippet: String::new(),
             date: raw.received,
             flags: raw.flags,
-            category,
-            unsubscribe: Unsubscribe::new(
-                raw_header("List-Unsubscribe"),
-                raw_header("List-Unsubscribe-Post"),
-            ),
+            category: Category::of(&signals),
+            unsubscribe: Unsubscribe::new(signals.list_unsubscribe, signals.list_unsubscribe_post),
         }
     }
 
@@ -103,7 +100,7 @@ fn attachments(message: &Message<'_>, html: &str) -> Vec<Attachment> {
         .map(|(at, _)| {
             let id = &html[at + 4..];
             let end = id.find(['"', '\'', ')', ' ', '>']).unwrap_or(id.len());
-            percent_decoded(&id[..end])
+            percent_decode(&id[..end])
         })
         .collect();
     message
@@ -129,29 +126,6 @@ fn attachments(message: &Message<'_>, html: &str) -> Vec<Attachment> {
             size: u64::try_from(p.len()).unwrap_or(u64::MAX),
         })
         .collect()
-}
-
-/// `text` with each `%XX` turned into its byte; anything else is left as it is.
-fn percent_decoded(text: &str) -> String {
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        let hex = bytes
-            .get(i + 1..i + 3)
-            .and_then(|h| std::str::from_utf8(h).ok());
-        match hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
-            Some(byte) if bytes[i] == b'%' => {
-                out.push(byte);
-                i += 3;
-            }
-            _ => {
-                out.push(bytes[i]);
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// The file name as sent, without any folders or control characters; a forwarded message

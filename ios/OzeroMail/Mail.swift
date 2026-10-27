@@ -382,15 +382,10 @@ final class Mail: Sendable {
         try core.moveTargets(message: message.id)
     }
 
-    /// Whether `message` says how to leave its list in a way `unsubscribe` takes.
-    func canUnsubscribe(_ message: MessageItem) async throws -> Bool {
-        try core.canUnsubscribe(message: message.id)
-    }
-
-    /// Leaves `message`'s list; a message asking to leave goes out in the background.
+    /// Leaves `message`'s list; a request or message asking to leave goes out in the background.
     func unsubscribe(_ message: MessageItem) async throws -> Unsubscribed {
-        let done = try await core.unsubscribe(message: message.id)
-        if done == .sent { push(account: message.accountId) }
+        let done = try core.unsubscribe(message: message.id)
+        push(account: message.accountId)
         return done
     }
 

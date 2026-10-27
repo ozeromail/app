@@ -1,5 +1,9 @@
 package com.ozeromail.app
 
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -353,5 +357,14 @@ fun Modifier.whilePressed(onChange: (Boolean) -> Unit): Modifier = pointerInput(
 fun Modifier.blockTouches(): Modifier = pointerInput(Unit) {
     awaitPointerEventScope {
         while (true) awaitPointerEvent(PointerEventPass.Initial).changes.forEach { it.consume() }
+    }
+}
+
+/** Opens a link in an app that takes links from a browser; nothing if none does. */
+fun openLink(context: Context, link: Uri) {
+    try {
+        context.startActivity(Intent(Intent.ACTION_VIEW, link).addCategory(Intent.CATEGORY_BROWSABLE))
+    } catch (_: ActivityNotFoundException) {
+        // Nothing opens it.
     }
 }

@@ -117,8 +117,14 @@ pub trait Store: Send + Sync {
     fn allow_images(&self, message: MessageId) -> Result<(), StoreError>;
     /// Who the message came from and went to.
     fn correspondents(&self, message: MessageId) -> Result<Correspondents, StoreError>;
-    /// How to leave the list the message came from, if it says.
+    /// How to leave the list the message came from, if it says and the person has not yet.
     fn unsubscribe(&self, message: MessageId) -> Result<Option<Unsubscribe>, StoreError>;
+    /// The person left the message's list: `queued` while a one-click request waits to go,
+    /// else for good. It is offered no more either way.
+    fn leave(&self, message: MessageId, queued: bool) -> Result<(), StoreError>;
+    /// The one-click requests of the account that wait to go; `leave` with `queued` false
+    /// once one went.
+    fn leaves_due(&self, account: AccountId) -> Result<Vec<(MessageId, Unsubscribe)>, StoreError>;
     fn location(&self, message: MessageId) -> Result<MessageLocation, StoreError>;
     /// The account's `limit` newest inbox messages and the rest of their conversations, those
     /// with no saved body and not being moved, newest first.

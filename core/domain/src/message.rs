@@ -131,6 +131,8 @@ pub struct MessageRow {
     pub attachments: Vec<String>,
     /// It waits in the outbox: the user sent it, the server does not have it yet.
     pub sending: bool,
+    /// It says how to leave the list it came from, and the person has not.
+    pub can_unsubscribe: bool,
 }
 
 /// Someone who wrote in a conversation.

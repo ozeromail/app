@@ -667,6 +667,7 @@ fn rows_are_marked_only_with_several_accounts() {
         role: FolderRole::Inbox,
         attachments: vec!["a.pdf".into()],
         sending: false,
+        can_unsubscribe: false,
     };
     let first = add("a@example.com");
     let item = &core.items(vec![row(first)]).unwrap()[0];
@@ -1083,21 +1084,14 @@ fn leaves_a_list_by_its_page_when_it_offers_nothing_else() {
     };
     store.save_changes(folder, &changes).unwrap();
     let rows = core.inbox(None, Category::People, 10).unwrap();
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
 
-    assert!(core.can_unsubscribe(rows[0].id).unwrap());
+    assert!(rows[0].can_unsubscribe);
     assert_eq!(
-        runtime.block_on(core.unsubscribe(rows[0].id)),
+        core.unsubscribe(rows[0].id),
         Ok(Unsubscribed::Page {
             url: "https://shop.example/leave".into()
         })
     );
-    assert!(!core.can_unsubscribe(rows[1].id).unwrap());
-    assert_eq!(
-        runtime.block_on(core.unsubscribe(rows[1].id)),
-        Err(CoreError::NotFound)
-    );
+    assert!(!rows[1].can_unsubscribe);
+    assert_eq!(core.unsubscribe(rows[1].id), Err(CoreError::NotFound));
 }
