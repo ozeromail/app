@@ -12,7 +12,8 @@ func authorDraft(crash: String? = nil) -> DraftItem {
     var draft = newDraft
     draft.to = author
     draft.subject = tr(crash == nil ? "feedback_subject" : "crash_subject")
-    draft.text = text
+    // Plain text: a crash's marks stay as they are.
+    draft.text = richEscape(plain: text)
     return draft
 }
 

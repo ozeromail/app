@@ -982,7 +982,8 @@ private struct QuickReply: View {
 
     private var current: DraftItem {
         var draft = start
-        draft.text = text
+        // Written as plain text, its marks kept as they are.
+        draft.text = richEscape(plain: text)
         draft.cc = replying.copied.joined(separator: ", ")
         return draft
     }
@@ -1029,7 +1030,7 @@ private struct QuickReply: View {
         }
         .background(.bar)
         .onAppear {
-            text = start.text
+            text = richShown(text: start.text)
             keeper = DraftKeeper(mail: mail, id: start.id)
             focused = true
         }

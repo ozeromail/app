@@ -497,7 +497,7 @@ private suspend fun decoded(data: ByteArray, width: Int): ImageBitmap? = withCon
     try {
         ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(data))) { decoder, info, _ ->
             val w = info.size.width
-            if (w > width) decoder.setTargetSize(width, info.size.height * width / w)
+            if (w > width) decoder.setTargetSize(width, (info.size.height * width / w).coerceAtLeast(1))
         }.asImageBitmap()
     } catch (_: java.io.IOException) {
         null

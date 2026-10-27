@@ -2139,7 +2139,11 @@ fn copy_into_sent(
         return Ok(None);
     };
     let body = Body {
-        text: full_text(&draft.text, &draft.signature, &draft.quote),
+        // As the message reads in plain text, until the server's copy comes.
+        text: ozero_domain::rich::to_plain(
+            &full_text(&draft.text, &draft.signature, &draft.quote),
+            &|_| None,
+        ),
         ..Body::default()
     };
     let copy: i64 = tx

@@ -266,6 +266,12 @@ pub fn rich_move_image(text: String, file: i64, up: bool) -> String {
     rich::move_image(&text, FileId(file), up)
 }
 
+/// Plain text as text with styles, its marks kept as they are.
+#[uniffi::export]
+pub fn rich_escape(plain: String) -> String {
+    rich::escape(&plain)
+}
+
 /// What the text shows, without marks and images: for a list of drafts.
 #[uniffi::export]
 pub fn rich_shown(text: String) -> String {

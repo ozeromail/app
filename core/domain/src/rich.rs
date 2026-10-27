@@ -745,6 +745,7 @@ pub fn fix(before: &str, after: &str) -> Option<Edit> {
             .iter()
             .find(|m| m.style.is_line() && m.open.start < cut.end && cut.start < m.open.end)
         && cut.start >= m.open.start
+        && cut.end <= m.open.end
     {
         let mut text = before.to_owned();
         text.replace_range(m.open.clone(), "");

@@ -217,7 +217,7 @@ mod tests {
 
     #[test]
     fn escapes_text() {
-        assert_eq!(escape("a<b>&\"'\u{1}\n"), "a&lt;b&gt;&amp;&quot;&apos;\n");
+        assert_eq!(escape("a<b>&\"'\u{1}\n"), "a&lt;b&gt;&amp;&quot;&#39;\n");
         let text = "Tom & \"Jerry\" <x>";
         let xml = format!("<a v=\"{0}\">{0}</a>", escape(text));
         let root = parse(xml.as_bytes()).unwrap();

@@ -396,4 +396,10 @@ pub const MIGRATIONS: &[&str] = &[
     ",
     // 39: whether an account's new mail shows notifications.
     "ALTER TABLE account ADD COLUMN notify INTEGER NOT NULL DEFAULT 1;",
+    // 40: the text of a message being written has styles now (`rich`); what was written
+    // before is plain text, so its marks are kept as they are, as `rich::escape` keeps them.
+    r"
+    UPDATE draft SET text = replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(text, '\', '\\'), '*', '\*'), '_', '\_'), '~', '\~'), '`', '\`'), '[', '\['), ']', '\]'), '(', '\('), ')', '\)'), '#', '\#'), '-', '\-'), '>', '\>'), '!', '\!');
+    UPDATE outbox SET text = replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(text, '\', '\\'), '*', '\*'), '_', '\_'), '~', '\~'), '`', '\`'), '[', '\['), ']', '\]'), '(', '\('), ')', '\)'), '#', '\#'), '-', '\-'), '>', '\>'), '!', '\!');
+    ",
 ];
