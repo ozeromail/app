@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -642,7 +643,7 @@ private fun SettingRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(Gap.slot), contentAlignment = Alignment.Center) { lead() }
-        Column(Modifier.padding(start = Gap.afterSlot).weight(1f, fill = value == null)) {
+        Column(Modifier.padding(start = Gap.afterSlot).weight(1f)) {
             Text(title, color = color, style = Type.Row, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (caption != null) Text(caption, color = colors.onSurfaceVariant, style = Type.Caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
@@ -653,7 +654,8 @@ private fun SettingRow(
                 style = Type.Text,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f).padding(start = 12.dp),
+                // The title takes the rest, so the value and the arrow sit at the row's end.
+                modifier = Modifier.padding(start = 12.dp).widthIn(max = 200.dp),
                 textAlign = TextAlign.End,
             )
         }
