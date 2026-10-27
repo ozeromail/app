@@ -2830,6 +2830,8 @@ pub struct PersonItem {
 pub struct SenderItem {
     /// The name, or the address when there is none.
     pub name: String,
+    /// What the name starts with: "Anna, me, Boris".
+    pub first: String,
     /// The user.
     pub me: bool,
 }
@@ -2837,6 +2839,7 @@ pub struct SenderItem {
 impl From<Sender> for SenderItem {
     fn from(s: Sender) -> Self {
         Self {
+            first: first_name(&s.name).to_owned(),
             name: s.name,
             me: s.me,
         }
