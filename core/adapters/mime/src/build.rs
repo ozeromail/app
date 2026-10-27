@@ -28,8 +28,13 @@ impl MessageBuilder for MimeBuilder {
         let text = &message.text;
         // The images the text shows, each a file of the draft, and the files that go below.
         let shown = rich::images(text);
-        let (inline, files): (Vec<&OutgoingFile>, Vec<&OutgoingFile>) =
-            message.files.iter().partition(|f| {
+        // An invitation's answer goes with the text, as another form of it (RFC 6047).
+        let calendar = message.files.iter().find(|f| is_calendar(f));
+        let (inline, files): (Vec<&OutgoingFile>, Vec<&OutgoingFile>) = message
+            .files
+            .iter()
+            .filter(|f| !is_calendar(f))
+            .partition(|f| {
                 f.mime.starts_with("image/")
                     && f.id.is_some_and(|id| shown.iter().any(|&(s, _)| s == id))
             });
@@ -54,6 +59,7 @@ impl MessageBuilder for MimeBuilder {
         let body = Body {
             plain: &plain,
             html: html.as_deref(),
+            calendar,
             inline: &inline,
             local: &local,
         };
@@ -77,6 +83,8 @@ impl MessageBuilder for MimeBuilder {
 struct Body<'a> {
     plain: &'a str,
     html: Option<&'a str>,
+    /// An invitation or the answer to one.
+    calendar: Option<&'a OutgoingFile>,
     /// The images with their `Content-ID`s.
     inline: &'a [(FileId, String, &'a OutgoingFile)],
     /// Makes the boundaries.
@@ -97,13 +105,16 @@ impl Body<'_> {
     }
 
     fn alternatives(&self, out: &mut String) {
-        let Some(html) = self.html else {
+        if self.html.is_none() && self.calendar.is_none() {
             return text(out, "text/plain", self.plain);
-        };
-        let parts: Vec<Part> = vec![
-            Box::new(|out| text(out, "text/plain", self.plain)),
-            Box::new(|out| text(out, "text/html", html)),
-        ];
+        }
+        let mut parts: Vec<Part> = vec![Box::new(|out| text(out, "text/plain", self.plain))];
+        if let Some(html) = self.html {
+            parts.push(Box::new(move |out| text(out, "text/html", html)));
+        }
+        if let Some(calendar) = self.calendar {
+            parts.push(Box::new(move |out| invitation(out, calendar)));
+        }
         multipart(out, "alternative", &format!("=_a.{}", self.local), parts);
     }
 }
@@ -121,6 +132,36 @@ fn multipart(out: &mut String, kind: &str, boundary: &str, parts: Vec<Part>) {
         part(out);
     }
     out.push_str(&format!("--{boundary}--\r\n"));
+}
+
+/// An iCalendar file with an iTIP `method`, sent as an invitation or the answer to one, not
+/// as a file to save; a plain `.ics` file stays an attachment.
+fn is_calendar(file: &OutgoingFile) -> bool {
+    file.mime.to_ascii_lowercase().starts_with("text/calendar") && method(file).is_some()
+}
+
+/// The iTIP method a calendar file's type names: `REPLY`, `REQUEST`.
+fn method(file: &OutgoingFile) -> Option<String> {
+    file.mime
+        .split(';')
+        .filter_map(|p| p.split_once('='))
+        .find(|(k, _)| k.trim().eq_ignore_ascii_case("method"))
+        .map(|(_, v)| v.trim().trim_matches('"'))
+        .filter(|v| !v.is_empty() && v.chars().all(|c| c.is_ascii_alphabetic()))
+        .map(str::to_ascii_uppercase)
+}
+
+/// The calendar part of an invitation or answer: its type keeps its `method`.
+fn invitation(out: &mut String, file: &OutgoingFile) {
+    let method = method(file).unwrap_or_default();
+    header(
+        out,
+        "Content-Type",
+        &format!("text/calendar; charset=utf-8; method={method}"),
+    );
+    header(out, "Content-Transfer-Encoding", "base64");
+    out.push_str("\r\n");
+    lines(out, &file.data);
 }
 
 fn header(out: &mut String, name: &str, value: &str) {
@@ -430,5 +471,49 @@ mod tests {
         assert!(!text.contains("multipart"));
         let parsed = MessageParser::default().parse(&raw).unwrap();
         assert_eq!(parsed.body_text(0).as_deref(), Some("a_b\r\n> c"));
+    }
+
+    #[test]
+    fn sends_an_answer_with_the_text() {
+        let from = Address {
+            name: None,
+            email: "anna@example.com".into(),
+        };
+        let reply = "BEGIN:VCALENDAR\r\nMETHOD:REPLY\r\nBEGIN:VEVENT\r\nUID:1\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let calendar = OutgoingFile {
+            id: None,
+            name: "reply.ics".into(),
+            mime: "text/calendar; method=REPLY".into(),
+            data: reply.as_bytes().to_vec(),
+        };
+        let pdf = OutgoingFile {
+            id: None,
+            name: "a.pdf".into(),
+            mime: "application/pdf".into(),
+            data: b"pdf".to_vec(),
+        };
+        for files in [vec![calendar.clone()], vec![calendar, pdf]] {
+            let with_pdf = files.len() == 2;
+            let message = Outgoing {
+                files,
+                ..outgoing("Accepted: Sprint", "See you there")
+            };
+            let raw = MimeBuilder.build(&from, &message);
+            let text = String::from_utf8(raw.clone()).unwrap();
+            assert!(text.contains("Content-Type: text/calendar; charset=utf-8; method=REPLY\r\n"));
+            let parsed = MessageParser::default().parse(&raw).unwrap();
+            assert_eq!(parsed.body_text(0).as_deref(), Some("See you there"));
+            let part = parsed
+                .parts
+                .iter()
+                .find(|p| p.content_type().and_then(|t| t.subtype()) == Some("calendar"))
+                .unwrap();
+            assert_eq!(part.contents(), reply.as_bytes());
+            let names: Vec<_> = parsed
+                .attachments()
+                .filter_map(|a| a.attachment_name())
+                .collect();
+            assert_eq!(names, if with_pdf { vec!["a.pdf"] } else { vec![] });
+        }
     }
 }

@@ -1,8 +1,11 @@
-use crate::{FolderId, MessageLocation};
+use crate::{Answer, FolderId, MessageLocation};
 
 /// A change the user makes on the device first; the server gets it from the queue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Action {
+    /// Answers the meeting invitation the message is. First, so it goes before a move
+    /// takes the message out of the folder the server knows it in.
+    Answer(Answer),
     /// Marks the message read (`true`) or unread.
     Seen(bool),
     /// Flags the message (`true`) or takes its flag off.
@@ -29,9 +32,13 @@ pub enum Action {
 }
 
 impl Action {
-    /// Whether the message leaves its folder: everything but marking it read or flagged.
+    /// Whether the message leaves its folder: everything but marking it read or flagged
+    /// and answering it.
     pub fn removes(self) -> bool {
-        !matches!(self, Action::Seen(_) | Action::Flagged(_))
+        !matches!(
+            self,
+            Action::Seen(_) | Action::Flagged(_) | Action::Answer(_)
+        )
     }
 }
 

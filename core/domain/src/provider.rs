@@ -2,7 +2,7 @@ use std::fmt;
 use std::future::Future;
 use std::time::Duration;
 
-use crate::{Address, Body, Flags, NewFolder, NewMessage, Outgoing};
+use crate::{Address, Answer, Body, Flags, NewFolder, NewMessage, Outgoing};
 
 /// A message as the server returns it, before MIME parsing.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -201,6 +201,21 @@ pub trait MailProvider: Send {
     ) -> impl Future<Output = Result<Option<(u32, String)>, ProviderError>> + Send {
         let _ = (folder, message, message_id);
         async { Err(ProviderError::Rejected("drafts stay on the device".into())) }
+    }
+
+    /// Answers the meeting invitation `remote_id` of a folder in the calendar the server
+    /// keeps for the person, as Exchange does. A provider without one keeps this, which
+    /// does nothing: the answer goes to the organizer as mail. Fails with `Gone` if the
+    /// invitation is no longer there.
+    fn answer(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_id: &str,
+        answer: Answer,
+    ) -> impl Future<Output = Result<(), ProviderError>> + Send {
+        let _ = (folder, validity, remote_id, answer);
+        async { Ok(()) }
     }
 
     /// Waits until a folder may have changed since `since`, at most `wait`: true if it may

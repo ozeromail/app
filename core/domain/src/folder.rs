@@ -61,6 +61,10 @@ impl FolderRole {
     pub fn allows(self, action: Action) -> bool {
         match action {
             Action::Seen(_) | Action::Flagged(_) => true,
+            // An invitation thrown away is not asked about; Exchange keeps answered ones there.
+            Action::Answer(_) => {
+                !matches!(self, Self::Sent | Self::Drafts | Self::Trash | Self::Junk)
+            }
             Action::Spam => matches!(self, Self::Inbox | Self::Custom | Self::Archive),
             Action::Archive | Action::Snooze => matches!(self, Self::Inbox | Self::Custom),
             Action::Move(_) => matches!(

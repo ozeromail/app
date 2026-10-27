@@ -1,10 +1,11 @@
 use std::fmt;
 
 use crate::{
-    Account, AccountId, Action, Body, Category, Changes, Checkpoint, Correspondents, Draft,
-    DraftCopy, DraftFile, DraftId, DraftToPush, FileId, Folder, FolderId, ListQuery, MessageId,
-    MessageLocation, MessageRow, Moved, NewAccount, NewFolder, NewMail, NewMessage, Op, OpId,
-    OutboxId, Outgoing, OutgoingFile, RecentFile, SavedDraft, ServerDraft, Unsent, Unsubscribe,
+    Account, AccountId, Action, Body, Category, Changes, Checkpoint, Correspondents, DayEvent,
+    Draft, DraftCopy, DraftFile, DraftId, DraftToPush, FileId, Folder, FolderId, ListQuery,
+    MessageId, MessageLocation, MessageRow, Moved, NewAccount, NewFolder, NewMail, NewMessage, Op,
+    OpId, OutboxId, Outgoing, OutgoingFile, RecentFile, SavedDraft, SavedInvite, ServerDraft,
+    Unsent, Unsubscribe,
 };
 
 /// Local database port. The UI reads only from here; sync writes here.
@@ -146,6 +147,12 @@ pub trait Store: Send + Sync {
     /// Saves the body and sets the message's snippet from its text, if it has any.
     fn save_body(&self, message: MessageId, body: &Body) -> Result<(), StoreError>;
     fn body(&self, message: MessageId) -> Result<Option<Body>, StoreError>;
+    /// The meeting invitation saved with the message's body, if it is one.
+    fn invite(&self, message: MessageId) -> Result<Option<SavedInvite>, StoreError>;
+    /// The meetings of saved invitations, of every account, that take some of the time from
+    /// `from` to `to` (seconds), earliest first: each meeting once, as its newest invitation
+    /// has it, but those called off or turned down.
+    fn day(&self, from: i64, to: i64) -> Result<Vec<DayEvent>, StoreError>;
 
     /// Applies the action to the message's conversation in its folder and inbox tab now, in one transaction,
     /// and queues it for the server from `not_before`: the message itself, and the others

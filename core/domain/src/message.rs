@@ -133,6 +133,8 @@ pub struct MessageRow {
     pub sending: bool,
     /// It says how to leave the list it came from, and the person has not.
     pub can_unsubscribe: bool,
+    /// The meeting it invites to, once its body is saved.
+    pub invite: Option<crate::InviteRow>,
 }
 
 /// Someone who wrote in a conversation.
@@ -185,8 +187,11 @@ pub struct Body {
     pub text: String,
     /// The HTML part as sent, if there is one.
     pub html: Option<String>,
-    /// The files sent with it, in order; images the HTML part shows are not among them.
+    /// The files sent with it, in order; images the HTML part shows are not among them,
+    /// nor the invitation in `calendar`.
     pub attachments: Vec<Attachment>,
+    /// The meeting invitation it is, as iCalendar text.
+    pub calendar: Option<String>,
 }
 
 /// A file sent with a message.

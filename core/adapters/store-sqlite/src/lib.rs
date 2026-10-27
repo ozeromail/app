@@ -7,12 +7,13 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
 use ozero_domain::{
-    Account, AccountId, AccountKind, Action, Address, Attachment, Body, Category, Changes,
-    Checkpoint, Correspondents, Draft, DraftCopy, DraftFile, DraftId, DraftToPush, FileId, Flags,
-    Folder, FolderId, FolderRole, ListQuery, ListScope, MessageId, MessageLocation, MessageRow,
-    Moved, NewAccount, NewFolder, NewMail, NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile,
-    RecentFile, SavedDraft, Sender, Server, ServerDraft, Store, StoreError, Unsent, Unsubscribe,
-    default_label, full_text, typed_addresses,
+    Account, AccountId, AccountKind, Action, Address, Answer, Attachment, Body, Category, Changes,
+    Checkpoint, Correspondents, DayEvent, Draft, DraftCopy, DraftFile, DraftId, DraftToPush,
+    FileId, Flags, Folder, FolderId, FolderRole, Invite, InviteKind, InviteRow, ListQuery,
+    ListScope, MessageId, MessageLocation, MessageRow, Moved, NewAccount, NewFolder, NewMail,
+    NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile, RecentFile, SavedDraft, SavedInvite,
+    Sender, Server, ServerDraft, Store, StoreError, Unsent, Unsubscribe, default_label, full_text,
+    typed_addresses,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{
@@ -984,6 +985,7 @@ impl Store for SqliteStore {
             params![message.0, body.snippet()],
         )
         .map_err(storage)?;
+        save_invite(&tx, message, body.calendar.as_deref())?;
         tx.commit().map_err(storage)
     }
 
@@ -1015,11 +1017,71 @@ impl Store for SqliteStore {
                 .collect()
             })
             .map_err(storage)?;
+        let calendar = conn
+            .prepare_cached("SELECT calendar FROM invite WHERE message_id = ?1")
+            .and_then(|mut s| s.query_row([message.0], |r| r.get(0)).optional())
+            .map_err(storage)?;
         Ok(Some(Body {
             text,
             html,
             attachments,
+            calendar,
         }))
+    }
+
+    fn invite(&self, message: MessageId) -> Result<Option<SavedInvite>, StoreError> {
+        let conn = self.conn();
+        conn.prepare_cached(INVITE)
+            .and_then(|mut s| {
+                s.query_row([message.0], |r| {
+                    let before: Option<(i64, i64)> = match (r.get(2)?, r.get(3)?) {
+                        (Some(start), Some(end)) => Some((start, end)),
+                        _ => None,
+                    };
+                    Ok(SavedInvite {
+                        calendar: r.get(0)?,
+                        answer: r.get::<_, Option<i64>>(1)?.and_then(Answer::from_code),
+                        before,
+                    })
+                })
+                .optional()
+            })
+            .map_err(storage)
+    }
+
+    fn day(&self, from: i64, to: i64) -> Result<Vec<DayEvent>, StoreError> {
+        let conn = self.conn();
+        let rows: Vec<(bool, DayEvent)> = conn
+            .prepare_cached(DAY)
+            .and_then(|mut s| {
+                s.query_map(params![from, to], |r| {
+                    Ok((
+                        r.get(1)?,
+                        DayEvent {
+                            uid: r.get(0)?,
+                            message: MessageId(r.get(2)?),
+                            summary: r.get(3)?,
+                            start: r.get(4)?,
+                            end: r.get(5)?,
+                            all_day: r.get(6)?,
+                            answer: r.get::<_, Option<i64>>(7)?.and_then(Answer::from_code),
+                        },
+                    ))
+                })?
+                .collect()
+            })
+            .map_err(storage)?;
+        // Newest first within a meeting: its latest update or cancellation says what holds.
+        let mut seen = HashSet::new();
+        let mut events: Vec<DayEvent> = rows
+            .into_iter()
+            .filter(|(_, e)| seen.insert(e.uid.clone()))
+            .filter(|(cancelled, e)| !cancelled && e.answer != Some(Answer::No))
+            .filter(|(_, e)| e.start < to && e.end > from)
+            .map(|(_, e)| e)
+            .collect();
+        events.sort_by_key(|e| (e.start, e.end));
+        Ok(events)
     }
 
     fn queue_all(
@@ -2075,6 +2137,10 @@ fn queue_one(
         .ok_or(StoreError::NotFound)?;
     // What to restore on revert or undo, and where a move goes.
     let (undo, target) = match action {
+        Action::Answer(answer) => {
+            let before = set_answer(tx, message.0, Some(answer.code()))?;
+            (queued.unwrap_or(before), None)
+        }
         Action::Seen(seen) => {
             set_seen(tx, message.0, seen)?;
             (queued.unwrap_or(i64::from(flags & SEEN != 0)), None)
@@ -2215,6 +2281,11 @@ fn copy_into(tx: &Transaction<'_>, message: MessageId, folder: i64) -> Result<i6
          SELECT ?2, part, name, mime, size FROM attachment WHERE message_id = ?1",
         "INSERT INTO unsubscribe (message_id, links, one_click, state)
          SELECT ?2, links, one_click, state FROM unsubscribe WHERE message_id = ?1",
+        "INSERT INTO invite (message_id, calendar, uid, sequence, summary, location, start, end,
+                             all_day, cancelled, answer)
+         SELECT ?2, calendar, uid, sequence, summary, location, start, end, all_day, cancelled,
+                answer
+         FROM invite WHERE message_id = ?1",
         "INSERT INTO message_ref (message_id, ref)
          SELECT ?2, ref FROM message_ref WHERE message_id = ?1",
     ] {
@@ -2488,6 +2559,9 @@ fn take_back(tx: &Transaction<'_>, sql: &str, op: OpId, arg: i64) -> Result<bool
         return Ok(false);
     };
     match kind.with(undo) {
+        Action::Answer(_) => {
+            set_answer(tx, message, Some(undo).filter(|&a| a != 0))?;
+        }
         Action::Seen(seen) => set_seen(tx, message, seen)?,
         Action::Flagged(flagged) => set_flagged(tx, message, flagged)?,
         // As the other moves, and nothing waits to come back.
@@ -2505,6 +2579,61 @@ fn take_back(tx: &Transaction<'_>, sql: &str, op: OpId, arg: i64) -> Result<bool
         }
     }
     Ok(true)
+}
+
+/// Records the person's answer to the invitation the message is, none for None, and returns
+/// the one before it, 0 for none. Fails with `NotFound` if it is no invitation.
+fn set_answer(tx: &Transaction<'_>, message: i64, answer: Option<i64>) -> Result<i64, StoreError> {
+    let before: Option<i64> = tx
+        .prepare_cached("SELECT answer FROM invite WHERE message_id = ?1")
+        .and_then(|mut s| s.query_row([message], |r| r.get(0)).optional())
+        .map_err(storage)?
+        .ok_or(StoreError::NotFound)?;
+    tx.prepare_cached("UPDATE invite SET answer = ?2 WHERE message_id = ?1")
+        .and_then(|mut s| s.execute(params![message, answer]))
+        .map_err(storage)?;
+    Ok(before.unwrap_or(0))
+}
+
+/// Saves the invitation of a message's body, or forgets the one saved if it has none. The
+/// person's answer stays when the body comes again.
+fn save_invite(
+    tx: &Transaction<'_>,
+    message: MessageId,
+    calendar: Option<&str>,
+) -> Result<(), StoreError> {
+    // Only an invitation or its cancellation: an answer or an event to save is no meeting here.
+    let invite = calendar.and_then(|c| Some((c, Invite::parse(c)?)));
+    let Some((calendar, invite)) = invite.filter(|(_, i)| i.kind != InviteKind::Other) else {
+        tx.execute("DELETE FROM invite WHERE message_id = ?1", [message.0])
+            .map_err(storage)?;
+        return Ok(());
+    };
+    tx.prepare_cached(
+        "INSERT INTO invite (message_id, calendar, uid, sequence, summary, location, start, end,
+                             all_day, cancelled)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+         ON CONFLICT (message_id) DO UPDATE SET
+             calendar = excluded.calendar, uid = excluded.uid, sequence = excluded.sequence,
+             summary = excluded.summary, location = excluded.location, start = excluded.start,
+             end = excluded.end, all_day = excluded.all_day, cancelled = excluded.cancelled",
+    )
+    .and_then(|mut s| {
+        s.execute(params![
+            message.0,
+            calendar,
+            invite.uid,
+            invite.sequence,
+            invite.summary,
+            invite.location,
+            invite.start,
+            invite.end,
+            invite.all_day,
+            invite.kind == InviteKind::Cancel,
+        ])
+    })
+    .map_err(storage)?;
+    Ok(())
 }
 
 fn set_seen(tx: &Transaction<'_>, message: i64, seen: bool) -> Result<(), StoreError> {
@@ -2716,7 +2845,9 @@ macro_rules! message_from {
             ", f.role, (SELECT group_concat(part || char(31) || name, char(30)) FROM attachment
                          WHERE message_id = m.id),
                     m.stand_in = 1 AND EXISTS (SELECT 1 FROM outbox WHERE copy = m.id),
-                    EXISTS (SELECT 1 FROM unsubscribe WHERE message_id = m.id AND state = 0)",
+                    EXISTS (SELECT 1 FROM unsubscribe WHERE message_id = m.id AND state = 0),
+                    (SELECT start || char(31) || all_day || char(31) || cancelled || char(31)
+                            || location FROM invite WHERE message_id = m.id)",
             " FROM message m JOIN folder f ON f.id = m.folder_id"
         )
     };
@@ -2956,6 +3087,33 @@ const WITHOUT_BODY: &str = concat!(
        AND NOT EXISTS (SELECT 1 FROM message_body b WHERE b.message_id = m.id) AND ",
     not_moving!(),
     " ORDER BY m.date DESC, m.id DESC LIMIT ?2 * 4"
+);
+
+/// A message's invitation: its calendar, the answer, and the times of the newest earlier
+/// invitation to the same meeting in the same account, where they differ.
+const INVITE: &str = "
+    SELECT i.calendar, i.answer, b.start, b.end FROM invite i
+    LEFT JOIN invite b ON b.message_id = (
+        SELECT e.message_id FROM invite e
+        JOIN message em ON em.id = e.message_id JOIN folder ef ON ef.id = em.folder_id
+        JOIN message m ON m.id = i.message_id JOIN folder f ON f.id = m.folder_id
+        WHERE e.uid = i.uid AND e.sequence < i.sequence AND e.cancelled = 0
+          AND ef.account_id = f.account_id
+        ORDER BY e.sequence DESC LIMIT 1)
+      AND (b.start <> i.start OR b.end <> i.end)
+    WHERE i.message_id = ?1";
+
+/// Every saved invitation to the meetings that take some of the time from `?1` to `?2`, but
+/// those in the trash or spam, newest first within each: uid, cancelled, then the event. Mail
+/// being moved shows as its copy. A meeting starting over 31 days before `?1` is left out, so the search keeps to
+/// the index on `start`.
+const DAY: &str = concat!(
+    "SELECT i.uid, i.cancelled, i.message_id, i.summary, i.start, i.end, i.all_day, i.answer
+     FROM invite i JOIN message m ON m.id = i.message_id JOIN folder f ON f.id = m.folder_id
+     WHERE i.uid IN (SELECT uid FROM invite WHERE start > ?1 - 2678400 AND start < ?2 AND end > ?1)
+       AND f.role NOT IN ('trash', 'junk') AND ",
+    not_moving!(),
+    " ORDER BY i.uid, i.sequence DESC, i.cancelled DESC, i.message_id DESC"
 );
 
 const FOLDER_MESSAGES: &str = concat!(
@@ -3238,6 +3396,21 @@ fn message_row(r: &Row<'_>) -> rusqlite::Result<MessageRow> {
         attachments: parse_attachments(&r.get::<_, Option<String>>(11)?.unwrap_or_default()),
         sending: r.get(12)?,
         can_unsubscribe: r.get(13)?,
+        invite: r
+            .get::<_, Option<String>>(14)?
+            .as_deref()
+            .and_then(parse_invite_row),
+    })
+}
+
+/// A list's invitation as `message_from!` joins it: start, all day, cancelled, location.
+fn parse_invite_row(joined: &str) -> Option<InviteRow> {
+    let mut parts = joined.splitn(4, '\x1f');
+    Some(InviteRow {
+        start: parts.next()?.parse().ok()?,
+        all_day: parts.next()? == "1",
+        cancelled: parts.next()? == "1",
+        location: parts.next()?.to_owned(),
     })
 }
 
@@ -3298,6 +3471,7 @@ struct Role(FolderRole);
 /// The kind column of `op`; the value column completes it.
 #[derive(Clone, Copy)]
 enum StoredAction {
+    Answer,
     Seen,
     Flagged,
     Spam,
@@ -3313,6 +3487,7 @@ enum StoredAction {
 /// The kind and value columns of `op` for an action.
 fn stored(action: Action) -> (&'static str, i64) {
     match action {
+        Action::Answer(answer) => ("answer", answer.code()),
         Action::Seen(seen) => ("seen", i64::from(seen)),
         Action::Flagged(flagged) => ("flagged", i64::from(flagged)),
         Action::Spam => ("spam", 1),
@@ -3329,6 +3504,8 @@ fn stored(action: Action) -> (&'static str, i64) {
 impl StoredAction {
     fn with(self, value: i64) -> Action {
         match self {
+            // Never 0 for an answer queued; `take_back` restores no answer itself.
+            Self::Answer => Action::Answer(Answer::from_code(value).unwrap_or(Answer::Yes)),
             Self::Seen => Action::Seen(value != 0),
             Self::Flagged => Action::Flagged(value != 0),
             Self::Spam => Action::Spam,
@@ -3346,6 +3523,7 @@ impl StoredAction {
 impl FromSql for StoredAction {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         match value.as_str()? {
+            "answer" => Ok(Self::Answer),
             "seen" => Ok(Self::Seen),
             "flagged" => Ok(Self::Flagged),
             "spam" => Ok(Self::Spam),

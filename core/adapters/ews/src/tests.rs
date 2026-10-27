@@ -507,6 +507,27 @@ async fn sends_with_a_copy_in_sent() {
 }
 
 #[tokio::test]
+async fn answers_an_invitation_on_the_server() {
+    let (mut ews, seen) = session(|body: &str| {
+        let item = if body.contains("Id=\"gone\"") {
+            not_found("CreateItem")
+        } else {
+            ok("CreateItem", "")
+        };
+        response("CreateItem", &[item])
+    })
+    .await;
+    ews.answer("inbox", 0, "m1", Answer::Maybe).await.unwrap();
+    let body = seen.lock().unwrap().last().unwrap().body.clone();
+    assert!(body.contains("MessageDisposition=\"SendAndSaveCopy\""));
+    assert!(body.contains(
+        "<t:TentativelyAcceptItem><t:ReferenceItemId Id=\"m1\"/></t:TentativelyAcceptItem>"
+    ));
+    let gone = ews.answer("inbox", 0, "gone", Answer::No).await;
+    assert_eq!(gone, Err(ProviderError::Gone));
+}
+
+#[tokio::test]
 async fn saves_a_draft_and_tells_its_id() {
     let made = "<m:Items><t:Message><t:ItemId Id=\"d1\" ChangeKey=\"c\"/></t:Message></m:Items>";
     let (mut ews, seen) = session(move |_| response("CreateItem", &[ok("CreateItem", made)])).await;

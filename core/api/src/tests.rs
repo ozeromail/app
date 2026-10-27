@@ -668,6 +668,7 @@ fn rows_are_marked_only_with_several_accounts() {
         attachments: vec!["a.pdf".into()],
         sending: false,
         can_unsubscribe: false,
+        invite: None,
     };
     let first = add("a@example.com");
     let item = &core.items(vec![row(first)]).unwrap()[0];
@@ -1126,4 +1127,110 @@ fn the_sender_name_is_the_users_or_only_the_address() {
     assert_eq!(from(), "");
     assert!(core.accounts().unwrap()[0].in_all_fixed);
     assert!(core.set_account_sender(999, "Bob".into()).is_err());
+}
+
+#[test]
+fn answers_an_invitation_by_mail_and_takes_it_back() {
+    let db = TempDb::new("invite");
+    let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
+    let store = &core.store;
+    let server = |host: &str| Server {
+        host: host.into(),
+        port: 993,
+        user: "me@example.com".into(),
+        certificate: None,
+    };
+    let account = store
+        .add_account(&NewAccount {
+            kind: AccountKind::Imap,
+            email: "me@example.com".into(),
+            display_name: "Me".into(),
+            server: Some(server("imap.example.com")),
+            smtp: Some(server("smtp.example.com")),
+        })
+        .unwrap();
+    let folders = [
+        ("INBOX", FolderRole::Inbox),
+        ("Archive", FolderRole::Archive),
+    ]
+    .map(|(name, role)| NewFolder {
+        remote_id: name.into(),
+        name: name.into(),
+        role,
+    });
+    let inbox = store.save_folders(account, &folders).unwrap()[0].id;
+    let message = ozero_domain::NewMessage {
+        remote_id: "1".into(),
+        message_id: Some("m1@example.org".into()),
+        references: vec![],
+        from: Address {
+            name: Some("Anna".into()),
+            email: "anna@example.org".into(),
+        },
+        answer_to: vec![],
+        to: vec![],
+        cc: vec![],
+        subject: "Invitation: Sprint".into(),
+        snippet: String::new(),
+        date: 10,
+        flags: Default::default(),
+        category: Category::People,
+        unsubscribe: None,
+    };
+    let changes = Changes {
+        checkpoint: store.checkpoint(inbox).unwrap().0,
+        new: vec![message],
+        flags: vec![],
+        gone: vec![],
+    };
+    store.save_changes(inbox, &changes).unwrap();
+    let id = core.inbox(None, Category::People, 10).unwrap()[0].id;
+    assert_eq!(core.invite(id), Ok(None));
+    let calendar = "BEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:s1\r\n\
+SUMMARY:Sprint\r\nDTSTART:20261029T080000Z\r\nDTEND:20261029T090000Z\r\n\
+LOCATION:Baikal\r\nORGANIZER;CN=Olga:mailto:olga@example.org\r\n\
+ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:me@example.com\r\n\
+ATTENDEE;PARTSTAT=ACCEPTED:mailto:ivan@example.org\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    let body = Body {
+        calendar: Some(calendar.into()),
+        ..Body::default()
+    };
+    store.save_body(MessageId(id), &body).unwrap();
+    let row = core.inbox(None, Category::People, 10).unwrap().remove(0);
+    assert_eq!(row.invite.map(|i| i.location), Some("Baikal".into()));
+
+    let invite = core.invite(id).unwrap().unwrap();
+    assert_eq!(invite.summary, "Sprint");
+    assert_eq!(invite.organizer_name.as_deref(), Some("Olga"));
+    assert_eq!(invite.others, 1);
+    assert_eq!(invite.answer, None);
+    assert!(invite.can_answer && invite.can_add_to_calendar && !invite.cancelled);
+
+    let answered = core
+        .answer_invite(
+            id,
+            InviteAnswer::Yes,
+            " Late by 5 ".into(),
+            "Accepted: Sprint".into(),
+        )
+        .unwrap();
+    assert!(answered.archived);
+    assert_eq!(
+        core.invite(id).unwrap().unwrap().answer,
+        Some(InviteAnswer::Yes)
+    );
+    assert!(core.inbox(None, Category::People, 10).unwrap().is_empty());
+    let mail = OutboxId(answered.mail.unwrap());
+    let files = store.outbox_files(mail).unwrap();
+    assert_eq!(files[0].mime, "text/calendar; method=REPLY");
+    let reply = String::from_utf8(files[0].data.clone()).unwrap();
+    assert!(reply.contains("ATTENDEE;PARTSTAT=ACCEPTED;CN=\"Me\":mailto:me@example.com\r\n"));
+    assert!(reply.contains("COMMENT:Late by 5\r\n"));
+    assert!(core.drafts().unwrap().is_empty());
+
+    assert_eq!(core.undo_answer(answered), Ok(true));
+    assert_eq!(core.invite(id).unwrap().unwrap().answer, None);
+    assert_eq!(core.inbox(None, Category::People, 10).unwrap().len(), 1);
+    assert_eq!(store.due_sends(account, i64::MAX).unwrap(), vec![]);
+    assert!(core.drafts().unwrap().is_empty());
 }

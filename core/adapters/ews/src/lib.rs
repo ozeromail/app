@@ -22,8 +22,8 @@ use std::time::{Duration, Instant};
 
 use mail_parser::DateTime;
 use ozero_domain::{
-    Changes, Checkpoint, Flags, FolderRole, MailProvider, MailSender, Moved, NewFolder, Older,
-    ProviderError, RawMessage, Server, base64, decode_base64,
+    Answer, Changes, Checkpoint, Flags, FolderRole, MailProvider, MailSender, Moved, NewFolder,
+    Older, ProviderError, RawMessage, Server, base64, decode_base64,
 };
 use tokio_rustls::rustls::ClientConfig;
 
@@ -679,6 +679,33 @@ SuppressReadReceipts=\"true\"><m:ItemChanges>{changes}</m:ItemChanges></m:Update
     ) -> Result<Option<(u32, String)>, ProviderError> {
         let id = self.create(message, folder, Create::Draft).await?;
         Ok(id.map(|id| (0, id)))
+    }
+
+    async fn answer(
+        &mut self,
+        _folder: &str,
+        _validity: u32,
+        remote_id: &str,
+        answer: Answer,
+    ) -> Result<(), ProviderError> {
+        let kind = match answer {
+            Answer::Yes => "AcceptItem",
+            Answer::Maybe => "TentativelyAcceptItem",
+            Answer::No => "DeclineItem",
+        };
+        // Exchange puts the meeting in the calendar and tells the organizer, as Outlook does.
+        // Not repeatable: a second answer would reach the organizer twice.
+        let answer = self
+            .call(
+                &format!(
+                    "<m:CreateItem MessageDisposition=\"SendAndSaveCopy\"><m:Items><t:{kind}>\
+<t:ReferenceItemId Id=\"{}\"/></t:{kind}></m:Items></m:CreateItem>",
+                    escape(remote_id)
+                ),
+                false,
+            )
+            .await?;
+        first(&answer, "CreateItem").map(drop)
     }
 
     async fn wait(

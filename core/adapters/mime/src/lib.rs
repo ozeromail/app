@@ -8,8 +8,8 @@ pub use build::MimeBuilder;
 
 use mail_parser::{Address as Addresses, Message, MessagePart, MimeHeaders, PartType};
 use ozero_domain::{
-    Address, Attachment, Body, Category, MessageParser, NewMessage, RawMessage, Signals,
-    Unsubscribe, percent_decode,
+    Address, Attachment, Body, Category, Invite, InviteKind, MessageParser, NewMessage, RawMessage,
+    Signals, Unsubscribe, percent_decode,
 };
 
 #[derive(Debug, Default)]
@@ -65,13 +65,26 @@ impl MessageParser for MimeParser {
             PartType::Html(html) => Some(html.to_string()),
             _ => None,
         });
+        let calendar = calendar(&message);
+        let mut files = attachments(&message, html.as_deref().unwrap_or_default());
+        if let Some((parts, _)) = &calendar {
+            // The card shows the invitation; its files would only repeat it.
+            files.retain(|f| !parts.contains(&f.part));
+        }
+        let text = message
+            .body_text(0)
+            .map(|t| t.trim_end().to_owned())
+            .unwrap_or_default();
         Body {
-            text: message
-                .body_text(0)
-                .map(|t| t.trim_end().to_owned())
-                .unwrap_or_default(),
-            attachments: attachments(&message, html.as_deref().unwrap_or_default()),
+            // A message that is only an invitation has no text but the calendar's own.
+            text: if text.starts_with("BEGIN:VCALENDAR") {
+                String::new()
+            } else {
+                text
+            },
+            attachments: files,
             html,
+            calendar: calendar.map(|(_, text)| text),
         }
     }
 
@@ -126,6 +139,47 @@ fn attachments(message: &Message<'_>, html: &str) -> Vec<Attachment> {
             size: u64::try_from(p.len()).unwrap_or(u64::MAX),
         })
         .collect()
+}
+
+/// The invitation or cancellation a message carries, and the parts that hold it: its
+/// `text/calendar` part, else an `.ics` file. Any other calendar, an answer or an event to
+/// save, stays a file.
+fn calendar(message: &Message<'_>) -> Option<(Vec<u32>, String)> {
+    let found: Vec<(u32, bool, String, Invite)> = message
+        .parts
+        .iter()
+        .enumerate()
+        .filter_map(|(part, p)| {
+            let mime = p.content_type()?;
+            let mime = format!("{}/{}", mime.ctype(), mime.subtype().unwrap_or_default());
+            if !is_calendar(&mime, &name(p)) {
+                return None;
+            }
+            let text = String::from_utf8_lossy(p.contents()).into_owned();
+            let invite = Invite::parse(&text).filter(|i| i.kind != InviteKind::Other)?;
+            let inline = mime.eq_ignore_ascii_case("text/calendar");
+            Some((u32::try_from(part).ok()?, inline, text, invite))
+        })
+        .collect();
+    let (_, _, text, chosen) = found
+        .iter()
+        .find(|(_, inline, ..)| *inline)
+        .or_else(|| found.first())?;
+    // Outlook sends the invitation twice: as the message's calendar and as a file.
+    let parts = found
+        .iter()
+        .filter(|(.., i)| i.uid == chosen.uid)
+        .map(|(part, ..)| *part)
+        .collect();
+    Some((parts, text.clone()))
+}
+
+/// An iCalendar part or file, by its type or name.
+fn is_calendar(mime: &str, name: &str) -> bool {
+    let mime = mime.to_ascii_lowercase();
+    mime == "text/calendar"
+        || mime == "application/ics"
+        || name.to_ascii_lowercase().ends_with(".ics")
 }
 
 /// The file name as sent, without any folders or control characters; a forwarded message
@@ -185,6 +239,40 @@ mod tests {
     use ozero_domain::Flags;
 
     use super::*;
+
+    const EVENT: &str = "BEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:1\r\n\
+DTSTART:20261029T080000Z\r\nSUMMARY:Sprint\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+
+    #[test]
+    fn finds_the_invitation_and_hides_its_file() {
+        let raw = format!(
+            "From: anna@example.com\r\nContent-Type: multipart/mixed; boundary=m\r\n\r\n\
+--m\r\nContent-Type: multipart/alternative; boundary=a\r\n\r\n\
+--a\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nSprint planning\r\n\
+--a\r\nContent-Type: text/calendar; charset=utf-8; method=REQUEST\r\n\r\n{EVENT}\
+--a--\r\n\
+--m\r\nContent-Type: application/ics; name=invite.ics\r\n\
+Content-Disposition: attachment; filename=invite.ics\r\n\r\n{EVENT}\
+--m\r\nContent-Type: application/pdf; name=agenda.pdf\r\n\
+Content-Disposition: attachment; filename=agenda.pdf\r\n\r\nPDF\r\n\
+--m--\r\n"
+        );
+        let body = MimeParser::default().parse_body(raw.as_bytes());
+        assert_eq!(body.text, "Sprint planning");
+        assert_eq!(
+            body.calendar.as_deref().map(str::trim_end),
+            Some(EVENT.trim_end())
+        );
+        let names: Vec<_> = body.attachments.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, ["agenda.pdf"]);
+
+        let alone = format!(
+            "From: anna@example.com\r\nContent-Type: text/calendar; method=CANCEL\r\n\r\n{EVENT}"
+        );
+        let body = MimeParser::default().parse_body(alone.as_bytes());
+        assert_eq!(body.text, "");
+        assert!(body.calendar.is_some());
+    }
 
     fn parse(header: &[u8]) -> NewMessage {
         MimeParser::default().parse(RawMessage {
