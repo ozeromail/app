@@ -98,18 +98,21 @@ struct SnoozeSheet: View {
 }
 
 extension View {
-    /// Asks which of `targets` to move to, while there are any to ask about; says so when there
-    /// is no other folder.
-    func moveDialog(_ targets: Binding<[(folder: FolderItem, title: String)]?>, onPick: @escaping (FolderItem, String) -> Void) -> some View {
+    /// Asks which of the folders `item` holds to move to, while there is one; says so when there
+    /// is no other folder. `onPick` gets the item as it was when asked.
+    func moveDialog<Item>(
+        _ item: Binding<Item?>, targets: @escaping (Item) -> [(folder: FolderItem, title: String)],
+        onPick: @escaping (Item, FolderItem, String) -> Void
+    ) -> some View {
         confirmationDialog(
-            "move_title", isPresented: Binding { targets.wrappedValue != nil } set: { if !$0 { targets.wrappedValue = nil } },
-            titleVisibility: .visible, presenting: targets.wrappedValue
-        ) { list in
-            ForEach(list, id: \.folder.id) { target in
-                Button(target.title) { onPick(target.folder, target.title) }
+            "move_title", isPresented: Binding { item.wrappedValue != nil } set: { if !$0 { item.wrappedValue = nil } },
+            titleVisibility: .visible, presenting: item.wrappedValue
+        ) { asked in
+            ForEach(targets(asked), id: \.folder.id) { target in
+                Button(target.title) { onPick(asked, target.folder, target.title) }
             }
-        } message: { list in
-            if list.isEmpty { Text("move_none") }
+        } message: { asked in
+            if targets(asked).isEmpty { Text("move_none") }
         }
     }
 }

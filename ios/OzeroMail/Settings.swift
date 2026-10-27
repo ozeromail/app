@@ -100,7 +100,7 @@ struct Swipes: Equatable {
         func side(_ short: SwipeAction, _ long: SwipeAction?) -> String {
             long.map { tr("swipes_further", short.label, $0.label) } ?? short.label
         }
-        return tr("swipes_tip", side(left, leftLong), side(right, rightLong)) + " " + tr("swipes_tip_lift")
+        return tr("swipes_tip", side(left, leftLong), side(right, rightLong))
     }
 
     var summary: String {
@@ -200,8 +200,10 @@ enum Settings {
         get {
             let fallback = Swipes()
             // A long swipe turned off is kept as OFF, so it does not come back as the default.
+            // Who picked their swipes before long ones came keeps them off, so a full swipe does what it did.
+            let picked = defaults.string(forKey: "swipe_left") != nil
             func long(_ key: String, _ usual: SwipeAction?) -> SwipeAction? {
-                guard let name = defaults.string(forKey: key) else { return usual }
+                guard let name = defaults.string(forKey: key) else { return picked ? nil : usual }
                 return name == off ? nil : SwipeAction(rawValue: name) ?? usual
             }
             return Swipes(

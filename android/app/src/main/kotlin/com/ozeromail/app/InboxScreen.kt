@@ -335,10 +335,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var chosen by remember { mutableStateOf(emptySet<Long>()) }
     // Messages waiting on the snooze sheet for a time.
     var snoozing by remember { mutableStateOf<Snoozing?>(null) }
-    // A message swiped to another folder, off the list while the folder is picked. Kept after,
-    // so the sheet's folders do not vanish before it has gone down.
+    // A message swiped to another folder, off the list while the folder is picked.
     var moving by remember { mutableStateOf<Moving?>(null) }
-    var movingOpen by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -921,8 +919,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     fun move(message: MessageItem, reset: () -> Unit) {
         scope.launch {
             try {
-                moving = Moving(message, mail.moveTargets(message), reset)
-                movingOpen = true
+                val targets = mail.moveTargets(message)
+                // One swiped before and still waiting comes back.
+                moving?.reset?.invoke()
+                moving = Moving(message, targets, reset)
             } catch (e: CoreException) {
                 fail(e)
                 reset()
@@ -1437,15 +1437,17 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             },
         )
         Sheet(
-            visible = movingOpen,
+            visible = moving != null,
             onClose = {
-                movingOpen = false
                 moving?.reset?.invoke()
+                moving = null
             },
         ) {
-            moving?.let { shown ->
+            rememberLast(moving)?.let { shown ->
                 MoveTargets(shown.targets) { folder, title ->
-                    movingOpen = false
+                    // Once: the folders stay on the sheet while it goes down.
+                    if (moving == null) return@MoveTargets
+                    moving = null
                     moveToFolder(listOf(shown.message), folder, title, shown.reset)
                 }
             }
@@ -1791,7 +1793,7 @@ private fun InboxList(
                     Afloat(thumb, page, depth = { 0 }, modifier = rowMove().then(sink)) { UnsentRow(failed, onClick = { onUnsent(failed) }) }
                 }
                 if (swipeTip && messages.isNotEmpty()) {
-                    item(key = "tip") { Afloat(thumb, page, depth = { 0 }, modifier = rowMove().then(sink)) { SwipeTip(swipes, onSwipeTip) } }
+                    item(key = "tip") { Afloat(thumb, page, depth = { 0 }, modifier = rowMove().then(sink)) { SwipeTip(swipes, lift = !wide, onDismiss = onSwipeTip) } }
                 }
                 if (lake) {
                     item(key = "empty") {
