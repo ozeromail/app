@@ -82,7 +82,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
@@ -171,7 +170,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import uniffi.ozero_api.AccountItem
 import uniffi.ozero_api.AccountMark
 import uniffi.ozero_api.Category
@@ -625,15 +623,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
      * Shows a toast for [undoSeconds]; true if Undo was tapped. One toast at a time. With [go],
      * it can also show that folder.
      */
-    suspend fun offerUndo(text: String, go: Mailbox? = null): Boolean {
-        // The older toast is past undo anyway.
-        snackbar.currentSnackbarData?.dismiss()
-        // Closes before the core sends, so Undo is never too late.
-        val result = withTimeoutOrNull(undoSeconds().toLong() * 1000) {
-            snackbar.showSnackbar(MovedToast(text, undo, go))
-        }
-        return result == SnackbarResult.ActionPerformed
-    }
+    suspend fun offerUndo(text: String, go: Mailbox? = null): Boolean = snackbar.offerUndo(text, undo, go)
 
     /** Takes [actions] back, or says the server already has them. */
     suspend fun takeBack(actions: List<Long>) {
@@ -682,6 +672,20 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         scope.launch {
             if (!offerUndo(sending)) return@launch
             mail.undoSend(id)?.let { composing = message.copy(draft = it) }
+        }
+    }
+
+    /** A new message, to [to] if given. */
+    fun compose(to: String = "") {
+        scope.launch {
+            // Unsigned rather than not at all.
+            val draft = try {
+                mail.newDraft()
+            } catch (_: CoreException) {
+                NEW_DRAFT
+            }
+            // A second tap meanwhile opens nothing more.
+            if (composing == null) composing = Composing(draft.copy(to = to))
         }
     }
 
@@ -899,6 +903,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             message,
             onWrite = { composing = it },
             onKept = ::kept,
+            onWriteTo = { compose(it) },
             onForward = { original ->
                 write(original) { mail.forward(original, forwardLabels(context), longDate(context, original.date)) }
             },
@@ -1105,18 +1110,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                 },
                                 onAccounts = { accountsOpen = true },
                                 onSearch = { searching = true },
-                                onCompose = {
-                                    scope.launch {
-                                        // Unsigned rather than not at all.
-                                        val draft = try {
-                                            mail.newDraft()
-                                        } catch (_: CoreException) {
-                                            NEW_DRAFT
-                                        }
-                                        // A second tap meanwhile opens nothing more.
-                                        if (composing == null) composing = Composing(draft)
-                                    }
-                                },
+                                onCompose = { compose() },
                                 onGo = { mailbox = it },
                                 onBack = { mailbox = Mail.INBOX }.takeIf { mailbox != Mail.INBOX },
                                 empty = mailboxRole(mailbox, openFolder)?.emptyLabel()?.let { it to { empty() } },
@@ -2291,8 +2285,13 @@ fun MessageItem.participants(): String {
     return senders.joinToString(", ") { if (it.me) me else firstName(it.name) }
 }
 
+/** "Anna", "Anna and Oleg", "Anna, Oleg and Maria". */
+@Composable
+fun joinNames(names: List<String>): String =
+    if (names.size < 2) names.joinToString() else stringResource(R.string.message_and, names.dropLast(1).joinToString(", "), names.last())
+
 /** "Anna" of "Anna Lee", "Lee, Anna" or "anna@x.com". */
-fun firstName(name: String): String {
+private fun firstName(name: String): String {
     val given = name.substringBefore('@').substringAfter(", ").trim()
     return given.substringBefore(' ').ifEmpty { name }
 }

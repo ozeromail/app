@@ -32,9 +32,6 @@ struct MessageView: View {
     @State private var person: PersonItem?
     @State private var replying: Replying?
     @State private var barShown = true
-    /// The toast of a reply just sent, and what Undo brings back.
-    @State private var toast: Toast?
-    @State private var unsent: (id: Int64, reply: Replying)?
 
     private var mail: Mail { model.mail }
 
@@ -69,7 +66,7 @@ struct MessageView: View {
                         Text(error).foregroundStyle(.secondary).padding(20)
                     }
                     // The end of the page clears the row over it.
-                    Color.clear.frame(height: pane || replying != nil ? 12 : 84)
+                    Color.clear.frame(height: pane || replying != nil ? 12 : barHeight)
                 }
             }
             .onScrollGeometryChange(for: Scrolled.self) { geometry in
@@ -78,7 +75,14 @@ struct MessageView: View {
                     atEnd: geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 1)
             } action: { old, new in
                 // At the end, where what to do with the message is decided, it is back.
-                let shows = new.atEnd || new.offset <= 0 ? true : new.offset > old.offset + 2 ? false : new.offset < old.offset - 2 ? true : barShown
+                var shows = barShown
+                if new.atEnd || new.offset <= 0 {
+                    shows = true
+                } else if new.offset > old.offset + 2 {
+                    shows = false
+                } else if new.offset < old.offset - 2 {
+                    shows = true
+                }
                 if shows != barShown { withAnimation(.smooth(duration: 0.25)) { barShown = shows } }
             }
             .onChange(of: unread) { _, new in
@@ -105,13 +109,14 @@ struct MessageView: View {
             }
         }
         .overlay(alignment: .bottom) {
-            if let toast {
-                ToastView(toast: toast, onUndo: undoSend, onGo: { _ in })
-                    .padding(.bottom, replying == nil ? 84 : 12)
+            // The list's toast, over the message: Undo for a reply, or where a draft went.
+            if !pane, let toast = model.toast {
+                ToastView(toast: toast, onUndo: model.tapUndo, onGo: model.tapGo)
+                    .padding(.bottom, replying == nil && !pane ? barHeight : 12)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(.smooth, value: toast)
+        .animation(.smooth, value: model.toast)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if let replying {
                 QuickReply(
@@ -119,9 +124,7 @@ struct MessageView: View {
                     replying: Binding { self.replying ?? replying } set: { self.replying = $0 },
                     onClose: { kept in
                         self.replying = nil
-                        if kept {
-                            mail.pushDrafts()
-                        }
+                        if kept { model.kept() }
                     },
                     onExpand: { draft in
                         self.replying = nil
@@ -153,7 +156,7 @@ struct MessageView: View {
             person?.name ?? "", isPresented: Binding { person != nil } set: { if !$0 { person = nil } },
             titleVisibility: .visible, presenting: person
         ) { person in
-            Button("message_write_to") { write(to: person) }
+            Button("message_write_to") { model.write(to: person.email) }
             Button("message_copy_address") { UIPasteboard.general.string = person.email }
         } message: { person in
             if person.name != person.email { Text(verbatim: person.email) }
@@ -239,20 +242,20 @@ struct MessageView: View {
                 Text("message_reply_prompt")
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
+                    .frame(maxWidth: .infinity, minHeight: paneButton, alignment: .leading)
                     .padding(.horizontal, 16)
                     .background(Color.ozeroCard, in: .capsule)
             }
             .buttonStyle(.plain)
-            RoundButton(icon: "arrowshape.turn.up.left.2", label: "message_reply_all", size: 40) { reply(answer, all: true) }
-            RoundButton(icon: "arrowshape.turn.up.right", label: "message_forward", size: 40) { forward(newest) }
-            RoundButton(icon: "trash", label: message.canTrash ? "action_delete" : "action_delete_forever", size: 40, action: delete)
+            RoundButton(icon: "arrowshape.turn.up.left.2", label: "message_reply_all", size: paneButton) { reply(answer, all: true) }
+            RoundButton(icon: "arrowshape.turn.up.right", label: "message_forward", size: paneButton) { forward(newest) }
+            RoundButton(icon: "trash", label: message.canTrash ? "action_delete" : "action_delete_forever", size: paneButton, action: delete)
             if message.canSnooze {
-                RoundButton(icon: "clock", label: "action_snooze", size: 40, action: snooze)
+                RoundButton(icon: "clock", label: "action_snooze", size: paneButton, action: snooze)
             }
-            RoundButton(icon: "ellipsis", label: "action_more", size: 40) { more = true }
+            RoundButton(icon: "ellipsis", label: "action_more", size: paneButton) { more = true }
             if message.canArchive {
-                RoundButton(icon: "checkmark", label: "action_done", size: 40, tint: .white, background: .ozeroFill, action: done)
+                RoundButton(icon: "checkmark", label: "action_done", size: paneButton, tint: .white, background: .ozeroFill, action: done)
             }
         }
         .padding(.horizontal, 12)
@@ -265,7 +268,7 @@ struct MessageView: View {
         guard replying == nil else { return }
         Task {
             do {
-                let draft = try await mail.reply(to: to, all: all)
+                async let draft = mail.reply(to: to, all: all)
                 let others: [PersonItem]
                 if let known = people[to.id] {
                     others = known.others
@@ -274,7 +277,7 @@ struct MessageView: View {
                     people[to.id] = found
                     others = found.others
                 }
-                replying = Replying(draft: draft, original: to, others: others, copied: all ? others.map(\.email) : [])
+                replying = Replying(draft: try await draft, original: to, others: others, copied: all ? others.map(\.email) : [])
             } catch {
                 self.error = error.text()
             }
@@ -287,42 +290,14 @@ struct MessageView: View {
         }
     }
 
-    private func write(to person: PersonItem) {
-        Task {
-            do {
-                var draft = try await mail.newDraft()
-                draft.to = person.email
-                model.composing = Composing(draft: draft)
-            } catch {
-                self.error = error.text()
-            }
-        }
-    }
-
     /// Sent from the page: the toast can bring the reply back to go on writing.
     private func sent(_ id: Int64, _ reply: Replying) {
         replying = nil
-        let shown = Toast(text: tr("inbox_sending"), undo: true)
-        toast = shown
-        unsent = (id, reply)
         Task {
-            // Closes before the core sends, so Undo is never too late.
-            try? await Task.sleep(for: .seconds(Int(undoSeconds())))
-            if toast == shown {
-                toast = nil
-                unsent = nil
-            }
-        }
-    }
-
-    private func undoSend() {
-        toast = nil
-        guard let unsent else { return }
-        self.unsent = nil
-        Task {
+            guard await model.offerUndo(tr("inbox_sending")) else { return }
             do {
-                if let draft = try await mail.undoSend(unsent.id) {
-                    var again = unsent.reply
+                if let draft = try await mail.undoSend(id) {
+                    var again = reply
                     again.draft = draft
                     replying = again
                 }
@@ -366,6 +341,12 @@ struct MessageView: View {
             date: tr("compose_forward_date"), subject: tr("compose_forward_subject"))
     }
 }
+
+/// The round buttons beside the list, where the height is short.
+private let paneButton: CGFloat = 40
+
+/// How tall the bottom row is, for the page's end and the toast to clear it.
+private let barHeight: CGFloat = 84
 
 /// Where the page is scrolled to, and whether that is its end.
 private struct Scrolled: Equatable {
@@ -519,7 +500,7 @@ private struct LetterBody: View {
     private func page(_ html: String, images: [RemoteImage?], styled: Bool) -> some View {
         // A new web view per page: it loads its page only once.
         // A newsletter keeps the light page it was made for, as a card on the screen.
-        HTMLView(html: html, images: images, message: message.id, fits: true)
+        HTMLView(html: html, images: images, message: message.id)
             .id("\(message.id)-\(images.isEmpty)")
             .clipShape(.rect(cornerRadius: styled ? 16 : 0))
             .padding(.horizontal, styled ? 10 : 0)
@@ -717,14 +698,8 @@ private struct From: View {
 
 /// "To you, Oleg and Maria": who a message went to, copies too, by first name.
 private func toLine(_ people: PeopleItem) -> String {
-    var seen = Set<String>()
-    let names = (people.to + people.cc)
-        .filter { seen.insert($0.email.lowercased()).inserted }
-        .sorted { $0.me && !$1.me }
-        .map { $0.me ? tr("message_you_to") : firstName($0.name) }
-    guard let last = names.last else { return "" }
-    let joined = names.count == 1 ? last : tr("message_and", names.dropLast().joined(separator: ", "), last)
-    return tr("message_to_line", joined)
+    let names = people.shown.map { $0.me ? tr("message_you_to") : $0.first }
+    return names.isEmpty ? "" : tr("message_to_line", joinNames(names))
 }
 
 /// Every address of a message and its full date, each person a tap away.
@@ -848,7 +823,7 @@ private struct QuickReply: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Divider()
-            FlowLayout(spacing: 6) {
+            Flow(spacing: 6) {
                 let original = replying.original
                 Person(text: start.to.caseInsensitiveCompare(original.fromEmail) == .orderedSame ? original.sender : start.to)
                 ForEach(replying.others.filter { replying.copied.contains($0.email) }, id: \.email) { person in
@@ -857,10 +832,8 @@ private struct QuickReply: View {
                     }
                 }
                 let left = replying.others.filter { !replying.copied.contains($0.email) }
-                if let last = left.last {
-                    let names = left.map { firstName($0.name) }
-                    let joined = names.count == 1 ? firstName(last.name) : tr("message_and", names.dropLast().joined(separator: ", "), names.last ?? "")
-                    Person(text: tr("message_add_people", joined), primary: true) {
+                if !left.isEmpty {
+                    Person(text: tr("message_add_people", joinNames(left.map(\.first))), primary: true) {
                         replying.copied += left.map(\.email)
                     }
                 }
@@ -895,7 +868,7 @@ private struct QuickReply: View {
         // A pause in typing saves the draft, so each key does not.
         .task(id: current) {
             guard current.text != start.text || current.cc != start.cc else { return }
-            try? await Task.sleep(for: .seconds(1))
+            try? await Task.sleep(for: DraftKeeper.pause)
             keeper?.save(current)
         }
     }
@@ -959,45 +932,6 @@ private struct Person: View {
         }
         .buttonStyle(.plain)
         .disabled(action == nil)
-    }
-}
-
-/// Lays its views out in rows, starting a new row when one is full.
-private struct FlowLayout: Layout {
-    var spacing: CGFloat
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let rows = rows(in: proposal.width ?? .infinity, subviews)
-        let height = rows.map(\.height).reduce(0, +) + spacing * CGFloat(max(0, rows.count - 1))
-        return CGSize(width: proposal.width ?? rows.map(\.width).max() ?? 0, height: height)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var y = bounds.minY
-        for row in rows(in: bounds.width, subviews) {
-            var x = bounds.minX
-            for index in row.items {
-                let size = subviews[index].sizeThatFits(.unspecified)
-                subviews[index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
-                x += size.width + spacing
-            }
-            y += row.height + spacing
-        }
-    }
-
-    private func rows(in width: CGFloat, _ subviews: Subviews) -> [(items: [Int], width: CGFloat, height: CGFloat)] {
-        var rows: [(items: [Int], width: CGFloat, height: CGFloat)] = []
-        for (index, subview) in subviews.enumerated() {
-            let size = subview.sizeThatFits(.unspecified)
-            if let last = rows.last, last.width + spacing + size.width <= width {
-                rows[rows.count - 1].items.append(index)
-                rows[rows.count - 1].width += spacing + size.width
-                rows[rows.count - 1].height = max(last.height, size.height)
-            } else {
-                rows.append(([index], size.width, size.height))
-            }
-        }
-        return rows
     }
 }
 

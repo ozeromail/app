@@ -183,7 +183,7 @@ struct ComposeView: View {
             guard firstSeen != nil else { return }
             if current != firstSeen { changed = true }
             guard changed else { return }
-            try? await Task.sleep(for: .seconds(1))
+            try? await Task.sleep(for: DraftKeeper.pause)
             if !finished { keeper?.save(current) }
         }
         // The app may be closed in the background at any time.
@@ -543,6 +543,9 @@ private struct QuoteLine: View {
 /// the screen and the last one still lands after it closes. Once the message is sent or thrown
 /// away, nothing more is saved.
 final class DraftKeeper: Sendable {
+    /// How long typing pauses before the draft is saved, so each key does not save it.
+    static let pause = Duration.seconds(1)
+
     private let mail: Mail
     private let state: State
 

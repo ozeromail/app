@@ -16,8 +16,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -28,6 +31,9 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -123,6 +129,27 @@ class DraftKeeper(private val mail: Mail, private val scope: CoroutineScope, id:
                 }
                 id
             }
+        }
+    }
+}
+
+/** How long typing pauses before the draft is saved, so each key does not save it. */
+private const val SAVE_PAUSE_MS = 1_000L
+
+/** Saves what [current] gives with [save] once typing pauses; [onChange] hears each change first. */
+@Composable
+fun SaveOnPause(
+    keeper: DraftKeeper,
+    current: () -> DraftItem,
+    onChange: () -> Unit = {},
+    save: (DraftItem) -> Unit = keeper::save,
+) {
+    val latest by rememberUpdatedState(current)
+    LaunchedEffect(keeper) {
+        snapshotFlow { latest() }.drop(1).collectLatest { draft ->
+            onChange()
+            delay(SAVE_PAUSE_MS)
+            save(draft)
         }
     }
 }

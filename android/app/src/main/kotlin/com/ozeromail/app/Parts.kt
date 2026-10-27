@@ -33,6 +33,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.SnackbarVisuals
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -65,7 +66,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import uniffi.ozero_api.Mailbox
+import uniffi.ozero_api.undoSeconds
 
 /** A square-ish button holding one icon, as in the bottom bars. */
 @Composable
@@ -173,22 +176,6 @@ fun AccountDot(color: Color, modifier: Modifier = Modifier, size: Dp = 10.dp) {
     Box(modifier.size(size).background(color, CircleShape))
 }
 
-/** A person's initials on a colour of their own. */
-@Composable
-fun Avatar(name: String, key: String, modifier: Modifier = Modifier, size: Dp = 44.dp) {
-    Box(
-        modifier.size(size).background(avatarColor(key), CircleShape),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            initials(name),
-            color = Color.White,
-            fontWeight = Weight.SemiBold,
-            fontSize = fixedSp(size * 0.36f),
-        )
-    }
-}
-
 /** Text that fills a circle of a fixed size, so it does not grow with the font scale. */
 @Composable
 private fun fixedSp(size: Dp): TextUnit = with(LocalDensity.current) { size.toSp() }
@@ -201,13 +188,6 @@ fun initials(name: String): String =
         .joinToString("") { it.take(1) }
         .uppercase()
         .ifEmpty { "?" }
-
-private val AVATAR_COLORS = listOf(
-    0xFF5A6B8E, 0xFF4D8789, 0xFF7D6CAE, 0xFFA87458, 0xFF5B8C62, 0xFF93688A, 0xFF6A7B96,
-).map(::Color)
-
-/** The same colour every time for one sender. */
-private fun avatarColor(key: String): Color = AVATAR_COLORS[Math.floorMod(key.lowercase().hashCode(), AVATAR_COLORS.size)]
 
 /** The ring of every empty note, the same size on every screen. */
 private val NOTE_RING = 80.dp
@@ -253,6 +233,18 @@ class MovedToast(
 ) : SnackbarVisuals {
     override val withDismissAction = false
     override val duration = SnackbarDuration.Indefinite
+}
+
+/**
+ * Shows [text] with [undo] for [undoSeconds], in place of any other toast; true if Undo was
+ * tapped. With [go], it can also show that folder.
+ */
+suspend fun SnackbarHostState.offerUndo(text: String, undo: String, go: Mailbox? = null): Boolean {
+    // The older toast is past undo anyway.
+    currentSnackbarData?.dismiss()
+    // Closes before the core sends, so Undo is never too late.
+    val result = withTimeoutOrNull(undoSeconds().toLong() * 1000) { showSnackbar(MovedToast(text, undo, go)) }
+    return result == SnackbarResult.ActionPerformed
 }
 
 /**

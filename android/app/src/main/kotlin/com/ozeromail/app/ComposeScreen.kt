@@ -43,7 +43,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -66,9 +65,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.drop
 import java.io.IOException
 import kotlinx.coroutines.launch
 import uniffi.ozero_api.AccountItem
@@ -83,8 +79,6 @@ import uniffi.ozero_api.RecentFileItem
 /** A blank message; account 0 is none, so compose starts from the first account. */
 val NEW_DRAFT = DraftItem(0, 0, "", "", "", null, "", 0)
 
-/** A pause in typing this long saves the draft, so each key does not. */
-internal const val SAVE_PAUSE_MS = 1_000L
 
 /** The header words of a forwarded message, in the app's language. */
 fun forwardLabels(context: Context) = ForwardLabels(
@@ -163,13 +157,7 @@ fun ComposeScreen(
     fun keep() {
         if (changed && !finished) keeper.save(current())
     }
-    LaunchedEffect(keeper) {
-        snapshotFlow { current() }.drop(1).collectLatest { draft ->
-            changed = true
-            delay(SAVE_PAUSE_MS)
-            if (!finished) keeper.save(draft)
-        }
-    }
+    SaveOnPause(keeper, ::current, onChange = { changed = true }, save = { if (!finished) keeper.save(it) })
     // The process may be killed in the background at any time.
     // Something written here or before, which Delete throws away.
     val hasDraft = changed || start.id != 0L

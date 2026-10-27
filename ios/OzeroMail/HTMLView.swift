@@ -1,8 +1,7 @@
 import SwiftUI
 import WebKit
 
-/// Shows a message's HTML with no scripts, no storage and no network. With `fits` it is as tall
-/// as its page; otherwise it takes the space it is given and scrolls itself.
+/// Shows a message's HTML with no scripts, no storage and no network, as tall as its page.
 /// The page from the core also carries its own policy; a tapped link opens outside the app.
 /// The page asks for its loaded `images` by address; they go in as inline data, so the page
 /// needs nothing from outside.
@@ -10,13 +9,12 @@ struct HTMLView: View {
     let html: String
     var images: [RemoteImage?] = []
     var message: Int64 = 0
-    var fits = false
 
     @State private var height: CGFloat = 96
 
     var body: some View {
-        Page(html: html, images: images, message: message, fits: fits, height: $height)
-            .frame(height: fits ? height : nil)
+        Page(html: html, images: images, message: message, height: $height)
+            .frame(height: height)
     }
 }
 
@@ -24,7 +22,6 @@ private struct Page: UIViewRepresentable {
     let html: String
     let images: [RemoteImage?]
     let message: Int64
-    let fits: Bool
     @Binding var height: CGFloat
 
     /// The page with its image addresses, `https://images.ozero.invalid/<message>/<n>`, made
@@ -56,10 +53,8 @@ private struct Page: UIViewRepresentable {
         view.backgroundColor = .clear
         view.scrollView.backgroundColor = .clear
         // As tall as its page, it scrolls with the conversation instead.
-        view.scrollView.isScrollEnabled = !fits
-        if fits {
-            context.coordinator.watch(view.scrollView)
-        }
+        view.scrollView.isScrollEnabled = false
+        context.coordinator.watch(view.scrollView)
         Task {
             // Without the rule list the page's own policy still blocks the network.
             if let rules = await Self.rules.value {

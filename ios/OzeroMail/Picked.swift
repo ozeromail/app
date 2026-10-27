@@ -56,7 +56,7 @@ struct FileChips: View {
 }
 
 /// Lays its views out in rows, left to right, starting a new row where one does not fit.
-private struct Flow: Layout {
+struct Flow: Layout {
     let spacing: CGFloat
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
