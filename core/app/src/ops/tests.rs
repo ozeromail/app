@@ -1,4 +1,4 @@
-use ozero_domain::{AccountId, Action, MessageId, MessageLocation, OpId};
+use ozero_domain::{AccountId, Action, Answer, MessageId, MessageLocation, OpId};
 
 use super::*;
 use crate::fakes::{Memory, Server, run};
@@ -195,4 +195,33 @@ fn archiving_without_an_archive_folder_is_reverted() {
     run(push_ops(&store, &mut server, store.ops.clone())).unwrap();
     assert!(server.applied.is_empty());
     assert_eq!(*store.reverted.lock().unwrap(), [OpId(1)]);
+}
+
+#[test]
+fn answers_each_invitation_before_it_moves() {
+    let store = store(vec![
+        op(1, "INBOX", "5", Action::Archive),
+        op(2, "INBOX", "5", Action::Answer(Answer::Yes)),
+        op(3, "INBOX", "6", Action::Answer(Answer::Yes)),
+    ]);
+    let mut server = Server {
+        refuse: vec![ProviderError::Gone],
+        ..Server::default()
+    };
+    run(push_ops(&store, &mut server, store.ops.clone())).unwrap();
+    let calls: Vec<_> = server
+        .applied
+        .iter()
+        .map(|(f, _, ids, a)| (f.as_str(), ids.join(","), *a))
+        .collect();
+    // The first invitation is gone already; the second is still answered.
+    assert_eq!(
+        calls,
+        [
+            ("INBOX", "5".into(), Action::Answer(Answer::Yes)),
+            ("INBOX", "6".into(), Action::Answer(Answer::Yes)),
+            ("INBOX", "5".into(), Action::Archive),
+        ]
+    );
+    assert_eq!(store.finished.lock().unwrap().len(), 3);
 }

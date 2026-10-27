@@ -402,4 +402,29 @@ pub const MIGRATIONS: &[&str] = &[
     UPDATE draft SET text = replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(text, '\', '\\'), '*', '\*'), '_', '\_'), '~', '\~'), '`', '\`'), '[', '\['), ']', '\]'), '(', '\('), ')', '\)'), '#', '\#'), '-', '\-'), '>', '\>'), '!', '\!');
     UPDATE outbox SET text = replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(text, '\', '\\'), '*', '\*'), '_', '\_'), '~', '\~'), '`', '\`'), '[', '\['), ']', '\]'), '(', '\('), ')', '\)'), '#', '\#'), '-', '\-'), '>', '\>'), '!', '\!');
     ",
+    // 41: meeting invitations, from a message's body: the calendar as sent, what the list and
+    // a day of meetings read of it, and the person's answer in the app (see `Answer::code`).
+    // Saved bodies with an invitation file download again, so their invitations show.
+    "
+    CREATE TABLE invite (
+        message_id INTEGER PRIMARY KEY REFERENCES message(id) ON DELETE CASCADE,
+        calendar   TEXT NOT NULL,
+        uid        TEXT NOT NULL,
+        sequence   INTEGER NOT NULL,
+        summary    TEXT NOT NULL,
+        location   TEXT NOT NULL,
+        start      INTEGER NOT NULL,
+        end        INTEGER NOT NULL,
+        all_day    INTEGER NOT NULL,
+        cancelled  INTEGER NOT NULL,
+        answer     INTEGER
+    );
+    CREATE INDEX invite_uid ON invite(uid);
+    CREATE INDEX invite_start ON invite(start);
+    DELETE FROM message_body WHERE message_id IN (
+        SELECT a.message_id FROM attachment a JOIN message m ON m.id = a.message_id
+        WHERE m.stand_in = 0
+          AND (a.mime IN ('text/calendar', 'application/ics') OR lower(a.name) LIKE '%.ics')
+    );
+    ",
 ];

@@ -15,12 +15,13 @@ use ozero_app::sync::{
     sync_folders, sync_mail, wait_for_mail,
 };
 use ozero_domain::{
-    Account, AccountId, AccountKind, Action, Address, Attachment, Body, Category, Changes,
-    Checkpoint, Draft, DraftFile, DraftId, FileId, Folder, FolderId, FolderRole, Leave, ListQuery,
-    ListScope, MailProvider, MailSender, MailService, MessageId, MessageRow, Moved, NewAccount,
-    NewFolder, NewMail, Older, OpId, OutboxId, Outgoing, OutgoingFile, ProviderError,
-    ProviderState, RawMessage, RecentFile, SavedDraft, Sender, Server, Store, StoreError,
-    close_blank_lines, html, parse_recipients, saves_sent_itself,
+    Account, AccountId, AccountKind, Action, Address, Answer, Attachment, Body, Category, Changes,
+    Checkpoint, DayEvent, Draft, DraftFile, DraftId, FileId, Folder, FolderId, FolderRole,
+    Frequency, Invite, InviteKind, InviteRow, Leave, ListQuery, ListScope, MailProvider,
+    MailSender, MailService, MessageId, MessageRow, Moved, NewAccount, NewFolder, NewMail, Older,
+    OpId, OutboxId, Outgoing, OutgoingFile, ProviderError, ProviderState, RawMessage, RecentFile,
+    SavedDraft, Sender, Server, Store, StoreError, close_blank_lines, html, parse_recipients,
+    saves_sent_itself,
 };
 use ozero_ews::{EasSession, EwsSession, discover};
 use ozero_gmail::{GmailSession, oauth};
@@ -181,6 +182,9 @@ pub struct Core {
     /// The last pages read with all their images, newest last, so opening one again is
     /// instant; up to `PAGES_KEPT` times `IMAGES_SIZE` in memory.
     pages: Mutex<VecDeque<KeptPage>>,
+    /// Answers to invitations still held, by invitation: another answer meanwhile takes the
+    /// first back, so the organizer gets one.
+    answers: Mutex<HashMap<MessageId, Answered>>,
     /// How many writes changed the database since it was opened, for `changed`.
     changes: Arc<tokio::sync::watch::Sender<u64>>,
 }
@@ -242,6 +246,7 @@ impl Core {
             tokens: Mutex::default(),
             no_idle: Mutex::default(),
             pages: Mutex::default(),
+            answers: Mutex::default(),
             changes,
         }))
     }
@@ -624,6 +629,190 @@ impl Core {
         }
     }
 
+    /// The meeting invitation the message is, if it is one and its body is saved.
+    pub fn invite(&self, message: i64) -> Result<Option<InviteItem>, CoreError> {
+        let id = MessageId(message);
+        let Some(saved) = self.store.invite(id)? else {
+            return Ok(None);
+        };
+        let Some(invite) = Invite::parse(&saved.calendar) else {
+            return Ok(None);
+        };
+        let here = self.store.location(id)?;
+        let account = self.account(here.account_id)?;
+        let role = self
+            .store
+            .folders(account.id)?
+            .into_iter()
+            .find(|f| f.remote_id == here.folder_remote_id)
+            .map_or(FolderRole::Custom, |f| f.role);
+        let own = &account.email;
+        let others = invite
+            .attendees
+            .iter()
+            .filter(|(a, _)| !a.email.eq_ignore_ascii_case(own))
+            .count();
+        // Exchange and Gmail put the meeting in their own calendar.
+        let lands_nowhere = account.kind == AccountKind::Imap
+            && ozero_domain::mail_service(own) != Some(MailService::Google);
+        let answer = saved.answer.or_else(|| invite.answer_of(own));
+        let can_answer =
+            invite.kind == InviteKind::Request && role.allows(Action::Answer(Answer::Yes));
+        // The hours a strip of the day shows, and the other meetings in them.
+        let (day_from, day_to) = day_window(invite.start, invite.end);
+        let day = if invite.all_day || invite.kind == InviteKind::Cancel {
+            vec![]
+        } else {
+            self.store
+                .day(day_from, day_to)?
+                .into_iter()
+                .filter(|e| e.uid != invite.uid && !e.all_day)
+                .map(|e| DayEventItem {
+                    clashes: e.start < invite.end && e.end > invite.start,
+                    ..e.into()
+                })
+                .collect()
+        };
+        Ok(Some(InviteItem {
+            needs_answer: can_answer && answer.is_none(),
+            can_answer,
+            can_add_to_calendar: lands_nowhere && invite.kind != InviteKind::Cancel,
+            cancelled: invite.kind == InviteKind::Cancel,
+            summary: invite.summary,
+            start: invite.start,
+            end: invite.end,
+            all_day: invite.all_day,
+            offset: invite.offset,
+            location: invite.location,
+            link: invite.link,
+            organizer_name: invite.organizer.as_ref().and_then(|o| o.name.clone()),
+            organizer_email: invite.organizer.map(|o| o.email),
+            others: u32::try_from(others).unwrap_or(u32::MAX),
+            repeats: invite.repeats.map(|r| RepeatItem {
+                every: r.every.into(),
+                interval: r.interval,
+                days: r.days,
+            }),
+            before: saved.before.map(|(start, end)| Span { start, end }),
+            answer: answer.map(InviteAnswer::from),
+            day_from,
+            day_to,
+            day,
+        }))
+    }
+
+    /// Answers the meeting invitation `message` is, on the device at once and held like
+    /// `archive`: the server hears from `push_actions`. Exchange puts the meeting in the
+    /// calendar and tells the organizer itself; elsewhere the organizer gets the answer as
+    /// mail, subject `subject` as the app words it ("Accepted: Sprint"), with `comment`.
+    /// Exchange gets `comment` as a message of its own, if there is one. The invitation
+    /// goes to the archive too where Done would take it. Returns what `undo_answer` takes
+    /// back. Fails with `NotFound` if it is no invitation that takes an answer.
+    pub fn answer_invite(
+        &self,
+        message: i64,
+        answer: InviteAnswer,
+        comment: String,
+        subject: String,
+    ) -> Result<Answered, CoreError> {
+        let id = MessageId(message);
+        let held = self.held_answers().remove(&id);
+        if let Some(held) = held {
+            // Too late for it is fine: the server has it, and this one follows.
+            self.undo_answer(held)?;
+        }
+        let saved = self.store.invite(id)?.ok_or(CoreError::NotFound)?;
+        let invite = Invite::parse(&saved.calendar)
+            .filter(|i| i.kind == InviteKind::Request)
+            .ok_or(CoreError::NotFound)?;
+        let account = self.account(self.store.location(id)?.account_id)?;
+        let answer = Answer::from(answer);
+        let organizer = match invite.organizer {
+            Some(o) => o.email,
+            None => self.store.correspondents(id)?.from,
+        };
+        let comment = comment.trim();
+        let server_tells =
+            account.kind == AccountKind::Exchange && !self.speaks_active_sync(account.id)?;
+        let reply = if server_tells {
+            None
+        } else {
+            let calendar = ozero_domain::reply(
+                &saved.calendar,
+                &sender(&account),
+                answer,
+                comment,
+                now() / 1_000,
+            )
+            .ok_or(CoreError::NotFound)?;
+            Some(OutgoingFile {
+                id: None,
+                name: "reply.ics".into(),
+                mime: "text/calendar; method=REPLY".into(),
+                data: calendar.into_bytes(),
+            })
+        };
+        // The mail first: an account that cannot send it gets no answer that never arrives.
+        let mail = if reply.is_some() || !comment.is_empty() {
+            Some(self.queue_mail(
+                &account,
+                organizer,
+                subject,
+                ozero_domain::rich::escape(comment),
+                id,
+                reply,
+            )?)
+        } else {
+            None
+        };
+        let hold = now() + HOLD;
+        let queued = self
+            .store
+            .queue_alone(&[(id, Action::Answer(answer))], hold)
+            .and_then(|mut ops| {
+                match self.store.queue(id, Action::Archive, hold) {
+                    Ok(moved) => ops.extend(moved),
+                    // Where Done would not take it, it stays.
+                    Err(StoreError::NotAllowed | StoreError::NoArchive) => {}
+                    Err(e) => {
+                        self.store.undo(&ops, 0)?;
+                        return Err(e);
+                    }
+                }
+                Ok(ops)
+            });
+        match queued {
+            Ok(ops) => {
+                let answered = Answered {
+                    archived: ops.len() > 1,
+                    actions: ids(ops),
+                    mail: mail.map(|m| m.0),
+                };
+                self.held_answers().insert(id, answered.clone());
+                Ok(answered)
+            }
+            Err(e) => {
+                if let Some(mail) = mail {
+                    self.drop_mail(mail)?;
+                }
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Takes back an answer `answer_invite` gave while it is still held: true if it did.
+    pub fn undo_answer(&self, answered: Answered) -> Result<bool, CoreError> {
+        self.held_answers().retain(|_, held| *held != answered);
+        let ops: Vec<_> = answered.actions.into_iter().map(OpId).collect();
+        if !self.store.undo(&ops, now())? {
+            return Ok(false);
+        }
+        if let Some(mail) = answered.mail {
+            self.drop_mail(OutboxId(mail))?;
+        }
+        Ok(true)
+    }
+
     /// As `archive`, into the account's snoozed folder until `until` (seconds), when `wake`
     /// brings the messages back. Fails with `NoSnoozed` if an account has none yet.
     pub fn snooze(&self, messages: Vec<i64>, until: i64) -> Result<Vec<i64>, CoreError> {
@@ -779,10 +968,6 @@ impl Core {
             cc => parse_recipients(cc).ok_or(CoreError::BadCopies)?,
         };
         let from = self.account(AccountId(account))?;
-        // Would wait in the outbox forever.
-        if from.kind == AccountKind::Imap && from.smtp.is_none() {
-            return Err(CoreError::NoSmtp);
-        }
         let draft = Draft {
             account_id: from.id,
             to,
@@ -794,15 +979,7 @@ impl Core {
             quote,
             forward: forward.map(MessageId),
         };
-        let now = now();
-        let id = self.store.queue_send(
-            &draft,
-            draft_id(saved),
-            &message_id(&from.email, now),
-            now / 1_000,
-            now + HOLD,
-        )?;
-        Ok(id.0)
+        Ok(self.queue(&from, &draft, draft_id(saved))?.0)
     }
 
     /// The messages the server refused, newest first; `undo_send` takes one back to fix it.
@@ -2142,6 +2319,107 @@ impl Core {
         Ok((imap, watch))
     }
 
+    /// Puts `draft` in the outbox, held for `HOLD`; with `saved`, the saved draft it was and
+    /// its files go with it.
+    fn queue(
+        &self,
+        from: &Account,
+        draft: &Draft,
+        saved: Option<DraftId>,
+    ) -> Result<OutboxId, CoreError> {
+        // Would wait in the outbox forever.
+        if from.kind == AccountKind::Imap && from.smtp.is_none() {
+            return Err(CoreError::NoSmtp);
+        }
+        let now = now();
+        Ok(self.store.queue_send(
+            draft,
+            saved,
+            &message_id(&from.email, now),
+            now / 1_000,
+            now + HOLD,
+        )?)
+    }
+
+    /// Queues a message from `account` to `to` that answers `reply_to`, held like `send`,
+    /// with `file` if any.
+    fn held_answers(&self) -> std::sync::MutexGuard<'_, HashMap<MessageId, Answered>> {
+        self.answers.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn queue_mail(
+        &self,
+        account: &Account,
+        to: String,
+        subject: String,
+        text: String,
+        reply_to: MessageId,
+        file: Option<OutgoingFile>,
+    ) -> Result<OutboxId, CoreError> {
+        let draft = Draft {
+            account_id: account.id,
+            to: vec![to],
+            cc: vec![],
+            subject,
+            text,
+            signature: String::new(),
+            reply_to: Some(reply_to),
+            quote: String::new(),
+            forward: None,
+        };
+        if account.kind == AccountKind::Imap && account.smtp.is_none() {
+            return Err(CoreError::NoSmtp);
+        }
+        // A file goes with a message through a saved draft.
+        let saved = match file {
+            Some(file) => {
+                let saved = self.store.save_draft(&SavedDraft {
+                    id: None,
+                    account_id: Some(account.id),
+                    to: draft.to.join(", "),
+                    cc: String::new(),
+                    subject: draft.subject.clone(),
+                    text: draft.text.clone(),
+                    signature: String::new(),
+                    reply_to: Some(reply_to),
+                    quote: String::new(),
+                    forward: None,
+                    saved: now(),
+                    files: vec![],
+                })?;
+                match self.store.attach(saved, &file, FILE_LIMIT) {
+                    Ok(Some(_)) => Some(saved),
+                    failed => {
+                        self.drop_draft(saved)?;
+                        return Err(failed.err().map_or(CoreError::TooLarge, CoreError::from));
+                    }
+                }
+            }
+            None => None,
+        };
+        self.queue(account, &draft, saved).inspect_err(|_| {
+            if let Some(saved) = saved {
+                // The answer fails as it is; a draft left over would only be in the way.
+                let _ = self.drop_draft(saved);
+            }
+        })
+    }
+
+    /// Deletes a draft made for a message that does not go.
+    fn drop_draft(&self, draft: DraftId) -> Result<(), CoreError> {
+        let now = now();
+        Ok(self.store.delete_draft(draft, now, now)?)
+    }
+
+    /// Takes a held message out of the outbox for good, not back into the drafts.
+    fn drop_mail(&self, mail: OutboxId) -> Result<(), CoreError> {
+        let now = now();
+        if let Some(SavedDraft { id: Some(id), .. }) = self.store.undo_send(mail, now)? {
+            self.drop_draft(id)?;
+        }
+        Ok(())
+    }
+
     /// Whether a saved Exchange account speaks ActiveSync rather than EWS.
     fn speaks_active_sync(&self, account: AccountId) -> Result<bool, CoreError> {
         let protocol = self.store.provider_state(account, PROTOCOL)?;
@@ -2722,6 +3000,21 @@ impl MailProvider for Remote {
             Self::Gmail(p) => p.set_flagged(folder, validity, remote_ids, flagged).await,
             Self::Ews(p) => p.set_flagged(folder, validity, remote_ids, flagged).await,
             Self::Eas(p) => p.set_flagged(folder, validity, remote_ids, flagged).await,
+        }
+    }
+
+    async fn answer(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_id: &str,
+        answer: Answer,
+    ) -> Result<(), ProviderError> {
+        match self {
+            Self::Imap(p) => p.answer(folder, validity, remote_id, answer).await,
+            Self::Gmail(p) => p.answer(folder, validity, remote_id, answer).await,
+            Self::Ews(p) => p.answer(folder, validity, remote_id, answer).await,
+            Self::Eas(p) => p.answer(folder, validity, remote_id, answer).await,
         }
     }
 
@@ -3597,6 +3890,178 @@ pub enum Unsubscribed {
     Page { url: String },
 }
 
+/// What the person says to a meeting invitation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum InviteAnswer {
+    Yes,
+    Maybe,
+    No,
+}
+
+impl From<InviteAnswer> for Answer {
+    fn from(answer: InviteAnswer) -> Self {
+        match answer {
+            InviteAnswer::Yes => Self::Yes,
+            InviteAnswer::Maybe => Self::Maybe,
+            InviteAnswer::No => Self::No,
+        }
+    }
+}
+
+impl From<Answer> for InviteAnswer {
+    fn from(answer: Answer) -> Self {
+        match answer {
+            Answer::Yes => Self::Yes,
+            Answer::Maybe => Self::Maybe,
+            Answer::No => Self::No,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum RepeatEvery {
+    Day,
+    Week,
+    Month,
+    Year,
+}
+
+impl From<Frequency> for RepeatEvery {
+    fn from(every: Frequency) -> Self {
+        match every {
+            Frequency::Daily => Self::Day,
+            Frequency::Weekly => Self::Week,
+            Frequency::Monthly => Self::Month,
+            Frequency::Yearly => Self::Year,
+        }
+    }
+}
+
+/// How a meeting comes back.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RepeatItem {
+    pub every: RepeatEvery,
+    /// Every this many days, weeks, months or years.
+    pub interval: u32,
+    /// The weekdays it falls on, 0 for Monday to 6 for Sunday; empty when it names none.
+    pub days: Vec<u8>,
+}
+
+/// A meeting invitation, as the reader shows it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct InviteItem {
+    pub summary: String,
+    /// Seconds since the Unix epoch. A day-long meeting starts at 00:00 UTC of its first
+    /// day and ends at 00:00 UTC after its last: show its dates in UTC.
+    pub start: i64,
+    pub end: i64,
+    pub all_day: bool,
+    /// The organizer's offset from UTC at the start, in minutes, when the invitation
+    /// gives the time in a zone: to show their time where it differs from the phone's.
+    pub offset: Option<i32>,
+    pub location: String,
+    /// Where to join it online.
+    pub link: Option<String>,
+    pub organizer_name: Option<String>,
+    pub organizer_email: Option<String>,
+    /// How many others are asked, the person and the organizer aside.
+    pub others: u32,
+    pub repeats: Option<RepeatItem>,
+    /// The meeting is off.
+    pub cancelled: bool,
+    /// When the meeting was before this update moved it, if an earlier invitation says.
+    pub before: Option<Span>,
+    /// What the person answered, in the app or as the invitation tells.
+    pub answer: Option<InviteAnswer>,
+    /// `Core::answer_invite` takes an answer to it.
+    pub can_answer: bool,
+    /// It takes an answer and has none yet: the reader asks for one.
+    pub needs_answer: bool,
+    /// The meeting lands in no calendar by itself: the app offers the phone's.
+    pub can_add_to_calendar: bool,
+    /// The hours around a timed meeting a strip of the day shows, as `start`, and the other
+    /// meetings in them from invitations in the mail, earliest first, but those called off or
+    /// turned down. Empty for a day-long or cancelled one.
+    pub day_from: i64,
+    pub day_to: i64,
+    pub day: Vec<DayEventItem>,
+}
+
+/// From when to when, in seconds since the Unix epoch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct Span {
+    pub start: i64,
+    pub end: i64,
+}
+
+/// The hours a strip of the day shows around a meeting: from the hour before it, four at least,
+/// ten at most.
+fn day_window(start: i64, end: i64) -> (i64, i64) {
+    const HOUR: i64 = 3_600;
+    let from = start.div_euclid(HOUR) * HOUR - HOUR;
+    let after = (end + HOUR - 1).div_euclid(HOUR) * HOUR + HOUR;
+    (from, after.max(from + 4 * HOUR).min(from + 10 * HOUR))
+}
+
+/// Another meeting of the day, from an invitation in the mail.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct DayEventItem {
+    /// It overlaps the meeting it is shown around.
+    pub clashes: bool,
+    /// The message with its newest invitation.
+    pub message: i64,
+    pub summary: String,
+    pub start: i64,
+    pub end: i64,
+    pub all_day: bool,
+    pub answer: Option<InviteAnswer>,
+}
+
+impl From<DayEvent> for DayEventItem {
+    fn from(e: DayEvent) -> Self {
+        Self {
+            message: e.message.0,
+            summary: e.summary,
+            start: e.start,
+            end: e.end,
+            all_day: e.all_day,
+            answer: e.answer.map(InviteAnswer::from),
+            clashes: false,
+        }
+    }
+}
+
+/// An answer `Core::undo_answer` can take back while it is held.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct Answered {
+    pub actions: Vec<i64>,
+    /// The answer's mail to the organizer, if one goes.
+    pub mail: Option<i64>,
+    /// The invitation went to the archive, as Done takes mail: the reader moves on.
+    pub archived: bool,
+}
+
+/// What a message list shows of an invitation in place of its text.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct InviteMark {
+    /// As `InviteItem::start`.
+    pub start: i64,
+    pub all_day: bool,
+    pub cancelled: bool,
+    pub location: String,
+}
+
+impl From<InviteRow> for InviteMark {
+    fn from(row: InviteRow) -> Self {
+        Self {
+            start: row.start,
+            all_day: row.all_day,
+            cancelled: row.cancelled,
+            location: row.location,
+        }
+    }
+}
+
 /// One row of a message list.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct MessageItem {
@@ -3638,6 +4103,8 @@ pub struct MessageItem {
     pub attachments: Vec<String>,
     /// The user sent it and it waits to go: nothing can be done to it until it has.
     pub sending: bool,
+    /// The meeting it invites to, once its body is downloaded.
+    pub invite: Option<InviteMark>,
 }
 
 impl From<MessageRow> for MessageItem {
@@ -3667,6 +4134,7 @@ impl From<MessageRow> for MessageItem {
             account: None,
             attachments: row.attachments,
             sending: row.sending,
+            invite: row.invite.map(InviteMark::from),
         }
     }
 }

@@ -14,8 +14,8 @@ use std::time::Duration;
 
 use mail_parser::DateTime;
 use ozero_domain::{
-    Changes, Checkpoint, Flags, FolderRole, MailProvider, MailSender, Moved, NewFolder, Older,
-    ProviderError, ProviderState, RawMessage, Server,
+    Answer, Changes, Checkpoint, Flags, FolderRole, MailProvider, MailSender, Moved, NewFolder,
+    Older, ProviderError, ProviderState, RawMessage, Server,
 };
 use ozero_http::Tls;
 
@@ -974,6 +974,40 @@ impl MailProvider for EasSession {
         Err(ProviderError::Rejected(
             "ActiveSync saves no message into a folder".into(),
         ))
+    }
+
+    async fn answer(
+        &mut self,
+        folder: &str,
+        _validity: u32,
+        remote_id: &str,
+        answer: Answer,
+    ) -> Result<(), ProviderError> {
+        // ActiveSync's UserResponse numbers the answers as `Answer::code` does.
+        let response = answer.code().to_string();
+        // The server puts the meeting in the calendar; the organizer hears by mail, which
+        // the app sends itself, as ActiveSync before 16.0 leaves it to the device.
+        let request = Node::new(
+            "MeetingResponse:MeetingResponse",
+            vec![Node::new(
+                "MeetingResponse:Request",
+                vec![
+                    Node::text("MeetingResponse:UserResponse", response),
+                    Node::text("MeetingResponse:CollectionId", folder),
+                    Node::text("MeetingResponse:RequestId", remote_id),
+                ],
+            )],
+        );
+        let answer = self.command("MeetingResponse", &request, true).await?;
+        match answer.text_at(&["MeetingResponse:Result", "MeetingResponse:Status"]) {
+            "1" => Ok(()),
+            // Not a meeting request, or no longer there.
+            "2" => Err(ProviderError::Gone),
+            "4" => Err(ProviderError::Network("MeetingResponse status 4".into())),
+            status => Err(ProviderError::Rejected(format!(
+                "MeetingResponse status {status}"
+            ))),
+        }
     }
 
     async fn wait(

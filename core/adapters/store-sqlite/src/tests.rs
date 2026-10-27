@@ -458,6 +458,7 @@ fn body_is_saved_with_its_snippet() {
         text: "Hi Anna,\nsee you soon".into(),
         html: Some("<p>Hi Anna,</p>".into()),
         attachments: vec![file(4, "b.pdf"), file(2, "")],
+        calendar: None,
     };
     store.save_body(id, &body).unwrap();
     // In part order, the nameless one too.
@@ -1293,6 +1294,7 @@ fn lists_unread_mail_and_mail_with_files_of_every_account() {
             mime: "application/pdf".into(),
             size: 10,
         }],
+        calendar: None,
     };
     store.save_body(id("Subject 2"), &body).unwrap();
     assert_eq!(subjects(ListScope::Files), ["Subject 2"]);
@@ -2549,6 +2551,7 @@ fn offers_recent_files_once_each_newest_first() {
         text: String::new(),
         html: None,
         attachments: files,
+        calendar: None,
     };
     let file = |part: u32, name: &str| Attachment {
         part,
@@ -3022,4 +3025,157 @@ fn keeps_the_marks_of_text_written_before_styles() {
             .unwrap();
         assert_eq!(text, ozero_domain::rich::escape(plain));
     }
+}
+
+fn calendar(uid: &str, sequence: u32, start: &str, method: &str) -> String {
+    format!(
+        "BEGIN:VCALENDAR\r\nMETHOD:{method}\r\nBEGIN:VEVENT\r\nUID:{uid}\r\nSEQUENCE:{sequence}\r\n\
+SUMMARY:Meeting {uid}\r\nDTSTART:{start}\r\nDURATION:PT1H\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    )
+}
+
+fn invited(store: &SqliteStore, id: MessageId, calendar: String) {
+    let body = Body {
+        text: "Come".into(),
+        calendar: Some(calendar),
+        ..Body::default()
+    };
+    store.save_body(id, &body).unwrap();
+}
+
+#[test]
+fn an_answer_shows_at_once_and_stays_with_the_message() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let folder = inbox(&store, account);
+    archive_folder(&store, account);
+    store.save_messages(folder, &[message(1, 100)]).unwrap();
+    let id = list(&store, ListScope::Folder(folder), 10, None)[0].id;
+    assert_eq!(store.invite(id).unwrap(), None);
+    assert_eq!(
+        store.queue_alone(&[(id, Action::Answer(Answer::Yes))], 50),
+        Err(StoreError::NotFound)
+    );
+
+    let sent = calendar("m", 0, "20261029T080000Z", "REQUEST");
+    invited(&store, id, sent.clone());
+    assert_eq!(
+        store.body(id).unwrap().unwrap().calendar.as_deref(),
+        Some(&*sent)
+    );
+    let row = list(&store, ListScope::Folder(folder), 10, None).remove(0);
+    let shown = InviteRow {
+        start: 1_793_260_800,
+        all_day: false,
+        cancelled: false,
+        location: String::new(),
+    };
+    assert_eq!(row.invite, Some(shown));
+    let saved = store.invite(id).unwrap().unwrap();
+    assert_eq!(
+        (saved.calendar, saved.answer, saved.before),
+        (sent.clone(), None, None)
+    );
+
+    // Undo takes the answer back; a second answer replaces the first, undone as one.
+    let op = store
+        .queue_alone(&[(id, Action::Answer(Answer::Yes))], 50)
+        .unwrap();
+    assert_eq!(store.invite(id).unwrap().unwrap().answer, Some(Answer::Yes));
+    assert!(store.undo(&op, 49).unwrap());
+    assert_eq!(store.invite(id).unwrap().unwrap().answer, None);
+    store
+        .queue_alone(&[(id, Action::Answer(Answer::Yes))], 0)
+        .unwrap();
+    store
+        .queue_alone(&[(id, Action::Answer(Answer::No))], 0)
+        .unwrap();
+    let due = store.due(account, 0).unwrap();
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].action, Action::Answer(Answer::No));
+    store.revert(&due).unwrap();
+    assert_eq!(store.invite(id).unwrap().unwrap().answer, None);
+
+    // A body saved again keeps it; the archived copy has it too.
+    store
+        .queue_alone(&[(id, Action::Answer(Answer::Maybe))], 0)
+        .unwrap();
+    store.finish(&store.due(account, 0).unwrap()).unwrap();
+    invited(&store, id, sent);
+    assert_eq!(
+        store.invite(id).unwrap().unwrap().answer,
+        Some(Answer::Maybe)
+    );
+    store.queue(id, Action::Archive, 0).unwrap();
+    let archive = store
+        .folders(account)
+        .unwrap()
+        .into_iter()
+        .find(|f| f.role == FolderRole::Archive)
+        .unwrap();
+    let copy = list(&store, ListScope::Folder(archive.id), 10, None)[0].id;
+    assert_eq!(
+        store.invite(copy).unwrap().unwrap().answer,
+        Some(Answer::Maybe)
+    );
+
+    // A body without an invitation forgets it.
+    store.save_body(id, &Body::default()).unwrap();
+    assert_eq!(store.invite(id).unwrap(), None);
+}
+
+#[test]
+fn a_day_shows_each_meeting_as_its_newest_invitation_has_it() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let folder = inbox(&store, account);
+    let messages: Vec<NewMessage> = (1..=6).map(|i| message(i, i64::from(i) * 100)).collect();
+    store.save_messages(folder, &messages).unwrap();
+    let rows = list(&store, ListScope::Folder(folder), 10, None);
+    let id = |n: usize| rows[rows.len() - n].id;
+    // 29 October 2026, 08:00 UTC.
+    let eight = 1_793_260_800;
+    invited(
+        &store,
+        id(1),
+        calendar("moved", 0, "20261029T080000Z", "REQUEST"),
+    );
+    invited(
+        &store,
+        id(2),
+        calendar("moved", 1, "20261029T100000Z", "REQUEST"),
+    );
+    invited(
+        &store,
+        id(3),
+        calendar("off", 0, "20261029T090000Z", "REQUEST"),
+    );
+    invited(
+        &store,
+        id(4),
+        calendar("off", 1, "20261029T090000Z", "CANCEL"),
+    );
+    invited(
+        &store,
+        id(5),
+        calendar("other day", 0, "20261030T090000Z", "REQUEST"),
+    );
+    invited(
+        &store,
+        id(6),
+        calendar("declined", 0, "20261029T070000Z", "REQUEST"),
+    );
+    store
+        .queue_alone(&[(id(6), Action::Answer(Answer::No))], 0)
+        .unwrap();
+
+    let day = store.day(eight - 2 * 3_600, eight + 6 * 3_600).unwrap();
+    let found: Vec<_> = day.iter().map(|e| (e.message, e.start)).collect();
+    assert_eq!(found, [(id(2), eight + 2 * 3_600)]);
+    assert_eq!(day[0].summary, "Meeting moved");
+
+    // The update says when the meeting was before; the first invitation says nothing.
+    let update = store.invite(id(2)).unwrap().unwrap();
+    assert_eq!(update.before, Some((eight, eight + 3_600)));
+    assert_eq!(store.invite(id(1)).unwrap().unwrap().before, None);
 }

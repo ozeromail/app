@@ -7,12 +7,12 @@ use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
 use ozero_domain::{
-    Account, AccountId, Action, Address, Body, Category, Changes, Checkpoint, Correspondents,
-    Draft, DraftCopy, DraftFile, DraftId, DraftToPush, FileId, Flags, Folder, FolderId, FolderRole,
-    ListQuery, MailProvider, MailSender, MessageBuilder, MessageId, MessageLocation, MessageParser,
-    MessageRow, Moved, NewAccount, NewFolder, NewMail, NewMessage, Older, Op, OpId, OutboxId,
-    Outgoing, OutgoingFile, ProviderError, RawMessage, RecentFile, SavedDraft, ServerDraft, Store,
-    StoreError, Unsent, Unsubscribe,
+    Account, AccountId, Action, Address, Answer, Body, Category, Changes, Checkpoint,
+    Correspondents, DayEvent, Draft, DraftCopy, DraftFile, DraftId, DraftToPush, FileId, Flags,
+    Folder, FolderId, FolderRole, ListQuery, MailProvider, MailSender, MessageBuilder, MessageId,
+    MessageLocation, MessageParser, MessageRow, Moved, NewAccount, NewFolder, NewMail, NewMessage,
+    Older, Op, OpId, OutboxId, Outgoing, OutgoingFile, ProviderError, RawMessage, RecentFile,
+    SavedDraft, SavedInvite, ServerDraft, Store, StoreError, Unsent, Unsubscribe,
 };
 
 /// Fakes answer at once, so one poll finishes the future.
@@ -151,6 +151,21 @@ impl MailProvider for Server {
         flagged: bool,
     ) -> impl Future<Output = Result<(), ProviderError>> + Send {
         ready(self.apply(folder, validity, remote_ids, Action::Flagged(flagged)))
+    }
+
+    fn answer(
+        &mut self,
+        folder: &str,
+        validity: u32,
+        remote_id: &str,
+        answer: Answer,
+    ) -> impl Future<Output = Result<(), ProviderError>> + Send {
+        ready(self.apply(
+            folder,
+            validity,
+            &[remote_id.into()],
+            Action::Answer(answer),
+        ))
     }
 
     fn move_to(
@@ -622,6 +637,14 @@ impl Store for Memory {
 
     fn body(&self, _: MessageId) -> Result<Option<Body>, StoreError> {
         Ok(None)
+    }
+
+    fn invite(&self, _: MessageId) -> Result<Option<SavedInvite>, StoreError> {
+        Ok(None)
+    }
+
+    fn day(&self, _: i64, _: i64) -> Result<Vec<DayEvent>, StoreError> {
+        Ok(vec![])
     }
 
     fn queue_all(&self, _: &[(MessageId, Action)], _: i64) -> Result<Vec<OpId>, StoreError> {

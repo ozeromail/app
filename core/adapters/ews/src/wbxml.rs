@@ -333,6 +333,19 @@ const PAGES: &[(u8, &[(u8, &str)])] = &[
         ],
     ),
     (
+        8,
+        &[
+            (0x05, "MeetingResponse:CalendarId"),
+            (0x06, "MeetingResponse:CollectionId"),
+            (0x07, "MeetingResponse:MeetingResponse"),
+            (0x08, "MeetingResponse:RequestId"),
+            (0x09, "MeetingResponse:Request"),
+            (0x0a, "MeetingResponse:Result"),
+            (0x0b, "MeetingResponse:Status"),
+            (0x0c, "MeetingResponse:UserResponse"),
+        ],
+    ),
+    (
         13,
         &[
             (0x05, "Ping:Ping"),

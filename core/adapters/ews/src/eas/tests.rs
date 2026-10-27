@@ -642,3 +642,35 @@ async fn starts_a_folder_over_when_it_keeps_another_span() {
     assert_eq!(days.checkpoint.validity, month.checkpoint.validity + 1);
     assert_eq!(filters()[1], ("S1".to_owned(), "2".to_owned()));
 }
+
+#[tokio::test]
+async fn answers_an_invitation_in_the_calendar() {
+    let (mut eas, _, took, _) = server(|_, request, _| {
+        let id = request.text_at(&["MeetingResponse:Request", "MeetingResponse:RequestId"]);
+        let status = if id == "1:9" { "2" } else { "1" };
+        let result = n(
+            "MeetingResponse:Result",
+            vec![
+                t("MeetingResponse:RequestId", id),
+                t("MeetingResponse:Status", status),
+            ],
+        );
+        (
+            200,
+            Some(n("MeetingResponse:MeetingResponse", vec![result])),
+        )
+    })
+    .await;
+    eas.answer("1", 0, "1:5", Answer::No).await.unwrap();
+    assert_eq!(
+        eas.answer("1", 0, "1:9", Answer::Yes).await,
+        Err(ProviderError::Gone)
+    );
+    let took = took.lock().unwrap();
+    let (cmd, request) = &took[0];
+    assert_eq!(cmd, "MeetingResponse");
+    let asked = |name| request.text_at(&["MeetingResponse:Request", name]);
+    assert_eq!(asked("MeetingResponse:UserResponse"), "3");
+    assert_eq!(asked("MeetingResponse:CollectionId"), "1");
+    assert_eq!(asked("MeetingResponse:RequestId"), "1:5");
+}

@@ -4,6 +4,7 @@ mod account;
 mod encoding;
 mod folder;
 pub mod html;
+mod invite;
 mod message;
 mod op;
 mod outbox;
@@ -19,6 +20,9 @@ pub use account::{
 };
 pub use encoding::{base64, decode_base64, markup_escape, percent_decode};
 pub use folder::{Folder, FolderId, FolderRole, NewFolder, SNOOZED};
+pub use invite::{
+    Answer, DayEvent, Frequency, Invite, InviteKind, InviteRow, Repeat, SavedInvite, reply,
+};
 pub use message::{
     Address, Attachment, Body, Correspondents, Cursor, Flags, ListQuery, ListScope, MessageId,
     MessageLocation, MessageRow, NewMessage, RecentFile, Sender, close_blank_lines,

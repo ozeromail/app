@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use ozero_domain::{Action, MailProvider, Op, ProviderError, Store};
+use ozero_domain::{Action, Answer, MailProvider, Op, ProviderError, Store};
 
 use crate::sync::SyncError;
 
@@ -29,6 +29,9 @@ pub async fn push_ops(
     for ((_, folder, validity, action, to), ops) in batches {
         let ids: Vec<_> = ops.iter().map(|o| o.location.remote_id.clone()).collect();
         let sent = match (action, to) {
+            (Action::Answer(answer), _) => {
+                answer_each(provider, &folder, validity, &ids, answer).await
+            }
             (Action::Seen(seen), _) => provider.set_seen(&folder, validity, &ids, seen).await,
             (Action::Flagged(flagged), _) => {
                 provider.set_flagged(&folder, validity, &ids, flagged).await
@@ -65,6 +68,23 @@ pub async fn push_ops(
             // Refused for good: trying again would hold back every action after it.
             Err(ProviderError::Protocol(_) | ProviderError::Rejected(_)) => store.revert(&ops)?,
             Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(())
+}
+
+/// Answers each invitation; one no longer there is skipped.
+async fn answer_each(
+    provider: &mut impl MailProvider,
+    folder: &str,
+    validity: u32,
+    ids: &[String],
+    answer: Answer,
+) -> Result<(), ProviderError> {
+    for id in ids {
+        match provider.answer(folder, validity, id, answer).await {
+            Ok(()) | Err(ProviderError::Gone) => {}
+            Err(e) => return Err(e),
         }
     }
     Ok(())
