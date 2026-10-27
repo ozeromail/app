@@ -429,6 +429,40 @@ private fun AccountFolders(account: AccountItem, state: MailboxesState, actions:
 }
 
 /**
+ * Where a message can move, from [targets]: the account's inbox and archive, then its own
+ * folders in tree order. Without any, says so.
+ */
+@Composable
+fun MoveTargets(targets: List<FolderItem>, onPick: (FolderItem, String) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Caption(stringResource(R.string.move_title))
+    if (targets.isEmpty()) {
+        Text(
+            stringResource(R.string.move_none),
+            color = colors.onSurfaceVariant,
+            style = Type.Row,
+            modifier = Modifier.padding(horizontal = Gap.sheet, vertical = 12.dp),
+        )
+        return
+    }
+    val (usual, own) = targets.partition { it.role != FolderRole.CUSTOM }
+    usual.sortedBy { it.role.rank() }.forEach { folder ->
+        val title = folder.title()
+        FolderRow(folder.role.icon(), title, open = false) { onPick(folder, title) }
+    }
+    val ids = targets.map { it.id }.toSet()
+    treeOrder(own).forEach { folder ->
+        val title = folder.shownName(ids)
+        FolderRow(
+            lead = { Glyph(R.drawable.ic_folder, null, colors.primary) },
+            title = title,
+            open = false,
+            indent = own.any { it.id == folder.parent },
+        ) { onPick(folder, title) }
+    }
+}
+
+/**
  * [folders] in tree order: each folder with the ones inside it right under it, by the names
  * they show with.
  */

@@ -284,5 +284,9 @@
   "mail_settings": "Mail",
   "action_move": "Move",
   "action_pin": "Pin",
-  "action_unpin": "Unpin"
+  "action_unpin": "Unpin",
+  "action_move_to_folder": "Move to Folder",
+  "move_title": "Move to",
+  "inbox_moved_to": "Moved to %1$s",
+  "move_none": "No other folders"
 }

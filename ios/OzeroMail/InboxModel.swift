@@ -506,10 +506,11 @@ final class InboxModel {
     /// one; the toast can take them all back for a moment, or show that folder.
     /// True if they were taken back.
     @discardableResult
-    private func remove(_ gone: [MessageItem], toast text: String, role: FolderRole?, move: ([MessageItem]) async throws -> [Int64]) async -> Bool {
+    private func remove(_ gone: [MessageItem], toast text: String, role: FolderRole?, to: FolderItem? = nil,
+                        move: ([MessageItem]) async throws -> [Int64]) async -> Bool {
         let accounts = Set(gone.map(\.accountId))
         let go = accounts.count == 1
-            ? folders.first { $0.accountId == accounts.first && $0.role == role }.map { Mailbox.folder(id: $0.id) }
+            ? (to ?? folders.first { $0.accountId == accounts.first && $0.role == role }).map { Mailbox.folder(id: $0.id) }
             : nil
         let actions: [Int64]
         do {
@@ -585,6 +586,13 @@ final class InboxModel {
             var changed = row
             changed.flagged = flagged
             return changed
+        }
+    }
+
+    /// Into another folder of the account, named `title` in the toast.
+    func moveToFolder(_ gone: [MessageItem], to folder: FolderItem, title: String) async {
+        await remove(gone, toast: tr("inbox_moved_to", title), role: nil, to: folder) {
+            try await self.mail.moveToFolder($0, folder: folder)
         }
     }
 

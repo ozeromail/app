@@ -328,6 +328,13 @@ class Mail(private val context: Context) {
         push(messages)
     }
 
+    /** As [archive], into [folder], another folder of the messages' account. */
+    suspend fun moveToFolder(messages: List<MessageItem>, folder: FolderItem): List<Long> =
+        move(messages) { core.moveToFolder(it, folder.id) }
+
+    /** Where [moveToFolder] can take [message]: its account's inbox, archive and own folders, but its own. */
+    suspend fun moveTargets(message: MessageItem): List<FolderItem> = io { core.moveTargets(message.id) }
+
     /** As [archive], back into the inbox: for mail in the archive, trash or spam. */
     suspend fun moveToInbox(messages: List<MessageItem>): List<Long> = move(messages) { core.moveToInbox(it) }
 
