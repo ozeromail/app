@@ -77,6 +77,7 @@ import uniffi.ozero_api.RichBlock
 import uniffi.ozero_api.RichStyle
 import uniffi.ozero_api.richBlocks
 import uniffi.ozero_api.richFix
+import uniffi.ozero_api.richLinkAt
 import uniffi.ozero_api.richMarks
 import uniffi.ozero_api.richToggle
 
@@ -102,7 +103,9 @@ fun RichBody(
 ) {
     val colors = MaterialTheme.colorScheme
     val look = remember(colors) { RichLook(colors) }
-    val blocks = remember(text.value) { richBlocks(text.value) }
+    // Parsed once for each text, however often it is asked for.
+    val parsed = remember { Parsed() }
+    val blocks = parsed.blocks(text.value)
     // Each field by the image above it, 0 for the first, so a field keeps its caret.
     val fields = remember { mutableStateMapOf<Long, TextFieldValue>() }
     var focused by remember { mutableStateOf<Long?>(null) }
@@ -111,7 +114,7 @@ fun RichBody(
     /** Where the field under [key] is in the whole text now. */
     fun span(key: Long): IntRange? {
         var above = 0L
-        for (block in richBlocks(text.value)) {
+        for (block in parsed.blocks(text.value)) {
             when (block) {
                 is RichBlock.Text -> if (above == key) return block.start.toInt() until block.end.toInt()
                 is RichBlock.Image -> above = block.file
@@ -139,11 +142,7 @@ fun RichBody(
     toolbar.onFormat = { style ->
         if (style == RichStyle.LINK) {
             val value = focused?.let { fields[it] }
-            val has = value?.let { v ->
-                richMarks(v.text).find {
-                    it.style == RichStyle.LINK && it.openEnd.toInt() <= v.selection.min && v.selection.max <= it.closeStart.toInt()
-                }?.url
-            }
+            val has = value?.let { richLinkAt(it.text, it.selection.min.toUInt(), it.selection.max.toUInt()) }
             onLink(has) { url -> format(RichStyle.LINK, url) }
         } else {
             format(style)
@@ -202,6 +201,20 @@ fun RichBody(
     }
 }
 
+/** The blocks of the last text asked for. */
+private class Parsed {
+    private var text: String? = null
+    private var blocks: List<RichBlock> = emptyList()
+
+    fun blocks(of: String): List<RichBlock> {
+        if (of != text) {
+            blocks = richBlocks(of)
+            text = of
+        }
+        return blocks
+    }
+}
+
 /** One run of text between images, its marks hidden. */
 @Composable
 private fun RichField(
@@ -239,8 +252,15 @@ private fun RichField(
  * The caret never stops inside hidden marks: a place there counts as after them.
  */
 private class RichLook(private val colors: ColorScheme) : VisualTransformation {
+    // The field asks again as the caret moves; the text is the same then.
+    private var last: Pair<String, TransformedText>? = null
+
     override fun filter(text: AnnotatedString): TransformedText {
-        val raw = text.text
+        last?.let { (raw, shown) -> if (raw == text.text) return shown }
+        return look(text.text).also { last = text.text to it }
+    }
+
+    private fun look(raw: String): TransformedText {
         val marks = richMarks(raw)
         val hidden = BooleanArray(raw.length)
         val bullets = HashSet<Int>()

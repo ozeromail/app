@@ -69,6 +69,8 @@ struct ComposeView: View {
     /// To and Subject shown again while the text is typed on its side.
     @State private var unfolded = false
     @State private var textHeight: CGFloat = 0
+    /// The files the text shows as images, which go without a chip.
+    @State private var shownFiles: [Int64] = []
 
     private enum Field { case to, cc, subject, signature }
 
@@ -196,10 +198,12 @@ struct ComposeView: View {
             if case .success(let urls) = result { addFiles(urls) }
         }
         .animation(.smooth, value: editing)
+        .onChange(of: text, initial: true) { shownFiles = Self.shown(in: text) }
         .task(id: shownFiles) {
             // The images of the text, as the draft keeps them.
             for file in shownFiles where images[file] == nil {
-                if let data = try? await mail.draftFileData(file), let image = shownImage(data) { images[file] = image }
+                guard let data = try? await mail.draftFileData(file) else { continue }
+                if let image = await Task.detached(operation: { shownImage(data) }).value { images[file] = image }
             }
         }
         .alert("compose_format_link", isPresented: Binding(get: { linking != nil }, set: { if !$0 { linking = nil } })) {
@@ -245,8 +249,8 @@ struct ComposeView: View {
     /// the little height the keyboard leaves; a tap on the line brings them back.
     private var folded: Bool { sideways && textFocused && !unfolded }
 
-    /// The files the text shows as images, which go without a chip.
-    private var shownFiles: [Int64] {
+    /// The files `text` shows as images, which go without a chip.
+    private static func shown(in text: String) -> [Int64] {
         richBlocks(text: text).compactMap { block in
             if case .image(_, _, let file, _) = block { file } else { nil }
         }
@@ -495,7 +499,8 @@ struct ComposeView: View {
             guard let media = try await items[index].loadTransferable(type: PickedMedia.self) else {
                 throw CocoaError(.fileReadUnknown)
             }
-            guard let file = media.file, let light = file.lighter() else { return media.file }
+            guard let file = media.file,
+                  let light = await Task.detached(operation: { file.lighter() }).value else { return media.file }
             lighter[index] = Picture(original: file, light: light, full: false)
             return light
         }, then: { added in
@@ -509,24 +514,15 @@ struct ComposeView: View {
 
     /// Sends the other of a photo's two versions: the original, or the lighter one again.
     private func swap(_ file: Int64, _ picture: Picture, _ size: ImageSize) {
-        guard let keeper, let shown = files.first(where: { $0.id == file }) else { return }
-        Task {
-            do {
-                let other = picture.full ? picture.light : picture.original
-                let room = fileLimit() - min(fileLimit(), files.reduce(0) { $0 + $1.size })
-                guard UInt64(other.data.count) <= room else { throw CoreError.TooLarge }
-                let added = try await keeper.attach(current, other)
-                files.append(added)
-                pictures[added.id] = Picture(original: picture.original, light: picture.light, full: !picture.full)
-                if let image = images[file] { images[added.id] = image }
-                text = richChangeImage(text: text, file: file, to: added.id, size: size)
-                detach(shown)
-            } catch let error as CoreError {
-                self.error = error.text()
-            } catch {
-                self.error = "compose_file_unreadable"
-            }
-        }
+        guard let shown = files.first(where: { $0.id == file }) else { return }
+        let other = picture.full ? picture.light : picture.original
+        add([other.name], read: { _, _ in other }, then: { added in
+            guard let attached = added.first?.1 else { return }
+            pictures[attached.id] = Picture(original: picture.original, light: picture.light, full: !picture.full)
+            images[attached.id] = images[file]
+            text = richChangeImage(text: text, file: file, to: attached.id, size: size)
+            detach(shown)
+        })
     }
 
     private func addFiles(_ urls: [URL]) {

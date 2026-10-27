@@ -33,21 +33,21 @@ impl MessageBuilder for MimeBuilder {
                 f.mime.starts_with("image/")
                     && f.id.is_some_and(|id| shown.iter().any(|&(s, _)| s == id))
             });
-        let image = |id: FileId| inline.iter().find(|f| f.id == Some(id));
-        let cid = |id: FileId| format!("f{}.{}", id.0, one_line(&message.message_id));
-        let plain = rich::to_plain(text, &|id| image(id).map(|f| f.name.clone()));
+        let id = one_line(&message.message_id);
+        let inline: Vec<(FileId, String, &OutgoingFile)> = inline
+            .into_iter()
+            .filter_map(|f| f.id.map(|i| (i, format!("f{}.{id}", i.0), f)))
+            .collect();
+        let image = |id: FileId| inline.iter().find(|(i, ..)| *i == id);
+        let plain = rich::to_plain(text, &|id| image(id).map(|(.., f)| f.name.clone()));
         let html = rich::is_rich(text).then(|| {
             rich::to_html(text, &|id| {
-                image(id).map(|f| HtmlImage {
-                    cid: cid(id),
+                image(id).map(|(_, cid, f)| HtmlImage {
+                    cid: cid.clone(),
                     name: f.name.clone(),
                 })
             })
         });
-        let inline: Vec<(String, &OutgoingFile)> = inline
-            .into_iter()
-            .filter_map(|f| Some((cid(f.id?), f)))
-            .collect();
         // Unique as the message id, and never in base64, which has no `=_`.
         let local = message.message_id.split('@').next().unwrap_or_default();
         let local = one_line(local).replace('"', "");
@@ -61,17 +61,13 @@ impl MessageBuilder for MimeBuilder {
             body.write(&mut out);
             return out.into_bytes();
         }
-        let boundary = format!("=_m.{local}");
-        let content = format!("multipart/mixed; boundary=\"{boundary}\"");
-        header(&mut out, "Content-Type", &content);
-        out.push_str("\r\n");
-        out.push_str(&format!("--{boundary}\r\n"));
-        body.write(&mut out);
-        for file in files {
-            out.push_str(&format!("--{boundary}\r\n"));
-            attachment(&mut out, file, None);
-        }
-        out.push_str(&format!("--{boundary}--\r\n"));
+        let mut parts: Vec<Part> = vec![Box::new(|out| body.write(out))];
+        parts.extend(
+            files
+                .into_iter()
+                .map(|file| -> Part { Box::new(move |out| attachment(out, file, None)) }),
+        );
+        multipart(&mut out, "mixed", &format!("=_m.{local}"), parts);
         out.into_bytes()
     }
 }
@@ -82,7 +78,7 @@ struct Body<'a> {
     plain: &'a str,
     html: Option<&'a str>,
     /// The images with their `Content-ID`s.
-    inline: &'a [(String, &'a OutgoingFile)],
+    inline: &'a [(FileId, String, &'a OutgoingFile)],
     /// Makes the boundaries.
     local: &'a str,
 }
@@ -92,37 +88,39 @@ impl Body<'_> {
         if self.inline.is_empty() {
             return self.alternatives(out);
         }
-        let boundary = format!("=_r.{}", self.local);
-        let content =
-            format!("multipart/related; type=\"multipart/alternative\"; boundary=\"{boundary}\"");
-        header(out, "Content-Type", &content);
-        out.push_str("\r\n");
-        out.push_str(&format!("--{boundary}\r\n"));
-        self.alternatives(out);
-        for (cid, file) in self.inline {
-            out.push_str(&format!("--{boundary}\r\n"));
-            attachment(out, file, Some(cid));
-        }
-        out.push_str(&format!("--{boundary}--\r\n"));
+        let mut parts: Vec<Part> = vec![Box::new(|out| self.alternatives(out))];
+        parts.extend(self.inline.iter().map(|(_, cid, file)| -> Part {
+            Box::new(move |out| attachment(out, file, Some(cid)))
+        }));
+        let kind = "related; type=\"multipart/alternative\"";
+        multipart(out, kind, &format!("=_r.{}", self.local), parts);
     }
 
     fn alternatives(&self, out: &mut String) {
         let Some(html) = self.html else {
             return text(out, "text/plain", self.plain);
         };
-        let boundary = format!("=_a.{}", self.local);
-        header(
-            out,
-            "Content-Type",
-            &format!("multipart/alternative; boundary=\"{boundary}\""),
-        );
-        out.push_str("\r\n");
-        out.push_str(&format!("--{boundary}\r\n"));
-        text(out, "text/plain", self.plain);
-        out.push_str(&format!("--{boundary}\r\n"));
-        text(out, "text/html", html);
-        out.push_str(&format!("--{boundary}--\r\n"));
+        let parts: Vec<Part> = vec![
+            Box::new(|out| text(out, "text/plain", self.plain)),
+            Box::new(|out| text(out, "text/html", html)),
+        ];
+        multipart(out, "alternative", &format!("=_a.{}", self.local), parts);
     }
+}
+
+/// Writes a part of a multipart body.
+type Part<'a> = Box<dyn FnOnce(&mut String) + 'a>;
+
+/// A `multipart/{kind}` part: its header, then each of `parts` after the boundary.
+fn multipart(out: &mut String, kind: &str, boundary: &str, parts: Vec<Part>) {
+    let content = format!("multipart/{kind}; boundary=\"{boundary}\"");
+    header(out, "Content-Type", &content);
+    out.push_str("\r\n");
+    for part in parts {
+        out.push_str(&format!("--{boundary}\r\n"));
+        part(out);
+    }
+    out.push_str(&format!("--{boundary}--\r\n"));
 }
 
 fn header(out: &mut String, name: &str, value: &str) {

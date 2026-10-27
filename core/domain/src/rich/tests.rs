@@ -236,14 +236,10 @@ fn a_pasted_address_becomes_a_link() {
 
 #[test]
 fn places_and_moves_images() {
-    let text = insert_images("one\ntwo", 1, &[(FileId(5), ImageSize::Full)]);
+    let text = insert_images("one\ntwo", 1, &[FileId(5)]);
     assert_eq!(text, "one\n![](file:5)\ntwo");
-    let text = insert_images(
-        "one",
-        3,
-        &[(FileId(5), ImageSize::Full), (FileId(6), ImageSize::Medium)],
-    );
-    assert_eq!(text, "one\n![](file:5)\n![](file:6 \"m\")\n");
+    let text = insert_images("one", 3, &[FileId(5), FileId(6)]);
+    assert_eq!(text, "one\n![](file:5 \"m\")\n![](file:6 \"m\")\n");
     assert_eq!(remove_image(&text, FileId(5)), "one\n![](file:6 \"m\")\n");
     assert_eq!(
         change_image(&text, FileId(5), FileId(9), ImageSize::Small),
@@ -263,4 +259,19 @@ fn places_and_moves_images() {
         move_image("![](file:1)\nx", FileId(1), true),
         "![](file:1)\nx"
     );
+    assert_eq!(
+        move_image("x\n![](file:1)", FileId(1), false),
+        "x\n![](file:1)"
+    );
+    assert_eq!(
+        move_image("![](file:1)\n![](file:2)", FileId(1), false),
+        "![](file:2)\n![](file:1)"
+    );
+}
+
+#[test]
+fn finds_the_link_chosen() {
+    let text = "see [the plan](https://a.example) now";
+    assert_eq!(link_at(text, 5, 9).as_deref(), Some("https://a.example"));
+    assert_eq!(link_at(text, 0, 3), None);
 }
