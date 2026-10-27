@@ -27,7 +27,14 @@ pub async fn push_sends<P: MailProvider>(
 ) -> Result<(), SyncError> {
     for message in messages {
         let raw = builder.build(from, &message);
-        match sender.send(&from.email, &message.to, &raw).await {
+        // An address in both fields gets one copy.
+        let mut envelope: Vec<String> = Vec::new();
+        for address in message.to.iter().chain(&message.cc) {
+            if !envelope.iter().any(|a| a.eq_ignore_ascii_case(address)) {
+                envelope.push(address.clone());
+            }
+        }
+        match sender.send(&from.email, &envelope, &raw).await {
             Ok(()) => {
                 // Recorded first: a failed copy must not send the message twice.
                 store.sent(message.id)?;

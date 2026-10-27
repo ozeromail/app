@@ -115,7 +115,7 @@ class DraftKeeper(private val mail: Mail, private val scope: CoroutineScope, id:
 }
 
 /** Nothing worth keeping: no text or files, and for a new message no recipients or subject either. */
-fun DraftItem.isBlank(): Boolean = text.isBlank() && files.isEmpty() && (replyTo != null || (to.isBlank() && subject.isBlank()))
+fun DraftItem.isBlank(): Boolean = text.isBlank() && files.isEmpty() && (replyTo != null || (to.isBlank() && cc.isBlank() && subject.isBlank()))
 
 /**
  * The drafts on the phone, last saved first; a tap opens one to go on writing. The toast

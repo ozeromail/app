@@ -369,4 +369,10 @@ pub const MIGRATIONS: &[&str] = &[
     "
     UPDATE account SET new_mail = 15 WHERE new_mail = 0;
     ",
+    // 36: copies (`Cc`) of a message being written or sent, as `recipients`. A message's own
+    // `recipients` now holds its `To` and `Cc` with their names (see `people_column`).
+    "
+    ALTER TABLE draft ADD COLUMN cc TEXT NOT NULL DEFAULT '';
+    ALTER TABLE outbox ADD COLUMN cc TEXT NOT NULL DEFAULT '';
+    ",
 ];

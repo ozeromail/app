@@ -607,6 +607,7 @@ fun CoreException.text(): Int {
         is CoreException.NoTrash -> R.string.error_no_trash
         is CoreException.NoSnoozed -> R.string.error_no_snoozed
         is CoreException.BadRecipients -> R.string.error_bad_recipients
+        is CoreException.BadCopies -> R.string.error_bad_copies
         is CoreException.NoSmtp -> R.string.error_no_smtp
         is CoreException.NoServer -> R.string.error_no_server
         is CoreException.NotFound -> R.string.error_server_not_found

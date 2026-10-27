@@ -437,6 +437,23 @@ impl Core {
         Ok(rows.into_iter().map(MessageItem::from).collect())
     }
 
+    /// Who `message` went to, and who answering all would add.
+    pub fn people(&self, message: MessageItem) -> Result<PeopleItem, CoreError> {
+        let own = self.account(AccountId(message.account_id))?.email;
+        let saved = self.store.correspondents(MessageId(message.id))?;
+        let person = |a: &Address| PersonItem {
+            name: shown_name(a.name.as_deref()).unwrap_or(&a.email).to_owned(),
+            email: a.email.clone(),
+            me: a.email.eq_ignore_ascii_case(&own),
+        };
+        let others = saved.others(&own).into_iter().map(person).collect();
+        Ok(PeopleItem {
+            to: saved.to.iter().map(person).collect(),
+            cc: saved.cc.iter().map(person).collect(),
+            others,
+        })
+    }
+
     /// Marks the messages' conversations read, or the messages alone unread, on the device at
     /// once and in one go; `push_actions` tells the server.
     pub fn mark_read(&self, messages: Vec<i64>, seen: bool) -> Result<(), CoreError> {
@@ -525,18 +542,26 @@ impl Core {
             forward: None,
             files: vec![],
             signature,
+            cc: String::new(),
         })
     }
 
-    /// An answer to `message` from the account that got it, `Re: ` once: to its sender, or
-    /// with `all` to everyone it went to as well.
+    /// An answer to `message` from the account that got it, `Re: ` once: to its sender, and
+    /// with `all` a copy to everyone else it went to, `PeopleItem::others`.
     pub fn reply(&self, message: MessageItem, all: bool) -> Result<DraftItem, CoreError> {
         let account = self.account(AccountId(message.account_id))?;
         let correspondents = self.store.correspondents(MessageId(message.id))?;
+        let cc: Vec<&str> = if all {
+            let others = correspondents.others(&account.email);
+            others.into_iter().map(|a| a.email.as_str()).collect()
+        } else {
+            vec![]
+        };
         Ok(DraftItem {
             id: 0,
             account_id: message.account_id,
-            to: correspondents.answer(&account.email, all).join(", "),
+            to: correspondents.answer(&account.email).join(", "),
+            cc: cc.join(", "),
             subject: ozero_domain::reply_subject(&message.subject),
             text: String::new(),
             reply_to: Some(message.id),
@@ -582,9 +607,14 @@ impl Core {
             quote,
             forward,
             signature,
+            cc,
             ..
         } = draft;
         let to = parse_recipients(&to).ok_or(CoreError::BadRecipients)?;
+        let cc = match cc.trim() {
+            "" => vec![],
+            cc => parse_recipients(cc).ok_or(CoreError::BadCopies)?,
+        };
         let from = self.account(AccountId(account))?;
         // Would wait in the outbox forever.
         if from.kind == AccountKind::Imap && from.smtp.is_none() {
@@ -593,6 +623,7 @@ impl Core {
         let draft = Draft {
             account_id: from.id,
             to,
+            cc,
             subject,
             text,
             signature,
@@ -646,6 +677,7 @@ impl Core {
             id: draft_id(draft.id),
             account_id,
             to: draft.to,
+            cc: draft.cc,
             subject: draft.subject,
             text: draft.text,
             signature: draft.signature,
@@ -1304,6 +1336,7 @@ impl Core {
             saved: 0,
             forward: Some(message.id),
             files: vec![],
+            cc: String::new(),
             // Removed meanwhile: the send says so.
             signature: self
                 .account(AccountId(message.account_id))
@@ -2753,6 +2786,26 @@ impl AccountItem {
     }
 }
 
+/// Who a message went to.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PeopleItem {
+    pub to: Vec<PersonItem>,
+    /// Copies (`Cc`).
+    pub cc: Vec<PersonItem>,
+    /// Who `Core::reply` with `all` copies besides those it answers: never the user.
+    pub others: Vec<PersonItem>,
+}
+
+/// Someone a message went to.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PersonItem {
+    /// The name, or the address when there is none.
+    pub name: String,
+    pub email: String,
+    /// The account the message is in.
+    pub me: bool,
+}
+
 /// Someone who wrote in a conversation.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct SenderItem {
@@ -2898,6 +2951,9 @@ pub struct DraftItem {
     /// has its account's `signs_with`.
     #[uniffi(default = "")]
     pub signature: String,
+    /// Copies (`Cc`), as `to`; empty for none.
+    #[uniffi(default = "")]
+    pub cc: String,
 }
 
 /// A file of saved mail, offered to send on.
@@ -2984,6 +3040,7 @@ impl From<SavedDraft> for DraftItem {
             forward: d.forward.map(|m| m.0),
             files: d.files.into_iter().map(DraftFileItem::from).collect(),
             signature: d.signature,
+            cc: d.cc,
         }
     }
 }
@@ -3246,6 +3303,8 @@ pub enum CoreError {
     NoSnoozed,
     /// A recipient is not an email address, or there is none.
     BadRecipients,
+    /// A copy (`Cc`) is not an email address.
+    BadCopies,
     /// The account has no SMTP server to send through.
     NoSmtp,
     /// No Exchange server was found for the address, or the one typed is no server address.
@@ -3288,6 +3347,7 @@ impl fmt::Display for CoreError {
             Self::NoTrash => write!(f, "the account has no trash folder"),
             Self::NoSnoozed => write!(f, "the account has no snoozed folder"),
             Self::BadRecipients => write!(f, "a recipient is not an email address"),
+            Self::BadCopies => write!(f, "a copy is not an email address"),
             Self::NoSmtp => write!(f, "the account has no SMTP server"),
             Self::NoServer => write!(f, "no Exchange server found"),
             Self::NotFound => write!(f, "no server found for the address"),

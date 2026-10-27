@@ -13,6 +13,9 @@ impl MessageBuilder for MimeBuilder {
         header(&mut out, "From", &mailbox(from));
         // One address per line keeps each line short (RFC 5322 folding).
         header(&mut out, "To", &message.to.join(",\r\n "));
+        if !message.cc.is_empty() {
+            header(&mut out, "Cc", &message.cc.join(",\r\n "));
+        }
         header(&mut out, "Subject", &encoded_words(&message.subject));
         header(&mut out, "Message-ID", &format!("<{}>", message.message_id));
         if let Some(parent) = &message.in_reply_to {
@@ -178,6 +181,7 @@ mod tests {
         Outgoing {
             id: OutboxId(1),
             to: vec!["bob@example.org".into(), "cat@example.net".into()],
+            cc: vec!["dan@example.com".into()],
             subject: subject.into(),
             text: text.into(),
             message_id: "1.2@example.com".into(),
@@ -219,6 +223,11 @@ mod tests {
         assert_eq!(sender.name(), Some("Анна Иванова"));
         assert_eq!(sender.address(), Some("anna@example.com"));
         assert_eq!(parsed.to().map(|a| a.iter().count()), Some(2));
+        let cc = parsed
+            .cc()
+            .and_then(|a| a.first())
+            .and_then(|a| a.address());
+        assert_eq!(cc, Some("dan@example.com"));
         assert_eq!(parsed.message_id(), Some("1.2@example.com"));
         assert_eq!(parsed.in_reply_to().as_text(), Some("parent@example.org"));
         assert_eq!(

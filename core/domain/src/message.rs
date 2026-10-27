@@ -30,8 +30,8 @@ pub struct NewMessage {
     pub from: Address,
     /// `Reply-To`: where answers go instead of `from`.
     pub answer_to: Vec<String>,
-    /// `To` and `Cc`.
-    pub recipients: Vec<String>,
+    pub to: Vec<Address>,
+    pub cc: Vec<Address>,
     pub subject: String,
     pub snippet: String,
     /// Seconds since the Unix epoch.
@@ -45,39 +45,64 @@ pub struct NewMessage {
 pub struct Correspondents {
     pub from: String,
     pub answer_to: Vec<String>,
-    pub recipients: Vec<String>,
+    pub to: Vec<Address>,
+    pub cc: Vec<Address>,
 }
 
 impl Correspondents {
-    /// Who an answer from `own` goes to: the sender, or `Reply-To` when there is one; with
-    /// `all`, everyone else it went to as well. Never `own`, and each address once. An answer
-    /// to the user's own message goes to the people it was sent to, or back to `own` if it
-    /// went only there.
-    pub fn answer(&self, own: &str, all: bool) -> Vec<String> {
-        let first = if self.answer_to.is_empty() {
-            std::slice::from_ref(&self.from)
-        } else {
-            &self.answer_to[..]
-        };
+    /// Who an answer from `own` goes to: the sender, or `Reply-To` when there is one. An
+    /// answer to the user's own message goes to its `To`, or back to `own` if it went only
+    /// there. Never `own` otherwise, and each address once.
+    pub fn answer(&self, own: &str) -> Vec<String> {
         let mine = self.from.eq_ignore_ascii_case(own);
-        let rest = if all || mine {
-            &self.recipients[..]
+        let first: Vec<&String> = if mine {
+            self.to.iter().map(|a| &a.email).collect()
+        } else if self.answer_to.is_empty() {
+            vec![&self.from]
         } else {
-            &[]
+            self.answer_to.iter().collect()
         };
         let mut to: Vec<String> = Vec::new();
-        for address in first.iter().chain(rest) {
-            let known = to.iter().any(|a| a.eq_ignore_ascii_case(address));
-            if !address.is_empty() && !address.eq_ignore_ascii_case(own) && !known {
+        for address in first {
+            if unknown(address, own, to.iter()) {
                 to.push(address.clone());
             }
         }
-        let to_me = self.recipients.iter().any(|a| a.eq_ignore_ascii_case(own));
+        let to_me = self.recipients().any(|a| a.eq_ignore_ascii_case(own));
         if to.is_empty() && mine && to_me {
             to.push(self.from.clone());
         }
         to
     }
+
+    /// Who answering all copies besides [`Self::answer`]: everyone else in `To` and `Cc`,
+    /// never `own`, each address once.
+    pub fn others(&self, own: &str) -> Vec<&Address> {
+        let to = self.answer(own);
+        let mut others: Vec<&Address> = Vec::new();
+        for a in self.to.iter().chain(&self.cc) {
+            if unknown(
+                &a.email,
+                own,
+                to.iter().chain(others.iter().map(|o| &o.email)),
+            ) {
+                others.push(a);
+            }
+        }
+        others
+    }
+
+    /// `To` and `Cc`, in that order.
+    fn recipients(&self) -> impl Iterator<Item = &String> {
+        self.to.iter().chain(&self.cc).map(|a| &a.email)
+    }
+}
+
+/// An address to add: not empty, not `own` and not `known` yet, in any case.
+fn unknown<'a>(address: &str, own: &str, mut known: impl Iterator<Item = &'a String>) -> bool {
+    !address.is_empty()
+        && !address.eq_ignore_ascii_case(own)
+        && !known.any(|k| k.eq_ignore_ascii_case(address))
 }
 
 /// One row of a message list, ready for the screen.
@@ -351,41 +376,71 @@ mod tests {
         assert_eq!(snippet(&"x".repeat(500)).len(), 160);
     }
 
+    fn emails(list: Vec<&Address>) -> Vec<&str> {
+        list.into_iter().map(|a| a.email.as_str()).collect()
+    }
+
     fn mail(from: &str, answer_to: &[&str], recipients: &[&str]) -> Correspondents {
         let list = |a: &[&str]| a.iter().map(|s| (*s).to_owned()).collect();
+        let (to, cc) = recipients.split_at(recipients.len().min(1));
+        let addresses = |a: &[&str]| {
+            a.iter()
+                .map(|s| Address {
+                    name: None,
+                    email: (*s).to_owned(),
+                })
+                .collect()
+        };
         Correspondents {
             from: from.into(),
             answer_to: list(answer_to),
-            recipients: list(recipients),
+            to: addresses(to),
+            cc: addresses(cc),
         }
+    }
+
+    #[test]
+    fn others_are_who_answering_all_adds() {
+        let m = mail("anna@x.com", &[], &["me@x.com", "bob@x.com", "cat@x.com"]);
+        assert_eq!(emails(m.others("me@x.com")), ["bob@x.com", "cat@x.com"]);
+        let m = mail(
+            "anna@x.com",
+            &["list@x.com"],
+            &["list@x.com", "Bob@x.com", "bob@x.com"],
+        );
+        assert_eq!(emails(m.others("me@x.com")), ["Bob@x.com"]);
     }
 
     #[test]
     fn answers_the_sender_or_reply_to() {
         let m = mail("anna@x.com", &[], &["me@x.com", "bob@x.com"]);
-        assert_eq!(m.answer("me@x.com", false), ["anna@x.com"]);
+        assert_eq!(m.answer("me@x.com"), ["anna@x.com"]);
         let m = mail("list@x.com", &["anna@x.com"], &["me@x.com"]);
-        assert_eq!(m.answer("me@x.com", false), ["anna@x.com"]);
+        assert_eq!(m.answer("me@x.com"), ["anna@x.com"]);
     }
 
     #[test]
     fn answers_all_without_me_or_repeats() {
         let m = mail("anna@x.com", &[], &["ME@x.com", "bob@x.com", "Anna@x.com"]);
-        assert_eq!(m.answer("me@x.com", true), ["anna@x.com", "bob@x.com"]);
+        assert_eq!(m.answer("me@x.com"), ["anna@x.com"]);
+        assert_eq!(emails(m.others("me@x.com")), ["bob@x.com"]);
     }
 
     #[test]
     fn answers_my_own_message_to_its_recipients() {
         let m = mail("me@x.com", &[], &["anna@x.com", "bob@x.com"]);
-        assert_eq!(m.answer("me@x.com", false), ["anna@x.com", "bob@x.com"]);
+        // To stays To and Cc stays Cc.
+        assert_eq!(m.answer("me@x.com"), ["anna@x.com"]);
+        assert_eq!(emails(m.others("me@x.com")), ["bob@x.com"]);
     }
 
     #[test]
     fn answers_a_note_to_myself_to_me() {
         let m = mail("me@x.com", &[], &["Me@x.com"]);
-        assert_eq!(m.answer("me@x.com", true), ["me@x.com"]);
+        assert_eq!(m.answer("me@x.com"), ["me@x.com"]);
+        assert!(m.others("me@x.com").is_empty());
         // Sent in Bcc only: who it went to is not known.
         let m = mail("me@x.com", &[], &[]);
-        assert!(m.answer("me@x.com", false).is_empty());
+        assert!(m.answer("me@x.com").is_empty());
     }
 }

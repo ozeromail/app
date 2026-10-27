@@ -139,10 +139,15 @@ pub async fn import_drafts(
                 })
             })
             .collect::<Vec<_>>();
+        let typed = |list: &[ozero_domain::Address]| {
+            let emails: Vec<&str> = list.iter().map(|a| a.email.as_str()).collect();
+            emails.join(", ")
+        };
         let draft = SavedDraft {
             id: None,
             account_id: Some(account),
-            to: header.recipients.join(", "),
+            to: typed(&header.to),
+            cc: typed(&header.cc),
             subject: header.subject,
             text: body.text,
             signature: String::new(),
