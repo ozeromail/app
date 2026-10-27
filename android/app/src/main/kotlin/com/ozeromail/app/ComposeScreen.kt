@@ -38,6 +38,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -47,6 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -63,6 +66,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -73,10 +77,17 @@ import uniffi.ozero_api.AccountItem
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.DraftFileItem
 import uniffi.ozero_api.DraftItem
-import uniffi.ozero_api.fileLimit
 import uniffi.ozero_api.ForwardLabels
+import uniffi.ozero_api.ImageSize
 import uniffi.ozero_api.MessageItem
 import uniffi.ozero_api.RecentFileItem
+import uniffi.ozero_api.RichBlock
+import uniffi.ozero_api.fileLimit
+import uniffi.ozero_api.richBlocks
+import uniffi.ozero_api.richChangeImage
+import uniffi.ozero_api.richInsertImages
+import uniffi.ozero_api.richMoveImage
+import uniffi.ozero_api.richRemoveImage
 
 /** A blank message; account 0 is none, so compose starts from the first account. */
 val NEW_DRAFT = DraftItem(0, 0, "", "", "", null, "", 0)
@@ -117,7 +128,11 @@ fun ComposeScreen(
     // Kept while it is emptied, so it does not jump away.
     var hasCc by rememberSaveable { mutableStateOf(start.cc.isNotBlank()) }
     var subject by rememberSaveable { mutableStateOf(start.subject) }
-    var text by rememberSaveable { mutableStateOf(start.text) }
+    // With its styles and images as marks; the editor shows what they mean.
+    val textState = rememberSaveable { mutableStateOf(start.text) }
+    var text by textState
+    // Where the caret is in the text, for photos to go after its line.
+    var caret by rememberSaveable { mutableIntStateOf(start.text.length) }
     var accountId by rememberSaveable { mutableStateOf(start.accountId) }
     var signature by rememberSaveable { mutableStateOf(start.signature) }
     // Not saveable: a long quote would not fit in the saved state.
@@ -132,6 +147,13 @@ fun ComposeScreen(
     var adding by remember { mutableStateOf(emptyList<String>()) }
     var attaching by remember { mutableStateOf(false) }
     var recent by remember { mutableStateOf(emptyList<RecentFileItem>()) }
+    // Photos made lighter here, by file, with where the full one is while the screen is open.
+    val photos = remember { mutableStateMapOf<Long, Photo>() }
+    // The image whose menu is open, and the last one, which the closing menu still shows.
+    var chosenImage by remember { mutableStateOf<Long?>(null) }
+    var lastImage by remember { mutableStateOf<Long?>(null) }
+    // The address a link is getting, and where it goes.
+    var linking by remember { mutableStateOf<Linking?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val keeper = remember { mail.keeper(start.id) }
@@ -183,19 +205,26 @@ fun ComposeScreen(
     /**
      * Adds the files [named] gives the names of, one at a time so a message never holds more than fits in
      * it: [read] gets each by its index and name whole, or null when it takes more than the
-     * room left.
+     * room left. [then] gets those added, by index, whatever went wrong.
      */
-    fun addFiles(named: suspend () -> List<String>, read: suspend (Int, String, Long) -> PickedFile?) {
+    fun addFiles(
+        named: suspend () -> List<String>,
+        read: suspend (Int, String, Long) -> PickedFile?,
+        then: (List<Pair<Int, DraftFileItem>>) -> Unit = {},
+    ) {
         error = null
         scope.launch {
             val names = named()
             adding = adding + names
             var done = 0
+            val added = mutableListOf<Pair<Int, DraftFileItem>>()
             try {
                 for ((index, name) in names.withIndex()) {
                     val room = fileLimit().toLong() - files.sumOf { it.size.toLong() }
                     val picked = read(index, name, room) ?: throw CoreException.TooLarge()
-                    files = files + keeper.attach(current(), picked)
+                    val file = keeper.attach(current(), picked)
+                    files = files + file
+                    added += index to file
                     adding = adding - name
                     done++
                 }
@@ -208,6 +237,7 @@ fun ComposeScreen(
             } finally {
                 // What did not come stops showing; another pick's files of the same name stay.
                 names.drop(done).forEach { adding = adding - it }
+                then(added)
             }
         }
     }
@@ -216,7 +246,30 @@ fun ComposeScreen(
         if (uris.isEmpty()) return
         addFiles({ uris.map { pickedName(context, it) } }) { index, name, room -> readPicked(context, uris[index], name, room) }
     }
-    val pickMedia = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(), ::add)
+    // Photos go into the text after the caret's line, lighter; videos go with the files.
+    fun addMedia(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        val lighter = mutableSetOf<Int>()
+        addFiles(
+            { uris.map { pickedName(context, it) } },
+            { index, name, room ->
+                val light = lighterPhoto(context, uris[index], name)
+                if (light == null) {
+                    readPicked(context, uris[index], name, room)
+                } else {
+                    lighter += index
+                    light.takeIf { it.data.size <= room }
+                }
+            },
+        ) { added ->
+            val shown = added.filter { (_, file) -> file.mime.startsWith("image/") }
+            shown.forEach { (index, file) -> if (index in lighter) photos[file.id] = Photo(uris[index], file.name, full = false) }
+            if (shown.isNotEmpty()) {
+                text = richInsertImages(text, caret.coerceIn(0, text.length).toUInt(), shown.map { it.second.id })
+            }
+        }
+    }
+    val pickMedia = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(), ::addMedia)
     val pickFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments(), ::add)
 
     fun addFromMail(file: RecentFileItem) {
@@ -239,11 +292,41 @@ fun ComposeScreen(
 
     fun detach(file: DraftFileItem) {
         files = files - file
+        photos.remove(file.id)
         scope.launch {
             try {
                 keeper.detach(file)
             } catch (e: CoreException) {
                 error = e.text()
+            }
+        }
+    }
+
+    /** The image of [file] taken out of the text: it goes as a file, or with [drop] not at all. */
+    fun unshow(file: Long, drop: Boolean) {
+        text = richRemoveImage(text, file)
+        if (drop) files.find { it.id == file }?.let(::detach)
+    }
+
+    /** The photo of [file] as it was taken, or lighter again: the other one takes its place. */
+    fun swapPhoto(file: DraftFileItem, photo: Photo, size: ImageSize) {
+        error = null
+        scope.launch {
+            try {
+                val room = fileLimit().toLong() - files.sumOf { it.size.toLong() }
+                val other = if (photo.full) lighterPhoto(context, photo.uri, photo.name) else readPicked(context, photo.uri, photo.name, room)
+                if (other == null || other.data.size > room) throw CoreException.TooLarge()
+                val added = keeper.attach(current(), other)
+                files = files + added
+                photos[added.id] = photo.copy(full = !photo.full)
+                text = richChangeImage(text, file.id, added.id, size)
+                detach(file)
+            } catch (e: CoreException) {
+                error = e.text()
+            } catch (_: IOException) {
+                error = R.string.compose_file_unreadable
+            } catch (_: SecurityException) {
+                error = R.string.compose_file_unreadable
             }
         }
     }
@@ -282,6 +365,9 @@ fun ComposeScreen(
     val toFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { if (to.isBlank() && !folded) toFocus.requestFocus() }
     val original = composing.original
+    // The images the text shows, and the files that go under it.
+    val shownImages = remember(text) { richBlocks(text).filterIsInstance<RichBlock.Image>() }.associate { it.file to it.size }
+    val images = rememberImages(mail, shownImages.keys.toList(), LocalContext.current.resources.displayMetrics.widthPixels)
     val addresses = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next, autoCorrectEnabled = false)
     val fields = @Composable {
         if (!folded) {
@@ -313,15 +399,21 @@ fun ComposeScreen(
                 KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Next),
             )
         }
-        Plain(
-            text,
-            { text = it },
-            R.string.compose_text,
-            Type.Writing,
-            KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-            singleLine = false,
+        RichBody(
+            textState,
+            files,
+            images,
+            chosen = chosenImage,
+            placeholder = stringResource(R.string.compose_text),
+            style = Type.Writing,
+            onCaret = { caret = it },
+            onImage = {
+                chosenImage = it
+                lastImage = it
+            },
+            onLink = { url, apply -> linking = Linking(url, apply) },
             modifier = Modifier
-                .onFocusChanged { writingText = it.isFocused }
+                .onFocusChanged { writingText = it.hasFocus }
                 .then(
                     if (sideways) {
                         Modifier.heightIn(min = 72.dp)
@@ -329,9 +421,11 @@ fun ComposeScreen(
                         // Room for a few lines from the start, less while the keyboard takes the screen.
                         Modifier.heightIn(min = if (keyboard) 72.dp else 168.dp, max = if (keyboard) 168.dp else 320.dp)
                     },
-                ),
+                )
+                .verticalScroll(rememberScrollState()),
         )
-        if (files.isNotEmpty() || adding.isNotEmpty()) FileChips(files, adding, ::detach)
+        val attached = files.filter { it.id !in shownImages }
+        if (attached.isNotEmpty() || adding.isNotEmpty()) FileChips(attached, adding, ::detach)
         // A forward is its quote, so it stays.
         val forwarding = start.forward != null
         val forwardedFiles = forwarded?.takeIf { it.accountId == from?.id }?.attachments.orEmpty()
@@ -494,6 +588,29 @@ fun ComposeScreen(
                 }
             }
         }
+        // What can be done with an image in the text, low in reach of the thumb like every menu.
+        Sheet(visible = chosenImage != null, onClose = { chosenImage = null }) {
+            val id = chosenImage ?: lastImage
+            val file = files.find { it.id == id }
+            val size = shownImages[id]
+            if (id != null && file != null && size != null) {
+                ImageMenu(
+                    size,
+                    photos[id],
+                    onSize = { text = richChangeImage(text, id, id, it) },
+                    onMove = { up -> text = richMoveImage(text, id, up) },
+                    onSwap = { photo ->
+                        chosenImage = null
+                        swapPhoto(file, photo, size)
+                    },
+                    onUnshow = { drop ->
+                        chosenImage = null
+                        unshow(id, drop)
+                    },
+                )
+            }
+        }
+        LinkSheet(linking, onClose = { linking = null })
         // Like every menu, the other accounts open in a sheet, low in reach of the thumb.
         Sheet(visible = picking, onClose = { picking = false }) {
             accounts.forEach { account ->
@@ -628,4 +745,98 @@ internal fun Plain(
             }
         },
     )
+}
+
+/** A photo made lighter to send, with where the full one is and which of the two goes. */
+data class Photo(val uri: Uri, val name: String, val full: Boolean)
+
+/** A link getting an address: the one it has, if any, and what takes the new one, or null to take it off. */
+class Linking(val url: String?, val apply: (String?) -> Unit)
+
+/** The size of an image in the text, moving it, the other photo, and taking it out of the text. */
+@Composable
+private fun ImageMenu(
+    size: ImageSize,
+    photo: Photo?,
+    onSize: (ImageSize) -> Unit,
+    onMove: (Boolean) -> Unit,
+    onSwap: (Photo) -> Unit,
+    onUnshow: (Boolean) -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    SheetTitle(stringResource(R.string.compose_image))
+    Row(
+        Modifier.fillMaxWidth().padding(start = Gap.sheet, end = Gap.sheet, bottom = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        listOf(
+            ImageSize.SMALL to R.string.compose_image_small,
+            ImageSize.MEDIUM to R.string.compose_image_medium,
+            ImageSize.FULL to R.string.compose_image_full,
+        ).forEach { (option, label) ->
+            val on = option == size
+            Text(
+                stringResource(label),
+                color = if (on) colors.onAccent else colors.onSurface,
+                style = Type.Text,
+                fontWeight = Weight.SemiBold,
+                maxLines = 1,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(CircleShape)
+                    .background(if (on) colors.accent else colors.surfaceVariant)
+                    .clickable(role = Role.RadioButton, onClick = { onSize(option) })
+                    .padding(vertical = 10.dp),
+            )
+        }
+    }
+    SheetRow({ onMove(true) }, lead = { Glyph(R.drawable.ic_chevron_down, null, colors.onSurface, Modifier.rotate(180f)) }) {
+        Text(stringResource(R.string.compose_image_up), style = Type.Row)
+    }
+    SheetRow({ onMove(false) }, lead = { Glyph(R.drawable.ic_chevron_down, null, colors.onSurface) }) {
+        Text(stringResource(R.string.compose_image_down), style = Type.Row)
+    }
+    if (photo != null) {
+        SheetAction(R.drawable.ic_photo, stringResource(if (photo.full) R.string.compose_image_lighter else R.string.compose_image_original), colors.onSurface) {
+            onSwap(photo)
+        }
+    }
+    SheetAction(R.drawable.ic_attach, stringResource(R.string.compose_image_to_file), colors.onSurface) { onUnshow(false) }
+    SheetAction(R.drawable.ic_delete, stringResource(R.string.action_remove), colors.error) { onUnshow(true) }
+}
+
+/** Where a link goes: an address to type, and a way to take the link off when it has one. */
+@Composable
+private fun LinkSheet(linking: Linking?, onClose: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    // The last one, which the closing sheet still shows.
+    var last by remember { mutableStateOf(linking) }
+    if (linking != null) last = linking
+    var url by remember(last) { mutableStateOf(last?.url ?: "https://") }
+    val focus = remember { FocusRequester() }
+    Sheet(visible = linking != null, onClose = onClose) {
+        val shown = last ?: return@Sheet
+        SheetTitle(stringResource(R.string.compose_format_link))
+        fun done() {
+            onClose()
+            shown.apply(url.trim().takeUnless { it.isEmpty() || it == "https://" })
+        }
+        Plain(
+            url,
+            { url = it },
+            R.string.compose_format_link,
+            Type.Body,
+            KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done, autoCorrectEnabled = false),
+            modifier = Modifier.padding(horizontal = Gap.sheet, vertical = 8.dp).focusRequester(focus),
+        )
+        LaunchedEffect(shown) { focus.requestFocus() }
+        SheetAction(R.drawable.ic_done, stringResource(R.string.action_done), colors.primary, ::done)
+        if (shown.url != null) {
+            SheetAction(R.drawable.ic_close, stringResource(R.string.compose_link_remove), colors.error) {
+                onClose()
+                shown.apply(null)
+            }
+        }
+    }
 }

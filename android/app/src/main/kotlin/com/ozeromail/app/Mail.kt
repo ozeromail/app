@@ -484,6 +484,9 @@ class Mail(private val context: Context) {
     /** Takes a file off its draft. */
     suspend fun detachFile(file: Long) = io { core.detachFile(file) }
 
+    /** The contents of a file added to a draft, to show it in the text. */
+    suspend fun draftFileData(file: Long): ByteArray = io { core.draftFileData(file) }
+
     /** Saves a message being written as it changes, starting from the saved draft [id], or 0. */
     fun keeper(id: Long) = DraftKeeper(this, background, id)
 

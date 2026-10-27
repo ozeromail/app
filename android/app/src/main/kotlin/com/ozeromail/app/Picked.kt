@@ -1,6 +1,9 @@
 package com.ozeromail.app
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.text.format.Formatter
@@ -69,6 +72,50 @@ suspend fun readPicked(context: Context, uri: Uri, name: String, room: Long): Pi
         }
         PickedFile(title, mime, out.toByteArray())
     }
+}
+
+/** The most pixels a photo sent in the text has on its long side. */
+private const val PHOTO_EDGE = 2048
+
+/** A photo up to this size, as JPEG or PNG, goes as it is. */
+private const val LIGHT_BYTES = 1_000_000L
+
+/**
+ * The photo at [uri] made lighter to send in the text: at most [PHOTO_EDGE] pixels on its
+ * long side, as JPEG, or as PNG where it has see-through parts. Null when it is light
+ * already, an animation, or no photo the phone reads.
+ */
+suspend fun lighterPhoto(context: Context, uri: Uri, name: String): PickedFile? = withContext(Dispatchers.IO) {
+    val resolver = context.contentResolver
+    val mime = resolver.getType(uri).orEmpty()
+    if (!mime.startsWith("image/") || mime == "image/gif") return@withContext null
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    try {
+        resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+    } catch (_: IOException) {
+        return@withContext null
+    }
+    val edge = maxOf(bounds.outWidth, bounds.outHeight)
+    if (edge <= 0) return@withContext null
+    val bytes = resolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L
+    if (edge <= PHOTO_EDGE && bytes in 0..LIGHT_BYTES && mime in setOf("image/jpeg", "image/png")) return@withContext null
+    val bitmap = try {
+        // Turned as the camera held it, which the file only notes.
+        ImageDecoder.decodeBitmap(ImageDecoder.createSource(resolver, uri)) { decoder, info, _ ->
+            val (w, h) = info.size.width to info.size.height
+            val long = maxOf(w, h)
+            if (long > PHOTO_EDGE) decoder.setTargetSize(w * PHOTO_EDGE / long, h * PHOTO_EDGE / long)
+            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+        }
+    } catch (_: IOException) {
+        return@withContext null
+    }
+    val png = bitmap.hasAlpha()
+    val out = ByteArrayOutputStream()
+    bitmap.compress(if (png) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG, if (png) 100 else 85, out)
+    bitmap.recycle()
+    val base = name.substringBeforeLast('.').ifBlank { context.getString(R.string.attachment_untitled) }
+    PickedFile(if (png) "$base.png" else "$base.jpg", if (png) "image/png" else "image/jpeg", out.toByteArray())
 }
 
 /**
