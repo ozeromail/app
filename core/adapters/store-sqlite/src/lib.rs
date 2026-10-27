@@ -1822,9 +1822,7 @@ fn queue_thread(
     if ids.is_empty() {
         return Err(StoreError::NotFound);
     }
-    if !matches!(action, Action::Seen(_) | Action::Flagged(_))
-        && !folder_role(tx, message)?.allows(action)
-    {
+    if action.removes() && !folder_role(tx, message)?.allows(action) {
         return Err(StoreError::NotAllowed);
     }
     let mut ops = vec![];
@@ -2266,10 +2264,9 @@ fn set_flag(tx: &Transaction<'_>, message: i64, flag: u8, on: bool) -> Result<()
 /// `1` (`SEEN`) for "seen", `2` (`FLAGGED`) for "flagged".
 macro_rules! held_flags {
     () => {
-        "((CASE WHEN EXISTS (SELECT 1 FROM op WHERE op.message_id = message.id AND op.kind = 'seen')
-           THEN 1 ELSE 0 END)
-          | (CASE WHEN EXISTS (SELECT 1 FROM op WHERE op.message_id = message.id AND op.kind = 'flagged')
-           THEN 2 ELSE 0 END))"
+        "(SELECT coalesce(max(CASE op.kind WHEN 'seen' THEN 1 ELSE 0 END), 0)
+                 | coalesce(max(CASE op.kind WHEN 'flagged' THEN 2 ELSE 0 END), 0)
+          FROM op WHERE op.message_id = message.id)"
     };
 }
 

@@ -549,6 +549,13 @@ final class InboxModel {
             try await mail.flag([message], flagged: flagged)
         } catch {
             self.error = error.textKey()
+            return
+        }
+        messages = messages.map { row in
+            guard row.id == message.id else { return row }
+            var changed = row
+            changed.flagged = flagged
+            return changed
         }
     }
 
