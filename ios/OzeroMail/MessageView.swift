@@ -406,7 +406,7 @@ extension Task where Failure == Never {
             finish.yield()
         }
         let timer = Task<Void, Never> {
-            try? await Task.sleep(for: limit)
+            try? await Task<Never, Never>.sleep(for: limit)
             finish.yield()
         }
         for await _ in done { break }
