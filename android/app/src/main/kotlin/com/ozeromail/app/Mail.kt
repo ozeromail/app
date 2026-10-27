@@ -182,6 +182,12 @@ class Mail(private val context: Context) {
     /** Takes [account]'s inbox into the unified one, or leaves it out. */
     suspend fun setInAll(account: AccountItem, inAll: Boolean) = io { core.setAccountInAll(account.id, inAll) }
 
+    /** Shows notifications for the account's new mail from people, or stops them. */
+    suspend fun setNotify(account: AccountItem, notify: Boolean) = io { core.setAccountNotify(account.id, notify) }
+
+    /** The name the account's mail goes out under; empty leaves only the address. */
+    suspend fun setSender(account: AccountItem, name: String) = io { core.setAccountSender(account.id, name) }
+
     /** Pins [folder] among its account's usual folders, or unpins it. */
     suspend fun setPinned(folder: FolderItem, pinned: Boolean) = io { core.setFolderPinned(folder.id, pinned) }
 
@@ -400,6 +406,17 @@ class Mail(private val context: Context) {
 
     /** From now on the remote images of mail from [message]'s sender load on their own. */
     suspend fun allowImages(message: MessageItem) = io { core.allowImages(message.id) }
+
+    /** The senders whose images load on their own because the person chose so. */
+    suspend fun imageSenders(): List<String> = io { core.imageSenders() }
+
+    /** The sender's images wait to be asked for again. */
+    suspend fun forbidImages(email: String) = io { core.forbidImages(email) }
+
+    /** Whether all mail's images load on their own, but in spam. */
+    suspend fun imagesAlways(): Boolean = io { core.imagesAlways() }
+
+    suspend fun setImagesAlways(always: Boolean) = io { core.setImagesAlways(always) }
 
     /** A blank message from the first account, with its signature. */
     suspend fun newDraft(): DraftItem = io { core.newDraft() }

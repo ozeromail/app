@@ -301,9 +301,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     // The account being signed in to again, by id.
     var signingIn by rememberSaveable { mutableStateOf<Long?>(null) }
     var accountsOpen by rememberSaveable { mutableStateOf(false) }
-    // The page the sheet opens on: an account just added, its name and when its mail comes, or the settings.
-    var added by rememberSaveable { mutableStateOf<Long?>(null) }
-    LaunchedEffect(accountsOpen) { if (!accountsOpen) added = null }
+    // The settings' pages open, the top one last; none while they are closed.
+    var settingsPages by rememberSaveable { mutableStateOf(emptyList<Long>()) }
     var accounts by remember { mutableStateOf(emptyList<AccountItem>()) }
     // The default signature, for accounts without their own.
     var signature by remember { mutableStateOf("") }
@@ -320,6 +319,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var groups by remember { mutableStateOf(settings.groups) }
     var allBoxes by remember { mutableStateOf(settings.allBoxes) }
     var swipeTip by remember { mutableStateOf(!settings.swipeTipSeen) }
+    var holdTip by remember { mutableStateOf(!settings.holdTipSeen) }
     var query by rememberSaveable { mutableStateOf("") }
     // Messages chosen to act on together, in the order they were chosen.
     var chosen by remember { mutableStateOf(emptySet<Long>()) }
@@ -883,13 +883,16 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     val again = accounts.find { it.id == signingIn }
     // The list and the message side by side on a wide screen. Turning the screen keeps the
     // message open: beside the list, or on its own screen.
-    val screen = screenOf(composing, open, wide, addingAccount, again, searching, draftsOpen)
+    val screen = screenOf(composing, open, wide, addingAccount, again, searching, draftsOpen, settingsPages)
     // Where back leads: the same screens with the top one gone.
     val behind: Screen? = when (screen) {
         Screen.Inbox -> null
-        Screen.Search, Screen.AddAccount, is Screen.SignInAgain, Screen.Drafts -> Screen.Inbox
-        is Screen.Read -> screenOf(null, null, wide, addingAccount, again, searching, draftsOpen)
-        is Screen.Write -> screenOf(null, open, wide, addingAccount, again, searching, draftsOpen)
+        Screen.Search, Screen.Drafts -> Screen.Inbox
+        // Opened from the settings, they go back there.
+        Screen.AddAccount, is Screen.SignInAgain -> screenOf(null, null, wide, false, null, false, false, settingsPages)
+        is Screen.SettingsPage -> screenOf(null, null, wide, false, null, false, false, settingsPages.dropLast(1))
+        is Screen.Read -> screenOf(null, null, wide, addingAccount, again, searching, draftsOpen, settingsPages)
+        is Screen.Write -> screenOf(null, open, wide, addingAccount, again, searching, draftsOpen, settingsPages)
     }
 
     fun closeSearch() {
@@ -904,6 +907,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             Screen.AddAccount -> addingAccount = false
             is Screen.SignInAgain -> signingIn = null
             Screen.Drafts -> draftsOpen = false
+            is Screen.SettingsPage -> settingsPages = settingsPages.dropLast(1)
             // Back reloads the list: the message now has a snippet.
             is Screen.Read -> {
                 open = null
@@ -972,20 +976,40 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 }
             }
         },
-        onSwipes = {
-            swipes = it
-            settings.swipes = it
-        },
         onGroups = ::keepGroups,
         onAdd = {
             accountsOpen = false
             addingAccount = true
+        },
+        onSignIn = { account ->
+            accountsOpen = false
+            signingIn = account.id
+        },
+        onAccount = { account ->
+            accountsOpen = false
+            holdTip = false
+            settings.holdTipSeen = true
+            settingsPages = listOf(account.id)
+        },
+        onSettings = {
+            accountsOpen = false
+            settingsPages = listOf(SETTINGS)
+        },
+    )
+    val settingsActions = SettingsActions(
+        onAdd = { addingAccount = true },
+        onInAll = accountsActions.onInAll,
+        onNotify = { account, notify ->
+            changeAccount { mail.setNotify(account, notify) }
         },
         onColor = { account, color ->
             changeAccount { mail.setAccountColor(account, color) }
         },
         onLabel = { account, label ->
             changeAccount { mail.setAccountLabel(account, label) }
+        },
+        onSender = { account, name ->
+            changeAccount { mail.setSender(account, name) }
         },
         onSignature = {
             signature = it.trimEnd()
@@ -994,10 +1018,11 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         onAccountSignature = { account, text ->
             changeAccount { mail.setAccountSignature(account, text) }
         },
-        onSignIn = { account ->
-            accountsOpen = false
-            signingIn = account.id
+        onSwipes = {
+            swipes = it
+            settings.swipes = it
         },
+        onSignIn = { account -> signingIn = account.id },
         onKeepDays = { account, days ->
             changeAccount { mail.setKeepDays(account, days) }
         },
@@ -1005,7 +1030,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             changeAccount { mail.setNewMail(account, check) }
         },
         onRemove = { account ->
-            accountsOpen = false
+            settingsPages = emptyList()
             scope.launch {
                 try {
                     mail.removeAccount(account)
@@ -1028,10 +1053,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 }
             }
         },
-        onWrite = {
-            accountsOpen = false
-            composing = Composing(authorDraft(context))
-        },
+        onWrite = { composing = Composing(authorDraft(context)) },
     )
 
     // Back from another mailbox leads to the inbox.
@@ -1138,6 +1160,18 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         onDiscard = { discarded(it, shown.composing.original) },
                     )
                     Screen.Drafts -> Middle(LIST_MAX, Modifier.fillMaxSize()) { DraftsScreen(mail, snackbar, onOpen = ::openDraft, onBack = ::back) }
+                    is Screen.SettingsPage -> Middle(LIST_MAX, Modifier.fillMaxSize()) {
+                        SettingsScreen(
+                            mail,
+                            shown.pages.last(),
+                            accounts,
+                            swipes,
+                            signature,
+                            settingsActions,
+                            onOpen = { settingsPages = settingsPages + it },
+                            onBack = ::back,
+                        )
+                    }
                     is Screen.Read -> Reader(shown.message, pane = false)
                     Screen.AddAccount -> Middle(LIST_MAX, Modifier.fillMaxSize()) {
                         SignInScreen(
@@ -1147,10 +1181,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                 // Its mail is all still to come in the mailboxes together.
                                 keepSynced(everSynced.filterTo(mutableSetOf()) { it >= 0 })
                                 scope.launch { sync() }
+                                // Its page opens, for its name and when its mail comes.
                                 scope.launch {
                                     loadAccounts()
-                                    added = accounts.maxOfOrNull { it.id }
-                                    accountsOpen = added != null
+                                    accounts.maxOfOrNull { it.id }?.let { settingsPages = settingsPages + it }
                                 }
                             },
                             onCancel = ::back,
@@ -1192,10 +1226,6 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                 Mailboxes(
                                     state = mailboxesState,
                                     actions = accountsActions,
-                                    onSettings = {
-                                        added = SETTINGS
-                                        accountsOpen = true
-                                    },
                                     modifier = Modifier.width(MAILBOXES).fillMaxHeight(),
                                 )
                                 VerticalDivider(color = colors.outlineVariant)
@@ -1316,10 +1346,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         AccountsSheet(
             visible = accountsOpen,
             state = mailboxesState,
-            swipes = swipes,
-            signature = signature,
             actions = accountsActions,
-            startOn = added,
+            holdTip = holdTip,
             onClose = { accountsOpen = false },
         )
         SnoozeSheet(
@@ -1371,12 +1399,14 @@ private fun screenOf(
     again: AccountItem?,
     searching: Boolean,
     drafts: Boolean,
+    settings: List<Long>,
 ): Screen {
     val under = when {
         addingAccount -> Screen.AddAccount
         again != null -> Screen.SignInAgain(again)
         searching -> Screen.Search
         drafts -> Screen.Drafts
+        settings.isNotEmpty() -> Screen.SettingsPage(settings)
         else -> Screen.Inbox
     }
     // Beside the list, the message stays in the inbox's pane.
@@ -1387,9 +1417,12 @@ private fun screenOf(
 private sealed class Screen(val depth: Int) {
     data object Inbox : Screen(0)
     data object Search : Screen(1)
-    data object AddAccount : Screen(1)
-    data class SignInAgain(val account: AccountItem) : Screen(1)
+    // Over the settings too.
+    data object AddAccount : Screen(3)
+    data class SignInAgain(val account: AccountItem) : Screen(3)
     data object Drafts : Screen(1)
+    /** The settings' [pages] open, the top one last; each one deeper. */
+    data class SettingsPage(val pages: List<Long>) : Screen(pages.size)
     data class Read(val message: MessageItem) : Screen(2)
     data class Write(val composing: Composing) : Screen(3)
 }

@@ -7,8 +7,7 @@ private let author = "khizrim@khizrim.ru"
 /// A letter to the author, with what the app runs on below, and a crash report if there is one.
 @MainActor
 func authorDraft(crash: String? = nil) -> DraftItem {
-    let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
-    let device = "Ozero Mail \(version), iOS \(UIDevice.current.systemVersion), \(Crashes.model)"
+    let device = "Ozero Mail \(appVersion), iOS \(UIDevice.current.systemVersion), \(Crashes.model)"
     let text = ["\n\n-- ", device, crash].compactMap { $0 }.joined(separator: "\n")
     var draft = newDraft
     draft.to = author
@@ -16,6 +15,9 @@ func authorDraft(crash: String? = nil) -> DraftItem {
     draft.text = text
     return draft
 }
+
+/// The app's version, as the store shows it.
+let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
 
 /// The last crash, kept on the phone until the person sends it or lets it go. Nothing leaves the
 /// phone on its own: the report becomes a letter the person reads before sending. iOS hands the

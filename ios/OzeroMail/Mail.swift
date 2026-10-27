@@ -195,6 +195,16 @@ final class Mail: Sendable {
         try core.setAccountInAll(account: account.id, inAll: inAll)
     }
 
+    /// Shows notifications for the account's new mail from people, or stops them.
+    func setNotify(_ account: AccountItem, _ notify: Bool) async throws {
+        try core.setAccountNotify(account: account.id, notify: notify)
+    }
+
+    /// The name the account's mail goes out under; empty leaves only the address.
+    func setSender(_ account: AccountItem, name: String) async throws {
+        try core.setAccountSender(account: account.id, name: name)
+    }
+
     /// Pins `folder` among its account's usual folders, or unpins it.
     func setPinned(_ folder: FolderItem, _ pinned: Bool) async throws {
         try core.setFolderPinned(folder: folder.id, pinned: pinned)
@@ -455,6 +465,25 @@ final class Mail: Sendable {
     /// From now on the remote images of mail from `message`'s sender load on their own.
     func allowImages(of message: MessageItem) async throws {
         try core.allowImages(message: message.id)
+    }
+
+    /// The senders whose images load on their own because the person chose so.
+    func imageSenders() async throws -> [String] {
+        try core.imageSenders()
+    }
+
+    /// The sender's images wait to be asked for again.
+    func forbidImages(of email: String) async throws {
+        try core.forbidImages(email: email)
+    }
+
+    /// Whether all mail's images load on their own, but in spam.
+    func imagesAlways() async throws -> Bool {
+        try core.imagesAlways()
+    }
+
+    func setImagesAlways(_ always: Bool) async throws {
+        try core.setImagesAlways(always: always)
     }
 
     /// A blank message from the first account, with its signature.

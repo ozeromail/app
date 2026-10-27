@@ -66,6 +66,10 @@ enum class SwipeAction(@StringRes val label: Int, @DrawableRes val icon: Int) {
 /** By default left is Done and right is Read, as in the prototype. */
 data class Swipes(val left: SwipeAction = SwipeAction.DONE, val right: SwipeAction = SwipeAction.READ)
 
+/** The sizes of mail's text the person can pick from, against the usual one. */
+val TEXT_SCALES = listOf(0.9f, 1f, 1.1f, 1.2f, 1.35f)
+const val USUAL_SIZE = 1
+
 /** The person's choices, kept on the phone. */
 class Settings(context: Context) {
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
@@ -80,6 +84,20 @@ class Settings(context: Context) {
     var swipeTipSeen: Boolean
         get() = prefs.getBoolean(TIP, false)
         set(value) = prefs.edit().putBoolean(TIP, value).apply()
+
+    /** The size of mail's text, a place in [TEXT_SCALES]. */
+    var textSize: Int
+        get() = prefs.getInt(TEXT_SIZE, USUAL_SIZE).coerceIn(TEXT_SCALES.indices)
+        set(value) = prefs.edit().putInt(TEXT_SIZE, value).apply()
+
+    /** How much larger than usual mail's text is. */
+    val textScale: Float
+        get() = TEXT_SCALES[textSize]
+
+    /** An account was held in the accounts sheet, so the tip about it does not show again. */
+    var holdTipSeen: Boolean
+        get() = prefs.getBoolean(HOLD_TIP, false)
+        set(value) = prefs.edit().putBoolean(HOLD_TIP, value).apply()
 
     /** The mailboxes synced on this phone, by [Mailbox] key: only one never synced waits for its first mail. */
     var syncedBoxes: Set<Long>
@@ -119,6 +137,8 @@ class Settings(context: Context) {
         private const val SYNCED = "synced_boxes"
         private const val ALL_ORDER = "all_boxes_order"
         private const val ALL_SHOWN = "all_boxes_shown"
+        private const val TEXT_SIZE = "text_size"
+        private const val HOLD_TIP = "hold_tip_seen"
     }
 }
 
@@ -299,7 +319,7 @@ class Pull {
 
 /** The fill and what sits on it: Done the accent, as everywhere; Read the quiet slate, Delete the warning red. */
 @Composable
-private fun SwipeAction.colors(): Pair<Color, Color> = with(MaterialTheme.colorScheme) {
+fun SwipeAction.colors(): Pair<Color, Color> = with(MaterialTheme.colorScheme) {
     when (this@colors) {
         SwipeAction.DONE -> accent to onAccent
         SwipeAction.READ -> secondary to onSecondary
@@ -373,12 +393,12 @@ fun <T> Choices(
         stringResource(title),
         color = colors.onSurfaceVariant,
         style = Type.Caption,
-        modifier = Modifier.padding(start = Gap.sheet, end = Gap.sheet, top = 8.dp, bottom = 8.dp),
+        modifier = Modifier.padding(start = Gap.screen, end = Gap.screen, top = 8.dp, bottom = 8.dp),
     )
     // More than four take two rows, so each keeps room for its words.
     val perRow = (if (options.size > 4) (options.size + 1) / 2 else options.size).coerceAtLeast(1)
     Column(
-        Modifier.fillMaxWidth().padding(horizontal = Gap.sheet).padding(bottom = 8.dp).selectableGroup(),
+        Modifier.fillMaxWidth().padding(horizontal = Gap.screen).padding(bottom = 8.dp).selectableGroup(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         options.chunked(perRow).forEach { row ->

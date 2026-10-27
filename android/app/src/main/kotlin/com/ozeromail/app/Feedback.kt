@@ -12,12 +12,16 @@ private const val AUTHOR = "khizrim@khizrim.ru"
 
 /** A letter to the author, with what the app runs on below, and a crash report if there is one. */
 fun authorDraft(context: Context, crash: String? = null): DraftItem {
-    val version = context.packageManager.getPackageInfo(context.packageName, PackageInfoFlags.of(0)).versionName ?: "?"
+    val version = appVersion(context)
     val subject = if (crash == null) R.string.feedback_subject else R.string.crash_subject
     val device = "Ozero Mail $version, Android ${Build.VERSION.RELEASE}, ${Build.MANUFACTURER} ${Build.MODEL}"
     val text = listOfNotNull("\n\n-- ", device, crash).joinToString("\n")
     return NEW_DRAFT.copy(to = AUTHOR, subject = context.getString(subject), text = text)
 }
+
+/** The app's version, as the store shows it. */
+fun appVersion(context: Context): String =
+    context.packageManager.getPackageInfo(context.packageName, PackageInfoFlags.of(0)).versionName ?: "?"
 
 /**
  * The last crash, kept on the phone until the person sends it or lets it go. Nothing leaves
