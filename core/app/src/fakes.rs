@@ -405,6 +405,22 @@ impl Store for Memory {
         Ok(())
     }
 
+    fn image_senders(&self) -> Result<Vec<String>, StoreError> {
+        Ok(Vec::new())
+    }
+
+    fn forbid_images(&self, _: &str) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn images_always(&self) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    fn set_images_always(&self, _: bool) -> Result<(), StoreError> {
+        Ok(())
+    }
+
     fn correspondents(&self, _: MessageId) -> Result<Correspondents, StoreError> {
         Ok(Correspondents::default())
     }
@@ -442,6 +458,10 @@ impl Store for Memory {
     }
 
     fn set_account_in_all(&self, _: AccountId, _: bool) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn set_account_notify(&self, _: AccountId, _: bool) -> Result<(), StoreError> {
         Ok(())
     }
 

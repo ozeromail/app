@@ -1095,3 +1095,26 @@ fn leaves_a_list_by_its_page_when_it_offers_nothing_else() {
     assert!(!rows[1].can_unsubscribe);
     assert_eq!(core.unsubscribe(rows[1].id), Err(CoreError::NotFound));
 }
+
+#[test]
+fn the_sender_name_is_the_users_or_only_the_address() {
+    let db = TempDb::new("sender");
+    let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
+    let account = core
+        .store
+        .add_account(&NewAccount {
+            kind: AccountKind::Imap,
+            email: "a@example.com".into(),
+            display_name: "Anna".into(),
+            server: None,
+            smtp: None,
+        })
+        .unwrap();
+    let from = || sender(&core.store.accounts().unwrap()[0]).name;
+    core.set_account_sender(account.0, " Anna Petrova ".into())
+        .unwrap();
+    assert_eq!(from().as_deref(), Some("Anna Petrova"));
+    core.set_account_sender(account.0, "  ".into()).unwrap();
+    assert_eq!(from(), None);
+    assert!(core.set_account_sender(999, "Bob".into()).is_err());
+}

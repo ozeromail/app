@@ -297,6 +297,25 @@ impl Core {
         Ok(self.store.set_account_in_all(account, in_all)?)
     }
 
+    /// Shows notifications for the account's new mail from people, or stops them; its mail
+    /// still comes.
+    pub fn set_account_notify(&self, account: i64, notify: bool) -> Result<(), CoreError> {
+        Ok(self.store.set_account_notify(AccountId(account), notify)?)
+    }
+
+    /// Sets the name the account's mail goes out under; empty leaves only the address.
+    pub fn set_account_sender(&self, account: i64, name: String) -> Result<(), CoreError> {
+        let account = AccountId(account);
+        let name = match name.trim() {
+            "" => match self.store.accounts()?.into_iter().find(|a| a.id == account) {
+                Some(a) => a.email,
+                None => return Ok(()),
+            },
+            name => name.to_owned(),
+        };
+        Ok(self.store.set_account_name(account, &name)?)
+    }
+
     /// Sets when the phone looks for the account's new mail with the app closed.
     pub fn set_account_new_mail(&self, account: i64, when: NewMail) -> Result<(), CoreError> {
         Ok(self.store.set_account_new_mail(AccountId(account), when)?)
@@ -1583,6 +1602,30 @@ impl Core {
     /// From now on the remote images of mail from this message's sender load on their own.
     pub fn allow_images(&self, message: i64) -> Result<(), CoreError> {
         Ok(self.store.allow_images(MessageId(message))?)
+    }
+
+    /// The senders whose images load on their own because the user chose so, by address.
+    pub fn image_senders(&self) -> Result<Vec<String>, CoreError> {
+        Ok(self.store.image_senders()?)
+    }
+
+    /// The sender's images wait to be asked for again.
+    pub fn forbid_images(&self, email: String) -> Result<(), CoreError> {
+        self.store.forbid_images(&email)?;
+        // A page kept with its images would show them again.
+        self.kept_pages().clear();
+        Ok(())
+    }
+
+    /// Whether the images of all mail load on their own, but in junk.
+    pub fn images_always(&self) -> Result<bool, CoreError> {
+        Ok(self.store.images_always()?)
+    }
+
+    pub fn set_images_always(&self, always: bool) -> Result<(), CoreError> {
+        self.store.set_images_always(always)?;
+        self.kept_pages().clear();
+        Ok(())
     }
 }
 
@@ -3022,6 +3065,10 @@ pub struct AccountItem {
     pub signs_with: String,
     /// Its inbox is part of the unified inbox.
     pub in_all: bool,
+    /// Its new mail from people shows notifications.
+    pub notify: bool,
+    /// The host its mail comes from; empty for a provider's own, as with Gmail.
+    pub server: String,
 }
 
 impl AccountItem {
@@ -3029,6 +3076,12 @@ impl AccountItem {
     fn new(a: Account, signature: &str) -> Self {
         Self {
             in_all: a.in_all,
+            notify: a.notify,
+            server: a
+                .server
+                .as_ref()
+                .map(|s| s.host.clone())
+                .unwrap_or_default(),
             signs_with: a.signs_with(signature).to_owned(),
             id: a.id.0,
             color: rgb(a.color),

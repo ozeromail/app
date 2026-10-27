@@ -188,7 +188,7 @@ impl Store for SqliteStore {
             .prepare_cached(
                 "SELECT id, kind, email, display_name, server_host, server_port, server_user,
                         server_certificate, smtp_host, smtp_port, smtp_user, smtp_certificate,
-                        color, label, keep_days, needs_sign_in, new_mail, signature, in_all
+                        color, label, keep_days, needs_sign_in, new_mail, signature, in_all, notify
                  FROM account ORDER BY position, id",
             )
             .map_err(storage)?;
@@ -218,6 +218,7 @@ impl Store for SqliteStore {
                 new_mail: r.get::<_, StoredNewMail>(16)?.0,
                 signature: r.get(17)?,
                 in_all: r.get(18)?,
+                notify: r.get(19)?,
             })
         });
         rows.and_then(|rows| rows.collect()).map_err(storage)
@@ -296,6 +297,17 @@ impl Store for SqliteStore {
             .execute(
                 "UPDATE account SET in_all = ?2 WHERE id = ?1",
                 params![account.0, in_all],
+            )
+            .map_err(storage)?;
+        found(changed)
+    }
+
+    fn set_account_notify(&self, account: AccountId, notify: bool) -> Result<(), StoreError> {
+        let changed = self
+            .conn()
+            .execute(
+                "UPDATE account SET notify = ?2 WHERE id = ?1",
+                params![account.0, notify],
             )
             .map_err(storage)?;
         found(changed)
@@ -764,7 +776,8 @@ impl Store for SqliteStore {
                 // Never in junk: a sender there may be anyone, and may be pretending.
                 "SELECT f.role IS NOT 'junk' AND (
                             m.category = 'people' AND m.from_email != ''
-                            OR EXISTS (SELECT 1 FROM image_sender WHERE email = m.from_email))
+                            OR EXISTS (SELECT 1 FROM image_sender WHERE email = m.from_email)
+                            OR EXISTS (SELECT 1 FROM setting WHERE key = 'images' AND value = 'always'))
                  FROM message m JOIN folder f ON f.id = m.folder_id WHERE m.id = ?1",
             )
             .and_then(|mut s| s.query_row([message.0], |r| r.get(0)).optional())
@@ -783,6 +796,40 @@ impl Store for SqliteStore {
             )
             .map_err(storage)?;
         found(changed)
+    }
+
+    fn image_senders(&self) -> Result<Vec<String>, StoreError> {
+        self.conn()
+            .prepare_cached("SELECT email FROM image_sender ORDER BY email")
+            .and_then(|mut s| s.query_map([], |r| r.get(0))?.collect())
+            .map_err(storage)
+    }
+
+    fn forbid_images(&self, email: &str) -> Result<(), StoreError> {
+        self.conn()
+            .execute("DELETE FROM image_sender WHERE email = ?1", [email])
+            .map(|_| ())
+            .map_err(storage)
+    }
+
+    fn images_always(&self) -> Result<bool, StoreError> {
+        self.conn()
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM setting WHERE key = 'images' AND value = 'always')",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(storage)
+    }
+
+    fn set_images_always(&self, always: bool) -> Result<(), StoreError> {
+        self.conn()
+            .execute(
+                "INSERT OR REPLACE INTO setting (key, value) VALUES ('images', ?1)",
+                [if always { "always" } else { "ask" }],
+            )
+            .map(|_| ())
+            .map_err(storage)
     }
 
     fn correspondents(&self, message: MessageId) -> Result<Correspondents, StoreError> {
@@ -2852,7 +2899,8 @@ const CLEAR_FRESH: &str = "UPDATE message SET fresh = 0 WHERE fresh = 1";
 // `1` is `SEEN`.
 const FRESH_PEOPLE: &str = concat!(
     message_select!(),
-    "m.fresh = 1 AND m.date > ?1 AND f.role = 'inbox' AND m.category = 'people' AND m.flags & 1 = 0 AND ",
+    "m.fresh = 1 AND m.date > ?1 AND f.role = 'inbox' AND m.category = 'people' AND m.flags & 1 = 0
+       AND EXISTS (SELECT 1 FROM account WHERE id = f.account_id AND notify = 1) AND ",
     not_moving!(),
     " ORDER BY m.date DESC, m.id DESC"
 );
