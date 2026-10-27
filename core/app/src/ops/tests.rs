@@ -14,7 +14,11 @@ fn op(id: i64, folder: &str, uid: &str, action: Action) -> Op {
             validity: 9,
             remote_id: uid.into(),
         },
-        to: (action == Action::Archive).then(|| "Archive".into()),
+        to: match action {
+            Action::Archive => Some("Archive".into()),
+            Action::Spam => Some("Junk".into()),
+            _ => None,
+        },
     }
 }
 
@@ -102,6 +106,19 @@ fn a_network_failure_keeps_the_rest_queued() {
     assert_eq!(server.applied.len(), 1);
     assert!(store.finished.lock().unwrap().is_empty());
     assert!(store.reverted.lock().unwrap().is_empty());
+}
+
+#[test]
+fn moves_to_spam_after_flagging() {
+    let store = store(vec![
+        op(1, "INBOX", "5", Action::Spam),
+        op(2, "INBOX", "5", Action::Flagged(true)),
+    ]);
+    let mut server = Server::default();
+    run(push_ops(&store, &mut server, store.ops.clone())).unwrap();
+    // The fake logs a move as an archive: the flag is set first, then it goes to Junk.
+    assert_eq!(server.applied[0].3, Action::Flagged(true));
+    assert_eq!(server.moved_to, ["Junk"]);
 }
 
 #[test]

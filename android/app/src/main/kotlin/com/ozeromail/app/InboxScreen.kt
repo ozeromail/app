@@ -942,7 +942,9 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         mail.flag(listOf(message), flagged)
                     } catch (e: CoreException) {
                         fail(e)
+                        return@launch
                     }
+                    messages = messages.map { if (it.id == message.id) it.copy(flagged = flagged) else it }
                 }
             },
             onDone = {
