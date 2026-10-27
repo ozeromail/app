@@ -893,6 +893,19 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         }
     }
 
+    /** Off the list while the sheet asks where to; back if it closes without a folder. */
+    fun move(message: MessageItem, reset: () -> Unit) {
+        scope.launch {
+            try {
+                moving = Moving(message, mail.moveTargets(message), reset)
+                movingOpen = true
+            } catch (e: CoreException) {
+                fail(e)
+                reset()
+            }
+        }
+    }
+
     fun swiped(message: MessageItem, action: SwipeAction, reset: () -> Unit) = when (action) {
         SwipeAction.DONE -> archive(listOf(message), reset)
         SwipeAction.DELETE -> delete(listOf(message), reset)
@@ -902,19 +915,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         SwipeAction.SNOOZE -> { snoozing = Snoozing(listOf(message), reset) }
         SwipeAction.FLAG -> setFlag(message, !message.flagged)
         SwipeAction.SPAM -> spam(listOf(message), reset)
-        // The same: off the list while the sheet asks where to.
-        SwipeAction.MOVE -> {
-            scope.launch {
-                try {
-                    moving = Moving(message, mail.moveTargets(message), reset)
-                    movingOpen = true
-                } catch (e: CoreException) {
-                    fail(e)
-                    reset()
-                }
-            }
-            Unit
-        }
+        SwipeAction.MOVE -> move(message, reset)
     }
 
     /** The chosen messages, as the list shows them; acting on them ends the choosing. */

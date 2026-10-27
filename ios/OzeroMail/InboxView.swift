@@ -511,15 +511,10 @@ private struct InboxList: View {
     @ViewBuilder
     private func swipe(_ action: SwipeAction, _ message: MessageItem) -> some View {
         if action.applies(to: message) {
-            let unread = message.threadUnread > 0
             Button(role: action == .delete ? .destructive : nil) {
                 model.swiped(message, action)
             } label: {
-                if action == .read {
-                    Label(action.label(for: message), systemImage: unread ? "envelope.open" : "envelope.badge")
-                } else {
-                    Label(action.label(for: message), systemImage: action == .flag && message.flagged ? "flag.slash" : action.icon)
-                }
+                Label(action.label(for: message), systemImage: action.icon(for: message))
             }
             .tint(action.tint)
         }

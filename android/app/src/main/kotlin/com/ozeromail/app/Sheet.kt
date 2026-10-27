@@ -181,7 +181,7 @@ private fun SheetBody(
     var pulled by remember { mutableFloatStateOf(0f) }
     var height by remember { mutableIntStateOf(0) }
     // How far below its place the sheet is: raised from below, it is as low as the finger left it.
-    fun lowered(): Float = lift?.risen?.let { (height - it).coerceAtLeast(0f) } ?: pulled
+    fun lowered(tall: Float = height.toFloat()): Float = lift?.risen?.let { (tall - it).coerceAtLeast(0f) } ?: pulled
 
     suspend fun settle() {
         animate(pulled, 0f, animationSpec = Motion.settle()) { value, _ -> pulled = value }
@@ -259,7 +259,7 @@ private fun SheetBody(
             }
             .onSizeChanged { height = it.height }
             // Before it is measured, a sheet raised from below stays under the screen.
-            .graphicsLayer { translationY = lift?.risen?.let { (size.height - it).coerceAtLeast(0f) } ?: pulled }
+            .graphicsLayer { translationY = lowered(size.height) }
             .clip(RoundedCornerShape(topStart = Radius.sheet, topEnd = Radius.sheet))
             .background(colors.background)
             .draggable(
