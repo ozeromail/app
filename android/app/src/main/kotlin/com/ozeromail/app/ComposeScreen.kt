@@ -244,7 +244,7 @@ fun ComposeScreen(
 
     fun add(uris: List<Uri>) {
         if (uris.isEmpty()) return
-        addFiles({ uris.map { pickedName(context, it) } }) { index, name, room -> readPicked(context, uris[index], name, room) }
+        addFiles({ uris.map { pickedName(context, it) } }, { index, name, room -> readPicked(context, uris[index], name, room) })
     }
     // Photos go into the text after the caret's line, lighter; videos go with the files.
     fun addMedia(uris: List<Uri>) {
@@ -275,7 +275,7 @@ fun ComposeScreen(
     fun addFromMail(file: RecentFileItem) {
         // A second tap while it downloads adds nothing.
         if (file.name in adding) return
-        addFiles({ listOf(file.name) }) { _, _, room -> if (file.size.toLong() > room) null else mail.downloadFile(file) }
+        addFiles({ listOf(file.name) }, { _, _, room -> if (file.size.toLong() > room) null else mail.downloadFile(file) })
     }
     // Read each time the sheet opens, as mail keeps coming.
     LaunchedEffect(attaching) {
