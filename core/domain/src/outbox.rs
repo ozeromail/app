@@ -133,6 +133,8 @@ pub struct Outgoing {
 /// A file sent with a message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutgoingFile {
+    /// The draft's file, which its text can show as an image; none for a forwarded one.
+    pub id: Option<FileId>,
     pub name: String,
     /// The content type, such as `application/pdf`.
     pub mime: String,
@@ -185,9 +187,12 @@ pub fn quote(header: String, text: &str) -> String {
 }
 
 /// What a message says: the text, the signature and the quote, those there are, with a
-/// blank line between them.
+/// blank line between them. The signature and the quote are plain text, so their marks are
+/// kept as they are (`rich::escape`).
 pub fn full_text(text: &str, signature: &str, quote: &str) -> String {
-    [text.trim_end(), signature.trim_end(), quote]
+    let signature = crate::rich::escape(signature.trim_end());
+    let quote = crate::rich::escape(quote);
+    [text.trim_end(), &signature, &quote]
         .into_iter()
         .filter(|part| !part.trim().is_empty())
         .collect::<Vec<_>>()
@@ -282,17 +287,19 @@ mod tests {
     fn quotes_line_by_line() {
         let quote = quote("Anna wrote:".into(), "Hi\n\nBye\n");
         assert_eq!(quote, "Anna wrote:\n> Hi\n>\n> Bye");
+        // The signature and the quote are plain text: their marks stay as they are.
+        let shown = |text: String| crate::rich::to_plain(&text, &|_| None);
         assert_eq!(
-            full_text("Hello\n", "", &quote),
+            shown(full_text("Hello\n", "", &quote)),
             format!("Hello\n\n{quote}")
         );
         assert_eq!(full_text("Hello", "", ""), "Hello");
-        assert_eq!(full_text(" \n", "", &quote), quote);
+        assert_eq!(shown(full_text(" \n", "", &quote)), quote);
         assert_eq!(
-            full_text("Hello\n", "--\nAnna\n", &quote),
-            format!("Hello\n\n--\nAnna\n\n{quote}")
+            shown(full_text("**Hello**\n", "--\nAnna\n", &quote)),
+            format!("*Hello*\n\n--\nAnna\n\n{quote}")
         );
-        assert_eq!(full_text("", "--\nAnna", ""), "--\nAnna");
+        assert_eq!(full_text("", "Anna", ""), "Anna");
     }
 
     #[test]

@@ -133,6 +133,7 @@ pub async fn import_drafts(
             .zip(parser.attachments(&raw, &parts))
             .filter_map(|(file, data)| {
                 Some(ozero_domain::OutgoingFile {
+                    id: None,
                     name: file.name.clone(),
                     mime: file.mime.clone(),
                     data: data?,
@@ -149,7 +150,8 @@ pub async fn import_drafts(
             to: typed(&header.to),
             cc: typed(&header.cc),
             subject: header.subject,
-            text: body.text,
+            // Plain text, so any marks in it stay as written.
+            text: ozero_domain::rich::escape(&body.text),
             signature: String::new(),
             reply_to: None,
             quote: String::new(),

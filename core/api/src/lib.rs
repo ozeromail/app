@@ -910,7 +910,12 @@ impl Core {
         mime: String,
         data: Vec<u8>,
     ) -> Result<DraftFileItem, CoreError> {
-        let file = OutgoingFile { name, mime, data };
+        let file = OutgoingFile {
+            id: None,
+            name,
+            mime,
+            data,
+        };
         match self.store.attach(DraftId(draft), &file, FILE_LIMIT) {
             Ok(Some(file)) => Ok(file.into()),
             Ok(None) => Err(CoreError::TooLarge),
@@ -932,6 +937,15 @@ impl Core {
     /// Takes a file off its draft.
     pub fn detach_file(&self, file: i64) -> Result<(), CoreError> {
         Ok(self.store.detach(FileId(file))?)
+    }
+
+    /// The contents of a file added to a draft, to show an image in its text. Fails with
+    /// `Gone` once the file is.
+    pub fn draft_file_data(&self, file: i64) -> Result<Vec<u8>, CoreError> {
+        match self.store.file_data(FileId(file)) {
+            Err(StoreError::NotFound) => Err(CoreError::Gone),
+            data => Ok(data?),
+        }
     }
 }
 
@@ -3801,6 +3815,7 @@ impl From<SyncError> for CoreError {
 }
 
 mod certificate;
+mod rich;
 
 pub use certificate::{ClientCertificates, Signing};
 
