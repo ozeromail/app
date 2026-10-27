@@ -109,7 +109,7 @@ fn verify(
         .collect();
     let leaf = EndEntityCert::try_from(end_entity).map_err(|_| bad())?;
     let algorithms = default_provider().signature_verification_algorithms.all;
-    leaf.verify_for_usage(
+    let checked = leaf.verify_for_usage(
         algorithms,
         &anchors,
         &[],
@@ -117,17 +117,17 @@ fn verify(
         KeyUsage::server_auth(),
         Some(revocation),
         None,
-    )
-    .map_or_else(
-        |e| match e {
-            webpki::Error::CertRevoked => Err(Error::InvalidCertificate(CertificateError::Revoked)),
-            other => {
-                log::warn!("revocation status unknown: {other:?}");
-                Ok(())
-            }
-        },
-        drop,
-    )
+    );
+    match checked {
+        Err(webpki::Error::CertRevoked) => {
+            Err(Error::InvalidCertificate(CertificateError::Revoked))
+        }
+        Err(other) => {
+            log::warn!("revocation status unknown: {other:?}");
+            Ok(())
+        }
+        Ok(_) => Ok(()),
+    }
 }
 
 fn bad() -> Error {
