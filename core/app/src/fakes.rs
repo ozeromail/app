@@ -424,6 +424,18 @@ impl Store for Memory {
         Ok(())
     }
 
+    fn set_account_order(&self, _: &[AccountId]) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn set_account_in_all(&self, _: AccountId, _: bool) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn left_out_of_all(&self) -> Result<Vec<AccountId>, StoreError> {
+        Ok(vec![])
+    }
+
     fn set_account_signature(&self, _: AccountId, _: &str) -> Result<(), StoreError> {
         Ok(())
     }
@@ -487,6 +499,14 @@ impl Store for Memory {
         Ok(self.folders.clone())
     }
 
+    fn set_folder_pinned(&self, _: FolderId, _: bool) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn pinned_folders(&self) -> Result<Vec<FolderId>, StoreError> {
+        Ok(vec![])
+    }
+
     fn checkpoint(&self, _: FolderId) -> Result<(Checkpoint, Vec<String>), StoreError> {
         Ok(self.checkpoint.clone())
     }
@@ -513,11 +533,11 @@ impl Store for Memory {
         Ok(())
     }
 
-    fn inbox_unread(&self) -> Result<Vec<(Category, u32)>, StoreError> {
+    fn inbox_unread(&self, _: Option<AccountId>) -> Result<Vec<(Category, u32)>, StoreError> {
         Ok(vec![])
     }
 
-    fn inbox_is_empty(&self) -> Result<bool, StoreError> {
+    fn inbox_is_empty(&self, _: Option<AccountId>) -> Result<bool, StoreError> {
         Ok(true)
     }
 

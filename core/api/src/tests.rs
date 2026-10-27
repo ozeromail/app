@@ -218,7 +218,7 @@ fn sync_an_imap_inbox_into_the_list() {
     assert!(!needs_sign_in());
     sync().unwrap();
 
-    let inbox = core.unified_inbox(Category::People, 50).unwrap();
+    let inbox = core.inbox(None, Category::People, 50).unwrap();
     let subjects: Vec<_> = inbox.iter().map(|m| m.subject.as_str()).collect();
     assert_eq!(subjects, ["Message 3", "Message 2", "Message 1"]);
     assert_eq!(inbox[0].from_name.as_deref(), Some("Анна"));
@@ -240,7 +240,7 @@ fn sync_an_imap_inbox_into_the_list() {
     // Saved now: no login, so a wrong password does not matter.
     assert_eq!(body("wrong").unwrap(), plain);
     assert_eq!(
-        core.unified_inbox(Category::People, 50).unwrap()[1].snippet,
+        core.inbox(None, Category::People, 50).unwrap()[1].snippet,
         "Hello 2"
     );
 
@@ -274,7 +274,7 @@ fn sync_an_imap_inbox_into_the_list() {
     for seen in [true, false] {
         core.mark_read(vec![first], seen).unwrap();
         assert_eq!(
-            core.unified_inbox(Category::People, 50).unwrap()[2].seen,
+            core.inbox(None, Category::People, 50).unwrap()[2].seen,
             seen
         );
         runtime
@@ -282,7 +282,7 @@ fn sync_an_imap_inbox_into_the_list() {
             .unwrap();
         sync().unwrap();
         assert_eq!(
-            core.unified_inbox(Category::People, 50).unwrap()[2].seen,
+            core.inbox(None, Category::People, 50).unwrap()[2].seen,
             seen
         );
     }
@@ -383,11 +383,11 @@ fn sync_an_imap_inbox_into_the_list() {
     let snoozed = Mailbox::Unified {
         role: FolderRole::Snoozed,
     };
-    let newest = core.unified_inbox(Category::People, 50).unwrap()[0].clone();
+    let newest = core.inbox(None, Category::People, 50).unwrap()[0].clone();
     core.mark_read(vec![newest.id], true).unwrap();
     core.snooze(vec![newest.id], now() / 1_000).unwrap();
     assert_ne!(
-        core.unified_inbox(Category::People, 50).unwrap()[0].id,
+        core.inbox(None, Category::People, 50).unwrap()[0].id,
         newest.id
     );
     assert_eq!(core.mailbox(snoozed, 50).unwrap().len(), 1);
@@ -403,7 +403,7 @@ fn sync_an_imap_inbox_into_the_list() {
         .block_on(core.push_actions(account, "pass".into()))
         .unwrap();
     sync().unwrap();
-    let back = &core.unified_inbox(Category::People, 50).unwrap()[0];
+    let back = &core.inbox(None, Category::People, 50).unwrap()[0];
     assert_eq!(
         (back.subject.as_str(), back.seen),
         (newest.subject.as_str(), false)
@@ -548,7 +548,7 @@ fn a_unified_list_ends_where_an_account_has_older_mail_to_load() {
     inbox("a@example.com", &[10, 20, 30]);
     let b = inbox("b@example.com", &[25, 35]);
     let dates = || -> Vec<i64> {
-        let rows = core.unified_inbox(Category::People, 50).unwrap();
+        let rows = core.inbox(None, Category::People, 50).unwrap();
         rows.iter().map(|m| m.date).collect()
     };
     assert_eq!(dates(), [35, 30, 25]);
@@ -606,7 +606,7 @@ fn tells_who_a_message_went_to_and_copies_the_others_on_reply_all() {
         gone: vec![],
     };
     store.save_changes(folder, &changes).unwrap();
-    let item = core.unified_inbox(Category::People, 10).unwrap().remove(0);
+    let item = core.inbox(None, Category::People, 10).unwrap().remove(0);
 
     let people = core.people(item.clone()).unwrap();
     let names = |p: &[PersonItem]| p.iter().map(|p| (p.name.clone(), p.me)).collect::<Vec<_>>();
@@ -984,4 +984,38 @@ fn says_a_first_name() {
     assert_eq!(first_name("Lee, Anna"), "Anna");
     assert_eq!(first_name("anna@x.com"), "anna");
     assert_eq!(first_name(" "), " ");
+}
+
+#[test]
+fn folders_sit_inside_the_folder_their_name_continues() {
+    let folder = |id: i64, name: &str, role: FolderRole| Folder {
+        id: FolderId(id),
+        account_id: AccountId(1),
+        remote_id: name.into(),
+        name: name.into(),
+        role,
+    };
+    let folders = [
+        folder(1, "INBOX", FolderRole::Inbox),
+        folder(2, "Trips", FolderRole::Custom),
+        folder(3, "Trips/2026", FolderRole::Custom),
+        folder(4, "Trips/2026/Kazan", FolderRole::Custom),
+        folder(5, "INBOX.Bills", FolderRole::Custom),
+        folder(6, "Tripsy", FolderRole::Custom),
+        folder(7, "Mr. Lee", FolderRole::Custom),
+    ];
+    let tree: Vec<(Option<i64>, String)> = folder_tree(&folders)
+        .into_iter()
+        .map(|(parent, name)| (parent.map(|p| p.0), name))
+        .collect();
+    let expected = [
+        (None, "INBOX"),
+        (None, "Trips"),
+        (Some(2), "2026"),
+        (Some(3), "Kazan"),
+        (None, "Bills"),
+        (None, "Tripsy"),
+        (None, "Mr. Lee"),
+    ];
+    assert_eq!(tree, expected.map(|(p, n)| (p, n.to_owned())));
 }

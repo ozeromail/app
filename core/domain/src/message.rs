@@ -305,8 +305,14 @@ pub enum ListScope {
     Folder(FolderId),
     /// The folders with this role across all accounts, e.g. the unified inbox.
     Unified(crate::FolderRole),
-    /// One tab of the unified inbox.
+    /// One tab of the unified inbox: the inboxes of the accounts in it.
     Inbox(Category),
+    /// One tab of one inbox.
+    FolderTab(FolderId, Category),
+    /// Unread mail of every account, trash, junk and drafts aside.
+    Unread,
+    /// Mail with files, as far as saved bodies list them, trash, junk and drafts aside.
+    Files,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

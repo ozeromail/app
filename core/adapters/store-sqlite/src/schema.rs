@@ -375,4 +375,12 @@ pub const MIGRATIONS: &[&str] = &[
     ALTER TABLE draft ADD COLUMN cc TEXT NOT NULL DEFAULT '';
     ALTER TABLE outbox ADD COLUMN cc TEXT NOT NULL DEFAULT '';
     ",
+    // 37: the order the person put the accounts in, whether an account's inbox is part of the
+    // unified one, and the folders pinned among an account's usual ones.
+    "
+    ALTER TABLE account ADD COLUMN position INTEGER NOT NULL DEFAULT 0;
+    UPDATE account SET position = id;
+    ALTER TABLE account ADD COLUMN in_all INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE folder ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
+    ",
 ];
