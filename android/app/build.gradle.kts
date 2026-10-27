@@ -140,6 +140,20 @@ val generateStrings by tasks.registering(RunTool::class) {
     command.addAll("python3", repoDir.resolve("tools/gen-strings.py").path, "{out}")
 }
 
+// Android's network security config: the verifier's own, which lets Android fetch revocation
+// lists over HTTP, plus trust in authorities installed on the device.
+val verifierAar by configurations.creating {
+    isCanBeConsumed = false
+}
+
+val generateNetworkConfig by tasks.registering(RunTool::class) {
+    sources.from(verifierAar, repoDir.resolve("tools/gen-network-config.py"))
+    workDir = layout.projectDirectory
+    command.addAll("python3", repoDir.resolve("tools/gen-network-config.py").path)
+    command.add(provider { verifierAar.singleFile.path })
+    command.add("{out}")
+}
+
 androidComponents {
     // The generator installs this release copy on an emulator; without the upload key it would
     // be unsigned.
@@ -150,6 +164,7 @@ androidComponents {
         variant.sources.jniLibs?.addGeneratedSourceDirectory(buildCore, RunTool::outputDir)
         variant.sources.java?.addGeneratedSourceDirectory(generateBindings, RunTool::outputDir)
         variant.sources.res?.addGeneratedSourceDirectory(generateStrings, RunTool::outputDir)
+        variant.sources.res?.addGeneratedSourceDirectory(generateNetworkConfig, RunTool::outputDir)
     }
 }
 
@@ -179,4 +194,5 @@ dependencies {
     androidTestUtil(libs.test.services)
     androidTestUtil(libs.test.orchestrator)
     implementation(verifierVersion.map { "org.rustls:rustls-platform-verifier:$it" })
+    addProvider(verifierAar.name, verifierVersion.map { "org.rustls:rustls-platform-verifier:$it@aar" })
 }
