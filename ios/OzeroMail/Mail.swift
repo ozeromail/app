@@ -567,6 +567,11 @@ final class Mail: Sendable {
         return PickedFile(name: file.name, mime: file.mime, data: data)
     }
 
+    /// What a file added to a draft holds, for its text to show it.
+    func draftFileData(_ file: Int64) async throws -> Data {
+        try core.draftFileData(file: file)
+    }
+
     /// Takes a file off its draft.
     func detachFile(_ file: Int64) async throws {
         try core.detachFile(file: file)

@@ -53,13 +53,40 @@ struct ComposeView: View {
     @State private var photos: [PhotosPickerItem] = []
     /// Files of saved mail to send on, offered in the paperclip's menu.
     @State private var recent: [RecentFileItem] = []
+    /// The photos in the text made lighter, with their originals, by the file shown now.
+    @State private var pictures: [Int64: Picture] = [:]
+    /// The images of the text, read from the draft's files.
+    @State private var images: [Int64: UIImage] = [:]
+    /// Where in the text the caret is, for photos to go after its line.
+    @State private var caret = 0
+    @State private var textFocused = false
+    @State private var textRequest = 0
+    @State private var linking: Linking?
+    @State private var linkURL = ""
     @FocusState private var focus: Field?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.sideways) private var sideways
     /// To and Subject shown again while the text is typed on its side.
     @State private var unfolded = false
+    @State private var textHeight: CGFloat = 0
 
-    private enum Field { case to, cc, subject, text, signature }
+    private enum Field { case to, cc, subject, signature }
+
+    /// A photo in the text, as it was picked and made lighter; `full` when the original is sent.
+    private struct Picture {
+        let original: PickedFile
+        let light: PickedFile
+        let full: Bool
+    }
+
+    /// A link being given its address: the one it has, and what to do with the new one.
+    private struct Linking {
+        let url: String?
+        let apply: (String?) -> Void
+    }
+
+    /// Anything being typed in, the text too.
+    private var editing: Bool { focus != nil || textFocused }
 
     private var start: DraftItem { composing.draft }
 
@@ -109,7 +136,7 @@ struct ComposeView: View {
                         // with it up the card only folds away, so it keeps what it loaded.
                         if let original = composing.original {
                             Original(mail: mail, message: original)
-                                .frame(maxHeight: focus == nil ? .infinity : 0, alignment: .top)
+                                .frame(maxHeight: editing ? 0 : .infinity, alignment: .top)
                                 .clipped()
                         }
                         ScrollView {
@@ -129,7 +156,7 @@ struct ComposeView: View {
                 VStack(spacing: 0) {
                     if let original = composing.original {
                         Original(mail: mail, message: original)
-                            .frame(maxHeight: focus == nil ? .infinity : 112, alignment: .top)
+                            .frame(maxHeight: editing ? 112 : .infinity, alignment: .top)
                     } else {
                         Spacer(minLength: 0)
                     }
@@ -150,8 +177,10 @@ struct ComposeView: View {
                 }
             }
         }
+        .onChange(of: editing) { _, now in
+            if !now { unfolded = false }
+        }
         .onChange(of: focus) { _, now in
-            if now == nil { unfolded = false }
             // Taken out, a tap brings it back.
             if now == .signature, signature.isEmpty, let from { signature = from.signsWith }
         }
@@ -166,7 +195,27 @@ struct ComposeView: View {
         .fileImporter(isPresented: $choosingFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             if case .success(let urls) = result { addFiles(urls) }
         }
-        .animation(.smooth, value: focus)
+        .animation(.smooth, value: editing)
+        .task(id: shownFiles) {
+            // The images of the text, as the draft keeps them.
+            for file in shownFiles where images[file] == nil {
+                if let data = try? await mail.draftFileData(file), let image = shownImage(data) { images[file] = image }
+            }
+        }
+        .alert("compose_format_link", isPresented: Binding(get: { linking != nil }, set: { if !$0 { linking = nil } })) {
+            TextField(text: $linkURL, prompt: Text(verbatim: "https://")) { Text("compose_format_link") }
+                .keyboardType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            Button("action_done") {
+                let url = linkURL.trimmingCharacters(in: .whitespaces)
+                if !url.isEmpty && url != "https://" { linking?.apply(url) }
+            }
+            if linking?.url != nil {
+                Button("compose_link_remove", role: .destructive) { linking?.apply(nil) }
+            }
+            Button("action_cancel", role: .cancel) {}
+        }
         .onAppear(perform: begin)
         .task {
             // Only an offer, the menu goes without it; a forwarded message's files go with it already.
@@ -194,7 +243,14 @@ struct ComposeView: View {
 
     /// On its side, while the text is typed, To and Subject fold into one line, so the text has
     /// the little height the keyboard leaves; a tap on the line brings them back.
-    private var folded: Bool { sideways && focus == .text && !unfolded }
+    private var folded: Bool { sideways && textFocused && !unfolded }
+
+    /// The files the text shows as images, which go without a chip.
+    private var shownFiles: [Int64] {
+        richBlocks(text: text).compactMap { block in
+            if case .image(_, _, let file, _) = block { file } else { nil }
+        }
+    }
 
     private var fields: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -226,13 +282,12 @@ struct ComposeView: View {
                     .font(.title2.bold())
                     .focused($focus, equals: .subject)
                     .submitLabel(.next)
-                    .onSubmit { focus = .text }
+                    .onSubmit { textRequest += 1 }
             }
-            TextField("compose_text", text: $text, axis: .vertical)
-                .lineLimit(focus == nil ? 7...14 : 3...7)
-                .focused($focus, equals: .text)
-            if !files.isEmpty || !adding.isEmpty {
-                FileChips(files: files, adding: adding, onRemove: detach)
+            textField
+            let chips = files.filter { !shownFiles.contains($0.id) }
+            if !chips.isEmpty || !adding.isEmpty {
+                FileChips(files: chips, adding: adding, onRemove: detach)
             }
             // A forward is its quote, so it stays.
             let forwarding = start.forward != nil
@@ -258,6 +313,60 @@ struct ComposeView: View {
             }
         }
         .padding(.horizontal, 20)
+    }
+
+    /// As tall as the text, up to some lines, scrolling past them.
+    private var textField: some View {
+        let line = UIFont.preferredFont(forTextStyle: .body).lineHeight
+        let lines: ClosedRange<CGFloat> = editing ? 3...7 : 7...14
+        return ScrollView {
+            RichBody(
+                text: $text, files: files, images: images, focusRequest: textRequest,
+                onCaret: { caret = $0 },
+                onFocus: { textFocused = $0 },
+                onLink: { url, apply in
+                    linkURL = url ?? "https://"
+                    linking = Linking(url: url, apply: apply)
+                },
+                imageMenu: imageMenu
+            )
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { textHeight = $0 }
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(height: min(max(textHeight, line * lines.lowerBound), line * lines.upperBound))
+    }
+
+    /// What can be done with an image in the text.
+    @ViewBuilder
+    private func imageMenu(_ file: Int64, _ size: ImageSize) -> some View {
+        Picker(selection: Binding(get: { size }, set: { text = richChangeImage(text: text, file: file, to: file, size: $0) })) {
+            Text("compose_image_small").tag(ImageSize.small)
+            Text("compose_image_medium").tag(ImageSize.medium)
+            Text("compose_image_full").tag(ImageSize.full)
+        } label: {
+            Text("compose_image")
+        }
+        .pickerStyle(.inline)
+        Button { text = richMoveImage(text: text, file: file, up: true) } label: {
+            Label("compose_image_up", systemImage: "arrow.up")
+        }
+        Button { text = richMoveImage(text: text, file: file, up: false) } label: {
+            Label("compose_image_down", systemImage: "arrow.down")
+        }
+        if let picture = pictures[file] {
+            Button { swap(file, picture, size) } label: {
+                Label(picture.full ? "compose_image_lighter" : "compose_image_original", systemImage: "photo")
+            }
+        }
+        Button { text = richRemoveImage(text: text, file: file) } label: {
+            Label("compose_image_to_file", systemImage: "paperclip")
+        }
+        Button(role: .destructive) {
+            text = richRemoveImage(text: text, file: file)
+            if let shown = files.first(where: { $0.id == file }) { detach(shown) }
+        } label: {
+            Label("action_remove", systemImage: "trash")
+        }
     }
 
     @ViewBuilder
@@ -348,6 +457,7 @@ struct ComposeView: View {
         quote = start.quote
         signature = start.signature
         files = start.files
+        caret = (text as NSString).length
         keeper = DraftKeeper(mail: mail, id: start.id)
         firstSeen = current
         // A forward or a new message starts where it is missing: who it goes to.
@@ -377,13 +487,45 @@ struct ComposeView: View {
         }
     }
 
+    /// Photos go into the text after the caret's line, lighter; videos go with the files.
     private func addPhotos(_ items: [PhotosPickerItem]) {
-        add(items.map { _ in "" }) { index, _ in
+        var lighter: [Int: Picture] = [:]
+        add(items.map { _ in "" }, read: { index, _ in
             // Nil when the library has no photo or video for it to hand over.
             guard let media = try await items[index].loadTransferable(type: PickedMedia.self) else {
                 throw CocoaError(.fileReadUnknown)
             }
-            return media.file
+            guard let file = media.file, let light = file.lighter() else { return media.file }
+            lighter[index] = Picture(original: file, light: light, full: false)
+            return light
+        }, then: { added in
+            let shown = added.filter { $0.1.mime.hasPrefix("image/") }
+            for (index, file) in shown { pictures[file.id] = lighter[index] }
+            if !shown.isEmpty {
+                text = richInsertImages(text: text, at: UInt32(clamping: caret), files: shown.map(\.1.id))
+            }
+        })
+    }
+
+    /// Sends the other of a photo's two versions: the original, or the lighter one again.
+    private func swap(_ file: Int64, _ picture: Picture, _ size: ImageSize) {
+        guard let keeper, let shown = files.first(where: { $0.id == file }) else { return }
+        Task {
+            do {
+                let other = picture.full ? picture.light : picture.original
+                let room = fileLimit() - min(fileLimit(), files.reduce(0) { $0 + $1.size })
+                guard UInt64(other.data.count) <= room else { throw CoreError.TooLarge }
+                let added = try await keeper.attach(current, other)
+                files.append(added)
+                pictures[added.id] = Picture(original: picture.original, light: picture.light, full: !picture.full)
+                if let image = images[file] { images[added.id] = image }
+                text = richChangeImage(text: text, file: file, to: added.id, size: size)
+                detach(shown)
+            } catch let error as CoreError {
+                self.error = error.text()
+            } catch {
+                self.error = "compose_file_unreadable"
+            }
         }
     }
 
@@ -400,14 +542,17 @@ struct ComposeView: View {
 
     /// Adds picked files one at a time, so a message never holds more than fits: `read` gives
     /// each whole, or nil when it takes more than the room left; `names` show meanwhile.
-    private func add(_ names: [String], read: @escaping (Int, UInt64) async throws -> PickedFile?) {
+    private func add(_ names: [String], read: @escaping (Int, UInt64) async throws -> PickedFile?,
+                     then: @escaping ([(Int, DraftFileItem)]) -> Void = { _ in }) {
         guard let keeper, !names.isEmpty else { return }
         error = nil
         adding += names
         Task {
             var done = 0
+            var added: [(Int, DraftFileItem)] = []
             // What did not come stops showing; another pick's files of the same name stay.
             defer {
+                then(added)
                 for name in names.dropFirst(done) {
                     if let shown = adding.firstIndex(of: name) { adding.remove(at: shown) }
                 }
@@ -419,7 +564,9 @@ struct ComposeView: View {
                     guard let file = try await read(index, room), UInt64(file.data.count) <= room else {
                         throw CoreError.TooLarge
                     }
-                    files.append(try await keeper.attach(current, file))
+                    let attached = try await keeper.attach(current, file)
+                    files.append(attached)
+                    added.append((index, attached))
                     if let shown = adding.firstIndex(of: names[index]) { adding.remove(at: shown) }
                     done += 1
                 }
@@ -439,6 +586,7 @@ struct ComposeView: View {
 
     private func detach(_ file: DraftFileItem) {
         files.removeAll { $0.id == file.id }
+        pictures[file.id] = nil
         Task {
             do {
                 try await keeper?.detach(file)
@@ -755,7 +903,7 @@ private struct DraftRow: View {
             }
             Text(verbatim: draft.subject.isBlank ? tr("inbox_no_subject") : draft.subject)
                 .font(.subheadline).lineLimit(1)
-            let text = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let text = richShown(text: draft.text).trimmingCharacters(in: .whitespacesAndNewlines)
             if !text.isEmpty {
                 Text(verbatim: text).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
             }

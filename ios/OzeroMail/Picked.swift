@@ -18,6 +18,28 @@ struct PickedFile: Sendable {
         let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
         return PickedFile(name: url.lastPathComponent, mime: mime, data: data)
     }
+
+    /// The photo made lighter to send in the text: at most 2048 px on its long side, as JPEG,
+    /// or PNG if it is see-through. Nil for what is no photo, a GIF, and a photo light already.
+    func lighter() -> PickedFile? {
+        guard mime.hasPrefix("image/"), mime != "image/gif", let image = UIImage(data: data),
+              let cgImage = image.cgImage else { return nil }
+        let pixels = CGSize(width: image.size.width * image.scale, height: image.size.height * image.scale)
+        let longest = max(pixels.width, pixels.height)
+        if longest <= 2048 && data.count <= 1_000_000 && (mime == "image/jpeg" || mime == "image/png") { return nil }
+        let scale = min(1, 2048 / longest)
+        let size = CGSize(width: (pixels.width * scale).rounded(), height: (pixels.height * scale).rounded())
+        let alpha = ![.none, .noneSkipFirst, .noneSkipLast].contains(cgImage.alphaInfo)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = !alpha
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        let draw: (UIGraphicsImageRendererContext) -> Void = { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
+        let base = (name as NSString).deletingPathExtension
+        return alpha
+            ? PickedFile(name: base + ".png", mime: "image/png", data: renderer.pngData(actions: draw))
+            : PickedFile(name: base + ".jpg", mime: "image/jpeg", data: renderer.jpegData(withCompressionQuality: 0.85, actions: draw))
+    }
 }
 
 /// A photo or video from the library, read as the picker hands it over; nil when it takes more
