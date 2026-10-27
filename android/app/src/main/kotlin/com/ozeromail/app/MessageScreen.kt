@@ -117,6 +117,8 @@ import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.DraftItem
 import uniffi.ozero_api.FolderItem
 import uniffi.ozero_api.ImagesPage
+import uniffi.ozero_api.InviteAnswer
+import uniffi.ozero_api.InviteItem
 import uniffi.ozero_api.Mailbox
 import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
@@ -158,6 +160,8 @@ fun MessageScreen(
     onFlag: (Boolean) -> Unit,
     onDone: (() -> Unit)?,
     onSnooze: (() -> Unit)?,
+    /** Answers a meeting invitation of the conversation, with a comment for its organizer. */
+    onAnswer: (invitation: MessageItem, invite: InviteItem, answer: InviteAnswer, comment: String) -> Unit,
     onBack: () -> Unit,
     /** Beside the list: the actions fit one row, and the list keeps the start edge clear. */
     pane: Boolean = false,
@@ -189,6 +193,27 @@ fun MessageScreen(
     var replying by remember(message.id) { mutableStateOf<Replying?>(null) }
     // A reply on its way to the page: a second tap meanwhile starts nothing more.
     var answering by remember(message.id) { mutableStateOf(false) }
+    // The meeting invitations among the messages, by message, and the messages looked at.
+    val meetings = remember(message.id) { mutableStateMapOf<Long, InviteItem>() }
+    val looked = remember(message.id) { mutableSetOf<Long>() }
+    suspend fun readMeeting(m: MessageItem) {
+        try {
+            val invite = mail.invite(m)
+            if (invite == null) meetings.remove(m.id) else meetings[m.id] = invite
+        } catch (e: CoreException) {
+            // The message reads the same without its card.
+            Log.w("Ozero", "invitation not read", e)
+        }
+    }
+    // An invitation is known once its body is saved; each is looked at once here.
+    LaunchedEffect(message.id) {
+        snapshotFlow { thread.filter { it.id in bodies.saved && it.id !in looked } }.collect { saved ->
+            saved.forEach {
+                looked += it.id
+                readMeeting(it)
+            }
+        }
+    }
     DisposableEffect(bodies) {
         onDispose {
             bodies.cancel()
@@ -235,6 +260,8 @@ fun MessageScreen(
             } catch (e: CoreException) {
                 error = e.text()
             }
+            // An answer, or one taken back, changes them.
+            meetings.keys.mapNotNull { id -> thread.find { it.id == id } }.forEach { readMeeting(it) }
         }
     }
     // Unread then, new since, or the one from the list when nothing was unread.
@@ -244,6 +271,19 @@ fun MessageScreen(
     }
     // The newest message not from the user.
     val answer = thread.lastOrNull { !it.sent } ?: message
+    // The newest invitation, while it waits for an answer: the bottom row asks for it.
+    val asking = thread.lastOrNull { it.id in meetings }?.takeIf { meetings[it.id]?.needsAnswer == true }
+
+    // No asks why first.
+    fun answerInvite(m: MessageItem, answer: InviteAnswer) {
+        val invite = meetings[m.id] ?: return
+        if (answer == InviteAnswer.NO) {
+            sheet = ReaderSheet.Reason(m, invite)
+        } else {
+            sheet = null
+            onAnswer(m, invite, answer, "")
+        }
+    }
     val many = thread.size > 1 || message.threadCount > 1u
 
     fun reply(to: MessageItem, all: Boolean) {
@@ -363,6 +403,13 @@ fun MessageScreen(
                                         onReply = { reply(m, all = false) },
                                         onForward = { onForward(m) },
                                         onDelete = { deleteAlone(m) },
+                                        invite = meetings[m.id],
+                                        onChangeAnswer = { sheet = ReaderSheet.Change(m) },
+                                        onAddToCalendar = { invite ->
+                                            if (!addToCalendar(context, invite)) {
+                                                scope.launch { snackbar.showSnackbar(context.getString(R.string.invite_no_calendar)) }
+                                            }
+                                        },
                                         modifier = modifier,
                                     )
                                 }
@@ -379,15 +426,19 @@ fun MessageScreen(
                     }
                     if (!pane && replying == null) {
                         Hiding({ barShown }, Modifier.align(Alignment.BottomCenter).onSizeChanged { barHeight = it.height }) {
-                            Actions(
-                                onReply = { reply(answer, all = false) },
-                                onAnswers = { sheet = ReaderSheet.Answers },
-                                onDelete = onDelete,
-                                forever = !message.canTrash,
-                                onSnooze = onSnooze,
-                                onMore = { sheet = ReaderSheet.More },
-                                onDone = onDone,
-                            )
+                            if (asking != null) {
+                                InviteActions(onAnswer = { answerInvite(asking, it) }, onMore = { sheet = ReaderSheet.More })
+                            } else {
+                                Actions(
+                                    onReply = { reply(answer, all = false) },
+                                    onAnswers = { sheet = ReaderSheet.Answers },
+                                    onDelete = onDelete,
+                                    forever = !message.canTrash,
+                                    onSnooze = onSnooze,
+                                    onMore = { sheet = ReaderSheet.More },
+                                    onDone = onDone,
+                                )
+                            }
                         }
                     }
                 }
@@ -407,6 +458,8 @@ fun MessageScreen(
                         },
                         onSent = { id -> sent(id, writing) },
                     )
+                } else if (pane && asking != null) {
+                    InviteActions(onAnswer = { answerInvite(asking, it) }, onMore = { sheet = ReaderSheet.More })
                 } else if (pane) {
                     PaneActions(
                         onReply = { reply(answer, all = false) },
@@ -440,6 +493,27 @@ fun MessageScreen(
                     replyAllAndForward()
                 }
                 ReaderSheet.More -> {
+                    // The answers took the row: the rest of it is here.
+                    if (asking != null) {
+                        SheetAction(R.drawable.ic_reply, stringResource(R.string.message_reply), colors.onSurface) { reply(answer, all = false) }
+                        if (pane) replyAllAndForward()
+                        SheetAction(R.drawable.ic_delete, stringResource(if (message.canTrash) R.string.action_delete else R.string.action_delete_forever), colors.onSurface) {
+                            sheet = null
+                            onDelete()
+                        }
+                        onSnooze?.let { snooze ->
+                            SheetAction(R.drawable.ic_snooze, stringResource(R.string.action_snooze), colors.onSurface) {
+                                sheet = null
+                                snooze()
+                            }
+                        }
+                        onDone?.let { done ->
+                            SheetAction(R.drawable.ic_done, stringResource(R.string.action_done), colors.onSurface) {
+                                sheet = null
+                                done()
+                            }
+                        }
+                    }
                     // Beside the list they are in the row already.
                     if (!pane) replyAllAndForward()
                     // As the conversation has it now, flagged here or elsewhere.
@@ -488,6 +562,11 @@ fun MessageScreen(
                 is ReaderSheet.Move -> MoveTargets(shown.targets) { folder, title ->
                     sheet = null
                     onMove?.invoke(folder, title)
+                }
+                is ReaderSheet.Change -> AnswerSheet(meetings[shown.message.id]?.answer) { answerInvite(shown.message, it) }
+                is ReaderSheet.Reason -> ReasonSheet(shown.invite.organizerName ?: shown.invite.organizerEmail ?: shown.message.sender) { reason ->
+                    sheet = null
+                    onAnswer(shown.message, shown.invite, InviteAnswer.NO, reason)
                 }
                 is ReaderSheet.Person -> PersonSheet(
                     shown.person,
@@ -562,6 +641,12 @@ private sealed interface ReaderSheet {
 
     /** What to do with someone the message is from or went to. */
     data class Person(val person: PersonItem) : ReaderSheet
+
+    /** Another answer to an invitation answered already. */
+    data class Change(val message: MessageItem) : ReaderSheet
+
+    /** Why not, before No goes. */
+    data class Reason(val message: MessageItem, val invite: InviteItem) : ReaderSheet
 }
 
 /** A reply being written low on the page: its draft, the message it answers, and who else may get a copy. */
@@ -610,6 +695,9 @@ private fun Letter(
     onReply: () -> Unit,
     onForward: () -> Unit,
     onDelete: () -> Unit,
+    invite: InviteItem?,
+    onChangeAnswer: () -> Unit,
+    onAddToCalendar: (InviteItem) -> Unit,
     modifier: Modifier,
 ) {
     val filesAt = remember { BringIntoViewRequester() }
@@ -625,6 +713,9 @@ private fun Letter(
         }
         AnimatedVisibility(open, enter = opening, exit = closing) {
             Column {
+                Reveal(invite) {
+                    InviteCard(it, onChange = onChangeAnswer.takeIf { _ -> it.canAnswer }, onAddToCalendar = { onAddToCalendar(it) })
+                }
                 LetterBody(mail, files, filesAt, message, bodies)
                 if (inThread) {
                     Row(Modifier.padding(start = Gap.screen, end = Gap.screen, bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
