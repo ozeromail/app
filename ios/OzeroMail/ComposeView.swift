@@ -639,6 +639,25 @@ final class DraftKeeper: Sendable {
             try result.get()
         }
 
+        func handOff(_ draft: DraftItem, with mail: Mail) async throws -> Int64 {
+            latest = nil
+            var result: Result<Int64, Error> = .failure(CancellationError())
+            await queue { state in
+                do {
+                    if !state.done {
+                        var draft = draft
+                        draft.id = state.id
+                        state.id = try await mail.saveDraft(draft)
+                        state.done = true
+                    }
+                    result = .success(state.id)
+                } catch {
+                    result = .failure(error)
+                }
+            }.value
+            return try result.get()
+        }
+
         func discard(with mail: Mail) async -> Int64 {
             latest = nil
             done = true
@@ -675,6 +694,12 @@ final class DraftKeeper: Sendable {
     /// without it.
     func detach(_ file: DraftFileItem) async throws {
         try await state.detach(file, with: mail)
+    }
+
+    /// Saves `draft` now and stops saving, for another screen to go on with it. Returns the id
+    /// it is saved under.
+    func handOff(_ draft: DraftItem) async throws -> Int64 {
+        try await state.handOff(draft, with: mail)
     }
 
     /// Throws the saved draft away, and stops saving. Returns the id it had, 0 for none.

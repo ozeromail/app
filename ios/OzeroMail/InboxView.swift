@@ -752,7 +752,7 @@ private struct SwipeTip: View {
 }
 
 /// The undo toast: dark, rounded, low on the screen. A move also offers to show the folder.
-private struct ToastView: View {
+struct ToastView: View {
     let toast: Toast
     let onUndo: () -> Void
     let onGo: (Mailbox) -> Void
@@ -884,7 +884,7 @@ extension MessageItem {
 }
 
 /// "Anna" of "Anna Lee", "Lee, Anna" or "anna@x.com".
-private func firstName(_ name: String) -> String {
+func firstName(_ name: String) -> String {
     var given = String(name.split(separator: "@", maxSplits: 1).first ?? "")
     if let comma = given.range(of: ", ") { given = String(given[comma.upperBound...]) }
     given = given.trimmingCharacters(in: .whitespaces)

@@ -1,8 +1,14 @@
 import SwiftUI
 
-/// A conversation, oldest first, on one page. The message opened from the list is open; the
-/// others sit closed as a line each, unread ones in bold, and a tap opens or closes any of them.
-/// Reply, Reply all, Forward and Done sit at the bottom, in reach of the thumb.
+/// A conversation, oldest first, on one page that scrolls title and all. What was unread when it
+/// opened is open, and the page starts at the first of it; the rest sit closed as a line each, and
+/// a tap opens or closes any of them. Under each open one in a conversation, Reply and Forward
+/// answer that very message.
+///
+/// Reply, Delete, Snooze, More and Done sit in one row at the bottom, in reach of the thumb; the
+/// row steps aside while the page is read down and comes back on the way up and at the end. A
+/// reply is written low on the same page, the message still in sight above it; one more tap takes
+/// it to the whole screen.
 struct MessageView: View {
     let model: InboxModel
     let message: MessageItem
@@ -11,51 +17,74 @@ struct MessageView: View {
 
     @State private var thread: [MessageItem] = []
     @State private var error: LocalizedStringKey?
-    /// What the user opened or closed; at first only the message from the list is open.
+    /// What the user opened or closed.
     @State private var opened: [Int64: Bool] = [:]
+    /// What was unread when it opened, and every message it had then; nil until read.
+    @State private var unread: Set<Int64>?
+    @State private var known: Set<Int64> = []
     @State private var showAll = false
     @State private var more = false
     @State private var files = Files()
-    /// Loaded bodies, so a message opened again shows at once.
+    /// Loaded bodies and who each message went to, so a message opened again shows at once.
     @State private var bodies = Bodies()
-    @Environment(\.sideways) private var sideways
+    @State private var people: [Int64: PeopleItem] = [:]
+    @State private var details: Set<Int64> = []
+    @State private var person: PersonItem?
+    @State private var replying: Replying?
+    @State private var barShown = true
+    /// The toast of a reply just sent, and what Undo brings back.
+    @State private var toast: Toast?
+    @State private var unsent: (id: Int64, reply: Replying)?
 
     private var mail: Mail { model.mail }
 
-    private func isOpen(_ m: MessageItem) -> Bool { opened[m.id] ?? (m.id == message.id) }
+    /// Unread then, new since, or the one from the list when nothing was unread.
+    private func isOpen(_ m: MessageItem) -> Bool {
+        if let opened = opened[m.id] { return opened }
+        guard let unread else { return m.id == message.id }
+        return unread.contains(m.id) || !known.contains(m.id) || (unread.isEmpty && m.id == message.id)
+    }
 
     var body: some View {
         let shown = thread.isEmpty ? [message] : thread
         // The newest message not from the user.
         let answer = shown.last { !$0.sent } ?? message
-        Group {
-            if shown.count > 1 || message.threadCount > 1 {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        Title(message: message)
-                        // A long run of closed messages in the middle folds into one line.
-                        let middle = 1..<max(1, shown.count - 2)
-                        let folded = !showAll && middle.count >= 2 && !middle.contains { isOpen(shown[$0]) }
-                        ForEach(Array(shown.enumerated()), id: \.element.id) { i, m in
-                            if i == 1 && folded {
-                                FoldedLine(count: middle.count) { withAnimation(.smooth) { showAll = true } }
-                            }
-                            if !(folded && middle.contains(i)) {
-                                Letter(mail: mail, files: files, bodies: bodies, message: m, open: isOpen(m)) {
-                                    withAnimation(.smooth) { opened[m.id] = !isOpen(m) }
-                                }
-                            }
+        let many = shown.count > 1 || message.threadCount > 1
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    Title(message: message)
+                    // A long run of closed messages in the middle folds into one line.
+                    let middle = 1..<max(1, shown.count - 2)
+                    let folded = !showAll && middle.count >= 2 && !middle.contains { isOpen(shown[$0]) }
+                    ForEach(Array(shown.enumerated()), id: \.element.id) { i, m in
+                        if i == 1 && folded {
+                            FoldedLine(count: middle.count) { withAnimation(.smooth) { showAll = true } }
                         }
-                        if let error {
-                            Text(error).foregroundStyle(.secondary).padding(20)
+                        if !(folded && middle.contains(i)) {
+                            letter(m, many: many)
                         }
                     }
+                    if let error {
+                        Text(error).foregroundStyle(.secondary).padding(20)
+                    }
+                    // The end of the page clears the row over it.
+                    Color.clear.frame(height: pane || replying != nil ? 12 : 84)
                 }
-            } else if sideways {
-                // The height is short: the whole page scrolls, title and all.
-                ScrollView { alone(fill: false) }
-            } else {
-                alone(fill: true)
+            }
+            .onScrollGeometryChange(for: Scrolled.self) { geometry in
+                Scrolled(
+                    offset: geometry.contentOffset.y,
+                    atEnd: geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 1)
+            } action: { old, new in
+                // At the end, where what to do with the message is decided, it is back.
+                let shows = new.atEnd || new.offset <= 0 ? true : new.offset > old.offset + 2 ? false : new.offset < old.offset - 2 ? true : barShown
+                if shows != barShown { withAnimation(.smooth(duration: 0.25)) { barShown = shows } }
+            }
+            .onChange(of: unread) { _, new in
+                // The first message is under the title: it opens at the top.
+                guard let new, let first = shown.first(where: { new.contains($0.id) }), first.id != shown.first?.id else { return }
+                proxy.scrollTo(first.id, anchor: .top)
             }
         }
         .middle(Room.letter)
@@ -70,14 +99,47 @@ struct MessageView: View {
                 .padding(.horizontal, 8)
             }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if pane {
-                row(answer: answer, newest: shown.last ?? message)
-            } else {
-                bars(answer: answer, newest: shown.last ?? message)
+        .overlay(alignment: .bottom) {
+            if !pane && replying == nil && barShown {
+                bar(answer: answer).transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .overlay(alignment: .bottom) {
+            if let toast {
+                ToastView(toast: toast, onUndo: undoSend, onGo: { _ in })
+                    .padding(.bottom, replying == nil ? 84 : 12)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.smooth, value: toast)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if let replying {
+                QuickReply(
+                    mail: mail,
+                    replying: Binding { self.replying ?? replying } set: { self.replying = $0 },
+                    onClose: { kept in
+                        self.replying = nil
+                        if kept {
+                            mail.pushDrafts()
+                        }
+                    },
+                    onExpand: { draft in
+                        self.replying = nil
+                        model.composing = Composing(draft: draft, original: replying.original)
+                    },
+                    onSent: { sent($0, self.replying ?? replying) })
+                .id(replying.draft.id)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if pane {
+                row(answer: answer, newest: shown.last ?? message)
+            }
+        }
+        .animation(.smooth, value: replying == nil)
         .confirmationDialog("action_more", isPresented: $more) {
+            if !pane {
+                Button("message_reply_all") { reply(answer, all: true) }
+                Button("message_forward") { forward(shown.last ?? message) }
+            }
             Button("action_mark_unread") {
                 leave { await model.setRead([message], read: false) }
             }
@@ -87,9 +149,24 @@ struct MessageView: View {
                 }
             }
         }
+        .confirmationDialog(
+            person?.name ?? "", isPresented: Binding { person != nil } set: { if !$0 { person = nil } },
+            titleVisibility: .visible, presenting: person
+        ) { person in
+            Button("message_write_to") { write(to: person) }
+            Button("message_copy_address") { UIPasteboard.general.string = person.email }
+        } message: { person in
+            if person.name != person.email { Text(verbatim: person.email) }
+        }
         .attachmentActions(files)
         .task(id: message.id) {
             do {
+                // Read before it is marked read, so what was new opens.
+                var first = try await mail.thread(of: message)
+                if first.isEmpty { first = [message] }
+                thread = first
+                known = Set(first.map(\.id))
+                unread = Set(first.filter { !$0.seen }.map(\.id))
                 if message.threadUnread > 0 { try await mail.markRead([message]) }
             } catch {
                 self.error = error.text()
@@ -107,29 +184,44 @@ struct MessageView: View {
         }
     }
 
-    /// The message on its own, under its title.
-    private func alone(fill: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Title(message: message)
-            From(message: message, open: true, files: fileCount(message))
-            Divider().padding(.top, 4)
-            LetterBody(mail: mail, files: files, bodies: bodies, message: message, fill: fill)
+    private func letter(_ m: MessageItem, many: Bool) -> some View {
+        Letter(
+            mail: mail, files: files, bodies: bodies, message: m, people: people[m.id], open: isOpen(m),
+            unread: unread?.contains(m.id) == true, inThread: many, details: details.contains(m.id),
+            onToggle: many ? { withAnimation(.smooth) { opened[m.id] = !isOpen(m) } } : nil,
+            onDetails: {
+                withAnimation(.smooth) {
+                    if details.contains(m.id) { details.remove(m.id) } else { details.insert(m.id) }
+                }
+            },
+            onPerson: { person = $0 },
+            onReply: { reply(m, all: false) },
+            onForward: { forward(m) })
+        .id(m.id)
+        .task(id: isOpen(m)) {
+            guard isOpen(m), people[m.id] == nil else { return }
+            // The line under the name stays empty otherwise; the message reads the same.
+            if let found = try? await mail.people(of: m) { people[m.id] = found }
         }
     }
 
-    /// Reply, Reply all and Forward over Delete, More and Done, along the bottom.
-    private func bars(answer: MessageItem, newest: MessageItem) -> some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 8) { answers(answer: answer, newest: newest) }
-            HStack(spacing: 8) {
-                BarAction(icon: "trash", label: message.canTrash ? "action_delete" : "action_delete_forever", action: delete)
-                if message.canSnooze {
-                    BarAction(icon: "clock", label: "action_snooze", action: snooze)
+    /// Reply, Delete, Snooze, More and Done in one row; a long press on Reply offers Reply all
+    /// and Forward.
+    private func bar(answer: MessageItem) -> some View {
+        HStack(spacing: 8) {
+            BarAction(icon: "arrowshape.turn.up.left", label: "message_reply") { reply(answer, all: false) }
+                .contextMenu {
+                    Button("message_reply", systemImage: "arrowshape.turn.up.left") { reply(answer, all: false) }
+                    Button("message_reply_all", systemImage: "arrowshape.turn.up.left.2") { reply(answer, all: true) }
+                    Button("message_forward", systemImage: "arrowshape.turn.up.right") { forward(thread.last ?? message) }
                 }
-                BarAction(icon: "ellipsis", label: "action_more") { more = true }
-                if message.canArchive {
-                    BarAction(icon: "checkmark", label: "action_done", tint: .white, background: .ozeroFill, action: done)
-                }
+            BarAction(icon: "trash", label: message.canTrash ? "action_delete" : "action_delete_forever", action: delete)
+            if message.canSnooze {
+                BarAction(icon: "clock", label: "action_snooze", action: snooze)
+            }
+            BarAction(icon: "ellipsis", label: "action_more") { more = true }
+            if message.canArchive {
+                BarAction(icon: "checkmark", label: "action_done", tint: .white, background: .ozeroFill, action: done)
             }
         }
         .padding(.horizontal, 12)
@@ -141,14 +233,26 @@ struct MessageView: View {
     /// Beside the list, where the height is short: the answers and the actions in one row.
     private func row(answer: MessageItem, newest: MessageItem) -> some View {
         HStack(spacing: 8) {
-            answers(answer: answer, newest: newest)
-            RoundButton(icon: "trash", label: message.canTrash ? "action_delete" : "action_delete_forever", size: button, action: delete)
-            if message.canSnooze {
-                RoundButton(icon: "clock", label: "action_snooze", size: button, action: snooze)
+            Button {
+                reply(answer, all: false)
+            } label: {
+                Text("message_reply_prompt")
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .background(Color.ozeroCard, in: .capsule)
             }
-            RoundButton(icon: "ellipsis", label: "action_more", size: button) { more = true }
+            .buttonStyle(.plain)
+            RoundButton(icon: "arrowshape.turn.up.left.2", label: "message_reply_all", size: 40) { reply(answer, all: true) }
+            RoundButton(icon: "arrowshape.turn.up.right", label: "message_forward", size: 40) { forward(newest) }
+            RoundButton(icon: "trash", label: message.canTrash ? "action_delete" : "action_delete_forever", size: 40, action: delete)
+            if message.canSnooze {
+                RoundButton(icon: "clock", label: "action_snooze", size: 40, action: snooze)
+            }
+            RoundButton(icon: "ellipsis", label: "action_more", size: 40) { more = true }
             if message.canArchive {
-                RoundButton(icon: "checkmark", label: "action_done", size: button, tint: .white, background: .ozeroFill, action: done)
+                RoundButton(icon: "checkmark", label: "action_done", size: 40, tint: .white, background: .ozeroFill, action: done)
             }
         }
         .padding(.horizontal, 12)
@@ -156,34 +260,75 @@ struct MessageView: View {
         .background(.bar)
     }
 
-    /// Reply, Reply all and Forward; the newest message is forwarded, the user's own too.
-    @ViewBuilder
-    private func answers(answer: MessageItem, newest: MessageItem) -> some View {
-        Button {
-            reply(answer, all: false)
-        } label: {
-            Text("message_reply_prompt")
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, minHeight: button, alignment: .leading)
-                .padding(.horizontal, 16)
-                .background(Color.ozeroCard, in: .capsule)
+    /// A reply low on the page, to the sender; with `all` the others it went to are copied.
+    private func reply(_ to: MessageItem, all: Bool) {
+        guard replying == nil else { return }
+        Task {
+            do {
+                let draft = try await mail.reply(to: to, all: all)
+                let others: [PersonItem]
+                if let known = people[to.id] {
+                    others = known.others
+                } else {
+                    let found = try await mail.people(of: to)
+                    people[to.id] = found
+                    others = found.others
+                }
+                replying = Replying(draft: draft, original: to, others: others, copied: all ? others.map(\.email) : [])
+            } catch {
+                self.error = error.text()
+            }
         }
-        .buttonStyle(.plain)
-        RoundButton(icon: "arrowshape.turn.up.left.2", label: "message_reply_all", size: button) { reply(answer, all: true) }
-        RoundButton(icon: "arrowshape.turn.up.right", label: "message_forward", size: button) { forward(newest) }
-    }
-
-    /// The round buttons along the bottom: smaller beside the list, where the height is short.
-    private var button: CGFloat { pane ? 40 : 46 }
-
-    private func reply(_ answer: MessageItem, all: Bool) {
-        model.write(answer) { try await mail.reply(to: answer, all: all) }
     }
 
     private func forward(_ newest: MessageItem) {
         model.write(newest) {
             try await mail.forward(newest, labels: forwardLabels, date: longDate(newest.date))
+        }
+    }
+
+    private func write(to person: PersonItem) {
+        Task {
+            do {
+                var draft = try await mail.newDraft()
+                draft.to = person.email
+                model.composing = Composing(draft: draft)
+            } catch {
+                self.error = error.text()
+            }
+        }
+    }
+
+    /// Sent from the page: the toast can bring the reply back to go on writing.
+    private func sent(_ id: Int64, _ reply: Replying) {
+        replying = nil
+        let shown = Toast(text: tr("inbox_sending"), undo: true)
+        toast = shown
+        unsent = (id, reply)
+        Task {
+            // Closes before the core sends, so Undo is never too late.
+            try? await Task.sleep(for: .seconds(Int(undoSeconds())))
+            if toast == shown {
+                toast = nil
+                unsent = nil
+            }
+        }
+    }
+
+    private func undoSend() {
+        toast = nil
+        guard let unsent else { return }
+        self.unsent = nil
+        Task {
+            do {
+                if let draft = try await mail.undoSend(unsent.id) {
+                    var again = unsent.reply
+                    again.draft = draft
+                    replying = again
+                }
+            } catch {
+                self.error = error.text()
+            }
         }
     }
 
@@ -215,16 +360,26 @@ struct MessageView: View {
         if model.pane?.id == message.id { model.pane = nil }
     }
 
-    /// How many files a message has: as the list knew, or as its body says once loaded.
-    private func fileCount(_ m: MessageItem) -> Int {
-        bodies.files(of: m)
-    }
-
     private var forwardLabels: ForwardLabels {
         ForwardLabels(
             title: tr("compose_forward_title"), from: tr("compose_forward_from"),
             date: tr("compose_forward_date"), subject: tr("compose_forward_subject"))
     }
+}
+
+/// Where the page is scrolled to, and whether that is its end.
+private struct Scrolled: Equatable {
+    let offset: CGFloat
+    let atEnd: Bool
+}
+
+/// A reply being written low on the page: its draft, the message it answers, and who else may
+/// get a copy.
+struct Replying: Equatable {
+    var draft: DraftItem
+    let original: MessageItem
+    let others: [PersonItem]
+    var copied: [String]
 }
 
 /// Loaded bodies of one conversation, shared by its letters.
@@ -238,24 +393,64 @@ final class Bodies {
     }
 }
 
-/// One message of a conversation: its line, and under it the message when open.
+/// One message: its line, and under it the message when open. In a conversation `onToggle`
+/// opens or closes it, and Reply and Forward under it answer this one.
 private struct Letter: View {
     let mail: Mail
     let files: Files
     let bodies: Bodies
     let message: MessageItem
+    let people: PeopleItem?
     let open: Bool
-    let onToggle: () -> Void
+    let unread: Bool
+    let inThread: Bool
+    let details: Bool
+    let onToggle: (() -> Void)?
+    let onDetails: () -> Void
+    let onPerson: (PersonItem) -> Void
+    let onReply: () -> Void
+    let onForward: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             Divider().padding(.horizontal, 20)
-            From(message: message, open: open, files: bodies.files(of: message), onToggle: onToggle)
             if open {
-                LetterBody(mail: mail, files: files, bodies: bodies, message: message, fill: false)
+                From(
+                    message: message, people: people, unread: unread, files: bodies.files(of: message), details: details,
+                    onToggle: onToggle, onDetails: onDetails, onPerson: onPerson)
+                LetterBody(mail: mail, files: files, bodies: bodies, message: message)
                     .transition(.opacity.combined(with: .move(edge: .top)))
+                if inThread {
+                    HStack(spacing: 8) {
+                        if !message.sent { Chip(icon: "arrowshape.turn.up.left", label: "message_reply", action: onReply) }
+                        Chip(icon: "arrowshape.turn.up.right", label: "message_forward", action: onForward)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 14)
+                }
+            } else {
+                Closed(message: message, unread: unread, onToggle: onToggle)
             }
         }
+    }
+}
+
+/// A small rounded button under a message.
+private struct Chip: View {
+    let icon: String
+    let label: LocalizedStringKey
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label(label, systemImage: icon)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Color.ozeroAccent)
+                .padding(.horizontal, 12)
+                .frame(minHeight: 36)
+                .background(Color.ozeroCard, in: .capsule)
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -280,14 +475,12 @@ private struct FoldedLine: View {
 }
 
 /// A message's page, or its text with the quote folded; it loads when shown, once into
-/// `bodies`. With `fill` it takes the space it is given and scrolls itself; otherwise it is as
-/// tall as it is. Its files follow the text.
+/// `bodies`. It is as tall as it is, and its files follow the text.
 private struct LetterBody: View {
     let mail: Mail
     let files: Files
     let bodies: Bodies
     let message: MessageItem
-    let fill: Bool
 
     @State private var body_: MessageBody?
     @State private var error: LocalizedStringKey?
@@ -301,11 +494,10 @@ private struct LetterBody: View {
                 HiddenImages(note: note, onShow: showImages)
             }
             content
-            if !fill || body_?.html != nil, let attachments = body_?.attachments, !attachments.isEmpty {
+            if let attachments = body_?.attachments, !attachments.isEmpty {
                 AttachmentList(mail: mail, files: files, message: message, items: attachments)
             }
         }
-        .frame(maxHeight: fill ? .infinity : nil, alignment: .top)
         .task(id: message.id) { await load() }
     }
 
@@ -316,33 +508,23 @@ private struct LetterBody: View {
         } else if let loaded = body_, let html = loaded.html {
             page(html, images: [], styled: loaded.styled)
         } else if let loaded = body_ {
-            if fill {
-                ScrollView {
-                    PlainText(text: loaded.text, quote: loaded.quote)
-                    if !loaded.attachments.isEmpty {
-                        AttachmentList(mail: mail, files: files, message: message, items: loaded.attachments)
-                    }
-                }
-            } else {
-                PlainText(text: loaded.text, quote: loaded.quote)
-            }
+            PlainText(text: loaded.text, quote: loaded.quote)
         } else if let error {
             Text(error).foregroundStyle(.secondary).padding(20)
         } else {
-            ProgressView().frame(maxWidth: .infinity, minHeight: fill ? nil : 96).frame(maxHeight: fill ? .infinity : nil)
+            ProgressView().frame(maxWidth: .infinity, minHeight: 96)
         }
     }
 
     private func page(_ html: String, images: [RemoteImage?], styled: Bool) -> some View {
         // A new web view per page: it loads its page only once.
         // A newsletter keeps the light page it was made for, as a card on the screen.
-        HTMLView(html: html, images: images, message: message.id, fits: !fill)
+        HTMLView(html: html, images: images, message: message.id, fits: true)
             .id("\(message.id)-\(images.isEmpty)")
             .clipShape(.rect(cornerRadius: styled ? 16 : 0))
             .padding(.horizontal, styled ? 10 : 0)
             .padding(.top, 4)
             .padding(.bottom, styled ? 10 : 0)
-            .frame(maxHeight: fill ? .infinity : nil)
     }
 
     private var imagesNote: LocalizedStringKey? {
@@ -469,42 +651,149 @@ private struct HiddenImages: View {
     }
 }
 
-/// Who sent a message and when. Open, it shows the address and the full date; closed, the start
-/// of the text. With `onToggle` a tap opens or closes the message.
+extension MessageItem {
+    /// The name the user is shown by in a message: "You" when they wrote it.
+    fileprivate var from: String { sent ? tr("message_you") : sender }
+}
+
+/// Who wrote an open message, to whom, and when, in two lines: "Anna Lee" and "To you, Oleg and
+/// Maria". A tap on the name offers what to do with the person; a tap on the second line shows
+/// every address and the full date. With `onToggle` a tap elsewhere closes the message.
 private struct From: View {
     let message: MessageItem
-    let open: Bool
+    let people: PeopleItem?
+    let unread: Bool
     let files: Int
-    var onToggle: (() -> Void)?
+    let details: Bool
+    let onToggle: (() -> Void)?
+    let onDetails: () -> Void
+    let onPerson: (PersonItem) -> Void
 
     var body: some View {
-        let unread = message.threadUnread > 0
-        let detail = !open ? message.snippet : message.sender != message.fromEmail ? message.fromEmail : ""
-        HStack(alignment: .center, spacing: 12) {
-            Avatar(name: message.sender, key: message.fromEmail, size: open ? 40 : 32)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(verbatim: message.sender).font(.body.weight(unread ? .bold : .semibold)).lineLimit(1)
-                if !detail.isBlank {
-                    Text(verbatim: detail).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
+        let author = PersonItem(name: message.sender, email: message.fromEmail, me: message.sent)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Button { onPerson(author) } label: {
+                        Text(verbatim: message.from).font(.body.weight(unread ? .bold : .semibold)).lineLimit(1)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(message.sent)
+                    if let line = people.map(toLine), !line.isEmpty {
+                        Button(action: onDetails) {
+                            HStack(spacing: 4) {
+                                Text(verbatim: line).lineLimit(1)
+                                Image(systemName: "chevron.down").imageScale(.small).rotationEffect(.degrees(details ? 180 : 0))
+                            }
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text(verbatim: message.sending ? tr("inbox_sending") : shortDate(message.date))
+                        .font(.footnote.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    if files > 0 {
+                        Label(String(files), systemImage: "paperclip").font(.footnote).foregroundStyle(.secondary)
+                            .accessibilityLabel(Text(verbatim: tr("attachment_count", files)))
+                    }
+                }
+                .padding(.top, 2)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .contentShape(.rect)
+            .onTapGesture { onToggle?() }
+            if details, let people {
+                Details(message: message, author: author, people: people, onPerson: onPerson)
+                    .transition(.opacity)
+            }
+        }
+    }
+}
+
+/// "To you, Oleg and Maria": who a message went to, copies too, by first name.
+private func toLine(_ people: PeopleItem) -> String {
+    var seen = Set<String>()
+    let names = (people.to + people.cc)
+        .filter { seen.insert($0.email.lowercased()).inserted }
+        .sorted { $0.me && !$1.me }
+        .map { $0.me ? tr("message_you_to") : firstName($0.name) }
+    guard let last = names.last else { return "" }
+    let joined = names.count == 1 ? last : tr("message_and", names.dropLast().joined(separator: ", "), last)
+    return tr("message_to_line", joined)
+}
+
+/// Every address of a message and its full date, each person a tap away.
+private struct Details: View {
+    let message: MessageItem
+    let author: PersonItem
+    let people: PeopleItem
+    let onPerson: (PersonItem) -> Void
+
+    var body: some View {
+        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 8) {
+            field("message_from", [author])
+            field("compose_to", people.to)
+            field("compose_cc", people.cc)
+            GridRow {
+                Text("message_date").foregroundStyle(.secondary)
+                Text(verbatim: longDate(message.date))
+            }
+        }
+        .font(.footnote)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color.ozeroCard, in: .rect(cornerRadius: 14))
+        .padding(.horizontal, 16)
+        .padding(.bottom, 10)
+    }
+
+    @ViewBuilder
+    private func field(_ label: LocalizedStringKey, _ persons: [PersonItem]) -> some View {
+        if !persons.isEmpty {
+            GridRow {
+                Text(label).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(persons, id: \.email) { person in
+                        Button { onPerson(person) } label: {
+                            Text(verbatim: person.name == person.email ? person.email : "\(person.name) \(person.email)")
+                                .multilineTextAlignment(.leading)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A closed message in a conversation: who, the start of its text, and when; a tap opens it.
+private struct Closed: View {
+    let message: MessageItem
+    let unread: Bool
+    let onToggle: (() -> Void)?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: message.from).font(.body.weight(unread ? .bold : .semibold)).lineLimit(1)
+                Text(verbatim: message.snippet).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()
-            VStack(alignment: .trailing, spacing: 4) {
-                Text(verbatim: message.sending ? tr("inbox_sending") : open ? longDate(message.date) : shortDate(message.date))
-                    .font(.footnote.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                if open && files > 0 {
-                    Label(String(files), systemImage: "paperclip").font(.footnote).foregroundStyle(.secondary)
-                        .accessibilityLabel(Text(verbatim: tr("attachment_count", files)))
-                }
-            }
-            .frame(maxHeight: .infinity, alignment: .top)
+            Text(verbatim: shortDate(message.date))
+                .font(.footnote.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .padding(.top, 2)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
         .contentShape(.rect)
         .onTapGesture { onToggle?() }
-        .textSelection(.enabled)
     }
 }
 
@@ -528,6 +817,187 @@ private struct Title: View {
         .padding(.horizontal, 20)
         .padding(.top, 6)
         .padding(.bottom, 8)
+    }
+}
+
+/// A reply written low on the page, over the keyboard: to the sender, with the others it went
+/// to a tap away as copies. It is kept as a draft as it is written; `onExpand` takes it to the
+/// whole screen, and `onClose` says whether it was kept.
+private struct QuickReply: View {
+    let mail: Mail
+    @Binding var replying: Replying
+    let onClose: (_ kept: Bool) -> Void
+    let onExpand: (DraftItem) -> Void
+    let onSent: (Int64) -> Void
+
+    @State private var text = ""
+    @State private var keeper: DraftKeeper?
+    @State private var busy = false
+    @State private var error: LocalizedStringKey?
+    @FocusState private var focused: Bool
+
+    private var start: DraftItem { replying.draft }
+
+    private var current: DraftItem {
+        var draft = start
+        draft.text = text
+        draft.cc = replying.copied.joined(separator: ", ")
+        return draft
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Divider()
+            FlowLayout(spacing: 6) {
+                let original = replying.original
+                Person(text: start.to.caseInsensitiveCompare(original.fromEmail) == .orderedSame ? original.sender : start.to)
+                ForEach(replying.others.filter { replying.copied.contains($0.email) }, id: \.email) { person in
+                    Person(text: tr("message_copy_person", person.name)) {
+                        replying.copied.removeAll { $0 == person.email }
+                    }
+                }
+                let left = replying.others.filter { !replying.copied.contains($0.email) }
+                if let last = left.last {
+                    let names = left.map { firstName($0.name) }
+                    let joined = names.count == 1 ? firstName(last.name) : tr("message_and", names.dropLast().joined(separator: ", "), names.last ?? "")
+                    Person(text: tr("message_add_people", joined), primary: true) {
+                        replying.copied += left.map(\.email)
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 10)
+            TextField("message_reply_prompt", text: $text, axis: .vertical)
+                .font(.body)
+                .lineLimit(2...6)
+                .focused($focused)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 8)
+            if let error {
+                Text(error).font(.footnote).foregroundStyle(.red).padding(.horizontal, 20)
+            }
+            HStack(spacing: 8) {
+                RoundButton(icon: "xmark", label: "action_close", size: 44, action: close)
+                RoundButton(icon: "arrow.up.left.and.arrow.down.right", label: "message_full_screen", size: 44, action: expand)
+                Spacer()
+                RoundButton(icon: "arrow.up", label: "compose_send", size: 44, tint: .white, background: .ozeroFill, action: send)
+                    .disabled(busy)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+        }
+        .background(.bar)
+        .onAppear {
+            text = start.text
+            keeper = DraftKeeper(mail: mail, id: start.id)
+            focused = true
+        }
+        // A pause in typing saves the draft, so each key does not.
+        .task(id: current) {
+            guard current.text != start.text || current.cc != start.cc else { return }
+            try? await Task.sleep(for: .seconds(1))
+            keeper?.save(current)
+        }
+    }
+
+    private func close() {
+        let draft = current
+        if draft.isBlank {
+            Task { _ = await keeper?.discard() }
+            onClose(false)
+        } else {
+            keeper?.save(draft)
+            onClose(true)
+        }
+    }
+
+    private func expand() {
+        guard let keeper else { return }
+        let draft = current
+        Task {
+            do {
+                var handed = draft
+                handed.id = try await keeper.handOff(draft)
+                onExpand(handed)
+            } catch {
+                self.error = error.text()
+            }
+        }
+    }
+
+    private func send() {
+        guard !busy, let keeper else { return }
+        busy = true
+        error = nil
+        let draft = current
+        Task {
+            defer { busy = false }
+            do {
+                onSent(try await keeper.send(draft))
+            } catch {
+                self.error = error.text()
+            }
+        }
+    }
+}
+
+/// Someone a reply goes to, as a chip; `action` takes them off or adds them.
+private struct Person: View {
+    let text: String
+    var primary = false
+    var action: (() -> Void)?
+
+    var body: some View {
+        Button { action?() } label: {
+            Text(verbatim: text)
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(primary ? Color.ozeroAccent : .primary)
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color.ozeroCard, in: .capsule)
+        }
+        .buttonStyle(.plain)
+        .disabled(action == nil)
+    }
+}
+
+/// Lays its views out in rows, starting a new row when one is full.
+private struct FlowLayout: Layout {
+    var spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = rows(in: proposal.width ?? .infinity, subviews)
+        let height = rows.map(\.height).reduce(0, +) + spacing * CGFloat(max(0, rows.count - 1))
+        return CGSize(width: proposal.width ?? rows.map(\.width).max() ?? 0, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in rows(in: bounds.width, subviews) {
+            var x = bounds.minX
+            for index in row.items {
+                let size = subviews[index].sizeThatFits(.unspecified)
+                subviews[index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+                x += size.width + spacing
+            }
+            y += row.height + spacing
+        }
+    }
+
+    private func rows(in width: CGFloat, _ subviews: Subviews) -> [(items: [Int], width: CGFloat, height: CGFloat)] {
+        var rows: [(items: [Int], width: CGFloat, height: CGFloat)] = []
+        for (index, subview) in subviews.enumerated() {
+            let size = subview.sizeThatFits(.unspecified)
+            if let last = rows.last, last.width + spacing + size.width <= width {
+                rows[rows.count - 1].items.append(index)
+                rows[rows.count - 1].width += spacing + size.width
+                rows[rows.count - 1].height = max(last.height, size.height)
+            } else {
+                rows.append(([index], size.width, size.height))
+            }
+        }
+        return rows
     }
 }
 
@@ -573,41 +1043,6 @@ struct BarAction: View {
         }
         .buttonStyle(.plain)
     }
-}
-
-/// A sender's initials on a colour that is the same every time for them.
-struct Avatar: View {
-    let name: String
-    let key: String
-    var size: CGFloat = 44
-
-    var body: some View {
-        Text(verbatim: initials(name))
-            .font(.system(size: size * 0.36, weight: .semibold))
-            .foregroundStyle(.white)
-            .frame(width: size, height: size)
-            .background(avatarColor(key), in: .circle)
-            .accessibilityHidden(true)
-    }
-}
-
-/// The first letters of the first two words, or of the address.
-func initials(_ name: String) -> String {
-    let words = name.split { " .@_-".contains($0) }.prefix(2)
-    let letters = words.compactMap(\.first).map { String($0) }.joined().uppercased()
-    return letters.isEmpty ? "?" : letters
-}
-
-private let avatarColors: [UInt32] = [0x5A6B8E, 0x4D8789, 0x7D6CAE, 0xA87458, 0x5B8C62, 0x93688A, 0x6A7B96]
-
-/// The same colour for one sender as on Android, which picks by Java's string hash.
-private func avatarColor(_ key: String) -> Color {
-    var hash: Int32 = 0
-    for unit in key.lowercased().utf16 {
-        hash = hash &* 31 &+ Int32(unit)
-    }
-    let count = Int32(avatarColors.count)
-    return Color(rgb: avatarColors[Int(((hash % count) + count) % count)])
 }
 
 extension Font {
