@@ -2897,18 +2897,24 @@ fn a_conversation_moves_to_another_folder_of_its_account() {
                     name: "Work".into(),
                     role: FolderRole::Custom,
                 },
+                NewFolder {
+                    remote_id: "Junk".into(),
+                    name: "Junk".into(),
+                    role: FolderRole::Junk,
+                },
             ],
         )
         .unwrap();
-    let work = store.folders(account).unwrap()[1].id;
+    let folders = store.folders(account).unwrap();
+    let (work, junk) = (folders[1].id, folders[2].id);
     let elsewhere = inbox(&store, other);
     store
         .save_messages(folder, &[message(1, 100), reply(2, 200, &[1])])
         .unwrap();
     let shown = list(&store, ListScope::Folder(folder), 10, None)[0].id;
 
-    // Not into the folder it is in, nor into another account's.
-    for to in [folder, elsewhere] {
+    // Not into the folder it is in, another account's, or one with an action of its own.
+    for to in [folder, elsewhere, junk] {
         assert_eq!(
             store.queue_all(&[(shown, Action::Move(to))], 50),
             Err(StoreError::NotAllowed)

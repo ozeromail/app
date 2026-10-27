@@ -79,6 +79,12 @@ impl FolderRole {
         }
     }
 
+    /// Whether `Action::Move` can take mail into a folder with this role: the inbox, the
+    /// archive and the user's own folders; the rest have actions of their own.
+    pub fn takes_moves(self) -> bool {
+        matches!(self, Self::Inbox | Self::Archive | Self::Custom)
+    }
+
     /// Messages in these folders take part in Inbox Zero counters.
     pub fn counts_unread(self) -> bool {
         matches!(self, Self::Inbox | Self::Custom)

@@ -2277,22 +2277,27 @@ fn role_folder(
     .ok_or(missing)
 }
 
-/// `folder`, where a move goes, if it is another folder of the message's account.
+/// `folder`, where a move goes, if it is another folder of the message's account that takes
+/// moves.
 fn other_folder(
     tx: &Transaction<'_>,
     message: MessageId,
     folder: FolderId,
 ) -> Result<i64, StoreError> {
     tx.prepare_cached(
-        "SELECT t.id FROM message m JOIN folder f ON f.id = m.folder_id
+        "SELECT t.id, t.role FROM message m JOIN folder f ON f.id = m.folder_id
          JOIN folder t ON t.account_id = f.account_id AND t.id != f.id
          WHERE m.id = ?1 AND t.id = ?2",
     )
     .and_then(|mut s| {
-        s.query_row(params![message.0, folder.0], |r| r.get(0))
-            .optional()
+        s.query_row(params![message.0, folder.0], |r| {
+            Ok((r.get(0)?, r.get::<_, Role>(1)?))
+        })
+        .optional()
     })
     .map_err(storage)?
+    .filter(|(_, role)| role.0.takes_moves())
+    .map(|(id, _)| id)
     .ok_or(StoreError::NotAllowed)
 }
 

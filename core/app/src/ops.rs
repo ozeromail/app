@@ -56,15 +56,8 @@ pub async fn push_ops(
                     .empty(&folder, validity, &store.others(&ops)?)
                     .await
             }
-            (
-                Action::Archive
-                | Action::Trash
-                | Action::Spam
-                | Action::Inbox
-                | Action::Snooze
-                | Action::Move(_),
-                None,
-            ) => Err(ProviderError::Protocol("no folder to move to".into())),
+            // A move whose folder is gone.
+            (_, None) => Err(ProviderError::Protocol("no folder to move to".into())),
         };
         match sent {
             // Gone: the messages are no longer there, and the next sync drops them.
