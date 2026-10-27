@@ -729,6 +729,7 @@ dependencies = [
  "ozero-domain",
  "ring",
  "rustls-platform-verifier",
+ "rustls-webpki",
  "tokio",
  "tokio-rustls",
 ]
