@@ -56,6 +56,8 @@ pub struct Account {
     pub signature: String,
     /// Its inbox is part of the unified inbox, as a new account's is.
     pub in_all: bool,
+    /// Its new mail from people shows a notification, as a new account's does.
+    pub notify: bool,
 }
 
 /// When the phone looks for an account's new mail while the app is closed; while it is open,
@@ -201,6 +203,7 @@ mod tests {
             needs_sign_in: false,
             signature: String::new(),
             in_all: true,
+            notify: true,
         };
         assert_eq!(account.name(), "a@example.com");
         account.display_name = "Anna".into();

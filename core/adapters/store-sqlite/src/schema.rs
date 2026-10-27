@@ -394,4 +394,6 @@ pub const MIGRATIONS: &[&str] = &[
         state INTEGER NOT NULL DEFAULT 0
     );
     ",
+    // 39: whether an account's new mail shows notifications.
+    "ALTER TABLE account ADD COLUMN notify INTEGER NOT NULL DEFAULT 1;",
 ];

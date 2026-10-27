@@ -1655,6 +1655,24 @@ fn new_people_mail_is_taken_once() {
     assert!(store.take_fresh(0).unwrap().is_empty());
 }
 
+#[test]
+fn a_quiet_account_announces_nothing_later_either() {
+    let store = store();
+    let a = account(&store, "a@example.com");
+    let folder = inbox(&store, a);
+    assert!(store.accounts().unwrap()[0].notify);
+    store.set_account_notify(a, false).unwrap();
+    assert!(!store.accounts().unwrap()[0].notify);
+    store.save_messages(folder, &[message(1, 100)]).unwrap();
+    assert!(store.take_fresh(0).unwrap().is_empty());
+    store.set_account_notify(a, true).unwrap();
+    assert!(store.take_fresh(0).unwrap().is_empty());
+    assert_eq!(
+        store.set_account_notify(AccountId(999), true),
+        Err(StoreError::NotFound)
+    );
+}
+
 /// Message `uid` with Message-ID `<uid@example.com>` answering `refs`.
 fn reply(uid: u32, date: i64, refs: &[u32]) -> NewMessage {
     NewMessage {
@@ -2296,6 +2314,14 @@ fn shows_images_from_people_and_chosen_senders() {
     assert!(!store.shows_images(letter).unwrap());
     store.allow_images(letter).unwrap();
     store.allow_images(letter).unwrap();
+    assert!(store.shows_images(letter).unwrap());
+    assert_eq!(store.image_senders().unwrap(), ["anna@example.com"]);
+    store.forbid_images("ANNA@example.com").unwrap();
+    assert!(store.image_senders().unwrap().is_empty());
+    assert!(!store.shows_images(letter).unwrap());
+    assert!(!store.images_always().unwrap());
+    store.set_images_always(true).unwrap();
+    assert!(store.images_always().unwrap());
     assert!(store.shows_images(letter).unwrap());
     store
         .conn()

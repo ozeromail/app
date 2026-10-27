@@ -24,6 +24,8 @@ pub trait Store: Send + Sync {
     fn set_account_order(&self, order: &[AccountId]) -> Result<(), StoreError>;
     /// Sets whether the account's inbox is part of the unified inbox, as new accounts are.
     fn set_account_in_all(&self, account: AccountId, in_all: bool) -> Result<(), StoreError>;
+    /// Sets whether the account's new mail shows notifications, as new accounts' does.
+    fn set_account_notify(&self, account: AccountId, notify: bool) -> Result<(), StoreError>;
     /// Sets the account's own signature; empty uses the default one.
     fn set_account_signature(&self, account: AccountId, signature: &str) -> Result<(), StoreError>;
     /// The signature of accounts without one of their own; empty for none.
@@ -104,17 +106,25 @@ pub trait Store: Send + Sync {
         text: &str,
         found: &[(FolderId, Vec<NewMessage>)],
     ) -> Result<(), StoreError>;
-    /// Unread People mail in an inbox saved since the last call and dated after `since`
-    /// (seconds), newest first, for a notification. Everything saved stops being new.
+    /// Unread People mail in the inbox of an account that notifies, saved since the last call
+    /// and dated after `since` (seconds), newest first, for a notification. Everything saved stops being new.
     fn take_fresh(&self, since: i64) -> Result<Vec<MessageRow>, StoreError>;
     /// Like `take_fresh` without reading the mail: it is on screen already.
     fn clear_fresh(&self) -> Result<(), StoreError>;
 
     /// Whether the message's remote images load without asking: mail from people, and from
-    /// senders whose images the user chose to see; never in junk.
+    /// senders whose images the user chose to see, or all mail with `images_always`; never in
+    /// junk.
     fn shows_images(&self, message: MessageId) -> Result<bool, StoreError>;
     /// From now on the message's sender's images load without asking.
     fn allow_images(&self, message: MessageId) -> Result<(), StoreError>;
+    /// The senders whose images the user chose to see, by address.
+    fn image_senders(&self) -> Result<Vec<String>, StoreError>;
+    /// The sender's images wait to be asked for again.
+    fn forbid_images(&self, email: &str) -> Result<(), StoreError>;
+    /// Whether all mail's images load without asking, but in junk.
+    fn images_always(&self) -> Result<bool, StoreError>;
+    fn set_images_always(&self, always: bool) -> Result<(), StoreError>;
     /// Who the message came from and went to.
     fn correspondents(&self, message: MessageId) -> Result<Correspondents, StoreError>;
     /// How to leave the list the message came from, if it says and the person has not yet.
