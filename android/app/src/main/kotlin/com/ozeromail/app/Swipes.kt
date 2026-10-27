@@ -275,7 +275,7 @@ fun SwipeRow(
         var last = 0
         snapshotFlow { stage to (if (held) offset else 0f) }.collect { (now, by) ->
             if (held && now != last) {
-                haptics.performHapticFeedback(if (now > last) HapticFeedbackType.GestureThresholdActivate else HapticFeedbackType.GestureThresholdDeactivate)
+                haptics.performHapticFeedback(if (now > last) HapticFeedbackType.GestureThresholdActivate else HapticFeedbackType.SegmentTick)
             }
             last = now
             pulled(by)
