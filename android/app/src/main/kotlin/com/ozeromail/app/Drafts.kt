@@ -19,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -40,6 +41,7 @@ import kotlinx.coroutines.sync.withLock
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.DraftFileItem
 import uniffi.ozero_api.DraftItem
+import uniffi.ozero_api.richShown
 
 /**
  * Keeps a message being written on the phone as it changes. Saves run one at a time in
@@ -210,9 +212,10 @@ private fun DraftRow(draft: DraftItem, onClick: () -> Unit) {
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        if (draft.text.isNotBlank()) {
+        val shown = remember(draft.text) { richShown(draft.text).trim() }
+        if (shown.isNotEmpty()) {
             Text(
-                draft.text.trim(),
+                shown,
                 color = colors.onSurfaceVariant,
                 style = Type.Text,
                 maxLines = 2,
