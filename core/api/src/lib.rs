@@ -2118,7 +2118,6 @@ impl Core {
         // Mail first: an action may take a forwarded message off the device, and its files
         // with it. Mail that cannot go does not hold the actions back.
         let mailed = self.push_mail(account, secret, slot).await;
-        self.push_leaves(account).await?;
         // Boxed, as below: connecting inline overflows a debug build's stack.
         Box::pin(self.send_ops(account, secret, slot)).await?;
         // After the mail, so the copies of drafts just sent go too. Drafts stay on the device
@@ -2126,6 +2125,10 @@ impl Core {
         // must not say the account is unreachable for it.
         if let Err(e) = Box::pin(self.push_drafts(account, secret, slot)).await {
             log::warn!("drafts not saved to the server: {e:?}");
+        }
+        // To the lists' own servers, not the account's: a list out of reach holds nothing back.
+        if let Err(e) = self.push_leaves(account).await {
+            log::warn!("unsubscribe not sent: {e:?}");
         }
         // Moved mail shows in its new folder as a copy; a sync there brings the server's own,
         // so what the person did to the copy meanwhile can go too.
