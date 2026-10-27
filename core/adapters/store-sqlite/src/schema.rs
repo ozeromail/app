@@ -383,4 +383,10 @@ pub const MIGRATIONS: &[&str] = &[
     ALTER TABLE account ADD COLUMN in_all INTEGER NOT NULL DEFAULT 1;
     ALTER TABLE folder ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
     ",
+    // 38: how to leave the list a message came from: its `List-Unsubscribe` header, and
+    // whether `List-Unsubscribe-Post` takes a one-click POST.
+    "
+    ALTER TABLE message ADD COLUMN unsubscribe TEXT;
+    ALTER TABLE message ADD COLUMN one_click INTEGER NOT NULL DEFAULT 0;
+    ",
 ];

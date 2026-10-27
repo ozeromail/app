@@ -9,6 +9,7 @@ pub use build::MimeBuilder;
 use mail_parser::{Address as Addresses, Message, MessagePart, MimeHeaders, PartType};
 use ozero_domain::{
     Address, Attachment, Body, Category, MessageParser, NewMessage, RawMessage, Signals,
+    Unsubscribe,
 };
 
 #[derive(Debug, Default)]
@@ -51,6 +52,10 @@ impl MessageParser for MimeParser {
             date: raw.received,
             flags: raw.flags,
             category,
+            unsubscribe: Unsubscribe::new(
+                raw_header("List-Unsubscribe"),
+                raw_header("List-Unsubscribe-Post"),
+            ),
         }
     }
 

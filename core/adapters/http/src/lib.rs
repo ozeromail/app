@@ -3,7 +3,7 @@
 
 mod fetch;
 
-pub use fetch::{MAX_IMAGE, image, split};
+pub use fetch::{MAX_IMAGE, image, one_click, split};
 
 use std::fmt;
 use std::pin::Pin;
