@@ -116,8 +116,6 @@ pub fn platform_checks(
         rustls_platform_verifier::Verifier::new(provider)
             .map_err(|e| ProviderError::Network(e.to_string()))?,
     );
-    #[cfg(target_os = "android")]
-    let os = Arc::new(verify::RecheckRevoked(os));
     Ok(Arc::new(verify::Trusting {
         checks: os,
         trusted,
