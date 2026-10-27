@@ -51,6 +51,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.hapticfeedback.HapticFeedback
@@ -65,11 +66,15 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.toggleableState
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Velocity
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.NonCancellable
@@ -269,11 +274,15 @@ fun SmallSwitch(on: Boolean, enabled: Boolean = true) {
             .size(width = 38.dp, height = 22.dp)
             .alpha(if (enabled) 1f else 0.4f)
             .clip(CircleShape)
-            .background(lerp(colors.outlineVariant, colors.primary, at))
+            .drawBehind { drawRect(lerp(colors.outlineVariant, colors.primary, at)) }
             .padding(2.dp)
-            .semantics { toggleableState = ToggleableState(on) },
+            .semantics {
+                role = Role.Switch
+                toggleableState = ToggleableState(on)
+                if (!enabled) disabled()
+            },
     ) {
-        Box(Modifier.offset(x = 16.dp * at).size(18.dp).background(Color.White, CircleShape))
+        Box(Modifier.offset { IntOffset((16.dp * at).roundToPx(), 0) }.size(18.dp).background(Color.White, CircleShape))
     }
 }
 

@@ -330,9 +330,7 @@ private extension FolderItem {
 /// An account with no more own folders than this and none pinned shows them all.
 private let fewFolders = 5
 
-/// A group's name, which hides or shows its folders, under `caption` when it starts a part of
-/// the list; holding it runs `onHold`.
-/// A section's heading that hides or shows it, with a chevron that says which, and [trailing]
+/// A section's heading that hides or shows it, with a chevron that says which, and `trailing`
 /// at its end. Without `onToggle` the chevron stays, pointing down.
 private struct PartHeader<Trailing: View>: View {
     let title: LocalizedStringKey
@@ -366,6 +364,8 @@ extension PartHeader where Trailing == EmptyView {
     }
 }
 
+/// A group's name, which hides or shows its folders, under `caption` when it starts a part of
+/// the list; holding it runs `onHold`.
 private struct FolderGroup<Caption: View, Lead: View, Folders: View>: View {
     let title: String
     let open: Bool
