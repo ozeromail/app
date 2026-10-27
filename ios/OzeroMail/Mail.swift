@@ -409,6 +409,11 @@ final class Mail: Sendable {
         try core.reply(message: message, all: all)
     }
 
+    /// Who `message` went to, and who else a reply to all would copy.
+    func people(of message: MessageItem) async throws -> PeopleItem {
+        try core.people(message: message)
+    }
+
     /// `message` to send on, its text under `labels` and `date`; loads the text if not saved.
     func forward(_ message: MessageItem, labels: ForwardLabels, date: String) async throws -> DraftItem {
         try await core.forward(message: message, labels: labels, date: date, secret: password(of: message.accountId) ?? "")
