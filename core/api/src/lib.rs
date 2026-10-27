@@ -3464,6 +3464,8 @@ pub struct MessageItem {
     pub can_snooze: bool,
     /// It can go to spam: from the inbox, the archive or the user's folders.
     pub can_spam: bool,
+    /// It can move to another folder: from the inbox, archive, trash, spam or the user's folders.
+    pub can_move: bool,
     /// In mixed lists (the unified inbox, search), set when there is more than one account.
     pub account: Option<AccountMark>,
     /// The names of its attachments, once its body is downloaded; a name may be empty.
@@ -3494,6 +3496,7 @@ impl From<MessageRow> for MessageItem {
             can_move_to_inbox: allows(Action::Inbox),
             can_snooze: allows(Action::Snooze),
             can_spam: allows(Action::Spam),
+            can_move: allows(Action::Move(FolderId(0))),
             account: None,
             attachments: row.attachments,
             sending: row.sending,

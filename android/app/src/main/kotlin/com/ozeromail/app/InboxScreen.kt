@@ -771,9 +771,16 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
      * The messages leave the list at once, for their account's folder of [role] if they go to
      * one; the toast can take them all back for a moment, or show that folder.
      */
-    fun remove(gone: List<MessageItem>, toast: String, role: FolderRole?, move: suspend (List<MessageItem>) -> List<Long>, reset: () -> Unit = {}) {
+    fun remove(
+        gone: List<MessageItem>,
+        toast: String,
+        role: FolderRole?,
+        move: suspend (List<MessageItem>) -> List<Long>,
+        reset: () -> Unit = {},
+        to: FolderItem? = null,
+    ) {
         val account = gone.map { it.accountId }.distinct().singleOrNull()
-        val go = folders.find { it.accountId == account && it.role == role }?.let { Mailbox.Folder(it.id) }
+        val go = (to ?: folders.find { it.accountId == account && it.role == role })?.let { Mailbox.Folder(it.id) }
         scope.launch {
             val actions = try {
                 move(gone)
@@ -831,6 +838,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
 
     /** Into the spam folder. */
     fun spam(gone: List<MessageItem>) = remove(gone, spammed, FolderRole.JUNK, mail::spam)
+
+    /** Into another folder of the account, named [title] in the toast. */
+    fun moveToFolder(gone: List<MessageItem>, folder: FolderItem, title: String) =
+        remove(gone, context.getString(R.string.inbox_moved_to, title), null, { mail.moveToFolder(it, folder) }, to = folder)
 
     /** Back into the inbox, out of the archive, trash or spam. */
     fun moveToInbox(gone: List<MessageItem>) = remove(gone, movedBack, FolderRole.INBOX, mail::moveToInbox)
@@ -1066,6 +1077,11 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 closeSearch()
                 moveToInbox(listOf(message))
             }.takeIf { message.canMoveToInbox },
+            onMove = { folder: FolderItem, title: String ->
+                open = null
+                closeSearch()
+                moveToFolder(listOf(message), folder, title)
+            }.takeIf { message.canMove },
             onSpam = {
                 open = null
                 closeSearch()

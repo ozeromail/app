@@ -372,6 +372,16 @@ final class Mail: Sendable {
         push(messages)
     }
 
+    /// As `archive`, into `folder`, another folder of the messages' account.
+    func moveToFolder(_ messages: [MessageItem], folder: FolderItem) async throws -> [Int64] {
+        try move(messages) { try core.moveToFolder(messages: $0, folder: folder.id) }
+    }
+
+    /// Where `moveToFolder` can take `message`: its account's inbox, archive and own folders, but its own.
+    func moveTargets(of message: MessageItem) async throws -> [FolderItem] {
+        try core.moveTargets(message: message.id)
+    }
+
     /// As `archive`, back into the inbox: for mail in the archive, trash or spam.
     func moveToInbox(_ messages: [MessageItem]) async throws -> [Int64] {
         try move(messages) { try core.moveToInbox(messages: $0) }

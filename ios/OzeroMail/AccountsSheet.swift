@@ -283,6 +283,14 @@ private struct AccountFolders: View {
     }
 }
 
+/// Where a message can move, from `targets`, each with the name it shows with: the account's
+/// inbox and archive, then its own folders in tree order.
+func moveOrder(_ targets: [FolderItem]) -> [(folder: FolderItem, title: String)] {
+    let ids = Set(targets.map(\.id))
+    let usual = targets.filter { $0.role != .custom }.sorted { $0.role.rank < $1.role.rank }
+    return usual.map { ($0, $0.title) } + treeOrder(targets.filter { $0.role == .custom }).map { ($0, $0.shownName(ids)) }
+}
+
 /// `folders` in tree order: each folder with the ones inside it right under it, by the names
 /// they show with.
 private func treeOrder(_ folders: [FolderItem]) -> [FolderItem] {

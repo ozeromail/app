@@ -282,5 +282,9 @@
   "mail_settings": "Почта",
   "action_move": "Переставить",
   "action_pin": "Закрепить",
-  "action_unpin": "Открепить"
+  "action_unpin": "Открепить",
+  "action_move_to_folder": "В папку",
+  "move_title": "Перенести в",
+  "inbox_moved_to": "Перенесено в «%1$s»",
+  "move_none": "Других папок нет"
 }

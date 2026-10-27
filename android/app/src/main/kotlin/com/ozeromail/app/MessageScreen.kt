@@ -112,6 +112,7 @@ import kotlinx.coroutines.plus
 import kotlinx.coroutines.withTimeoutOrNull
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.DraftItem
+import uniffi.ozero_api.FolderItem
 import uniffi.ozero_api.ImagesPage
 import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
@@ -144,6 +145,8 @@ fun MessageScreen(
     onDelete: () -> Unit,
     onUnread: () -> Unit,
     onMoveToInbox: (() -> Unit)?,
+    /** Into another folder of its account, named as shown; null where mail does not move from. */
+    onMove: ((FolderItem, String) -> Unit)?,
     onSpam: (() -> Unit)?,
     onFlag: (Boolean) -> Unit,
     onDone: (() -> Unit)?,
@@ -441,12 +444,30 @@ fun MessageScreen(
                             move()
                         }
                     }
+                    onMove?.let {
+                        SheetAction(R.drawable.ic_folder, stringResource(R.string.action_move_to_folder), colors.onSurface) {
+                            scope.launch {
+                                val targets = try {
+                                    mail.moveTargets(message)
+                                } catch (e: CoreException) {
+                                    sheet = null
+                                    snackbar.showSnackbar(context.getString(e.text()))
+                                    return@launch
+                                }
+                                sheet = ReaderSheet.Move(targets)
+                            }
+                        }
+                    }
                     onSpam?.let { spam ->
                         SheetAction(R.drawable.ic_spam, stringResource(R.string.action_spam), colors.onSurface) {
                             sheet = null
                             spam()
                         }
                     }
+                }
+                is ReaderSheet.Move -> MoveTargets(shown.targets) { folder, title ->
+                    sheet = null
+                    onMove?.invoke(folder, title)
                 }
                 is ReaderSheet.Person -> PersonSheet(
                     shown.person,
@@ -475,6 +496,9 @@ private sealed interface ReaderSheet {
     data object Answers : ReaderSheet
 
     data object More : ReaderSheet
+
+    /** The folders the message can move to, picked from More. */
+    data class Move(val targets: List<FolderItem>) : ReaderSheet
 
     /** What to do with someone the message is from or went to. */
     data class Person(val person: PersonItem) : ReaderSheet
