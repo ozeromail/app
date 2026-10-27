@@ -24,6 +24,15 @@ enum SwipeAction: String, CaseIterable, Identifiable {
         }
     }
 
+    /// The action's icon on `message`: an open envelope to mark read, a struck flag to unflag.
+    func icon(for message: MessageItem) -> String {
+        switch self {
+        case .read: message.threadUnread > 0 ? "envelope.open" : "envelope.badge"
+        case .flag where message.flagged: "flag.slash"
+        default: icon
+        }
+    }
+
     /// What the action says on `message`: Read on a read one is Unread, Flag on a flagged one
     /// takes it off.
     func label(for message: MessageItem) -> String {
@@ -82,7 +91,8 @@ struct Swipes: Equatable {
 
     /// What a row's menu offers: each swipe's action, once.
     var actions: [SwipeAction] {
-        [left, leftLong, right, rightLong].compactMap(\.self).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
+        var seen = Set<SwipeAction>()
+        return [left, leftLong, right, rightLong].compactMap { $0 }.filter { seen.insert($0).inserted }
     }
 
     /// What the tip says the swipes do, with the long ones when they are on.

@@ -8,8 +8,7 @@ struct Snoozing: Identifiable {
 }
 
 /// A swiped message waiting for a folder from `targets`.
-struct Moving: Identifiable {
-    let id = UUID()
+struct Moving {
     let message: MessageItem
     let targets: [(folder: FolderItem, title: String)]
 }

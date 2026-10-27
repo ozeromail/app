@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -218,7 +217,6 @@ fun SwipeAction.label(message: MessageItem): Int = when {
 private const val SHORT = 0.25f
 private const val LONG = 0.6f
 
-
 /**
  * A row that does [swipes] when swiped; a side whose short action does not apply to [message]
  * stays still, as the whole row does unless [enabled]. [onSwipe] gets a way to bring the row
@@ -270,17 +268,18 @@ fun SwipeRow(
             }
         }
     }
+    // Only the side and whether the row is out at all, so a drag does not recompose it each frame.
+    val out by remember { derivedStateOf { offset != 0f } }
+    val leftward by remember { derivedStateOf { offset < 0f } }
     LaunchedEffect(Unit) {
         var last = 0
-        snapshotFlow { stage }.collect {
-            if (held) {
-                haptics.performHapticFeedback(if (it > last) HapticFeedbackType.GestureThresholdActivate else HapticFeedbackType.GestureThresholdDeactivate)
+        snapshotFlow { stage to (if (held) offset else 0f) }.collect { (now, by) ->
+            if (held && now != last) {
+                haptics.performHapticFeedback(if (now > last) HapticFeedbackType.GestureThresholdActivate else HapticFeedbackType.GestureThresholdDeactivate)
             }
-            last = it
+            last = now
+            pulled(by)
         }
-    }
-    LaunchedEffect(Unit) {
-        snapshotFlow { if (held) offset else 0f }.collect { pulled(it) }
     }
     fun glide(to: Float, then: () -> Unit = {}) {
         moving?.cancel()
@@ -289,8 +288,8 @@ fun SwipeRow(
             then()
         }
     }
-    val flick = with(density) { 800.dp.toPx() }
     fun release(velocity: Float) {
+        val flick = with(density) { 800.dp.toPx() }
         held = false
         val left = offset < 0f
         val (short, long) = side(left)
@@ -335,8 +334,8 @@ fun SwipeRow(
                 onDragStopped = { release(it) },
             ),
     ) {
-        if (offset != 0f) {
-            val left = offset < 0f
+        if (out) {
+            val left = leftward
             val (short, long) = side(left)
             val action = long?.takeIf { stage == 2 } ?: short
             val far = stage == 2
@@ -497,14 +496,14 @@ fun SwipeTip(swipes: Swipes, onDismiss: () -> Unit) {
 /** The short and the long choice for each side, on its page of the settings; a long one can be off. */
 @Composable
 fun SwipeSettings(swipes: Swipes, onChange: (Swipes) -> Unit) {
-    Side(R.string.swipes_left, SwipeAction.entries, swipes.left) { onChange(swipes.copy(left = it ?: swipes.left)) }
+    Side(R.string.swipes_left, SwipeAction.entries, swipes.left) { onChange(swipes.copy(left = it)) }
     Side(R.string.swipes_left_long, SwipeAction.entries + null, swipes.leftLong) { onChange(swipes.copy(leftLong = it)) }
-    Side(R.string.swipes_right, SwipeAction.entries, swipes.right) { onChange(swipes.copy(right = it ?: swipes.right)) }
+    Side(R.string.swipes_right, SwipeAction.entries, swipes.right) { onChange(swipes.copy(right = it)) }
     Side(R.string.swipes_right_long, SwipeAction.entries + null, swipes.rightLong) { onChange(swipes.copy(rightLong = it)) }
 }
 
 @Composable
-private fun Side(@StringRes title: Int, options: List<SwipeAction?>, picked: SwipeAction?, onPick: (SwipeAction?) -> Unit) {
+private fun <T : SwipeAction?> Side(@StringRes title: Int, options: List<T>, picked: T, onPick: (T) -> Unit) {
     val colors = MaterialTheme.colorScheme
     // Four to a row: the name goes under the icon to fit.
     Choices(title, options, picked, onPick, height = 56.dp) { action, on ->
