@@ -2,6 +2,7 @@ package com.ozeromail.app
 
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
@@ -41,13 +42,18 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -78,6 +84,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -86,20 +94,26 @@ import kotlinx.coroutines.withContext
  *
  * A menu over the screen, rising from the bottom edge: the screen dims, the sheet glides up
  * and follows the finger down. A drag down, a tap outside or back closes it; the back
- * gesture lowers it as the finger moves. Put it last in a full-screen box.
+ * gesture lowers it as the finger moves. With [lift], a finger can also raise it from below,
+ * as from the dock. Put it last in a full-screen box.
  */
 @Composable
-fun Sheet(visible: Boolean, onClose: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+fun Sheet(visible: Boolean, onClose: () -> Unit, lift: Lift? = null, content: @Composable ColumnScope.() -> Unit) {
     val colors = MaterialTheme.colorScheme
+    // How much of the sheet is still below the screen, from 0 to 1: the scrim darkens as it rises.
+    var hidden by remember { mutableFloatStateOf(0f) }
+    // Raised by a finger, the sheet comes up with it rather than on its own.
+    val lifted by remember(lift) { derivedStateOf { lift?.risen != null } }
     Box(Modifier.fillMaxSize()) {
         AnimatedVisibility(
             visible,
-            enter = fadeIn(Motion.calm(Motion.SCRIM)),
+            enter = if (lifted) EnterTransition.None else fadeIn(Motion.calm(Motion.SCRIM)),
             exit = fadeOut(Motion.calm(Motion.SCRIM)),
         ) {
             Box(
                 Modifier
                     .fillMaxSize()
+                    .graphicsLayer { alpha = 1f - hidden }
                     .background(colors.scrim)
                     .clickable(remember { MutableInteractionSource() }, indication = null, enabled = visible, onClick = onClose),
             )
@@ -107,16 +121,58 @@ fun Sheet(visible: Boolean, onClose: () -> Unit, content: @Composable ColumnScop
         AnimatedVisibility(
             visible,
             Modifier.align(Alignment.BottomCenter),
-            enter = slideInVertically(Motion.calm(Motion.SCREEN)) { it },
+            enter = if (lifted) EnterTransition.None else slideInVertically(Motion.calm(Motion.SCREEN)) { it },
             exit = slideOutVertically(Motion.calm(Motion.SCREEN)) { it },
         ) {
-            SheetBody(visible, onClose, content)
+            SheetBody(visible, onClose, lift, { hidden = it }, content)
         }
     }
 }
 
+/**
+ * A finger raising a sheet from below its bottom edge, as from the dock: how far it has come
+ * up while it holds on, and how fast it went when it let go. Give the same one to the sheet.
+ */
+@Stable
+class Lift {
+    /** How far the finger has raised the sheet, in pixels; null when no finger holds it from below. */
+    var risen by mutableStateOf<Float?>(null)
+        private set
+
+    /** How fast the finger went when it let go, up being less than zero; the sheet then settles. */
+    internal var thrown by mutableStateOf<Float?>(null)
+        private set
+
+    /** A finger takes hold below the sheet. */
+    fun start() {
+        risen = 0f
+        thrown = null
+    }
+
+    /** The finger moved by [delta], up being less than zero. */
+    fun drag(delta: Float) {
+        risen = ((risen ?: return) - delta).coerceAtLeast(0f)
+    }
+
+    /** The finger let go at [velocity]. */
+    fun stop(velocity: Float) {
+        if (risen != null) thrown = velocity
+    }
+
+    internal fun land() {
+        risen = null
+        thrown = null
+    }
+}
+
 @Composable
-private fun SheetBody(visible: Boolean, onClose: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+private fun SheetBody(
+    visible: Boolean,
+    onClose: () -> Unit,
+    lift: Lift?,
+    onHidden: (Float) -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
     val colors = MaterialTheme.colorScheme
     val close by rememberUpdatedState(onClose)
     val scope = rememberCoroutineScope()
@@ -124,6 +180,8 @@ private fun SheetBody(visible: Boolean, onClose: () -> Unit, content: @Composabl
     // How far the finger has pulled the sheet down, in pixels.
     var pulled by remember { mutableFloatStateOf(0f) }
     var height by remember { mutableIntStateOf(0) }
+    // How far below its place the sheet is: raised from below, it is as low as the finger left it.
+    fun lowered(): Float = lift?.risen?.let { (height - it).coerceAtLeast(0f) } ?: pulled
 
     suspend fun settle() {
         animate(pulled, 0f, animationSpec = Motion.settle()) { value, _ -> pulled = value }
@@ -143,6 +201,26 @@ private fun SheetBody(visible: Boolean, onClose: () -> Unit, content: @Composabl
             withContext(NonCancellable) { settle() }
             throw e
         }
+    }
+
+    if (lift != null) {
+        LaunchedEffect(lift) {
+            snapshotFlow { lift.thrown }.filterNotNull().collect { velocity ->
+                snapshotFlow { height }.first { it > 0 }
+                pulled = lowered()
+                lift.land()
+                // A throw decides; otherwise the sheet opens once it is more than a third of the way up.
+                val open = when {
+                    velocity < -flingToClose / 2 -> true
+                    velocity > flingToClose / 2 -> false
+                    else -> pulled < height * 0.66f
+                }
+                if (open) settle() else close()
+            }
+        }
+    }
+    LaunchedEffect(Unit) {
+        snapshotFlow { if (height == 0) 1f else (lowered() / height).coerceIn(0f, 1f) }.collect(onHidden)
     }
 
     // A list scrolled to its top hands the rest of a downward drag to the sheet.
@@ -180,7 +258,8 @@ private fun SheetBody(visible: Boolean, onClose: () -> Unit, content: @Composabl
                 layout(placeable.width, placeable.height) { placeable.place(0, 0) }
             }
             .onSizeChanged { height = it.height }
-            .graphicsLayer { translationY = pulled }
+            // Before it is measured, a sheet raised from below stays under the screen.
+            .graphicsLayer { translationY = lift?.risen?.let { (size.height - it).coerceAtLeast(0f) } ?: pulled }
             .clip(RoundedCornerShape(topStart = Radius.sheet, topEnd = Radius.sheet))
             .background(colors.background)
             .draggable(
