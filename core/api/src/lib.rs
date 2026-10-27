@@ -267,11 +267,16 @@ impl Core {
     /// The accounts in the person's order, as they were added unless moved.
     pub fn accounts(&self) -> Result<Vec<AccountItem>, CoreError> {
         let signature = self.store.signature()?;
-        Ok(self
-            .store
-            .accounts()?
+        let accounts = self.store.accounts()?;
+        // The unified inbox keeps one account at least, so the last one in it stays.
+        let fixed = |a: &Account| {
+            accounts.len() == 1 || a.in_all && accounts.iter().filter(|b| b.in_all).count() == 1
+        };
+        let fixed: Vec<bool> = accounts.iter().map(fixed).collect();
+        Ok(accounts
             .into_iter()
-            .map(|a| AccountItem::new(a, &signature))
+            .zip(fixed)
+            .map(|(a, fixed)| AccountItem::new(a, &signature, fixed))
             .collect())
     }
 
@@ -305,15 +310,7 @@ impl Core {
 
     /// Sets the name the account's mail goes out under; empty leaves only the address.
     pub fn set_account_sender(&self, account: i64, name: String) -> Result<(), CoreError> {
-        let account = AccountId(account);
-        let name = match name.trim() {
-            "" => match self.store.accounts()?.into_iter().find(|a| a.id == account) {
-                Some(a) => a.email,
-                None => return Ok(()),
-            },
-            name => name.to_owned(),
-        };
-        Ok(self.store.set_account_name(account, &name)?)
+        Ok(self.store.set_account_name(AccountId(account), &name)?)
     }
 
     /// Sets when the phone looks for the account's new mail with the app closed.
@@ -2300,7 +2297,8 @@ impl Core {
         }
         let mut from = sender(account);
         if matches!(account.kind, AccountKind::Gmail | AccountKind::Exchange) {
-            if account.kind == AccountKind::Gmail && from.name.is_none() {
+            // Saved before names were read; an empty name is the person's choice of the address alone.
+            if account.kind == AccountKind::Gmail && account.display_name == account.email {
                 from.name = Box::pin(self.gmail_name(account, secret, slot)).await;
             }
             for message in mail {
@@ -2781,7 +2779,8 @@ impl MailProvider for Remote {
 /// Who the account's mail is from: its sender name, unless that is only the address.
 fn sender(account: &Account) -> Address {
     Address {
-        name: Some(account.display_name.clone()).filter(|n| *n != account.email),
+        name: Some(account.display_name.trim().to_owned())
+            .filter(|n| !n.is_empty() && *n != account.email),
         email: account.email.clone(),
     }
 }
@@ -3069,12 +3068,19 @@ pub struct AccountItem {
     pub notify: bool,
     /// The host its mail comes from; empty for a provider's own, as with Gmail.
     pub server: String,
+    /// The name its mail goes out under; empty when it goes out as the address alone.
+    pub sender_name: String,
+    /// Whether it is in the unified inbox cannot change: it is the only account, or the last
+    /// one in it.
+    pub in_all_fixed: bool,
 }
 
 impl AccountItem {
     /// `signature` is the default one, for accounts without their own.
-    fn new(a: Account, signature: &str) -> Self {
+    fn new(a: Account, signature: &str, in_all_fixed: bool) -> Self {
         Self {
+            sender_name: sender(&a).name.unwrap_or_default(),
+            in_all_fixed,
             in_all: a.in_all,
             notify: a.notify,
             server: a

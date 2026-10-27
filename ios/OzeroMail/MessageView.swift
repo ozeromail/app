@@ -739,11 +739,13 @@ private struct PlainText: View {
     let text: String
     let quote: String
     @State private var showQuote = false
+    // Read once when the letter opens.
+    private let scale = Settings.textScale
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if !text.isEmpty {
-                Text(verbatim: text).font(.reading(scale: Settings.textScale)).lineSpacing(6 * Settings.textScale).textSelection(.enabled)
+                Text(verbatim: text).font(.reading(scale: scale)).lineSpacing(6 * scale).textSelection(.enabled)
             }
             if !quote.isEmpty {
                 Button {
@@ -760,7 +762,7 @@ private struct PlainText: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text("message_quote"))
                 if showQuote {
-                    Text(verbatim: quote).font(.system(size: 15.5 * Settings.textScale, design: .serif)).foregroundStyle(.secondary).textSelection(.enabled)
+                    Text(verbatim: quote).font(.readingQuote(scale: scale)).foregroundStyle(.secondary).textSelection(.enabled)
                 }
             }
         }
@@ -1155,6 +1157,7 @@ struct BarAction: View {
 extension Font {
     /// A message's text: a serif made for reading, at `scale` times the size it is read at.
     static func reading(scale: Double) -> Font { .system(size: 17.5 * scale, design: .serif) }
+    static func readingQuote(scale: Double) -> Font { .system(size: 15.5 * scale, design: .serif) }
 
     /// Quoted text under a message, a step quieter.
     static let readingQuote = Font.system(size: 15.5, design: .serif)

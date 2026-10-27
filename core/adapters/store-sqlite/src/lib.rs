@@ -121,6 +121,13 @@ fn migrate(conn: &Connection) -> Result<(), StoreError> {
     Ok(())
 }
 
+/// Whether the person chose to see all mail's images.
+macro_rules! images_always {
+    () => {
+        "EXISTS (SELECT 1 FROM setting WHERE key = 'images' AND value = 'always')"
+    };
+}
+
 /// `$m` is a copy of moved mail whose move the server has, or of sent mail the server took,
 /// so a sync can find the server's own message in its place.
 macro_rules! unclaimed {
@@ -774,11 +781,14 @@ impl Store for SqliteStore {
         self.conn()
             .prepare_cached(
                 // Never in junk: a sender there may be anyone, and may be pretending.
-                "SELECT f.role IS NOT 'junk' AND (
+                concat!(
+                    "SELECT f.role IS NOT 'junk' AND (
                             m.category = 'people' AND m.from_email != ''
                             OR EXISTS (SELECT 1 FROM image_sender WHERE email = m.from_email)
-                            OR EXISTS (SELECT 1 FROM setting WHERE key = 'images' AND value = 'always'))
-                 FROM message m JOIN folder f ON f.id = m.folder_id WHERE m.id = ?1",
+                            OR ",
+                    images_always!(),
+                    ") FROM message m JOIN folder f ON f.id = m.folder_id WHERE m.id = ?1"
+                ),
             )
             .and_then(|mut s| s.query_row([message.0], |r| r.get(0)).optional())
             .map_err(storage)?
@@ -814,11 +824,7 @@ impl Store for SqliteStore {
 
     fn images_always(&self) -> Result<bool, StoreError> {
         self.conn()
-            .query_row(
-                "SELECT EXISTS (SELECT 1 FROM setting WHERE key = 'images' AND value = 'always')",
-                [],
-                |r| r.get(0),
-            )
+            .query_row(concat!("SELECT ", images_always!()), [], |r| r.get(0))
             .map_err(storage)
     }
 

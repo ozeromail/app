@@ -137,8 +137,7 @@ fun SettingsScreen(
                 page == NOTIFICATIONS -> NotificationSettings(accounts, actions)
                 account != null -> AccountSettings(
                     account,
-                    // Not for the last account in the unified inbox, which keeps one at least.
-                    inAll = account.inAll.takeIf { on -> accounts.size > 1 && !(on && accounts.count { it.inAll } == 1) },
+                    inAll = account.inAll.takeIf { !account.inAllFixed },
                     signature = signature,
                     actions = actions,
                 )
@@ -193,9 +192,9 @@ private fun AppSettings(
     }
     Section(stringResource(R.string.settings_reading)) {
         SettingRow(R.drawable.ic_text_size, stringResource(R.string.reading_size), stringResource(SIZE_NAMES[textSize])) { onOpen(READING) }
-        SettingRow(R.drawable.ic_photo, stringResource(R.string.images_title), null) { onOpen(READING) }
+        SettingRow(R.drawable.ic_photo, stringResource(R.string.images_title)) { onOpen(READING) }
     }
-    Section(stringResource(R.string.settings_app)) {
+    Section(stringResource(R.string.app_name)) {
         SettingRow(
             lead = { Glyph(R.drawable.ic_compose, null, colors.primary) },
             title = stringResource(R.string.feedback_write),
@@ -283,7 +282,7 @@ private fun AccountSettings(
     Caption(stringResource(R.string.account_seen_as))
     NameField(
         key = "sender${account.id}",
-        saved = account.displayName.takeIf { it != account.email }.orEmpty(),
+        saved = account.senderName,
         label = stringResource(R.string.account_sender_name),
         placeholder = account.email,
         hint = stringResource(R.string.account_sender_hint),
@@ -306,7 +305,7 @@ private fun AccountSettings(
     Swatches(account.colorIndex.toInt()) { actions.onColor(account, it) }
     if (inAll != null) {
         Section(null) {
-            SettingRow(R.drawable.ic_inbox, stringResource(R.string.all_in), null, next = false, end = { SmallSwitch(inAll) }) {
+            SettingRow(R.drawable.ic_inbox, stringResource(R.string.all_in), next = false, end = { SmallSwitch(inAll) }) {
                 actions.onInAll(account, !inAll)
             }
         }
@@ -316,7 +315,6 @@ private fun AccountSettings(
         SettingRow(
             R.drawable.ic_bell,
             stringResource(R.string.notify_title),
-            null,
             caption = stringResource(R.string.account_notify_hint),
             next = false,
             end = { SmallSwitch(account.notify) },
@@ -340,16 +338,13 @@ private fun AccountSettings(
     if (!account.needsSignIn) {
         Caption(stringResource(R.string.account_sign_in))
         Section(null) {
-            if (account.kind == AccountKind.GMAIL) {
-                SettingRow(R.drawable.ic_key, stringResource(R.string.signin_again_title), null) { actions.onSignIn(account) }
-            } else {
-                SettingRow(
-                    R.drawable.ic_key,
-                    stringResource(R.string.account_password),
-                    null,
-                    caption = stringResource(R.string.account_password_hint),
-                ) { actions.onSignIn(account) }
-            }
+            // Google asks for its own sign-in; the rest for the new password.
+            val google = account.kind == AccountKind.GMAIL
+            SettingRow(
+                R.drawable.ic_key,
+                stringResource(if (google) R.string.signin_again_title else R.string.account_password),
+                caption = if (google) null else stringResource(R.string.account_password_hint),
+            ) { actions.onSignIn(account) }
         }
     }
     Spacer(Modifier.height(16.dp))
@@ -386,10 +381,10 @@ private fun AccountSettings(
 
 /** The name of an account's kind, as its provider calls itself. */
 private fun AccountKind.title(): Int = when (this) {
-    AccountKind.IMAP -> R.string.kind_imap
+    AccountKind.IMAP -> R.string.signin_imap
     AccountKind.GMAIL -> R.string.kind_gmail
     AccountKind.GRAPH -> R.string.kind_outlook
-    AccountKind.EXCHANGE -> R.string.kind_exchange
+    AccountKind.EXCHANGE -> R.string.signin_exchange
 }
 
 /** When the phone looks for an account's new mail with the app closed, and what to call it. */
@@ -467,8 +462,10 @@ private fun ReadingSettings(mail: Mail) {
         Slider(
             value = size.toFloat(),
             onValueChange = {
-                size = it.roundToInt()
-                prefs.textSize = size
+                if (it.roundToInt() != size) {
+                    size = it.roundToInt()
+                    prefs.textSize = size
+                }
             },
             valueRange = 0f..TEXT_SCALES.lastIndex.toFloat(),
             steps = TEXT_SCALES.size - 2,
@@ -514,7 +511,7 @@ private fun ReadingSettings(mail: Mail) {
 /** [this] a [scale] larger, line height and all. */
 fun TextStyle.scaled(scale: Float): TextStyle = copy(fontSize = fontSize * scale, lineHeight = lineHeight * scale)
 
-/** Mail's text at the size the person picked; read once per screen. */
+/** Mail's text at the size the person picked, read when it first shows. */
 @Composable
 fun readingStyle(style: TextStyle = Type.Reading): TextStyle {
     val context = LocalContext.current
@@ -610,7 +607,7 @@ private fun Hint(text: String, top: Dp = 0.dp) {
 private fun SettingRow(
     @DrawableRes icon: Int,
     title: String,
-    value: String?,
+    value: String? = null,
     caption: String? = null,
     next: Boolean = true,
     end: (@Composable RowScope.() -> Unit)? = null,

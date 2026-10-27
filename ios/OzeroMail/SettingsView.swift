@@ -57,9 +57,7 @@ struct SettingsView: View {
         case .account(let id):
             // Gone, say removed meanwhile: nothing to show.
             if let account = accounts.first(where: { $0.id == id }) {
-                // Not for the last account in the unified inbox, which keeps one at least.
-                let last = account.inAll && accounts.filter(\.inAll).count == 1
-                AccountSettings(account: account, inAll: accounts.count > 1 && !last ? account.inAll : nil,
+                AccountSettings(account: account, inAll: account.inAllFixed ? nil : account.inAll,
                                 signature: signature, actions: actions)
             }
         }
@@ -94,7 +92,7 @@ private struct AppSettings: View {
             Section("mail_settings") {
                 ValueLink(page: .notifications, icon: "bell", title: "notify_title", value: notifySummary(accounts))
                 ValueLink(page: .swipes, icon: "hand.draw", title: "swipes_title",
-                          value: "\(swipes.left.label) · \(swipes.right.label)")
+                          value: swipes.summary)
                 ValueLink(page: .signature, icon: "signature", title: "signature_title",
                           value: signature.components(separatedBy: .newlines).first { !$0.isBlank } ?? tr("signature_none"))
             }
@@ -102,7 +100,7 @@ private struct AppSettings: View {
                 ValueLink(page: .reading, icon: "textformat.size", title: "reading_size", value: sizeNames[Settings.textSize])
                 ValueLink(page: .reading, icon: "photo", title: "images_title", value: nil)
             }
-            Section("settings_app") {
+            Section("app_name") {
                 SheetAction(icon: "square.and.pencil", text: "feedback_write", color: .primary, action: actions.onWrite)
                 LabeledContent {
                     Text(verbatim: appVersion)
@@ -169,10 +167,10 @@ extension AccountKind {
     /// What the provider calls itself.
     var title: String {
         switch self {
-        case .imap: tr("kind_imap")
+        case .imap: tr("signin_imap")
         case .gmail: tr("kind_gmail")
         case .graph: tr("kind_outlook")
-        case .exchange: tr("kind_exchange")
+        case .exchange: tr("signin_exchange")
         }
     }
 }
@@ -343,7 +341,7 @@ private struct AccountSettings: View {
                 }
             }
             Section {
-                NameField(saved: account.displayName == account.email ? "" : account.displayName,
+                NameField(saved: account.senderName,
                           label: "account_sender_name", placeholder: account.email, capitalization: .words) {
                     actions.onSender(account, $0)
                 }
@@ -397,12 +395,12 @@ private struct AccountSettings: View {
             if !account.needsSignIn {
                 Section("account_sign_in") {
                     Button { actions.onSignIn(account) } label: {
+                        // Google asks for its own sign-in; the rest for the new password.
+                        let google = account.kind == .gmail
                         Label {
-                            if account.kind == .gmail {
-                                Text("signin_again_title")
-                            } else {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("account_password")
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(LocalizedStringKey(google ? "signin_again_title" : "account_password"))
+                                if !google {
                                     Text("account_password_hint").font(.footnote).foregroundStyle(.secondary)
                                 }
                             }
@@ -541,11 +539,11 @@ private struct Swatches: View {
     let onPick: (Int) -> Void
 
     // In rainbow order, grey last, so each row reads as a run of hues; the saved place stays the same.
-    private let colors = accountColors().enumerated().sorted { hueOrder($0.element) < hueOrder($1.element) }
+    private static let colors = accountColors().enumerated().sorted { hueOrder($0.element) < hueOrder($1.element) }
 
     var body: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 5), spacing: 16) {
-            ForEach(colors, id: \.offset) { index, color in
+            ForEach(Self.colors, id: \.offset) { index, color in
                 let on = index == current
                 Button { onPick(index) } label: {
                     Circle()

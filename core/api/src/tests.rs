@@ -1110,11 +1110,12 @@ fn the_sender_name_is_the_users_or_only_the_address() {
             smtp: None,
         })
         .unwrap();
-    let from = || sender(&core.store.accounts().unwrap()[0]).name;
+    let from = || core.accounts().unwrap()[0].sender_name.clone();
     core.set_account_sender(account.0, " Anna Petrova ".into())
         .unwrap();
-    assert_eq!(from().as_deref(), Some("Anna Petrova"));
+    assert_eq!(from(), "Anna Petrova");
     core.set_account_sender(account.0, "  ".into()).unwrap();
-    assert_eq!(from(), None);
+    assert_eq!(from(), "");
+    assert!(core.accounts().unwrap()[0].in_all_fixed);
     assert!(core.set_account_sender(999, "Bob".into()).is_err());
 }

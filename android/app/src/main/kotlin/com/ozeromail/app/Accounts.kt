@@ -184,7 +184,7 @@ private fun MailboxList(state: MailboxesState, actions: AccountsActions) {
         if (editing) {
             Reorderable(accounts, key = { it.id }, onMove = { if (it != accounts) actions.onOrder(it) }) { account, handle ->
                 // The unified inbox keeps one account at least.
-                val last = account.inAll && inAll.size == 1
+                val last = account.inAllFixed
                 SheetRow(onClick = { if (!last) actions.onInAll(account, !account.inAll) }, lead = { AccountDot(account.tint, size = 12.dp) }) {
                     Text(account.name, style = Type.Row, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                     SmallSwitch(account.inAll, enabled = !last)
