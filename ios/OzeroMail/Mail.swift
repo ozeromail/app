@@ -339,6 +339,18 @@ final class Mail: Sendable {
         try move(messages) { try core.archive(messages: $0) }
     }
 
+    /// As `archive`, into the account's spam.
+    func spam(_ messages: [MessageItem]) async throws -> [Int64] {
+        try move(messages) { try core.spam(messages: $0) }
+    }
+
+    /// Flags the messages, or takes their flags off; only they, not the rest of their
+    /// conversations.
+    func flag(_ messages: [MessageItem], flagged: Bool) async throws {
+        try core.flag(messages: messages.map(\.id), flagged: flagged)
+        push(messages)
+    }
+
     /// As `archive`, back into the inbox: for mail in the archive, trash or spam.
     func moveToInbox(_ messages: [MessageItem]) async throws -> [Int64] {
         try move(messages) { try core.moveToInbox(messages: $0) }
@@ -708,6 +720,7 @@ extension Error {
         case .Gone?: return "error_gone"
         case .NoArchive?: return "error_no_archive"
         case .NoTrash?: return "error_no_trash"
+        case .NoSpam?: return "error_no_spam"
         case .NoSnoozed?: return "error_no_snoozed"
         case .BadRecipients?: return "error_bad_recipients"
         case .BadCopies?: return "error_bad_copies"
