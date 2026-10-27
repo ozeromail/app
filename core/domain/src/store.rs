@@ -141,6 +141,12 @@ pub trait Store: Send + Sync {
         actions: &[(MessageId, Action)],
         not_before: i64,
     ) -> Result<Vec<OpId>, StoreError>;
+    /// As `queue_all`, each message alone: the rest of its conversation stays.
+    fn queue_alone(
+        &self,
+        actions: &[(MessageId, Action)],
+        not_before: i64,
+    ) -> Result<Vec<OpId>, StoreError>;
     /// Snoozes the messages' conversations, as `queue_all` with `Action::Snooze`, until `until`
     /// (seconds): each message comes back then, wherever its server put it in the snoozed
     /// folder.

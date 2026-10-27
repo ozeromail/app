@@ -578,6 +578,10 @@ impl Store for Memory {
         Ok(vec![OpId(1)])
     }
 
+    fn queue_alone(&self, _: &[(MessageId, Action)], _: i64) -> Result<Vec<OpId>, StoreError> {
+        Ok(vec![OpId(1)])
+    }
+
     fn queue_empty(&self, _: FolderId, _: i64) -> Result<Vec<OpId>, StoreError> {
         Ok(vec![])
     }
