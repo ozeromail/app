@@ -994,6 +994,7 @@ fn folders_sit_inside_the_folder_their_name_continues() {
         remote_id: name.into(),
         name: name.into(),
         role,
+        pinned: false,
     };
     let folders = [
         folder(1, "INBOX", FolderRole::Inbox),

@@ -432,10 +432,6 @@ impl Store for Memory {
         Ok(())
     }
 
-    fn left_out_of_all(&self) -> Result<Vec<AccountId>, StoreError> {
-        Ok(vec![])
-    }
-
     fn set_account_signature(&self, _: AccountId, _: &str) -> Result<(), StoreError> {
         Ok(())
     }
@@ -491,6 +487,7 @@ impl Store for Memory {
                 remote_id: f.remote_id.clone(),
                 name: f.name.clone(),
                 role: f.role,
+                pinned: false,
             })
             .collect())
     }
@@ -501,10 +498,6 @@ impl Store for Memory {
 
     fn set_folder_pinned(&self, _: FolderId, _: bool) -> Result<(), StoreError> {
         Ok(())
-    }
-
-    fn pinned_folders(&self) -> Result<Vec<FolderId>, StoreError> {
-        Ok(vec![])
     }
 
     fn checkpoint(&self, _: FolderId) -> Result<(Checkpoint, Vec<String>), StoreError> {
@@ -534,6 +527,10 @@ impl Store for Memory {
     }
 
     fn inbox_unread(&self, _: Option<AccountId>) -> Result<Vec<(Category, u32)>, StoreError> {
+        Ok(vec![])
+    }
+
+    fn unread_by_account(&self, _: Category) -> Result<Vec<(AccountId, u32)>, StoreError> {
         Ok(vec![])
     }
 

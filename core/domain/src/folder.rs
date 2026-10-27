@@ -96,6 +96,8 @@ pub struct Folder {
     pub remote_id: String,
     pub name: String,
     pub role: FolderRole,
+    /// The person pinned it, so the apps show it with the account's usual folders.
+    pub pinned: bool,
 }
 
 #[cfg(test)]

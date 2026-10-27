@@ -188,7 +188,7 @@ impl Store for SqliteStore {
             .prepare_cached(
                 "SELECT id, kind, email, display_name, server_host, server_port, server_user,
                         server_certificate, smtp_host, smtp_port, smtp_user, smtp_certificate,
-                        color, label, keep_days, needs_sign_in, new_mail, signature
+                        color, label, keep_days, needs_sign_in, new_mail, signature, in_all
                  FROM account ORDER BY position, id",
             )
             .map_err(storage)?;
@@ -217,6 +217,7 @@ impl Store for SqliteStore {
                 needs_sign_in: r.get(15)?,
                 new_mail: r.get::<_, StoredNewMail>(16)?.0,
                 signature: r.get(17)?,
+                in_all: r.get(18)?,
             })
         });
         rows.and_then(|rows| rows.collect()).map_err(storage)
@@ -291,14 +292,6 @@ impl Store for SqliteStore {
             )
             .map_err(storage)?;
         found(changed)
-    }
-
-    fn left_out_of_all(&self) -> Result<Vec<AccountId>, StoreError> {
-        let conn = self.conn();
-        let rows = conn
-            .prepare_cached("SELECT id FROM account WHERE in_all = 0 ORDER BY id")
-            .and_then(|mut s| s.query_map([], |r| Ok(AccountId(r.get(0)?)))?.collect());
-        rows.map_err(storage)
     }
 
     fn set_account_new_mail(&self, account: AccountId, when: NewMail) -> Result<(), StoreError> {
@@ -438,16 +431,16 @@ impl Store for SqliteStore {
                 .prepare_cached(
                     "INSERT INTO folder (account_id, remote_id, name, role) VALUES (?1, ?2, ?3, ?4)
                      ON CONFLICT (account_id, remote_id) DO UPDATE SET name = excluded.name, role = excluded.role
-                     RETURNING id",
+                     RETURNING id, pinned",
                 )
                 .map_err(storage)?;
             folders
                 .iter()
                 .map(|f| {
-                    let id = upsert
+                    let (id, pinned) = upsert
                         .query_row(
                             params![account.0, f.remote_id, f.name, role_str(f.role)],
-                            |r| r.get(0),
+                            |r| Ok((r.get(0)?, r.get(1)?)),
                         )
                         .map_err(storage)?;
                     Ok(Folder {
@@ -456,6 +449,7 @@ impl Store for SqliteStore {
                         remote_id: f.remote_id.clone(),
                         name: f.name.clone(),
                         role: f.role,
+                        pinned,
                     })
                 })
                 .collect::<Result<Vec<_>, StoreError>>()?
@@ -468,7 +462,7 @@ impl Store for SqliteStore {
         let conn = self.conn();
         let mut stmt = conn
             .prepare_cached(
-                "SELECT id, remote_id, name, role FROM folder WHERE account_id = ?1 ORDER BY id",
+                "SELECT id, remote_id, name, role, pinned FROM folder WHERE account_id = ?1 ORDER BY id",
             )
             .map_err(storage)?;
         let rows = stmt.query_map([account.0], folder_row(account));
@@ -484,14 +478,6 @@ impl Store for SqliteStore {
             )
             .map_err(storage)?;
         found(changed)
-    }
-
-    fn pinned_folders(&self) -> Result<Vec<FolderId>, StoreError> {
-        let conn = self.conn();
-        let rows = conn
-            .prepare_cached("SELECT id FROM folder WHERE pinned = 1 ORDER BY id")
-            .and_then(|mut s| s.query_map([], |r| Ok(FolderId(r.get(0)?)))?.collect());
-        rows.map_err(storage)
     }
 
     fn checkpoint(&self, folder: FolderId) -> Result<(Checkpoint, Vec<String>), StoreError> {
@@ -622,12 +608,16 @@ impl Store for SqliteStore {
             .after
             .map_or((i64::MAX, i64::MAX), |c| (c.date, c.id.0));
         let tab = match &query.scope {
-            ListScope::FolderTab(_, category) => Some(*category_ref(*category)),
+            ListScope::Inbox(_, category) => Some(*category_ref(*category)),
+            _ => None,
+        };
+        let inbox = match &query.scope {
+            ListScope::Inbox(account, _) => account.map(|a| a.0),
             _ => None,
         };
         let (sql, scope): (&str, &dyn rusqlite::ToSql) = match &query.scope {
             ListScope::Folder(folder) => (LIST_FOLDER, &folder.0),
-            ListScope::FolderTab(folder, _) => (LIST_FOLDER_TAB, &folder.0),
+            ListScope::Inbox(..) => (LIST_INBOX_TAB, &inbox),
             // Their scopes take no value; `?1` stays unused.
             ListScope::Unread => (LIST_UNREAD, &0),
             ListScope::Files => (LIST_FILES, &0),
@@ -635,7 +625,6 @@ impl Store for SqliteStore {
                 (LIST_UNIFIED_BY_DATE, role_ref(*role))
             }
             ListScope::Unified(role) => (LIST_UNIFIED_BY_FOLDER, role_ref(*role)),
-            ListScope::Inbox(category) => (LIST_INBOX_TAB, category_ref(*category)),
         };
         let conn = self.conn();
         let rows = conn.prepare_cached(sql).and_then(|mut s| {
@@ -653,6 +642,17 @@ impl Store for SqliteStore {
         let rows = conn.prepare_cached(INBOX_UNREAD).and_then(|mut s| {
             s.query_map([account.map(|a| a.0)], |r| {
                 Ok((r.get::<_, StoredCategory>(0)?.0, r.get(1)?))
+            })?
+            .collect()
+        });
+        rows.map_err(storage)
+    }
+
+    fn unread_by_account(&self, category: Category) -> Result<Vec<(AccountId, u32)>, StoreError> {
+        let conn = self.conn();
+        let rows = conn.prepare_cached(UNREAD_BY_ACCOUNT).and_then(|mut s| {
+            s.query_map([category_ref(category)], |r| {
+                Ok((AccountId(r.get(0)?), r.get(1)?))
             })?
             .collect()
         });
@@ -1831,7 +1831,7 @@ impl Store for SqliteStore {
         let conn = self.conn();
         let rows = conn
             .prepare_cached(concat!(
-                "SELECT f.id, f.remote_id, f.name, f.role FROM folder f
+                "SELECT f.id, f.remote_id, f.name, f.role, f.pinned FROM folder f
                  WHERE f.account_id = ?1 AND EXISTS (
                      SELECT 1 FROM message m WHERE m.folder_id = f.id AND ",
                 unclaimed!("m"),
@@ -2279,7 +2279,7 @@ fn drop_message(tx: &Transaction<'_>, message: i64) -> Result<(), StoreError> {
         .map_err(storage)
 }
 
-/// Reads `id, remote_id, name, role` of one of the account's folders.
+/// Reads `id, remote_id, name, role, pinned` of one of the account's folders.
 fn folder_row(account: AccountId) -> impl Fn(&Row<'_>) -> rusqlite::Result<Folder> {
     move |r| {
         Ok(Folder {
@@ -2288,6 +2288,7 @@ fn folder_row(account: AccountId) -> impl Fn(&Row<'_>) -> rusqlite::Result<Folde
             remote_id: r.get(1)?,
             name: r.get(2)?,
             role: r.get::<_, Role>(3)?.0,
+            pinned: r.get(4)?,
         })
     }
 }
@@ -2566,7 +2567,7 @@ macro_rules! inboxes_of {
 
 /// Newest first, keyset-paged by (date, id) so deep pages cost the same as the first.
 macro_rules! list_sql {
-    ($scope:literal) => {
+    ($($scope:tt)+) => {
         concat!(
             message_from!(concat!(
                 "(SELECT count(*) ",
@@ -2580,7 +2581,7 @@ macro_rules! list_sql {
                 ")"
             )),
             " WHERE ",
-            $scope,
+            $($scope)+,
             " AND m.found = 0 AND (m.date, m.id) < (?2, ?3)
              AND ",
             not_moving!(),
@@ -2596,23 +2597,19 @@ macro_rules! list_sql {
 
 const LIST_FOLDER: &str = list_sql!("m.folder_id = ?1");
 // Walks the tab's date index; the `+` keeps SQLite from starting at the folder instead.
-const LIST_INBOX_TAB: &str = list_sql!(
-    "m.category = ?1 AND +m.folder_id IN (SELECT f.id FROM folder f JOIN account a ON a.id = f.account_id
-                                          WHERE f.role = 'inbox' AND a.in_all = 1)"
-);
-const LIST_FOLDER_TAB: &str = list_sql!("m.folder_id = ?1 AND m.category = ?5");
-// A conversation with unread mail, or with files, shows as its newest message.
+const LIST_INBOX_TAB: &str = list_sql!("m.category = ?5 AND +m.folder_id IN ", inboxes_of!());
+// A conversation with unread mail, or with files, shows as its newest message. The few
+// conversations are found first, from the unread index or the files, then sorted: the `+`s keep
+// SQLite from walking all mail by date instead.
 const LIST_UNREAD: &str = list_sql!(
-    "+m.folder_id IN (SELECT id FROM folder WHERE role NOT IN ('trash', 'junk', 'drafts'))
-     AND EXISTS (SELECT 1 FROM message n WHERE n.thread_id = m.thread_id
-                 AND n.folder_id = m.folder_id AND n.category = m.category
-                 AND n.flags & 1 = 0 AND n.found = 0)"
+    "(m.thread_id, +m.folder_id, +m.category) IN (SELECT n.thread_id, n.folder_id, n.category
+         FROM message n JOIN folder nf ON nf.id = n.folder_id
+         WHERE n.flags & 1 = 0 AND n.found = 0 AND nf.role NOT IN ('trash', 'junk', 'drafts'))"
 );
 const LIST_FILES: &str = list_sql!(
-    "+m.folder_id IN (SELECT id FROM folder WHERE role NOT IN ('trash', 'junk', 'drafts'))
-     AND EXISTS (SELECT 1 FROM message n JOIN attachment a ON a.message_id = n.id
-                 WHERE n.thread_id = m.thread_id AND n.folder_id = m.folder_id
-                 AND n.category = m.category AND n.found = 0 AND a.name != '')"
+    "(m.thread_id, +m.folder_id, +m.category) IN (SELECT n.thread_id, n.folder_id, n.category
+         FROM attachment a JOIN message n ON n.id = a.message_id JOIN folder nf ON nf.id = n.folder_id
+         WHERE a.name != '' AND n.found = 0 AND nf.role NOT IN ('trash', 'junk', 'drafts'))"
 );
 
 /// The conversation of message `?1` in its folder and inbox tab, with the user's replies
@@ -2788,6 +2785,14 @@ const WITHOUT_BODY: &str = concat!(
 const FOLDER_MESSAGES: &str = concat!(
     "SELECT m.id, m.stand_in FROM message m WHERE m.folder_id = ?1 AND ",
     not_moving!()
+);
+
+// `1` is `SEEN`.
+const UNREAD_BY_ACCOUNT: &str = concat!(
+    "SELECT f.account_id, count(*) FROM message m JOIN folder f ON f.id = m.folder_id
+     WHERE f.role = 'inbox' AND m.category = ?1 AND m.flags & 1 = 0 AND m.found = 0 AND ",
+    not_moving!(),
+    " GROUP BY f.account_id ORDER BY f.account_id"
 );
 
 // Stops at the first message found, so a full inbox costs no more than an empty one.

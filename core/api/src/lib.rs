@@ -267,15 +267,11 @@ impl Core {
     /// The accounts in the person's order, as they were added unless moved.
     pub fn accounts(&self) -> Result<Vec<AccountItem>, CoreError> {
         let signature = self.store.signature()?;
-        let left_out = self.store.left_out_of_all()?;
         Ok(self
             .store
             .accounts()?
             .into_iter()
-            .map(|a| {
-                let in_all = !left_out.contains(&a.id);
-                AccountItem::new(a, &signature, in_all)
-            })
+            .map(|a| AccountItem::new(a, &signature))
             .collect())
     }
 
@@ -289,15 +285,14 @@ impl Core {
     /// least stays in.
     pub fn set_account_in_all(&self, account: i64, in_all: bool) -> Result<(), CoreError> {
         let account = AccountId(account);
-        if !in_all {
-            let left_out = self.store.left_out_of_all()?;
-            let others = self.store.accounts()?;
-            if others
+        if !in_all
+            && !self
+                .store
+                .accounts()?
                 .iter()
-                .all(|a| a.id == account || left_out.contains(&a.id))
-            {
-                return Ok(());
-            }
+                .any(|a| a.id != account && a.in_all)
+        {
+            return Ok(());
         }
         Ok(self.store.set_account_in_all(account, in_all)?)
     }
@@ -393,27 +388,11 @@ impl Core {
         tab: Category,
         limit: u32,
     ) -> Result<Vec<MessageItem>, CoreError> {
-        let Some(account) = account else {
-            return self.list(ListScope::Inbox(tab), INBOX, limit);
-        };
-        let inbox = self
-            .store
-            .folders(AccountId(account))?
-            .into_iter()
-            .find(|f| f.role == FolderRole::Inbox);
-        match inbox {
-            Some(inbox) => self.list(
-                ListScope::FolderTab(inbox.id, tab),
-                Mailbox::Folder { id: inbox.id.0 },
-                limit,
-            ),
-            None => Ok(vec![]),
-        }
+        self.list(ListScope::Inbox(account.map(AccountId), tab), INBOX, limit)
     }
 
     /// The folders of every account, in the order the server listed them first.
     pub fn folders(&self) -> Result<Vec<FolderItem>, CoreError> {
-        let pinned = self.store.pinned_folders()?;
         let mut items = vec![];
         for account in self.store.accounts()? {
             let folders = self.store.folders(account.id)?;
@@ -423,7 +402,6 @@ impl Core {
                     .into_iter()
                     .zip(tree)
                     .map(|(f, (parent, short_name))| FolderItem {
-                        pinned: pinned.contains(&f.id),
                         parent: parent.map(|p| p.0),
                         short_name,
                         ..FolderItem::from(f)
@@ -492,21 +470,15 @@ impl Core {
     /// Unread People mail in each account's inbox, what its People tab counts; accounts
     /// without any left out.
     pub fn people_unread(&self) -> Result<Vec<AccountUnread>, CoreError> {
-        let mut counts = vec![];
-        for account in self.store.accounts()? {
-            let unread = self.store.inbox_unread(Some(account.id))?;
-            let people = unread
-                .iter()
-                .find(|(c, _)| *c == Category::People)
-                .map_or(0, |(_, n)| *n);
-            if people > 0 {
-                counts.push(AccountUnread {
-                    account: account.id.0,
-                    unread: people,
-                });
-            }
-        }
-        Ok(counts)
+        Ok(self
+            .store
+            .unread_by_account(Category::People)?
+            .into_iter()
+            .map(|(account, unread)| AccountUnread {
+                account: account.0,
+                unread,
+            })
+            .collect())
     }
 
     /// Messages matching every word of `text`, newest first, with what `search_server`
@@ -1696,16 +1668,14 @@ impl Core {
             limit,
             after: None,
         })?;
-        let mut floor = None;
-        let left_out = if mailbox == INBOX {
-            self.store.left_out_of_all()?
-        } else {
-            vec![]
+        // The accounts whose mail the list shows: of an inbox tab, those in it.
+        let shown = |a: &Account| match scope {
+            ListScope::Inbox(Some(only), _) => a.id == only,
+            ListScope::Inbox(None, _) => a.in_all,
+            _ => true,
         };
-        for account in self.store.accounts()? {
-            if left_out.contains(&account.id) {
-                continue;
-            }
+        let mut floor = None;
+        for account in self.store.accounts()?.into_iter().filter(shown) {
             for (_, oldest) in self.loadable(account.id, mailbox)? {
                 floor = floor.max(oldest);
             }
@@ -2857,7 +2827,7 @@ impl From<Folder> for FolderItem {
             name: f.name,
             role: f.role,
             parent: None,
-            pinned: false,
+            pinned: f.pinned,
         }
     }
 }
@@ -2866,19 +2836,17 @@ impl From<Folder> for FolderItem {
 /// the longest such, and its own part of the name. Inside the inbox, as some servers keep
 /// every folder, counts as at the top.
 fn folder_tree(folders: &[Folder]) -> Vec<(Option<FolderId>, String)> {
+    let by_name: HashMap<&str, &Folder> = folders.iter().map(|f| (f.name.as_str(), f)).collect();
     folders
         .iter()
         .map(|folder| {
-            let inside = |outer: &Folder| {
-                let rest = folder.name.strip_prefix(outer.name.as_str())?;
-                let rest = rest.strip_prefix('/').or_else(|| rest.strip_prefix('.'))?;
-                (!rest.is_empty()).then_some(rest)
-            };
-            let parent = folders
-                .iter()
-                .filter(|outer| outer.id != folder.id)
-                .filter_map(|outer| Some((outer, inside(outer)?)))
-                .max_by_key(|(outer, _)| outer.name.len());
+            let name = folder.name.as_str();
+            // From the end, so the first folder found is the longest.
+            let parent = name
+                .char_indices()
+                .rev()
+                .filter(|&(i, c)| (c == '/' || c == '.') && i + 1 < name.len())
+                .find_map(|(i, _)| Some((*by_name.get(&name[..i])?, &name[i + 1..])));
             match parent {
                 Some((outer, rest)) if outer.role == FolderRole::Inbox => (None, rest.to_owned()),
                 Some((outer, rest)) => (Some(outer.id), rest.to_owned()),
@@ -2965,9 +2933,9 @@ pub struct AccountItem {
 
 impl AccountItem {
     /// `signature` is the default one, for accounts without their own.
-    fn new(a: Account, signature: &str, in_all: bool) -> Self {
+    fn new(a: Account, signature: &str) -> Self {
         Self {
-            in_all,
+            in_all: a.in_all,
             signs_with: a.signs_with(signature).to_owned(),
             id: a.id.0,
             color: rgb(a.color),
