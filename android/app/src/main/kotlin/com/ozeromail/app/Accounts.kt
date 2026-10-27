@@ -466,8 +466,7 @@ private fun AccountSettings(
         modifier = Modifier.padding(start = Gap.sheet, end = Gap.sheet, top = 8.dp, bottom = 12.dp),
     )
     Swatches(account.colorIndex.toInt(), onColor)
-    val checks = NEW_MAIL.keys.filter { account.canPush || it != NewMail.Push }
-    Choices(R.string.account_new_mail, checks, account.newMail, onNewMail) { option, on ->
+    Choices(R.string.account_new_mail, NEW_MAIL.keys.toList(), account.newMail, onNewMail) { option, on ->
         Text(
             stringResource(NEW_MAIL.getValue(option)),
             color = if (on) colors.primary else colors.onSurface,
@@ -479,7 +478,6 @@ private fun AccountSettings(
     Text(
         stringResource(
             when (account.newMail) {
-                NewMail.Push -> R.string.account_new_mail_push_hint
                 NewMail.Manually -> R.string.account_new_mail_manually_hint
                 is NewMail.Every -> R.string.account_new_mail_every_hint
             },
@@ -528,7 +526,6 @@ private fun AccountSettings(
 
 /** When the phone looks for an account's new mail with the app closed, and what to call it. */
 private val NEW_MAIL = linkedMapOf(
-    NewMail.Push to R.string.account_new_mail_push,
     NewMail.Every(15u) to R.string.account_new_mail_quarter,
     NewMail.Every(60u) to R.string.account_new_mail_hourly,
     NewMail.Manually to R.string.account_new_mail_manually,

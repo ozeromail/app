@@ -5,7 +5,6 @@ import android.app.Application
 import android.os.Bundle
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 
 class OzeroApp : Application() {
     val mail by lazy { Mail(this) }
@@ -13,8 +12,6 @@ class OzeroApp : Application() {
     /** Started activities; above zero the person sees the app, so new mail needs no notification. */
     private var started = 0
     private val shown = MutableStateFlow(false)
-    /** Whether the person sees the app, as it changes. */
-    val visible: StateFlow<Boolean> = shown
     val inForeground: Boolean get() = shown.value
 
     override fun onCreate() {

@@ -4,11 +4,6 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- A connection kept open for accounts set to Instantly: WatchService. -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:name=".OzeroApp"
@@ -39,22 +34,6 @@
                 <data android:scheme="com.ozeromail.app" />
             </intent-filter>
         </activity>
-        <service
-            android:name=".WatchService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Keeps IMAP IDLE and Exchange ActiveSync Ping connections open so new mail arrives at once, without a push server." />
-        </service>
-        <receiver
-            android:name=".WatchService$Restart"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-            </intent-filter>
-        </receiver>
         <!-- Hands a downloaded attachment to the app the person picks, to read only. -->
         <provider
             android:name="androidx.core.content.FileProvider"

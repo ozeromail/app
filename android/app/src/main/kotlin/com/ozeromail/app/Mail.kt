@@ -530,8 +530,7 @@ class Mail(private val context: Context) {
 
     /**
      * Calls [onMail] each time an account's inbox may have changed, until cancelled: for the
-     * app on screen, and for [WatchService] with it closed. [onMail] says whether its sync went
-     * through.
+     * app on screen. [onMail] says whether its sync went through.
      */
     suspend fun watch(accounts: List<AccountItem>, onMail: suspend (AccountItem) -> Boolean) = coroutineScope {
         // One signed out would only be refused again and again.

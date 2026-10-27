@@ -329,14 +329,13 @@ private struct AccountSettings: View {
             }
             Section {
                 Picker("account_new_mail", selection: Binding(get: { account.newMail }, set: { actions.onNewMail(account, $0) })) {
-                    ForEach(newMail, id: \.check) { Text($0.label).tag($0.check) }
+                    ForEach(allNewMail, id: \.check) { Text($0.label).tag($0.check) }
                 }
                 .pickerStyle(.segmented)
             } header: {
                 Text("account_new_mail")
             } footer: {
                 switch account.newMail {
-                case .push: Text("account_new_mail_push_hint_ios")
                 case .manually: Text("account_new_mail_manually_hint")
                 case .every: Text("account_new_mail_every_hint")
                 }
@@ -372,17 +371,12 @@ private struct AccountSettings: View {
         saved = name
         actions.onLabel(account, label)
     }
-
-    /// The choices of when new mail comes; Instantly only where the server can.
-    private var newMail: [(check: NewMail, label: LocalizedStringKey)] {
-        allNewMail.filter { account.canPush || $0.check != .push }
-    }
 }
 
 /// When the phone looks for an account's new mail with the app closed, and what to call it.
 private let allNewMail: [(check: NewMail, label: LocalizedStringKey)] = [
-    (.push, "account_new_mail_push"), (.every(minutes: 15), "account_new_mail_quarter"),
-    (.every(minutes: 60), "account_new_mail_hourly"), (.manually, "account_new_mail_manually"),
+    (.every(minutes: 15), "account_new_mail_quarter"), (.every(minutes: 60), "account_new_mail_hourly"),
+    (.manually, "account_new_mail_manually"),
 ]
 
 /// A signature of a few lines under `label`, `placeholder` while empty; saved when it loses focus
