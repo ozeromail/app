@@ -8,20 +8,29 @@ use tokio_rustls::rustls::CertificateError;
 use tokio_rustls::rustls::client::danger::{
     HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
 };
+#[cfg(any(target_os = "android", test))]
+use tokio_rustls::rustls::client::verify_server_name;
+#[cfg(any(target_os = "android", test))]
+use tokio_rustls::rustls::server::ParsedCertificate;
+
+#[cfg(any(target_os = "android", test))]
+use crate::crl;
 use tokio_rustls::rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use tokio_rustls::rustls::{DigitallySignedStruct, Error, SignatureScheme};
 
-/// Checks a certificate a second time when the first check calls it revoked.
+/// Takes Android's "revoked" for what it is: its revocation check failed, which is not always
+/// a revocation.
 ///
-/// Android sometimes reports a valid certificate as revoked for a while, when a
-/// revocation answer it fetched could not be used. A second check usually passes;
-/// a certificate that is really revoked fails both.
+/// A certificate without an OCSP address, or a stapled answer, gave Android nothing to ask:
+/// its CA's revocation list decides instead. Otherwise Android sometimes reports a valid
+/// certificate as revoked for a while, when an answer it fetched could not be used: a second
+/// check usually passes, and a certificate that is really revoked fails both.
 #[cfg(any(target_os = "android", test))]
 #[derive(Debug)]
-pub struct RecheckRevoked(pub Arc<dyn ServerCertVerifier>);
+pub struct Revocation(pub Arc<dyn ServerCertVerifier>);
 
 #[cfg(any(target_os = "android", test))]
-impl ServerCertVerifier for RecheckRevoked {
+impl ServerCertVerifier for Revocation {
     fn verify_server_cert(
         &self,
         end_entity: &CertificateDer<'_>,
@@ -35,6 +44,15 @@ impl ServerCertVerifier for RecheckRevoked {
                 .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
         };
         match check() {
+            // By then Android has checked the chain; only the name is left, as after its "ok".
+            Err(Error::InvalidCertificate(CertificateError::Revoked))
+                if ocsp_response.is_empty() && !crl::has_ocsp(end_entity) =>
+            {
+                crl::check(end_entity, intermediates, now)?;
+                let parsed = ParsedCertificate::try_from(end_entity)?;
+                verify_server_name(&parsed, server_name)?;
+                Ok(ServerCertVerified::assertion())
+            }
             Err(revoked @ Error::InvalidCertificate(CertificateError::Revoked)) => {
                 log::warn!("certificate reported revoked, checking again");
                 check().map_err(|_| revoked)
@@ -241,12 +259,13 @@ mod tests {
     /// Runs one check and returns its result and the answers left unused.
     fn verify(script: Vec<Result<(), CertificateError>>) -> (Result<(), Error>, usize) {
         let inner = Arc::new(Scripted(Mutex::new(script)));
-        let result = RecheckRevoked(inner.clone())
+        // A stapled answer: Android had an OCSP answer to go by.
+        let result = Revocation(inner.clone())
             .verify_server_cert(
                 &CertificateDer::from(Vec::new()),
                 &[],
                 &ServerName::try_from("imap.example.com").unwrap(),
-                &[],
+                b"stapled",
                 UnixTime::now(),
             )
             .map(|_| ());
@@ -283,6 +302,36 @@ mod tests {
             Err(Error::InvalidCertificate(CertificateError::Expired))
         );
         assert_eq!(left, 1);
+    }
+
+    use tokio_rustls::rustls::pki_types::pem::PemObject;
+
+    /// The Dovecot test server's certificate, for localhost: no OCSP address, no CRL.
+    const NO_OCSP: &[u8] = include_bytes!("../tests/dovecot/tls.crt");
+
+    /// One check of the test certificate for `name`, Android calling it revoked.
+    fn revoked_without_ocsp(name: &str) -> Result<(), Error> {
+        let inner = Arc::new(Scripted(Mutex::new(vec![Err(CertificateError::Revoked)])));
+        Revocation(inner)
+            .verify_server_cert(
+                &CertificateDer::from_pem_slice(NO_OCSP).unwrap(),
+                &[],
+                &ServerName::try_from(name.to_owned()).unwrap(),
+                &[],
+                UnixTime::now(),
+            )
+            .map(|_| ())
+    }
+
+    #[test]
+    fn asks_the_list_when_android_had_no_ocsp_to_ask() {
+        assert_eq!(revoked_without_ocsp("localhost"), Ok(()));
+        assert!(matches!(
+            revoked_without_ocsp("imap.example.com"),
+            Err(Error::InvalidCertificate(
+                CertificateError::NotValidForName | CertificateError::NotValidForNameContext { .. }
+            ))
+        ));
     }
 
     #[test]
