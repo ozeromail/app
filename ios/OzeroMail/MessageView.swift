@@ -427,6 +427,9 @@ struct MessageView: View {
             model.pane = next
         } else if let shown = model.path.lastIndex(of: .message(message)) {
             model.path[shown] = .message(next)
+        } else {
+            leave { await model.archive([message]) }
+            return
         }
         Task { await model.archive([message]) }
     }
