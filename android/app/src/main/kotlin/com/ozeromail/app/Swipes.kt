@@ -88,8 +88,8 @@ class Settings(context: Context) {
 
     /** The groups of the accounts sheet the person closed or opened. */
     var groups: Groups
-        get() = Groups(ids(EXPANDED))
-        set(value) = prefs.edit().putStringSet(EXPANDED, value.expanded.strings()).apply()
+        get() = Groups(ids(EXPANDED), prefs.getStringSet(CLOSED, null).orEmpty())
+        set(value) = prefs.edit().putStringSet(EXPANDED, value.expanded.strings()).putStringSet(CLOSED, value.closed).apply()
 
     /** The mailboxes of all accounts below the inboxes in the accounts sheet: their order and which show. */
     var allBoxes: AllBoxes
@@ -115,17 +115,25 @@ class Settings(context: Context) {
         private const val RIGHT = "swipe_right"
         private const val TIP = "swipe_tip_seen"
         private const val EXPANDED = "expanded_groups"
+        private const val CLOSED = "closed_parts"
         private const val SYNCED = "synced_boxes"
         private const val ALL_ORDER = "all_boxes_order"
         private const val ALL_SHOWN = "all_boxes_shown"
     }
 }
 
-/** The accounts whose folders the accounts sheet shows; the rest stay closed, so the sheet stays short. */
-data class Groups(val expanded: Set<Long>) {
+/**
+ * The accounts whose folders the accounts sheet shows, and the parts of it the person closed.
+ * Accounts start closed, so the sheet stays short; parts start open.
+ */
+data class Groups(val expanded: Set<Long>, val closed: Set<String> = emptySet()) {
     fun open(account: Long) = account in expanded
 
-    fun toggle(account: Long) = Groups(if (open(account)) expanded - account else expanded + account)
+    fun toggle(account: Long) = copy(expanded = if (open(account)) expanded - account else expanded + account)
+
+    fun open(part: String) = part !in closed
+
+    fun toggle(part: String) = copy(closed = if (open(part)) closed + part else closed - part)
 }
 
 /** Where an action applies: Done and Snooze only where they file mail; Delete in the trash is for good. */

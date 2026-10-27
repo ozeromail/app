@@ -125,7 +125,7 @@ struct MailboxRows: View {
     let actions: AccountsActions
     var onAccount: ((AccountItem) -> Void)?
 
-    /// The mailboxes of all accounts show as switches to move.
+    /// The inboxes and the mailboxes of all accounts show as switches to move.
     @State private var editing = false
 
     var body: some View {
@@ -143,48 +143,90 @@ struct MailboxRows: View {
         } else {
             inboxes
             allAccounts
-            ForEach(Array(accounts.enumerated()), id: \.element.id) { index, account in
-                FolderGroup(
-                    caption: index == 0 ? "account_folders" : nil, title: account.name,
-                    open: groups.open(account.id),
-                    lead: { AccountDot(color: account.tint, size: 12) },
-                    onToggle: { withAnimation(.smooth) { groups = groups.toggled(account.id) } },
-                    onHold: onAccount.map { open in { open(account) } }
-                ) {
-                    AccountFolders(account: account, folders: folders, mailbox: mailbox, actions: actions)
-                }
-            }
-        }
-    }
-
-    /// All inboxes together, then each account's, with their unread People mail.
-    private var inboxes: some View {
-        Section("inboxes_title") {
-            let inAll = accounts.filter(\.inAll)
-            FolderRow(title: tr("folder_all_inbox"), open: mailbox == Mail.inbox,
-                      count: inAll.reduce(0) { $0 + (unread[$1.id] ?? 0) }, lead: { StackedDots(accounts: inAll) }) {
-                actions.onMailbox(Mail.inbox)
-            }
-            ForEach(accounts, id: \.id) { account in
-                let box = folders.first { $0.accountId == account.id && $0.role == .inbox }.map { Mailbox.folder(id: $0.id) }
-                FolderRow(title: account.name, open: box == mailbox, count: unread[account.id] ?? 0,
-                          lead: { AccountDot(color: account.tint, size: 12) }) {
-                    if let box { actions.onMailbox(box) }
-                }
-                .contextMenu {
-                    if let onAccount {
-                        Button { onAccount(account) } label: { Label("account_settings", systemImage: "gear") }
+            if groups.open(Groups.folders) {
+                ForEach(Array(accounts.enumerated()), id: \.element.id) { index, account in
+                    FolderGroup(
+                        title: account.name,
+                        open: groups.open(account.id),
+                        caption: { if index == 0 { foldersHeader } },
+                        lead: { AccountDot(color: account.tint, size: 12) },
+                        onToggle: { toggle { $0.toggled(account.id) } },
+                        onHold: onAccount.map { open in { open(account) } }
+                    ) {
+                        AccountFolders(account: account, folders: folders, mailbox: mailbox, actions: actions)
                     }
                 }
-                signInAgain(account)
+            } else {
+                Section { } header: { foldersHeader }
             }
         }
     }
 
-    /// The mailboxes of all accounts together the person chose, in their order; Edit turns them
-    /// all into switches to move, and adds the accounts the unified inbox takes in.
-    @ViewBuilder private var allAccounts: some View {
-        Section {
+    private var foldersHeader: some View {
+        PartHeader(title: "account_folders", open: groups.open(Groups.folders), onToggle: { toggle { $0.toggled(Groups.folders) } })
+    }
+
+    private func toggle(_ change: (Groups) -> Groups) {
+        withAnimation(.smooth) { groups = change(groups) }
+    }
+
+    /// All inboxes together, then each account's, with their unread People mail; Edit turns the
+    /// accounts into switches for All inboxes to move.
+    private var inboxes: some View {
+        let open = editing || groups.open(Groups.inboxes)
+        return Section {
+            if open {
+                let inAll = accounts.filter(\.inAll)
+                FolderRow(title: tr("folder_all_inbox"), open: mailbox == Mail.inbox,
+                          count: inAll.reduce(0) { $0 + (unread[$1.id] ?? 0) }, lead: { StackedDots(accounts: inAll) }) {
+                    actions.onMailbox(Mail.inbox)
+                }
+                if editing {
+                    ForEach(accounts, id: \.id) { account in
+                        Toggle(isOn: Binding(get: { account.inAll }, set: { actions.onInAll(account, $0) })) {
+                            Label { Text(verbatim: account.name) } icon: { AccountDot(color: account.tint, size: 12) }
+                        }
+                        // The unified inbox keeps one account at least.
+                        .disabled(account.inAll && inAll.count == 1)
+                    }
+                    .onMove { from, to in
+                        var order = accounts
+                        order.move(fromOffsets: from, toOffset: to)
+                        actions.onOrder(order)
+                    }
+                    .environment(\.editMode, .constant(.active))
+                } else {
+                    ForEach(accounts, id: \.id) { account in
+                        let box = folders.first { $0.accountId == account.id && $0.role == .inbox }.map { Mailbox.folder(id: $0.id) }
+                        FolderRow(title: account.name, open: box == mailbox, count: unread[account.id] ?? 0,
+                                  lead: { AccountDot(color: account.tint, size: 12) }) {
+                            if let box { actions.onMailbox(box) }
+                        }
+                        .contextMenu {
+                            if let onAccount {
+                                Button { onAccount(account) } label: { Label("account_settings", systemImage: "gear") }
+                            }
+                        }
+                        signInAgain(account)
+                    }
+                }
+            }
+        } header: {
+            PartHeader(title: "inboxes_title", open: open, onToggle: editing ? nil : { toggle { $0.toggled(Groups.inboxes) } }) {
+                Button(editing ? "action_done" : "action_edit") { withAnimation(.smooth) { editing.toggle() } }
+                    .font(.subheadline.weight(.semibold))
+                    .textCase(nil)
+            }
+        } footer: {
+            if editing { Text("inboxes_edit_hint") }
+        }
+    }
+
+    /// The mailboxes of all accounts together the person chose, in their order; while editing,
+    /// all of them as switches to move.
+    private var allAccounts: some View {
+        let open = editing || groups.open(Groups.allBoxes)
+        return Section {
             if editing {
                 ForEach(allBoxes.order) { box in
                     Toggle(isOn: Binding(
@@ -196,30 +238,13 @@ struct MailboxRows: View {
                 }
                 .onMove { allBoxes.order.move(fromOffsets: $0, toOffset: $1) }
                 .environment(\.editMode, .constant(.active))
-            } else {
+            } else if open {
                 ForEach(allBoxes.order.filter { allBoxes.shown.contains($0) && $0.listed(folders) }) { box in
                     FolderRow(icon: box.icon, title: box.title, open: box.mailbox == mailbox) { actions.onMailbox(box.mailbox) }
                 }
             }
         } header: {
-            HStack {
-                Text("inbox_all_accounts")
-                Spacer()
-                Button(editing ? "action_done" : "action_edit") { withAnimation(.smooth) { editing.toggle() } }
-                    .font(.subheadline.weight(.semibold))
-                    .textCase(nil)
-            }
-        }
-        if editing {
-            Section("all_in") {
-                ForEach(accounts, id: \.id) { account in
-                    Toggle(isOn: Binding(get: { account.inAll }, set: { actions.onInAll(account, $0) })) {
-                        Label { Text(verbatim: account.name) } icon: { AccountDot(color: account.tint, size: 12) }
-                    }
-                    // The unified inbox keeps one account at least.
-                    .disabled(account.inAll && accounts.filter(\.inAll).count == 1)
-                }
-            }
+            PartHeader(title: "inbox_all_accounts", open: open, onToggle: editing ? nil : { toggle { $0.toggled(Groups.allBoxes) } })
         }
     }
 
@@ -307,10 +332,44 @@ private let fewFolders = 5
 
 /// A group's name, which hides or shows its folders, under `caption` when it starts a part of
 /// the list; holding it runs `onHold`.
-private struct FolderGroup<Lead: View, Folders: View>: View {
-    var caption: LocalizedStringKey?
+/// A section's heading that hides or shows it, with a chevron that says which, and [trailing]
+/// at its end. Without `onToggle` the chevron stays, pointing down.
+private struct PartHeader<Trailing: View>: View {
+    let title: LocalizedStringKey
+    let open: Bool
+    var onToggle: (() -> Void)?
+    @ViewBuilder var trailing: () -> Trailing
+
+    var body: some View {
+        HStack {
+            Button { onToggle?() } label: {
+                HStack(spacing: 4) {
+                    Text(title)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .rotationEffect(.degrees(open ? 90 : 0))
+                }
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .disabled(onToggle == nil)
+            .accessibilityHint(Text(open ? "action_collapse" : "action_expand"))
+            Spacer()
+            trailing()
+        }
+    }
+}
+
+extension PartHeader where Trailing == EmptyView {
+    init(title: LocalizedStringKey, open: Bool, onToggle: (() -> Void)?) {
+        self.init(title: title, open: open, onToggle: onToggle) { EmptyView() }
+    }
+}
+
+private struct FolderGroup<Caption: View, Lead: View, Folders: View>: View {
     let title: String
     let open: Bool
+    @ViewBuilder let caption: () -> Caption
     @ViewBuilder let lead: () -> Lead
     let onToggle: () -> Void
     var onHold: (() -> Void)?
@@ -321,7 +380,7 @@ private struct FolderGroup<Lead: View, Folders: View>: View {
             if open { folders() }
         } header: {
             VStack(alignment: .leading, spacing: 12) {
-                if let caption { Text(caption) }
+                caption()
                 HStack(spacing: 14) {
                     lead().frame(width: 24)
                     Button(action: onToggle) {

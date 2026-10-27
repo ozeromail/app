@@ -3,6 +3,7 @@ package com.ozeromail.app
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -25,6 +26,7 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
@@ -33,6 +35,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
@@ -47,11 +50,14 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -59,6 +65,9 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
@@ -248,6 +257,25 @@ fun Modifier.holdable(
     },
     onClick = onClick,
 )
+
+/** A switch the size of a line of text, for lists of them; the row it is in turns it. */
+@Composable
+fun SmallSwitch(on: Boolean, enabled: Boolean = true) {
+    val colors = MaterialTheme.colorScheme
+    val at by animateFloatAsState(if (on) 1f else 0f, Motion.calm(Motion.QUICK), label = "switch")
+    Box(
+        Modifier
+            .padding(start = 12.dp)
+            .size(width = 38.dp, height = 22.dp)
+            .alpha(if (enabled) 1f else 0.4f)
+            .clip(CircleShape)
+            .background(lerp(colors.outlineVariant, colors.primary, at))
+            .padding(2.dp)
+            .semantics { toggleableState = ToggleableState(on) },
+    ) {
+        Box(Modifier.offset(x = 16.dp * at).size(18.dp).background(Color.White, CircleShape))
+    }
+}
 
 /** How wide a sheet gets. */
 private val SHEET_MAX = 560.dp

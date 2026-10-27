@@ -63,12 +63,26 @@ struct Swipes: Equatable {
 /// The accounts whose folders the accounts sheet shows; the rest stay closed, so the sheet stays short.
 struct Groups: Equatable {
     var expanded: Set<Int64> = []
+    /// The parts of the sheet the person closed; they start open.
+    var closed: Set<String> = []
+
+    static let inboxes = "inboxes"
+    static let allBoxes = "all"
+    static let folders = "folders"
 
     func open(_ account: Int64) -> Bool { expanded.contains(account) }
 
     func toggled(_ account: Int64) -> Groups {
         var next = self
         if open(account) { next.expanded.remove(account) } else { next.expanded.insert(account) }
+        return next
+    }
+
+    func open(_ part: String) -> Bool { !closed.contains(part) }
+
+    func toggled(_ part: String) -> Groups {
+        var next = self
+        if open(part) { next.closed.insert(part) } else { next.closed.remove(part) }
         return next
     }
 }
@@ -167,8 +181,11 @@ enum Settings {
 
     /// The groups of the accounts sheet the person closed or opened.
     static var groups: Groups {
-        get { Groups(expanded: ids("expanded_groups")) }
-        set { defaults.set(newValue.expanded.map(String.init), forKey: "expanded_groups") }
+        get { Groups(expanded: ids("expanded_groups"), closed: Set(defaults.stringArray(forKey: "closed_parts") ?? [])) }
+        set {
+            defaults.set(newValue.expanded.map(String.init), forKey: "expanded_groups")
+            defaults.set(Array(newValue.closed), forKey: "closed_parts")
+        }
     }
 
     /// The mailboxes of all accounts below the inboxes in the accounts sheet: their order and which show.

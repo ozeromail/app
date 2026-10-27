@@ -265,6 +265,7 @@
   "action_spam": "Spam",
   "inbox_spammed": "Moved to Spam",
   "inboxes_title": "Inboxes",
+  "inboxes_edit_hint": "Switch an inbox off to leave it out of All inboxes. Drag to reorder.",
   "account_folders": "Account folders",
   "action_edit": "Edit",
   "all_in": "In All inboxes",
