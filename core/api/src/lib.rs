@@ -264,15 +264,42 @@ impl Core {
         Ok(self.store.take_reverted()?)
     }
 
-    /// The accounts in the order they were added.
+    /// The accounts in the person's order, as they were added unless moved.
     pub fn accounts(&self) -> Result<Vec<AccountItem>, CoreError> {
         let signature = self.store.signature()?;
+        let left_out = self.store.left_out_of_all()?;
         Ok(self
             .store
             .accounts()?
             .into_iter()
-            .map(|a| AccountItem::new(a, &signature))
+            .map(|a| {
+                let in_all = !left_out.contains(&a.id);
+                AccountItem::new(a, &signature, in_all)
+            })
             .collect())
+    }
+
+    /// Puts the accounts in this order, by id.
+    pub fn set_account_order(&self, accounts: Vec<i64>) -> Result<(), CoreError> {
+        let order: Vec<AccountId> = accounts.into_iter().map(AccountId).collect();
+        Ok(self.store.set_account_order(&order)?)
+    }
+
+    /// Takes the account's inbox into the unified inbox, or leaves it out. One account at
+    /// least stays in.
+    pub fn set_account_in_all(&self, account: i64, in_all: bool) -> Result<(), CoreError> {
+        let account = AccountId(account);
+        if !in_all {
+            let left_out = self.store.left_out_of_all()?;
+            let others = self.store.accounts()?;
+            if others
+                .iter()
+                .all(|a| a.id == account || left_out.contains(&a.id))
+            {
+                return Ok(());
+            }
+        }
+        Ok(self.store.set_account_in_all(account, in_all)?)
     }
 
     /// Sets when the phone looks for the account's new mail with the app closed.
@@ -356,25 +383,59 @@ impl Core {
         Ok(self.store.add_account(&account)?.0)
     }
 
-    /// The newest conversations of one tab across all inboxes, newest first: each row is the
-    /// newest message of its conversation. Fewer than `limit` once the saved mail ends, so
-    /// `older_mail` can bring in more.
-    pub fn unified_inbox(&self, tab: Category, limit: u32) -> Result<Vec<MessageItem>, CoreError> {
-        self.list(ListScope::Inbox(tab), INBOX, limit)
+    /// The newest conversations of one tab of the account's inbox, or for None of the unified
+    /// inbox, the inboxes of the accounts in it, newest first: each row is the newest message
+    /// of its conversation. Fewer than `limit` once the saved mail ends, so `older_mail` can
+    /// bring in more; for an account, with its inbox as the mailbox.
+    pub fn inbox(
+        &self,
+        account: Option<i64>,
+        tab: Category,
+        limit: u32,
+    ) -> Result<Vec<MessageItem>, CoreError> {
+        let Some(account) = account else {
+            return self.list(ListScope::Inbox(tab), INBOX, limit);
+        };
+        let inbox = self
+            .store
+            .folders(AccountId(account))?
+            .into_iter()
+            .find(|f| f.role == FolderRole::Inbox);
+        match inbox {
+            Some(inbox) => self.list(
+                ListScope::FolderTab(inbox.id, tab),
+                Mailbox::Folder { id: inbox.id.0 },
+                limit,
+            ),
+            None => Ok(vec![]),
+        }
     }
 
     /// The folders of every account, in the order the server listed them first.
     pub fn folders(&self) -> Result<Vec<FolderItem>, CoreError> {
-        let mut folders = vec![];
+        let pinned = self.store.pinned_folders()?;
+        let mut items = vec![];
         for account in self.store.accounts()? {
-            folders.extend(
-                self.store
-                    .folders(account.id)?
+            let folders = self.store.folders(account.id)?;
+            let tree = folder_tree(&folders);
+            items.extend(
+                folders
                     .into_iter()
-                    .map(FolderItem::from),
+                    .zip(tree)
+                    .map(|(f, (parent, short_name))| FolderItem {
+                        pinned: pinned.contains(&f.id),
+                        parent: parent.map(|p| p.0),
+                        short_name,
+                        ..FolderItem::from(f)
+                    }),
             );
         }
-        Ok(folders)
+        Ok(items)
+    }
+
+    /// Pins the folder among its account's usual ones, or unpins it.
+    pub fn set_folder_pinned(&self, folder: i64, pinned: bool) -> Result<(), CoreError> {
+        Ok(self.store.set_folder_pinned(FolderId(folder), pinned)?)
     }
 
     /// The newest conversations of a mailbox, newest first, as `unified_inbox` without tabs.
@@ -382,6 +443,8 @@ impl Core {
         let scope = match mailbox {
             Mailbox::Unified { role } => ListScope::Unified(role),
             Mailbox::Folder { id } => ListScope::Folder(FolderId(id)),
+            Mailbox::Unread => ListScope::Unread,
+            Mailbox::Files => ListScope::Files,
         };
         self.list(scope, mailbox, limit)
     }
@@ -404,9 +467,10 @@ impl Core {
         Ok(self.store.clear_fresh()?)
     }
 
-    /// The inbox tabs in order, each with its unread count.
-    pub fn inbox_tabs(&self) -> Result<Vec<InboxTab>, CoreError> {
-        let unread = self.store.inbox_unread()?;
+    /// The tabs of the account's inbox, or for None of the unified inbox, in order, each
+    /// with its unread count.
+    pub fn inbox_tabs(&self, account: Option<i64>) -> Result<Vec<InboxTab>, CoreError> {
+        let unread = self.store.inbox_unread(account.map(AccountId))?;
         Ok(Category::ALL
             .into_iter()
             .map(|category| InboxTab {
@@ -419,9 +483,30 @@ impl Core {
             .collect())
     }
 
-    /// Whether every inbox tab is empty, so they can share one empty note.
-    pub fn inbox_is_empty(&self) -> Result<bool, CoreError> {
-        Ok(self.store.inbox_is_empty()?)
+    /// Whether every tab of the account's inbox, or for None of the unified inbox, is empty,
+    /// so they can share one empty note.
+    pub fn inbox_is_empty(&self, account: Option<i64>) -> Result<bool, CoreError> {
+        Ok(self.store.inbox_is_empty(account.map(AccountId))?)
+    }
+
+    /// Unread People mail in each account's inbox, what its People tab counts; accounts
+    /// without any left out.
+    pub fn people_unread(&self) -> Result<Vec<AccountUnread>, CoreError> {
+        let mut counts = vec![];
+        for account in self.store.accounts()? {
+            let unread = self.store.inbox_unread(Some(account.id))?;
+            let people = unread
+                .iter()
+                .find(|(c, _)| *c == Category::People)
+                .map_or(0, |(_, n)| *n);
+            if people > 0 {
+                counts.push(AccountUnread {
+                    account: account.id.0,
+                    unread: people,
+                });
+            }
+        }
+        Ok(counts)
     }
 
     /// Messages matching every word of `text`, newest first, with what `search_server`
@@ -546,6 +631,8 @@ impl Core {
     pub fn empty_mailbox(&self, mailbox: Mailbox) -> Result<Vec<i64>, CoreError> {
         let folders = match mailbox {
             Mailbox::Folder { id } => vec![FolderId(id)],
+            // Mail of many folders, not one to empty.
+            Mailbox::Unread | Mailbox::Files => vec![],
             Mailbox::Unified { role } => {
                 let mut folders = vec![];
                 for account in self.store.accounts()? {
@@ -1610,7 +1697,15 @@ impl Core {
             after: None,
         })?;
         let mut floor = None;
+        let left_out = if mailbox == INBOX {
+            self.store.left_out_of_all()?
+        } else {
+            vec![]
+        };
         for account in self.store.accounts()? {
+            if left_out.contains(&account.id) {
+                continue;
+            }
             for (_, oldest) in self.loadable(account.id, mailbox)? {
                 floor = floor.max(oldest);
             }
@@ -2700,11 +2795,14 @@ pub enum FolderRole {
     Custom,
 }
 
-/// A list of mail: the folders of one role across all accounts, or one folder.
+/// A list of mail: the folders of one role across all accounts, one folder, or the unread
+/// mail or mail with files of every account.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum Mailbox {
     Unified { role: FolderRole },
     Folder { id: i64 },
+    Unread,
+    Files,
 }
 
 /// Held actions as the apps pass them back to `undo`.
@@ -2729,6 +2827,8 @@ impl Mailbox {
         match self {
             Self::Unified { role } => folder.role == role,
             Self::Folder { id } => folder.id.0 == id,
+            // Most of such mail is in the inboxes: older mail loads there.
+            Self::Unread | Self::Files => folder.role == FolderRole::Inbox,
         }
     }
 }
@@ -2737,9 +2837,15 @@ impl Mailbox {
 pub struct FolderItem {
     pub id: i64,
     pub account_id: i64,
-    /// As the server names it; apps name folders with a role themselves.
+    /// As the server names it, the whole path; apps name folders with a role themselves.
     pub name: String,
     pub role: FolderRole,
+    /// The folder it is inside of, if that is one of the account's own folders.
+    pub parent: Option<i64>,
+    /// Its name within `parent`, or without the inbox it may be kept in.
+    pub short_name: String,
+    /// The person pinned it among the account's usual folders.
+    pub pinned: bool,
 }
 
 impl From<Folder> for FolderItem {
@@ -2747,10 +2853,39 @@ impl From<Folder> for FolderItem {
         Self {
             id: f.id.0,
             account_id: f.account_id.0,
+            short_name: f.name.clone(),
             name: f.name,
             role: f.role,
+            parent: None,
+            pinned: false,
         }
     }
+}
+
+/// Where each of an account's folders sits: the folder its name continues, past `/` or `.`,
+/// the longest such, and its own part of the name. Inside the inbox, as some servers keep
+/// every folder, counts as at the top.
+fn folder_tree(folders: &[Folder]) -> Vec<(Option<FolderId>, String)> {
+    folders
+        .iter()
+        .map(|folder| {
+            let inside = |outer: &Folder| {
+                let rest = folder.name.strip_prefix(outer.name.as_str())?;
+                let rest = rest.strip_prefix('/').or_else(|| rest.strip_prefix('.'))?;
+                (!rest.is_empty()).then_some(rest)
+            };
+            let parent = folders
+                .iter()
+                .filter(|outer| outer.id != folder.id)
+                .filter_map(|outer| Some((outer, inside(outer)?)))
+                .max_by_key(|(outer, _)| outer.name.len());
+            match parent {
+                Some((outer, rest)) if outer.role == FolderRole::Inbox => (None, rest.to_owned()),
+                Some((outer, rest)) => (Some(outer.id), rest.to_owned()),
+                None => (None, folder.name.clone()),
+            }
+        })
+        .collect()
 }
 
 /// How the core talks to the account's server.
@@ -2793,6 +2928,13 @@ pub struct InboxTab {
     pub unread: u32,
 }
 
+/// Unread mail of one account.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AccountUnread {
+    pub account: i64,
+    pub unread: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct AccountItem {
     pub id: i64,
@@ -2817,12 +2959,15 @@ pub struct AccountItem {
     pub signature: String,
     /// What goes under its mail: its own signature, else the default one.
     pub signs_with: String,
+    /// Its inbox is part of the unified inbox.
+    pub in_all: bool,
 }
 
 impl AccountItem {
     /// `signature` is the default one, for accounts without their own.
-    fn new(a: Account, signature: &str) -> Self {
+    fn new(a: Account, signature: &str, in_all: bool) -> Self {
         Self {
+            in_all,
             signs_with: a.signs_with(signature).to_owned(),
             id: a.id.0,
             color: rgb(a.color),

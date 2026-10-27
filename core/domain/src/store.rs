@@ -19,6 +19,13 @@ pub trait Store: Send + Sync {
     fn set_account_name(&self, account: AccountId, name: &str) -> Result<(), StoreError>;
     /// Sets the user's name for the account; empty clears it.
     fn set_account_label(&self, account: AccountId, label: &str) -> Result<(), StoreError>;
+    /// Puts the accounts in this order; `accounts` lists them so. Accounts left out keep
+    /// their places after these.
+    fn set_account_order(&self, order: &[AccountId]) -> Result<(), StoreError>;
+    /// Sets whether the account's inbox is part of the unified inbox, as new accounts are.
+    fn set_account_in_all(&self, account: AccountId, in_all: bool) -> Result<(), StoreError>;
+    /// The accounts whose inbox is not part of the unified inbox.
+    fn left_out_of_all(&self) -> Result<Vec<AccountId>, StoreError>;
     /// Sets the account's own signature; empty uses the default one.
     fn set_account_signature(&self, account: AccountId, signature: &str) -> Result<(), StoreError>;
     /// The signature of accounts without one of their own; empty for none.
@@ -50,6 +57,10 @@ pub trait Store: Send + Sync {
         folders: &[NewFolder],
     ) -> Result<Vec<Folder>, StoreError>;
     fn folders(&self, account: AccountId) -> Result<Vec<Folder>, StoreError>;
+    /// Pins the folder, so the apps show it with the account's usual folders, or unpins it.
+    fn set_folder_pinned(&self, folder: FolderId, pinned: bool) -> Result<(), StoreError>;
+    /// The pinned folders of every account.
+    fn pinned_folders(&self) -> Result<Vec<FolderId>, StoreError>;
 
     /// Where the folder's last sync stopped, and the `remote_id`s of its saved messages.
     fn checkpoint(&self, folder: FolderId) -> Result<(Checkpoint, Vec<String>), StoreError>;
@@ -74,11 +85,12 @@ pub trait Store: Send + Sync {
     /// The conversation of a message in its folder and inbox tab, with the user's replies from
     /// the sent folder, oldest first, leaving out what is being archived.
     fn thread(&self, message: MessageId) -> Result<Vec<MessageRow>, StoreError>;
-    /// Unread messages in each tab of the unified inbox, leaving out those being archived.
-    /// A tab without any is missing.
-    fn inbox_unread(&self) -> Result<Vec<(Category, u32)>, StoreError>;
-    /// Whether no tab of the unified inbox has a message, leaving out those being archived.
-    fn inbox_is_empty(&self) -> Result<bool, StoreError>;
+    /// Unread messages in each tab of the account's inbox, or of the unified inbox for None,
+    /// leaving out those being archived. A tab without any is missing.
+    fn inbox_unread(&self, account: Option<AccountId>) -> Result<Vec<(Category, u32)>, StoreError>;
+    /// Whether no tab of the account's inbox, or of the unified inbox for None, has a
+    /// message, leaving out those being archived.
+    fn inbox_is_empty(&self, account: Option<AccountId>) -> Result<bool, StoreError>;
     /// Messages, newest first, whose subject, sender or body has every word of `text`, each
     /// as a word or the start of one, case and accents aside. Trash, junk and what is being
     /// archived are left out; empty `text` finds nothing.

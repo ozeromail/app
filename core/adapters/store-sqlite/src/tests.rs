@@ -1173,10 +1173,112 @@ fn an_inbox_with_only_mail_being_archived_is_empty() {
     let folder = inbox(&store, account);
     archive_folder(&store, account);
     store.save_messages(folder, &[message(1, 100)]).unwrap();
-    assert!(!store.inbox_is_empty().unwrap());
+    assert!(!store.inbox_is_empty(None).unwrap());
     let id = list(&store, ListScope::Folder(folder), 10, None)[0].id;
     store.queue(id, Action::Archive, 0).unwrap();
-    assert!(store.inbox_is_empty().unwrap());
+    assert!(store.inbox_is_empty(None).unwrap());
+}
+
+#[test]
+fn an_account_left_out_of_the_unified_inbox_keeps_its_own_tabs() {
+    let store = store();
+    let (a, b) = (
+        account(&store, "a@example.com"),
+        account(&store, "b@example.com"),
+    );
+    let (inbox_a, inbox_b) = (inbox(&store, a), inbox(&store, b));
+    store.save_messages(inbox_a, &[message(1, 100)]).unwrap();
+    store.save_messages(inbox_b, &[message(2, 200)]).unwrap();
+    store.set_account_in_all(b, false).unwrap();
+    assert_eq!(store.left_out_of_all().unwrap(), [b]);
+
+    let subjects = |scope| {
+        let rows = list(&store, scope, 10, None);
+        rows.into_iter().map(|r| r.subject).collect::<Vec<_>>()
+    };
+    assert_eq!(subjects(ListScope::Inbox(Category::People)), ["Subject 1"]);
+    assert_eq!(
+        subjects(ListScope::FolderTab(inbox_b, Category::People)),
+        ["Subject 2"]
+    );
+    assert!(subjects(ListScope::FolderTab(inbox_b, Category::Newsletters)).is_empty());
+    assert_eq!(store.inbox_unread(None).unwrap(), [(Category::People, 1)]);
+    assert_eq!(
+        store.inbox_unread(Some(b)).unwrap(),
+        [(Category::People, 1)]
+    );
+
+    let id = list(&store, ListScope::Folder(inbox_a), 10, None)[0].id;
+    store.queue(id, Action::Seen(true), 0).unwrap();
+    assert!(store.inbox_unread(None).unwrap().is_empty());
+    store.set_account_in_all(a, false).unwrap();
+    assert!(store.inbox_is_empty(None).unwrap());
+    assert!(!store.inbox_is_empty(Some(b)).unwrap());
+}
+
+#[test]
+fn accounts_keep_the_order_the_person_gave_them() {
+    let store = store();
+    let [a, b, c] = ["a", "b", "c"].map(|n| account(&store, &format!("{n}@example.com")));
+    let order = |store: &SqliteStore| {
+        store
+            .accounts()
+            .unwrap()
+            .into_iter()
+            .map(|x| x.id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(order(&store), [a, b, c]);
+    store.set_account_order(&[c, a]).unwrap();
+    assert_eq!(order(&store), [c, a, b]);
+    let d = account(&store, "d@example.com");
+    assert_eq!(order(&store), [c, a, b, d]);
+}
+
+#[test]
+fn pins_folders() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    archive_folder(&store, account);
+    let archive = store.folders(account).unwrap()[1].id;
+    assert!(store.pinned_folders().unwrap().is_empty());
+    store.set_folder_pinned(archive, true).unwrap();
+    assert_eq!(store.pinned_folders().unwrap(), [archive]);
+    store.set_folder_pinned(archive, false).unwrap();
+    assert!(store.pinned_folders().unwrap().is_empty());
+}
+
+#[test]
+fn lists_unread_mail_and_mail_with_files_of_every_account() {
+    let store = store();
+    let folder = inbox(&store, account(&store, "a@example.com"));
+    let other = inbox(&store, account(&store, "b@example.com"));
+    store
+        .save_messages(folder, &[message(1, 100), message(2, 200)])
+        .unwrap();
+    store.save_messages(other, &[message(3, 300)]).unwrap();
+    let rows = list(&store, ListScope::Folder(folder), 10, None);
+    let id = |subject: &str| rows.iter().find(|r| r.subject == subject).unwrap().id;
+    store.queue(id("Subject 2"), Action::Seen(true), 0).unwrap();
+    let subjects = |scope| {
+        let rows = list(&store, scope, 10, None);
+        rows.into_iter().map(|r| r.subject).collect::<Vec<_>>()
+    };
+    assert_eq!(subjects(ListScope::Unread), ["Subject 3", "Subject 1"]);
+
+    assert!(subjects(ListScope::Files).is_empty());
+    let body = Body {
+        text: String::new(),
+        html: None,
+        attachments: vec![Attachment {
+            part: 2,
+            name: "bill.pdf".into(),
+            mime: "application/pdf".into(),
+            size: 10,
+        }],
+    };
+    store.save_body(id("Subject 2"), &body).unwrap();
+    assert_eq!(subjects(ListScope::Files), ["Subject 2"]);
 }
 
 #[test]
@@ -1203,7 +1305,7 @@ fn a_refused_archive_shows_the_message_again() {
 fn tabs_list_and_count_their_own_messages() {
     let store = store();
     let folder = inbox(&store, account(&store, "a@example.com"));
-    assert!(store.inbox_is_empty().unwrap());
+    assert!(store.inbox_is_empty(None).unwrap());
     let mut news = message(2, 200);
     news.category = Category::Newsletters;
     store
@@ -1217,10 +1319,10 @@ fn tabs_list_and_count_their_own_messages() {
     assert_eq!(tab(Category::People), ["Subject 1"]);
     assert_eq!(tab(Category::Newsletters), ["Subject 2"]);
     assert!(tab(Category::Notifications).is_empty());
-    let mut unread = store.inbox_unread().unwrap();
+    let mut unread = store.inbox_unread(None).unwrap();
     unread.sort_by_key(|(c, _)| Category::ALL.iter().position(|a| a == c));
     assert_eq!(unread, [(Category::People, 1), (Category::Newsletters, 1)]);
-    assert!(!store.inbox_is_empty().unwrap());
+    assert!(!store.inbox_is_empty(None).unwrap());
 
     // A resync sorts a known message again.
     news.category = Category::Notifications;
