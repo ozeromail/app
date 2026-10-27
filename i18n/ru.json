@@ -246,5 +246,16 @@
   "signature_hint": "Ставится в письма со всех аккаунтов, где нет своей подписи. В каждом письме её можно поправить.",
   "account_signature": "Подпись",
   "account_signature_hint": "Ставится в письма с этого аккаунта. Если оставить пустой, будет общая подпись.",
-  "compose_signature": "Подпись этого письма"
+  "compose_signature": "Подпись этого письма",
+  "message_you": "Вы",
+  "message_you_to": "вы",
+  "message_to_line": "Кому: %1$s",
+  "message_and": "%1$s и %2$s",
+  "message_from": "От",
+  "message_date": "Дата",
+  "message_add_people": "+ %1$s",
+  "message_copy_person": "Копия: %1$s",
+  "message_write_to": "Написать",
+  "message_copy_address": "Скопировать адрес",
+  "message_full_screen": "На весь экран"
 }

@@ -84,7 +84,7 @@ import uniffi.ozero_api.RecentFileItem
 val NEW_DRAFT = DraftItem(0, 0, "", "", "", null, "", 0)
 
 /** A pause in typing this long saves the draft, so each key does not. */
-private const val SAVE_PAUSE_MS = 1_000L
+internal const val SAVE_PAUSE_MS = 1_000L
 
 /** The header words of a forwarded message, in the app's language. */
 fun forwardLabels(context: Context) = ForwardLabels(
