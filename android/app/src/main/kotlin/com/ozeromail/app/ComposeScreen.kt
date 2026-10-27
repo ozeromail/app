@@ -47,6 +47,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -276,12 +278,15 @@ fun ComposeScreen(
     var unfolded by remember { mutableStateOf(false) }
     LaunchedEffect(keyboard) { if (!keyboard) unfolded = false }
     val folded = sideways && keyboard && writingText && !unfolded
+    // A forward or a new message starts where it is missing: who it goes to.
+    val toFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { if (to.isBlank() && !folded) toFocus.requestFocus() }
     val original = composing.original
     val addresses = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next, autoCorrectEnabled = false)
     val fields = @Composable {
         if (!folded) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Plain(to, { to = it }, R.string.compose_to, Type.Body, addresses, modifier = Modifier.weight(1f))
+                Plain(to, { to = it }, R.string.compose_to, Type.Body, addresses, modifier = Modifier.weight(1f).focusRequester(toFocus))
                 if (!hasCc) {
                     Text(
                         stringResource(R.string.compose_cc),
@@ -521,33 +526,35 @@ private fun Original(mail: Mail, message: MessageItem, modifier: Modifier) {
             // The snippet stays.
         }
     }
-    Column(
-        modifier
-            .fillMaxWidth()
-            .padding(start = Gap.card, end = Gap.card, top = 12.dp, bottom = 10.dp)
-            .clip(RoundedCornerShape(Radius.tile))
-            .background(colors.surfaceVariant),
-    ) {
-        Row(Modifier.padding(start = Gap.inCard, end = Gap.inCard, top = 12.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+    // The card is as tall as its text, up to the room it is given; the rest stays clear.
+    Box(modifier.fillMaxWidth()) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = Gap.card, end = Gap.card, top = 12.dp, bottom = 10.dp)
+                .clip(RoundedCornerShape(Radius.tile))
+                .background(colors.surfaceVariant),
+        ) {
+            Row(Modifier.padding(start = Gap.inCard, end = Gap.inCard, top = 12.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    message.sender,
+                    style = Type.Text,
+                    fontWeight = Weight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(shortDate(LocalContext.current, message.date), color = colors.onSurfaceVariant, style = Type.Caption)
+            }
             Text(
-                message.sender,
-                style = Type.Text,
-                fontWeight = Weight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
+                text,
+                color = colors.onSurfaceVariant,
+                style = Type.Quote,
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = Gap.inCard, end = Gap.inCard, bottom = 12.dp),
             )
-            Text(shortDate(LocalContext.current, message.date), color = colors.onSurfaceVariant, style = Type.Caption)
         }
-        Text(
-            text,
-            color = colors.onSurfaceVariant,
-            style = Type.Quote,
-            modifier = Modifier
-                .weight(1f, fill = false)
-                .verticalScroll(rememberScrollState())
-                .padding(start = Gap.inCard, end = Gap.inCard, bottom = 12.dp),
-        )
     }
 }
 

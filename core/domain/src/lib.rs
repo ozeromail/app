@@ -19,7 +19,7 @@ pub use encoding::{base64, decode_base64};
 pub use folder::{Folder, FolderId, FolderRole, NewFolder, SNOOZED};
 pub use message::{
     Address, Attachment, Body, Correspondents, Cursor, Flags, ListQuery, ListScope, MessageId,
-    MessageLocation, MessageRow, NewMessage, RecentFile, Sender,
+    MessageLocation, MessageRow, NewMessage, RecentFile, Sender, close_blank_lines,
 };
 pub use op::{Action, Op, OpId};
 pub use outbox::{

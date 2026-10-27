@@ -518,6 +518,49 @@ fn without_body_lists_the_newest_inbox_mail_left_to_download() {
     assert!(store.without_body(other, 10).unwrap().is_empty());
 }
 
+#[test]
+fn without_body_lists_the_rest_of_each_conversation() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let folders = store
+        .save_folders(
+            account,
+            &[
+                NewFolder {
+                    remote_id: "INBOX".into(),
+                    name: "Inbox".into(),
+                    role: FolderRole::Inbox,
+                },
+                NewFolder {
+                    remote_id: "Sent".into(),
+                    name: "Sent".into(),
+                    role: FolderRole::Sent,
+                },
+            ],
+        )
+        .unwrap();
+    let (inbox, sent) = (folders[0].id, folders[1].id);
+    store
+        .save_messages(inbox, &[message(1, 100), reply(3, 300, &[1, 2])])
+        .unwrap();
+    store.save_messages(sent, &[reply(2, 200, &[1])]).unwrap();
+    store.save_messages(sent, &[message(9, 900)]).unwrap();
+
+    // The newest inbox message brings its conversation: the older one and the reply in sent,
+    // not the sent mail of another conversation.
+    let uids: Vec<_> = store
+        .without_body(account, 1)
+        .unwrap()
+        .into_iter()
+        .map(|m| (m.folder_remote_id, m.remote_id))
+        .collect();
+    let pair = |f: &str, u: &str| (f.to_owned(), u.to_owned());
+    assert_eq!(
+        uids,
+        [pair("INBOX", "3"), pair("Sent", "2"), pair("INBOX", "1")]
+    );
+}
+
 fn seen(store: &SqliteStore, folder: FolderId) -> Vec<bool> {
     list(store, ListScope::Folder(folder), 10, None)
         .iter()

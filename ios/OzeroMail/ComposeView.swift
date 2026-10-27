@@ -109,7 +109,7 @@ struct ComposeView: View {
                         // with it up the card only folds away, so it keeps what it loaded.
                         if let original = composing.original {
                             Original(mail: mail, message: original)
-                                .frame(maxHeight: focus == nil ? .infinity : 0)
+                                .frame(maxHeight: focus == nil ? .infinity : 0, alignment: .top)
                                 .clipped()
                         }
                         ScrollView {
@@ -129,7 +129,7 @@ struct ComposeView: View {
                 VStack(spacing: 0) {
                     if let original = composing.original {
                         Original(mail: mail, message: original)
-                            .frame(maxHeight: focus == nil ? .infinity : 112)
+                            .frame(maxHeight: focus == nil ? .infinity : 112, alignment: .top)
                     } else {
                         Spacer(minLength: 0)
                     }
@@ -350,6 +350,8 @@ struct ComposeView: View {
         files = start.files
         keeper = DraftKeeper(mail: mail, id: start.id)
         firstSeen = current
+        // A forward or a new message starts where it is missing: who it goes to.
+        if to.isBlank { focus = .to }
     }
 
     private func keep() {
@@ -493,11 +495,10 @@ private struct Original: View {
                 Spacer()
                 Text(verbatim: shortDate(message.date)).font(.footnote).foregroundStyle(.secondary)
             }
-            ScrollView {
-                Text(verbatim: text.isEmpty ? message.snippet : text)
-                    .font(.readingQuote)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            // As tall as its text, scrolling only when the room is short.
+            ViewThatFits(in: .vertical) {
+                quoted
+                ScrollView { quoted }
             }
         }
         .padding(14)
@@ -511,6 +512,13 @@ private struct Original: View {
                 text = body.text
             }
         }
+    }
+
+    private var quoted: some View {
+        Text(verbatim: text.isEmpty ? message.snippet : text)
+            .font(.readingQuote)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

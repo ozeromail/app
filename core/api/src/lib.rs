@@ -19,8 +19,8 @@ use ozero_domain::{
     Checkpoint, Draft, DraftFile, DraftId, FileId, Folder, FolderId, FolderRole, ListQuery,
     ListScope, MailProvider, MailSender, MailService, MessageId, MessageRow, Moved, NewAccount,
     NewFolder, NewMail, Older, OpId, OutboxId, Outgoing, OutgoingFile, ProviderError,
-    ProviderState, RawMessage, RecentFile, SavedDraft, Sender, Server, Store, StoreError, html,
-    parse_recipients, saves_sent_itself,
+    ProviderState, RawMessage, RecentFile, SavedDraft, Sender, Server, Store, StoreError,
+    close_blank_lines, html, parse_recipients, saves_sent_itself,
 };
 use ozero_ews::{EasSession, EwsSession, discover};
 use ozero_gmail::{GmailSession, oauth};
@@ -3179,7 +3179,7 @@ impl From<Body> for MessageBody {
             styled,
             html: page.map(|p| sandboxed(&html::fold_quote(&p.html), styled)),
             shows_images: false,
-            text: text.to_owned(),
+            text: close_blank_lines(text),
             quote: quote.to_owned(),
             attachments: body
                 .attachments
@@ -3236,7 +3236,9 @@ fn sandboxed(html: &str, styled: bool) -> String {
         // below a scale where its text can still be read; the rest scrolls sideways. A page up to
         // about 800 px wide still fits a phone.
         "<meta name=\"viewport\" content=\"width=device-width,minimum-scale=0.48\">",
-        "<style>body{margin:0;padding:0 16px 16px;overflow-wrap:break-word}",
+        // With the 10 dp around a styled page's card, its text lines up with the 20 dp of the
+        // header above.
+        "<style>body{margin:0;padding:0 10px 16px;overflow-wrap:break-word}",
         "img{max-width:100%;height:auto}",
         "details.ozero-quote>summary{list-style:none;display:inline-block;margin:10px 0;",
         "padding:0 10px;border-radius:9px;background:#e9eef5;color:#6c7890;",
