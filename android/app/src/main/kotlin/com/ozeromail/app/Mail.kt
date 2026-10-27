@@ -304,6 +304,15 @@ class Mail(private val context: Context) {
      */
     suspend fun archive(messages: List<MessageItem>): List<Long> = move(messages) { core.archive(it) }
 
+    /** As [archive], into the account's spam. */
+    suspend fun spam(messages: List<MessageItem>): List<Long> = move(messages) { core.spam(it) }
+
+    /** Flags the messages, or takes their flags off; only they, not the rest of their conversations. */
+    suspend fun flag(messages: List<MessageItem>, flagged: Boolean) {
+        io { core.flag(messages.map { it.id }, flagged) }
+        push(messages)
+    }
+
     /** As [archive], back into the inbox: for mail in the archive, trash or spam. */
     suspend fun moveToInbox(messages: List<MessageItem>): List<Long> = move(messages) { core.moveToInbox(it) }
 
@@ -609,6 +618,7 @@ fun CoreException.text(): Int {
         is CoreException.Gone -> R.string.error_gone
         is CoreException.NoArchive -> R.string.error_no_archive
         is CoreException.NoTrash -> R.string.error_no_trash
+        is CoreException.NoSpam -> R.string.error_no_spam
         is CoreException.NoSnoozed -> R.string.error_no_snoozed
         is CoreException.BadRecipients -> R.string.error_bad_recipients
         is CoreException.BadCopies -> R.string.error_bad_copies
