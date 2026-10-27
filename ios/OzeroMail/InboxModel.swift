@@ -16,6 +16,8 @@ struct Toast: Identifiable, Equatable {
     let text: String
     var undo = false
     var go: Mailbox?
+    /// One more button, before Undo; `InboxModel.tapExtra` does it.
+    var extra: String?
 }
 
 /// The inbox and everything around it: which mailbox and tab show, the saved list and its
@@ -118,6 +120,8 @@ final class InboxModel {
     private var readingMore = false
     /// The toast waiting for Undo, answered with whether it was tapped.
     private var waiting: CheckedContinuation<Bool, Never>?
+    /// What the toast's extra button does.
+    private var extraAction: (() -> Void)?
     /// One answer or forward at a time: a second tap would replace the one being written.
     private var writing = false
     /// Brings snoozed mail back on time while the app is open.
@@ -428,12 +432,13 @@ final class InboxModel {
     }
 
     /// Shows a toast for `undoSeconds()`; true if Undo was tapped. One toast at a time. With
-    /// `go`, it can also show that folder.
-    func offerUndo(_ text: String, go: Mailbox? = nil) async -> Bool {
+    /// `go`, it can also show that folder; with `extra`, a button named so that does `run`.
+    func offerUndo(_ text: String, go: Mailbox? = nil, extra: String? = nil, run: (() -> Void)? = nil) async -> Bool {
         // The older toast is past undo anyway.
         answer(false)
-        let shown = Toast(text: text, undo: true, go: go)
+        let shown = Toast(text: text, undo: true, go: go, extra: extra)
         toast = shown
+        extraAction = run
         return await withCheckedContinuation { continuation in
             waiting = continuation
             Task {
@@ -442,6 +447,16 @@ final class InboxModel {
                 if toast == shown { answer(false) }
             }
         }
+    }
+
+    /// The toast after an invitation is answered: Undo takes the answer back, and with `write`
+    /// it offers to write to the organizer.
+    func answered(_ answered: Answered, text: String, write invitation: MessageItem?) async {
+        let undone = await offerUndo(text, extra: invitation.map { _ in tr("invite_write") }) { [self] in
+            guard let invitation else { return }
+            write(invitation) { try await self.mail.reply(to: invitation, all: false) }
+        }
+        if undone, (try? await mail.undoAnswer(answered)) != true { note(tr("inbox_undo_late")) }
     }
 
     func tapUndo() {
@@ -453,8 +468,15 @@ final class InboxModel {
         mailbox = box
     }
 
+    func tapExtra() {
+        let run = extraAction
+        answer(false)
+        run?()
+    }
+
     private func answer(_ undo: Bool) {
         toast = nil
+        extraAction = nil
         waiting?.resume(returning: undo)
         waiting = nil
     }

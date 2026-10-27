@@ -42,6 +42,16 @@ struct MessageView: View {
     @State private var answering = false
     /// The rest of the conversation downloading; it stops when the message closes.
     @State private var filling: Task<Void, Never>?
+    /// The meeting invitations among the messages, by message.
+    @State private var meetings: [Int64: InviteItem] = [:]
+    /// The messages looked at for an invitation.
+    @State private var looked: Set<Int64> = []
+    /// An invitation to answer again, from its card.
+    @State private var changing: MessageItem?
+    /// No, asking why first.
+    @State private var declining: Declining?
+    /// An invitation going into the phone's calendar.
+    @State private var adding: Adding?
 
     /// How long a conversation waits for the bodies that open before it shows.
     private static let bodyWait = Duration.milliseconds(250)
@@ -60,6 +70,8 @@ struct MessageView: View {
         // The newest message not from the user.
         let answer = shown.last { !$0.sent } ?? message
         let many = shown.count > 1 || message.threadCount > 1
+        // The newest invitation, while it waits for an answer: the bottom row asks for it.
+        let asking = shown.last { meetings[$0.id] != nil }.flatMap { meetings[$0.id]?.needsAnswer == true ? $0 : nil }
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
@@ -120,13 +132,20 @@ struct MessageView: View {
         }
         .overlay(alignment: .bottom) {
             if !pane && replying == nil && barShown {
-                bar(answer: answer).transition(.move(edge: .bottom).combined(with: .opacity))
+                Group {
+                    if let asking {
+                        InviteBar(onAnswer: { answerInvite(asking, $0) }, onMore: { more = true })
+                    } else {
+                        bar(answer: answer)
+                    }
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .overlay(alignment: .bottom) {
             // The list's toast, over the message: Undo for a reply, or where a draft went.
             if !pane, let toast = model.toast {
-                ToastView(toast: toast, onUndo: model.tapUndo, onGo: model.tapGo)
+                ToastView(toast: toast, onUndo: model.tapUndo, onGo: model.tapGo, onExtra: model.tapExtra)
                     .padding(.bottom, replying == nil && barShown ? barHeight : 12)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -148,12 +167,25 @@ struct MessageView: View {
                     onSent: { sent($0, self.replying ?? replying) })
                 .id(replying.draft.id)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if pane, let asking {
+                InviteBar(onAnswer: { answerInvite(asking, $0) }, onMore: { more = true })
             } else if pane {
                 row(answer: answer, newest: shown.last ?? message)
             }
         }
         .animation(.smooth, value: replying == nil)
         .confirmationDialog("action_more", isPresented: $more) {
+            // The answers took the row: the rest of it is here.
+            if asking != nil {
+                Button("message_reply") { reply(answer, all: false) }
+                if pane {
+                    Button("message_reply_all") { reply(answer, all: true) }
+                    Button("message_forward") { forward(shown.last ?? message) }
+                }
+                Button(message.canTrash ? "action_delete" : "action_delete_forever", role: .destructive, action: delete)
+                if message.canSnooze { Button("action_snooze", action: snooze) }
+                if message.canArchive { Button("action_done", action: done) }
+            }
             if !pane {
                 Button("message_reply_all") { reply(answer, all: true) }
                 Button("message_forward") { forward(shown.last ?? message) }
@@ -218,7 +250,31 @@ struct MessageView: View {
         } message: { person in
             if person.name != person.email { Text(verbatim: person.email) }
         }
+        .confirmationDialog(
+            "invite_answer_title", isPresented: Binding { changing != nil } set: { if !$0 { changing = nil } },
+            titleVisibility: .visible, presenting: changing
+        ) { m in
+            ForEach([InviteAnswer.yes, .maybe, .no], id: \.self) { reply in
+                Button(LocalizedStringKey(reply.label)) { answerInvite(m, reply) }
+            }
+        }
+        .sheet(item: $declining) { declining in
+            let invite = declining.invite
+            ReasonSheet(organizer: invite.organizerName ?? invite.organizerEmail ?? declining.message.sender) { reason in
+                self.declining = nil
+                send(declining.message, invite, .no, comment: reason)
+            }
+        }
+        .sheet(item: $adding) { adding in
+            AddToCalendar(invite: adding.invite) { self.adding = nil }.ignoresSafeArea()
+        }
         .attachmentActions(files)
+        .task(id: Set(bodies.loaded.keys)) {
+            // Each is looked at once here; an answer brings a change, which reads them again.
+            let new = thread.filter { bodies.loaded[$0.id] != nil && !looked.contains($0.id) }
+            looked.formUnion(new.map(\.id))
+            await readMeetings(new)
+        }
         .onDisappear { filling?.cancel() }
         .task(id: message.id) {
             do {
@@ -263,7 +319,50 @@ struct MessageView: View {
                 } catch {
                     self.error = error.text()
                 }
+                await readMeetings(thread.filter { meetings[$0.id] != nil })
             }
+        }
+    }
+
+    /// The invitations among `messages`, whose bodies are saved.
+    private func readMeetings(_ messages: [MessageItem]) async {
+        for m in messages {
+            do {
+                if let invite = try await mail.invite(of: m) {
+                    meetings[m.id] = invite
+                } else {
+                    meetings[m.id] = nil
+                }
+            } catch {
+                // The message reads the same without its card.
+            }
+        }
+    }
+
+    /// No asks why first.
+    private func answerInvite(_ m: MessageItem, _ answer: InviteAnswer) {
+        guard let invite = meetings[m.id] else { return }
+        if answer == .no {
+            declining = Declining(message: m, invite: invite)
+        } else {
+            send(m, invite, answer, comment: "")
+        }
+    }
+
+    /// Answers `invitation`. Where that takes it to the archive, as Done would, the next message
+    /// opens; the toast can take the answer back, or write to the organizer when there was
+    /// nothing to say yet.
+    private func send(_ invitation: MessageItem, _ invite: InviteItem, _ answer: InviteAnswer, comment: String) {
+        Task {
+            let answered: Answered
+            do {
+                answered = try await mail.answerInvite(invitation, answer: answer, comment: comment, subject: tr(answer.subject, invite.summary))
+            } catch {
+                model.error = error.textKey()
+                return
+            }
+            if answered.archived { moveOn {} }
+            await model.answered(answered, text: tr(answer.status), write: comment.isBlank ? invitation : nil)
         }
     }
 
@@ -280,7 +379,10 @@ struct MessageView: View {
             onPerson: { person = $0 },
             onReply: { reply(m, all: false) },
             onForward: { forward(m) },
-            onDelete: { deleteAlone(m) })
+            onDelete: { deleteAlone(m) },
+            invite: meetings[m.id],
+            onChangeAnswer: { changing = m },
+            onAddToCalendar: { adding = Adding(invite: $0) })
         .id(m.id)
         .task(id: isOpen(m)) {
             guard isOpen(m), people[m.id] == nil else { return }
@@ -413,15 +515,19 @@ struct MessageView: View {
         }
     }
 
-    /// The next message in the list opens in its place, and the toast can undo it there; after
-    /// the last, or from search, back to the list.
     private func done() {
+        moveOn { await model.archive([message]) }
+    }
+
+    /// The next message in the list opens in its place, then `act`, so the toast can undo it
+    /// there; after the last, or from search, back to the list.
+    private func moveOn(_ act: @escaping () async -> Void) {
         let rows = model.messages
         let at = rows.firstIndex { $0.id == message.id }
         let next = at.flatMap { $0 + 1 < rows.count && !model.path.contains(.search) ? rows[$0 + 1] : nil }
         let shown = model.path.lastIndex(of: .message(message))
         guard let next, model.pane?.id == message.id || shown != nil else {
-            leave { await model.archive([message]) }
+            leave(act)
             return
         }
         if model.pane?.id == message.id {
@@ -429,7 +535,7 @@ struct MessageView: View {
         } else if let shown {
             model.path[shown] = .message(next)
         }
-        Task { await model.archive([message]) }
+        Task { await act() }
     }
 
     /// The message stays open until a time is picked; then back to the list, as `leave`.
@@ -477,6 +583,19 @@ private let paneButton: CGFloat = 40
 
 /// How tall the bottom row is, for the page's end and the toast to clear it.
 private let barHeight: CGFloat = 84
+
+/// An invitation to say No to, once the reason is asked.
+private struct Declining: Identifiable {
+    let message: MessageItem
+    let invite: InviteItem
+    var id: Int64 { message.id }
+}
+
+/// An invitation for the phone's calendar.
+private struct Adding: Identifiable {
+    let id = UUID()
+    let invite: InviteItem
+}
 
 /// Where the page is scrolled to, and whether that is its end.
 private struct Scrolled: Equatable {
@@ -562,6 +681,9 @@ private struct Letter: View {
     let onReply: () -> Void
     let onForward: () -> Void
     let onDelete: () -> Void
+    let invite: InviteItem?
+    let onChangeAnswer: () -> Void
+    let onAddToCalendar: (InviteItem) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -570,6 +692,12 @@ private struct Letter: View {
                 From(
                     message: message, people: people, unread: unread, files: bodies.files(of: message), details: details,
                     onToggle: onToggle, onDetails: onDetails, onPerson: onPerson)
+                if let invite {
+                    InviteCard(
+                        invite: invite, onChange: invite.canAnswer ? onChangeAnswer : nil,
+                        onAddToCalendar: { onAddToCalendar(invite) })
+                    .transition(.opacity)
+                }
                 LetterBody(mail: mail, files: files, bodies: bodies, message: message)
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 if inThread {

@@ -370,6 +370,24 @@ final class Mail: Sendable {
         try move(messages) { try core.archive(messages: $0) }
     }
 
+    /// The meeting `message` invites to, once its body is saved; nil if it is no invitation.
+    func invite(of message: MessageItem) async throws -> InviteItem? {
+        try core.invite(message: message.id)
+    }
+
+    /// Answers the invitation `message` is, held like `archive`; the organizer hears in the
+    /// background, by mail with `subject` and `comment` where the server does not tell them.
+    func answerInvite(_ message: MessageItem, answer: InviteAnswer, comment: String, subject: String) async throws -> Answered {
+        let answered = try core.answerInvite(message: message.id, answer: answer, comment: comment, subject: subject)
+        push(account: message.accountId)
+        return answered
+    }
+
+    /// Takes back an answer not sent yet; false if too late.
+    func undoAnswer(_ answered: Answered) async throws -> Bool {
+        try core.undoAnswer(answered: answered)
+    }
+
     /// As `archive`, into the account's spam.
     func spam(_ messages: [MessageItem]) async throws -> [Int64] {
         try move(messages) { try core.spam(messages: $0) }
