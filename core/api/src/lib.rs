@@ -1682,14 +1682,24 @@ impl Core {
             let (url, tls, slots) = (url.clone(), tls.clone(), slots.clone());
             fetches.spawn(async move {
                 let _slot = slots.acquire().await;
-                (n, ozero_http::image(&url, tls).await.ok())
+                (n, ozero_http::image(&url, tls).await)
             });
         }
         let mut images = vec![None; fetches.len()];
+        let (mut failed, mut any) = (None, false);
         let mut left = IMAGES_SIZE;
         while let Some(fetched) = fetches.join_next().await {
-            let Ok((n, Some(image))) = fetched else {
-                continue;
+            let (n, image) = match fetched {
+                Ok((n, Ok(image))) => {
+                    any = true;
+                    (n, image)
+                }
+                Ok((n, Err(e))) => {
+                    log::warn!("image {n} not loaded: {e:?}");
+                    failed.get_or_insert(e);
+                    continue;
+                }
+                Err(_) => continue,
             };
             let Some(image) = RemoteImage::new(&image.content_type, image.body) else {
                 continue;
@@ -1698,6 +1708,10 @@ impl Core {
                 left -= image.data.len();
                 images[n] = Some(image);
             }
+        }
+        // None came: say why, so the reader can try again, instead of a page with gaps.
+        if let Some(e) = failed.filter(|_| !any) {
+            return Err(e.into());
         }
         // Addresses, not `data:` copies: a page with all its images inline is too big to
         // pass around on the app's side.

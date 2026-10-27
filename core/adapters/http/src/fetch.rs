@@ -115,18 +115,24 @@ pub(crate) fn is_public(ip: IpAddr) -> bool {
                 || a == 0
                 // Multicast, reserved and broadcast.
                 || a >= 224
-                // Carrier-grade NAT 100.64.0.0/10, benchmarking 198.18.0.0/15.
-                || (a == 100 && (64..128).contains(&b))
-                || (a == 198 && (18..20).contains(&b)))
+                // Carrier-grade NAT 100.64.0.0/10. Benchmarking 198.18.0.0/15 is left in: VPN
+                // apps answer names with addresses from it and take the traffic out themselves.
+                || (a == 100 && (64..128).contains(&b)))
         }
         IpAddr::V6(v6) => {
             if let Some(v4) = v6.to_ipv4_mapped() {
                 return is_public(IpAddr::V4(v4));
             }
+            // NAT64 64:ff9b::/96, which an IPv6-only network gives for an IPv4-only host: the
+            // host is the IPv4 address in its last 32 bits.
+            if v6.segments()[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
+                let [.., a, b, c, d] = v6.octets();
+                return is_public(IpAddr::V4([a, b, c, d].into()));
+            }
             let [first, second, ..] = v6.segments();
             // Global unicast 2000::/3 only, without the ranges that lead elsewhere: protocol
             // assignments 2001::/23 (Teredo among them), documentation 2001:db8::/32 and
-            // 6to4 2002::/16. NAT64, multicast and local ranges are outside 2000::/3.
+            // 6to4 2002::/16. Multicast and local ranges are outside 2000::/3.
             (first & 0xe000) == 0x2000
                 && !(first == 0x2001 && second < 0x200)
                 && !(first == 0x2001 && second == 0xdb8)
@@ -188,11 +194,17 @@ mod tests {
             "2001:db8::1",
             "ff02::1",
             "224.0.0.1",
-            "198.18.0.1",
         ] {
             assert!(!is_public(ip.parse().unwrap()), "{ip}");
         }
-        for ip in ["93.184.216.34", "2606:4700::1111", "2001:4860:4860::8888"] {
+        // A VPN's stand-in address, and NAT64 to a public one.
+        for ip in [
+            "93.184.216.34",
+            "2606:4700::1111",
+            "2001:4860:4860::8888",
+            "198.18.0.1",
+            "64:ff9b::5db8:d822",
+        ] {
             assert!(is_public(ip.parse().unwrap()), "{ip}");
         }
     }
