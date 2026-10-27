@@ -7,6 +7,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.icu.text.DateFormat
+import android.icu.util.TimeZone
 import android.os.SystemClock
 import android.text.format.DateUtils
 import android.util.Log
@@ -179,6 +180,8 @@ import uniffi.ozero_api.DraftItem
 import uniffi.ozero_api.FolderItem
 import uniffi.ozero_api.FolderRole
 import uniffi.ozero_api.InboxTab
+import uniffi.ozero_api.InviteAnswer
+import uniffi.ozero_api.InviteItem
 import uniffi.ozero_api.Mailbox
 import uniffi.ozero_api.MessageItem
 import uniffi.ozero_api.UnsentItem
@@ -836,6 +839,27 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         }
     }
 
+    /**
+     * Answers [invitation] with [comment] for its organizer. Where that takes it to the archive,
+     * as Done would, [onArchived] moves on from it. The toast can take the answer back, or
+     * write to the organizer when there was nothing to say yet.
+     */
+    fun answer(invitation: MessageItem, invite: InviteItem, answer: InviteAnswer, comment: String, onArchived: () -> Unit) {
+        scope.launch {
+            val answered = try {
+                mail.answerInvite(invitation, answer, comment, context.getString(answerSubject(answer), invite.summary))
+            } catch (e: CoreException) {
+                fail(e)
+                return@launch
+            }
+            if (answered.archived) onArchived()
+            val write = ToastAction(context.getString(R.string.invite_write)) {
+                write(invitation) { mail.reply(invitation, all = false) }
+            }.takeIf { comment.isBlank() }
+            if (snackbar.offerUndo(context.getString(answerStatus(answer)), undo, extra = write) && !mail.undoAnswer(answered)) note(undoLate)
+        }
+    }
+
     /** Done: into the archive. */
     fun archive(gone: List<MessageItem>, reset: () -> Unit = {}) = remove(gone, archived, FolderRole.ARCHIVE, mail::archive, reset)
 
@@ -1079,6 +1103,14 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     /** A message on its own screen, or beside the list in a [pane]; done with it, it closes. */
     @Composable
     fun Reader(message: MessageItem, pane: Boolean) {
+        // The next message in the list opens in its place, and the toast can undo it there;
+        // after the last, or from search, back to the list.
+        fun moveOn() {
+            val at = messages.indexOfFirst { it.id == message.id }
+            val next = if (searching || at < 0) null else messages.getOrNull(at + 1)
+            open = next
+            if (next == null) closeSearch()
+        }
         MessageScreen(
             mail,
             message,
@@ -1130,12 +1162,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 }
             },
             onDone = {
-                // The next message in the list opens in its place, and the toast can undo it there;
-                // after the last, or from search, back to the list.
-                val at = messages.indexOfFirst { it.id == message.id }
-                val next = if (searching || at < 0) null else messages.getOrNull(at + 1)
-                open = next
-                if (next == null) closeSearch()
+                moveOn()
                 archive(listOf(message))
             }.takeIf { message.canArchive },
             onSnooze = {
@@ -1145,6 +1172,12 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                     closeSearch()
                 }
             }.takeIf { message.canSnooze },
+            onAnswer = { invitation, invite, reply, comment ->
+                answer(invitation, invite, reply, comment) {
+                    moveOn()
+                    messages = messages.filterNot { it.id == message.id }
+                }
+            },
             onBack = if (pane) ::closePane else ::back,
             pane = pane,
             toasts = snackbar.takeUnless { pane },
@@ -2442,9 +2475,10 @@ private fun MessageLine(message: MessageItem, unread: Boolean, dot: Float, accou
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (message.snippet.isNotBlank()) {
+            val snippet = message.invite?.let { inviteLine(it) } ?: message.snippet
+            if (snippet.isNotBlank()) {
                 Text(
-                    message.snippet,
+                    snippet,
                     color = colors.onSurfaceVariant,
                     style = Type.Text,
                     maxLines = 2,
@@ -2479,10 +2513,10 @@ fun MessageItem.subjectText(): String = subject.ifBlank { stringResource(R.strin
 
 /** Time for today, otherwise the date; the year only when it is not this year. */
 fun shortDate(context: Context, seconds: Long): String =
-    format(context, seconds, if (DateUtils.isToday(seconds * 1000)) time(context) else day(seconds))
+    formatDate(context, seconds, if (DateUtils.isToday(seconds * 1000)) time(context) else day(seconds))
 
 /** The date and time, as a message header shows them. */
-fun longDate(context: Context, seconds: Long): String = format(context, seconds, day(seconds) + time(context))
+fun longDate(context: Context, seconds: Long): String = formatDate(context, seconds, day(seconds) + time(context))
 
 /** When snoozed mail comes back: the time today, the weekday and time within a week, else the date and time. */
 fun snoozeTime(context: Context, seconds: Long): String {
@@ -2493,15 +2527,17 @@ fun snoozeTime(context: Context, seconds: Long): String {
         days < 7 -> "EEE" + time(context)
         else -> day(seconds) + time(context)
     }
-    return format(context, seconds, skeleton)
+    return formatDate(context, seconds, skeleton)
 }
 
 /**
  * [seconds] by an ICU skeleton, in the language the app shows: with a per-app language that is
- * not the system's, DateUtils would still name months in the system's.
+ * not the system's, DateUtils would still name months in the system's. On the phone's clock,
+ * or in [zone].
  */
-private fun format(context: Context, seconds: Long, skeleton: String): String =
+internal fun formatDate(context: Context, seconds: Long, skeleton: String, zone: TimeZone? = null): String =
     DateFormat.getInstanceForSkeleton(skeleton, context.resources.configuration.locales[0])
+        .apply { zone?.let { timeZone = it } }
         .format(Date(seconds * 1000))
 
 /** Day and short month, and the year when it is not this one. */
@@ -2512,7 +2548,7 @@ private fun day(seconds: Long): String {
 }
 
 /** Hours and minutes, on the clock the user chose. */
-private fun time(context: Context): String = if (android.text.format.DateFormat.is24HourFormat(context)) "Hm" else "hm"
+internal fun time(context: Context): String = if (android.text.format.DateFormat.is24HourFormat(context)) "Hm" else "hm"
 
 /** A released thumb: a little give after a fling, since the finger threw it; flat otherwise. */
 private fun thumbSpring(velocity: Float): SpringSpec<Float> = if (abs(velocity) > FLING) Motion.fling() else Motion.settle()

@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import uniffi.ozero_api.AccountItem
+import uniffi.ozero_api.Answered
 import uniffi.ozero_api.AttachmentFile
 import uniffi.ozero_api.AttachmentItem
 import uniffi.ozero_api.Category
@@ -44,6 +45,8 @@ import uniffi.ozero_api.FolderRole
 import uniffi.ozero_api.ForwardLabels
 import uniffi.ozero_api.ImagesPage
 import uniffi.ozero_api.InboxTab
+import uniffi.ozero_api.InviteAnswer
+import uniffi.ozero_api.InviteItem
 import uniffi.ozero_api.Mailbox
 import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
@@ -348,6 +351,22 @@ class Mail(private val context: Context) {
         push(message.accountId)
         return done
     }
+
+    /** The meeting [message] invites to, and the day around it, once its body is saved; null if it is no invitation. */
+    suspend fun invite(message: MessageItem): InviteItem? = io { core.invite(message.id) }
+
+    /**
+     * Answers the invitation [message] is, held like [archive]; the organizer hears in the
+     * background, by mail with [subject] and [comment] where the server does not tell them.
+     */
+    suspend fun answerInvite(message: MessageItem, answer: InviteAnswer, comment: String, subject: String): Answered {
+        val answered = io { core.answerInvite(message.id, answer, comment, subject) }
+        push(message.accountId)
+        return answered
+    }
+
+    /** Takes back an answer not sent yet; false if too late. */
+    suspend fun undoAnswer(answered: Answered): Boolean = io { core.undoAnswer(answered) }
 
     /** As [archive], back into the inbox: for mail in the archive, trash or spam. */
     suspend fun moveToInbox(messages: List<MessageItem>): List<Long> = move(messages) { core.moveToInbox(it) }

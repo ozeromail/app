@@ -229,11 +229,18 @@ private fun Note(title: String, text: String?, mark: @Composable () -> Unit) {
     }
 }
 
-/** A toast about mail that moved: besides Undo, it can [go] to the folder the mail is in now. */
+/** One more button on a toast, before Undo. */
+class ToastAction(val label: String, val run: () -> Unit)
+
+/**
+ * A toast about mail that moved: besides Undo, it can [go] to the folder the mail is in now,
+ * or offer an [extra] action.
+ */
 class MovedToast(
     override val message: String,
     override val actionLabel: String,
     val go: Mailbox?,
+    val extra: ToastAction? = null,
 ) : SnackbarVisuals {
     override val withDismissAction = false
     override val duration = SnackbarDuration.Indefinite
@@ -241,13 +248,13 @@ class MovedToast(
 
 /**
  * Shows [text] with [undo] for [undoSeconds], in place of any other toast; true if Undo was
- * tapped. With [go], it can also show that folder.
+ * tapped. With [go], it can also show that folder; with [extra], do that.
  */
-suspend fun SnackbarHostState.offerUndo(text: String, undo: String, go: Mailbox? = null): Boolean {
+suspend fun SnackbarHostState.offerUndo(text: String, undo: String, go: Mailbox? = null, extra: ToastAction? = null): Boolean {
     // The older toast is past undo anyway.
     currentSnackbarData?.dismiss()
     // Closes before the core sends, so Undo is never too late.
-    val result = withTimeoutOrNull(undoSeconds().toLong() * 1000) { showSnackbar(MovedToast(text, undo, go)) }
+    val result = withTimeoutOrNull(undoSeconds().toLong() * 1000) { showSnackbar(MovedToast(text, undo, go, extra)) }
     return result == SnackbarResult.ActionPerformed
 }
 
@@ -270,7 +277,8 @@ fun Toast(state: SnackbarHostState, onGo: (Mailbox) -> Unit, modifier: Modifier 
         label = "toast",
     ) { data ->
         if (data != null) {
-            val go = (data.visuals as? MovedToast)?.go
+            val moved = data.visuals as? MovedToast
+            val go = moved?.go
             Snackbar(
                 modifier = Modifier.padding(horizontal = Gap.bar).semantics { liveRegion = LiveRegionMode.Polite },
                 action = {
@@ -282,6 +290,14 @@ fun Toast(state: SnackbarHostState, onGo: (Mailbox) -> Unit, modifier: Modifier 
                                     onGo(go)
                                 },
                             ) { Text(stringResource(R.string.action_show), color = colors.inversePrimary) }
+                        }
+                        moved?.extra?.let { extra ->
+                            TextButton(
+                                onClick = {
+                                    data.dismiss()
+                                    extra.run()
+                                },
+                            ) { Text(extra.label, color = colors.inversePrimary) }
                         }
                         data.visuals.actionLabel?.let { label ->
                             TextButton(onClick = data::performAction) { Text(label, color = colors.inversePrimary) }
