@@ -544,17 +544,24 @@ fun readingStyle(style: TextStyle = Type.Reading): TextStyle {
 private fun SwipePreview(swipes: Swipes) {
     val colors = MaterialTheme.colorScheme
     val reach = with(LocalDensity.current) { 96.dp.toPx() }
+    val further = with(LocalDensity.current) { 220.dp.toPx() }
     val offset = remember { Animatable(0f) }
     var last by remember { mutableStateOf(swipes) }
+    var action by remember { mutableStateOf(swipes.left) }
     LaunchedEffect(swipes) {
-        // Left first on the way in, then whichever side changed.
-        val way = if (swipes.right != last.right && swipes.left == last.left) 1f else -1f
+        // Left first on the way in, then whichever swipe changed; a long one that is now off shows the short.
+        val (way, long) = when {
+            swipes.leftLong != last.leftLong -> -1f to swipes.leftLong
+            swipes.rightLong != last.rightLong -> 1f to swipes.rightLong
+            swipes.right != last.right && swipes.left == last.left -> 1f to null
+            else -> -1f to null
+        }
         last = swipes
-        offset.animateTo(way * reach, Motion.settle())
+        action = long ?: if (way < 0f) swipes.left else swipes.right
+        offset.animateTo(way * if (long != null) further else reach, Motion.settle())
         offset.animateTo(0f, Motion.settle())
     }
     val left = offset.value < 0f
-    val action = if (left) swipes.left else swipes.right
     val (fill, on) = action.colors()
     Box(
         Modifier

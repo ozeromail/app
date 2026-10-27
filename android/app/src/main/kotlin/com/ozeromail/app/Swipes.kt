@@ -3,9 +3,13 @@ package com.ozeromail.app
 import android.content.Context
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.selectable
@@ -21,15 +26,12 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxDefaults
-import androidx.compose.material3.SwipeToDismissBoxState
-import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -46,25 +48,47 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.roundToInt
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import uniffi.ozero_api.MessageItem
 
-/** What a swipe on a row does; the person picks one for each side. */
+/** What a swipe on a row does; the person picks a short and a long one for each side. */
 enum class SwipeAction(@StringRes val label: Int, @DrawableRes val icon: Int) {
     DONE(R.string.action_done, R.drawable.ic_done),
     READ(R.string.action_read, R.drawable.ic_unread),
     DELETE(R.string.action_delete, R.drawable.ic_delete),
     SNOOZE(R.string.action_snooze, R.drawable.ic_snooze),
+    FLAG(R.string.swipe_flag, R.drawable.ic_flag),
+    MOVE(R.string.swipe_move, R.drawable.ic_folder),
+    SPAM(R.string.action_spam, R.drawable.ic_spam),
+    ;
+
+    /** Read and Flag change the row and leave it in the list; the rest take it away. */
+    val stays: Boolean
+        get() = this == READ || this == FLAG
 }
 
-/** By default left is Done and right is Read, as in the prototype. */
-data class Swipes(val left: SwipeAction = SwipeAction.DONE, val right: SwipeAction = SwipeAction.READ)
+/**
+ * Left is Done and, further, Delete; right is Read and, further, Snooze. A long swipe can be
+ * off, null, so the short one is all that side does.
+ */
+data class Swipes(
+    val left: SwipeAction = SwipeAction.DONE,
+    val right: SwipeAction = SwipeAction.READ,
+    val leftLong: SwipeAction? = SwipeAction.DELETE,
+    val rightLong: SwipeAction? = SwipeAction.SNOOZE,
+)
 
 /** The sizes of mail's text the person can pick from, against the usual one. */
 val TEXT_SCALES = listOf(0.9f, 1f, 1.1f, 1.2f, 1.35f)
@@ -76,9 +100,23 @@ class Settings(context: Context) {
 
     var swipes: Swipes
         get() = Swipes().let {
-            Swipes(action(prefs.getString(LEFT, null)) ?: it.left, action(prefs.getString(RIGHT, null)) ?: it.right)
+            // A long swipe turned off is kept as OFF, so it does not come back as the default.
+            fun long(key: String, usual: SwipeAction?) = prefs.getString(key, null).let { name ->
+                if (name == OFF) null else action(name) ?: usual
+            }
+            Swipes(
+                left = action(prefs.getString(LEFT, null)) ?: it.left,
+                right = action(prefs.getString(RIGHT, null)) ?: it.right,
+                leftLong = long(LEFT_LONG, it.leftLong),
+                rightLong = long(RIGHT_LONG, it.rightLong),
+            )
         }
-        set(value) = prefs.edit().putString(LEFT, value.left.name).putString(RIGHT, value.right.name).apply()
+        set(value) = prefs.edit()
+            .putString(LEFT, value.left.name)
+            .putString(RIGHT, value.right.name)
+            .putString(LEFT_LONG, value.leftLong?.name ?: OFF)
+            .putString(RIGHT_LONG, value.rightLong?.name ?: OFF)
+            .apply()
 
     /** The tip about swipes was read, so it does not show again. */
     var swipeTipSeen: Boolean
@@ -131,6 +169,9 @@ class Settings(context: Context) {
     companion object {
         private const val LEFT = "swipe_left"
         private const val RIGHT = "swipe_right"
+        private const val LEFT_LONG = "swipe_left_long"
+        private const val RIGHT_LONG = "swipe_right_long"
+        private const val OFF = "OFF"
         private const val TIP = "swipe_tip_seen"
         private const val EXPANDED = "expanded_groups"
         private const val CLOSED = "closed_parts"
@@ -160,16 +201,33 @@ data class Groups(val expanded: Set<Long>, val closed: Set<String> = emptySet())
 fun SwipeAction.appliesTo(message: MessageItem): Boolean = when (this) {
     SwipeAction.DONE -> message.canArchive
     SwipeAction.SNOOZE -> message.canSnooze
-    SwipeAction.READ, SwipeAction.DELETE -> true
+    SwipeAction.MOVE -> message.canMove
+    SwipeAction.SPAM -> message.canSpam
+    SwipeAction.READ, SwipeAction.DELETE, SwipeAction.FLAG -> true
 }
 
+/** What the action says on [message]: Read on a read one is Unread, Flag on a flagged one takes it off. */
+fun SwipeAction.label(message: MessageItem): Int = when {
+    this == SwipeAction.READ && message.threadUnread == 0u -> R.string.action_unread
+    this == SwipeAction.FLAG && message.flagged -> R.string.swipe_unflag
+    this == SwipeAction.DELETE && !message.canTrash -> R.string.action_delete_forever
+    else -> label
+}
+
+/** How far a row goes, as a share of its width, before letting go does the short swipe, and the long one. */
+private const val SHORT = 0.25f
+private const val LONG = 0.6f
+
+
 /**
- * A row that does [swipes] when swiped; a side whose action does not apply to [message] stays
- * still, as the whole row does unless [enabled]. [onSwipe] gets a way to bring the row back.
- * [onPull] hears how far the row is held from its place, so its neighbours can be drawn along.
+ * A row that does [swipes] when swiped; a side whose short action does not apply to [message]
+ * stays still, as the whole row does unless [enabled]. [onSwipe] gets a way to bring the row
+ * back. [onPull] hears how far the row is held from its place, so its neighbours can be drawn along.
  *
- * The row slides off a bare strip. The action's icon waits at the edge in a pale round drop;
- * once letting go would act, the drop fills with colour and the word slides out beside it.
+ * The row slides off a bare strip. The short action's icon waits at the edge in a pale round
+ * drop; once letting go would act, the drop fills with colour and the word slides out beside
+ * it. Further on, past the long swipe's mark, the whole strip floods with the long action's
+ * colour and its drop rides along with the row. Each mark crossed, either way, ticks.
  */
 @Composable
 fun SwipeRow(
@@ -181,110 +239,174 @@ fun SwipeRow(
     content: @Composable () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    // Not saved: the list keeps a row's saved state while it is gone, so a row brought back
-    // by Undo would come back swiped and do its action again.
+    val haptics = LocalHapticFeedback.current
     val density = LocalDensity.current
-    val threshold = SwipeToDismissBoxDefaults.positionalThreshold
     val swiped by rememberUpdatedState(onSwipe)
     val pulled by rememberUpdatedState(onPull)
     val current by rememberUpdatedState(swipes)
-    fun SwipeToDismissBoxValue.action() = when (this) {
-        SwipeToDismissBoxValue.EndToStart -> current.left
-        SwipeToDismissBoxValue.StartToEnd -> current.right
-        SwipeToDismissBoxValue.Settled -> null
-    }
-    val state = remember {
-        SwipeToDismissBoxState(
-            SwipeToDismissBoxValue.Settled,
-            density,
-            // Read keeps the row in the list: it goes back from where the finger let go as the
-            // mark changes, rather than out off the screen and in again.
-            confirmValueChange = { value ->
-                if (value.action() == SwipeAction.READ) {
-                    swiped(SwipeAction.READ) {}
-                    false
-                } else {
-                    true
-                }
-            },
-            positionalThreshold = threshold,
-        )
-    }
-    LaunchedEffect(state.currentValue) {
-        val action = state.currentValue.action() ?: return@LaunchedEffect
-        swiped(action) { scope.launch { state.reset() } }
-    }
-    // Only while a finger holds the row: once let go, its neighbours settle back.
+    val shown by rememberUpdatedState(message)
+    // Not saved: the list keeps a row's saved state while it is gone, so a row brought back
+    // by Undo would come back swiped and do its action again.
+    var offset by remember { mutableFloatStateOf(0f) }
+    var width by remember { mutableIntStateOf(0) }
     var held by remember { mutableStateOf(false) }
-    LaunchedEffect(state) {
-        snapshotFlow { if (held) state.offsetOrZero() else 0f }.collect { pulled(it) }
+    var moving by remember { mutableStateOf<Job?>(null) }
+
+    // The short and long action of the side the row goes to; a long one that does not apply is no long one.
+    fun side(left: Boolean): Pair<SwipeAction, SwipeAction?> {
+        val (short, long) = if (left) current.left to current.leftLong else current.right to current.rightLong
+        return short to long?.takeIf { it.appliesTo(shown) }
     }
-    val colors = MaterialTheme.colorScheme
-    SwipeToDismissBox(
-        state = state,
-        modifier = Modifier.whilePressed { held = it },
-        enableDismissFromStartToEnd = enabled && swipes.right.appliesTo(message),
-        enableDismissFromEndToStart = enabled && swipes.left.appliesTo(message),
-        backgroundContent = {
-            val left = state.dismissDirection == SwipeToDismissBoxValue.EndToStart
-            val action = if (left) swipes.left else swipes.right
-            val label = when {
-                action == SwipeAction.READ && message.threadUnread == 0u -> R.string.action_unread
-                action == SwipeAction.DELETE && !message.canTrash -> R.string.action_delete_forever
-                else -> action.label
+    fun open(left: Boolean) = enabled && side(left).first.appliesTo(shown)
+    // 0 while letting go does nothing, 1 for the short action, 2 for the long one.
+    val stage by remember {
+        derivedStateOf {
+            val far = if (width == 0) 0f else abs(offset) / width
+            when {
+                offset == 0f -> 0
+                far >= LONG && side(offset < 0f).second != null -> 2
+                far >= SHORT -> 1
+                else -> 0
             }
+        }
+    }
+    LaunchedEffect(Unit) {
+        var last = 0
+        snapshotFlow { stage }.collect {
+            if (held) {
+                haptics.performHapticFeedback(if (it > last) HapticFeedbackType.GestureThresholdActivate else HapticFeedbackType.GestureThresholdDeactivate)
+            }
+            last = it
+        }
+    }
+    LaunchedEffect(Unit) {
+        snapshotFlow { if (held) offset else 0f }.collect { pulled(it) }
+    }
+    fun glide(to: Float, then: () -> Unit = {}) {
+        moving?.cancel()
+        moving = scope.launch {
+            animate(offset, to, animationSpec = Motion.settle()) { value, _ -> offset = value }
+            then()
+        }
+    }
+    val flick = with(density) { 800.dp.toPx() }
+    fun release(velocity: Float) {
+        held = false
+        val left = offset < 0f
+        val (short, long) = side(left)
+        // A quick flick the row's way does the short swipe, as a slow pull that far would not.
+        val flicked = stage == 0 && abs(offset) > width * 0.08f && abs(velocity) > flick && (velocity < 0f) == left
+        val action = when {
+            stage == 2 -> long
+            stage == 1 || flicked -> short
+            else -> null
+        }
+        when {
+            action == null -> glide(0f)
+            action.stays -> {
+                swiped(action) {}
+                glide(0f)
+            }
+            else -> glide(if (left) -width.toFloat() else width.toFloat()) {
+                swiped(action) { moving?.cancel(); offset = 0f }
+            }
+        }
+    }
+
+    val colors = MaterialTheme.colorScheme
+    Box(
+        Modifier
+            .onSizeChanged { width = it.width }
+            .draggable(
+                rememberDraggableState { delta ->
+                    val to = offset + delta
+                    offset = when {
+                        to > 0f && !open(left = false) -> 0f
+                        to < 0f && !open(left = true) -> 0f
+                        else -> to.coerceIn(-width.toFloat(), width.toFloat())
+                    }
+                },
+                Orientation.Horizontal,
+                enabled = enabled,
+                onDragStarted = {
+                    moving?.cancel()
+                    held = true
+                },
+                onDragStopped = { release(it) },
+            ),
+    ) {
+        if (offset != 0f) {
+            val left = offset < 0f
+            val (short, long) = side(left)
+            val action = long?.takeIf { stage == 2 } ?: short
+            val far = stage == 2
             val (fill, on) = action.colors()
             // Whether letting go now would act: the drop fills a little slower than the icon nudges.
-            val armed = state.targetValue != SwipeToDismissBoxValue.Settled
-            val flood by animateFloatAsState(if (armed) 1f else 0f, Motion.drift(), label = "flood")
-            val arm by animateFloatAsState(if (armed) 1f else 0f, Motion.pop(), label = "arm")
-            val shown = arm.coerceIn(0f, 1f)
+            val flood by animateFloatAsState(if (far) 1f else 0f, Motion.drift(), label = "flood")
+            val pour by animateFloatAsState(if (stage > 0) 1f else 0f, Motion.drift(), label = "pour")
+            val arm by animateFloatAsState(if (stage > 0) 1f else 0f, Motion.pop(), label = "arm")
+            val armed = arm.coerceIn(0f, 1f)
             // A small swell as the drop fills, and the overshoot of the spring past it.
-            val swell = arm - shown * shown
-            val side = if (left) -1f else 1f
+            val swell = arm - armed * armed
+            val way = if (left) -1f else 1f
+            var group by remember { mutableIntStateOf(0) }
             Row(
-                Modifier.fillMaxSize().background(colors.background).padding(horizontal = Gap.screen - 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp, if (left) Alignment.End else Alignment.Start),
+                Modifier
+                    .matchParentSize()
+                    .background(lerp(colors.background, fill, flood))
+                    .padding(horizontal = Gap.screen - 2.dp),
+                horizontalArrangement = if (left) Arrangement.End else Arrangement.Start,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                val word = @Composable {
-                    Text(
-                        stringResource(label),
-                        color = fill,
-                        style = Type.Text,
-                        fontWeight = Weight.SemiBold,
-                        modifier = Modifier.graphicsLayer {
-                            alpha = shown
-                            translationX = side * (1f - shown) * 8.dp.toPx()
-                        },
-                    )
-                }
-                if (left) word()
-                // The drop: it grows in as the row uncovers it, and stays put at the edge.
-                Box(
+                Row(
                     Modifier
-                        .size(36.dp)
+                        .onSizeChanged { group = it.width }
                         .graphicsLayer {
-                            val seen = ((abs(state.offsetOrZero()) - 14.dp.toPx()) / 36.dp.toPx()).coerceIn(0f, 1f)
-                            scaleX = seen * (1f + 0.14f * swell)
-                            scaleY = scaleX
-                        }
-                        .background(fill.copy(alpha = 0.16f + 0.84f * flood), CircleShape),
-                    contentAlignment = Alignment.Center,
+                            // Flooded, the drop and its word ride just ahead of the row's edge.
+                            val ahead = (abs(offset) - group - (Gap.screen + 10.dp).toPx()).coerceAtLeast(0f)
+                            translationX = way * ahead * flood
+                        },
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Glyph(action.icon, null, lerp(fill, on, flood), size = 20.dp)
+                    val word = @Composable {
+                        Text(
+                            stringResource(action.label(message)),
+                            color = lerp(fill, on, flood),
+                            style = Type.Text,
+                            fontWeight = Weight.SemiBold,
+                            modifier = Modifier.graphicsLayer {
+                                alpha = armed
+                                translationX = way * (1f - armed) * 8.dp.toPx()
+                            },
+                        )
+                    }
+                    if (left) word()
+                    // The drop: it grows in as the row uncovers it.
+                    Box(
+                        Modifier
+                            .size(36.dp)
+                            .graphicsLayer {
+                                val seen = ((abs(offset) - 14.dp.toPx()) / 36.dp.toPx()).coerceIn(0f, 1f)
+                                scaleX = seen * (1f + 0.14f * swell)
+                                scaleY = scaleX
+                            }
+                            .background(lerp(fill.copy(alpha = 0.16f + 0.84f * pour), on.copy(alpha = 0.22f), flood), CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Glyph(action.icon, null, lerp(fill, on, maxOf(pour, flood)), size = 20.dp)
+                    }
+                    if (!left) word()
                 }
-                if (!left) word()
             }
-        },
-    ) {
-        Box(Modifier.background(colors.background)) { content() }
+        }
+        Box(
+            Modifier
+                .offset { IntOffset(offset.roundToInt(), 0) }
+                .background(colors.background),
+        ) { content() }
     }
 }
-
-/** How far the row is from its place; zero before it is first laid out. */
-private fun SwipeToDismissBoxState.offsetOrZero(): Float =
-    if (dismissDirection == SwipeToDismissBoxValue.Settled) 0f else requireOffset()
 
 /**
  * The row a finger holds and how far it has gone. Its neighbours are drawn a little way after
@@ -317,7 +439,10 @@ class Pull {
     }
 }
 
-/** The fill and what sits on it: Done the accent, as everywhere; Read the quiet slate, Delete the warning red. */
+/**
+ * The fill and what sits on it: Done the accent, as everywhere; Read the quiet slate, Delete
+ * the warning red, Snooze amber, Flag orange as flags are, a folder violet, spam grey.
+ */
 @Composable
 fun SwipeAction.colors(): Pair<Color, Color> = with(MaterialTheme.colorScheme) {
     when (this@colors) {
@@ -325,12 +450,27 @@ fun SwipeAction.colors(): Pair<Color, Color> = with(MaterialTheme.colorScheme) {
         SwipeAction.READ -> secondary to onSecondary
         SwipeAction.DELETE -> error to onError
         SwipeAction.SNOOZE -> tertiary to onTertiary
+        SwipeAction.FLAG -> Color(0xFFEA7A1E) to Color.White
+        SwipeAction.MOVE -> Color(0xFF7A6FF0) to Color.White
+        SwipeAction.SPAM -> Color(0xFF7C8799) to Color.White
     }
 }
 
 /** "← Done · Read →". */
 @Composable
 fun Swipes.summary(): String = stringResource(R.string.swipes_summary, stringResource(left.label), stringResource(right.label))
+
+/** What the tip says the swipes do, with the long ones when they are on, and how the mailboxes open. */
+@Composable
+private fun Swipes.tip(): String {
+    @Composable
+    fun side(short: SwipeAction, long: SwipeAction?): String =
+        long?.let { stringResource(R.string.swipes_further, stringResource(short.label), stringResource(it.label)) }
+            ?: stringResource(short.label)
+    val left = side(left, leftLong)
+    val right = side(right, rightLong)
+    return stringResource(R.string.swipes_tip, left, right) + " " + stringResource(R.string.swipes_tip_lift)
+}
 
 /** A one-time note above the list on what the swipes do. */
 @Composable
@@ -346,7 +486,7 @@ fun SwipeTip(swipes: Swipes, onDismiss: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            stringResource(R.string.swipes_tip, stringResource(swipes.left.label), stringResource(swipes.right.label)),
+            swipes.tip(),
             style = Type.Text,
             modifier = Modifier.weight(1f),
         )
@@ -354,22 +494,24 @@ fun SwipeTip(swipes: Swipes, onDismiss: () -> Unit) {
     }
 }
 
-/** The choice for each side, on its page of the settings. */
+/** The short and the long choice for each side, on its page of the settings; a long one can be off. */
 @Composable
 fun SwipeSettings(swipes: Swipes, onChange: (Swipes) -> Unit) {
-    Side(R.string.swipes_left, swipes.left) { onChange(swipes.copy(left = it)) }
-    Side(R.string.swipes_right, swipes.right) { onChange(swipes.copy(right = it)) }
+    Side(R.string.swipes_left, SwipeAction.entries, swipes.left) { onChange(swipes.copy(left = it ?: swipes.left)) }
+    Side(R.string.swipes_left_long, SwipeAction.entries + null, swipes.leftLong) { onChange(swipes.copy(leftLong = it)) }
+    Side(R.string.swipes_right, SwipeAction.entries, swipes.right) { onChange(swipes.copy(right = it ?: swipes.right)) }
+    Side(R.string.swipes_right_long, SwipeAction.entries + null, swipes.rightLong) { onChange(swipes.copy(rightLong = it)) }
 }
 
 @Composable
-private fun Side(@StringRes title: Int, picked: SwipeAction, onPick: (SwipeAction) -> Unit) {
+private fun Side(@StringRes title: Int, options: List<SwipeAction?>, picked: SwipeAction?, onPick: (SwipeAction?) -> Unit) {
     val colors = MaterialTheme.colorScheme
     // Four to a row: the name goes under the icon to fit.
-    Choices(title, SwipeAction.entries, picked, onPick, height = 56.dp) { action, on ->
+    Choices(title, options, picked, onPick, height = 56.dp) { action, on ->
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Glyph(action.icon, null, if (on) colors.primary else colors.onSurfaceVariant, size = 18.dp)
+            Glyph(action?.icon ?: R.drawable.ic_close, null, if (on) colors.primary else colors.onSurfaceVariant, size = 18.dp)
             Text(
-                stringResource(action.label),
+                stringResource(action?.label ?: R.string.swipes_off),
                 color = if (on) colors.primary else colors.onSurface,
                 style = Type.Label,
                 maxLines = 1,

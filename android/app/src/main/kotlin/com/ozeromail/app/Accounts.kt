@@ -93,12 +93,13 @@ data class MailboxesState(
 @Composable
 fun AccountsSheet(
     visible: Boolean,
+    lift: Lift,
     state: MailboxesState,
     actions: AccountsActions,
     holdTip: Boolean,
     onClose: () -> Unit,
 ) {
-    Sheet(visible, onClose) {
+    Sheet(visible, onClose, lift) {
         Column {
             SheetTitle(stringResource(R.string.folders_title))
             MailboxList(state, actions)

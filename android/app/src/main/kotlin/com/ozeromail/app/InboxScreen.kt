@@ -101,6 +101,9 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
@@ -301,6 +304,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     // The account being signed in to again, by id.
     var signingIn by rememberSaveable { mutableStateOf<Long?>(null) }
     var accountsOpen by rememberSaveable { mutableStateOf(false) }
+    // A finger raising the accounts sheet from the dock.
+    val lift = remember { Lift() }
     // The settings' pages open, the top one last; none while they are closed.
     var settingsPages by rememberSaveable { mutableStateOf(emptyList<Long>()) }
     // Accounts removed while the app runs.
@@ -327,6 +332,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var chosen by remember { mutableStateOf(emptySet<Long>()) }
     // Messages waiting on the snooze sheet for a time.
     var snoozing by remember { mutableStateOf<Snoozing?>(null) }
+    // A message swiped to another folder, off the list while the folder is picked. Kept after,
+    // so the sheet's folders do not vanish before it has gone down.
+    var moving by remember { mutableStateOf<Moving?>(null) }
+    var movingOpen by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -844,11 +853,11 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         remove(gone, context.getString(R.string.inbox_snoozed, snoozeTime(context, until)), FolderRole.SNOOZED, { mail.snooze(it, until) }, reset)
 
     /** Into the spam folder. */
-    fun spam(gone: List<MessageItem>) = remove(gone, spammed, FolderRole.JUNK, mail::spam)
+    fun spam(gone: List<MessageItem>, reset: () -> Unit = {}) = remove(gone, spammed, FolderRole.JUNK, mail::spam, reset)
 
     /** Into another folder of the account, named [title] in the toast. */
-    fun moveToFolder(gone: List<MessageItem>, folder: FolderItem, title: String) =
-        remove(gone, context.getString(R.string.inbox_moved_to, title), null, { mail.moveToFolder(it, folder) }, to = folder)
+    fun moveToFolder(gone: List<MessageItem>, folder: FolderItem, title: String, reset: () -> Unit = {}) =
+        remove(gone, context.getString(R.string.inbox_moved_to, title), null, { mail.moveToFolder(it, folder) }, reset, to = folder)
 
     /** Back into the inbox, out of the archive, trash or spam. */
     fun moveToInbox(gone: List<MessageItem>) = remove(gone, movedBack, FolderRole.INBOX, mail::moveToInbox)
@@ -871,6 +880,19 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         }
     }
 
+    /** Flags the message, or takes its flag off; it stays in the list. */
+    fun setFlag(message: MessageItem, flagged: Boolean) {
+        scope.launch {
+            try {
+                mail.flag(listOf(message), flagged)
+            } catch (e: CoreException) {
+                fail(e)
+                return@launch
+            }
+            messages = messages.map { if (it.id == message.id) it.copy(flagged = flagged) else it }
+        }
+    }
+
     fun swiped(message: MessageItem, action: SwipeAction, reset: () -> Unit) = when (action) {
         SwipeAction.DONE -> archive(listOf(message), reset)
         SwipeAction.DELETE -> delete(listOf(message), reset)
@@ -878,6 +900,21 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         SwipeAction.READ -> setRead(listOf(message), message.threadUnread > 0u, reset)
         // Off the list while the sheet asks until when; back if it closes without a time.
         SwipeAction.SNOOZE -> { snoozing = Snoozing(listOf(message), reset) }
+        SwipeAction.FLAG -> setFlag(message, !message.flagged)
+        SwipeAction.SPAM -> spam(listOf(message), reset)
+        // The same: off the list while the sheet asks where to.
+        SwipeAction.MOVE -> {
+            scope.launch {
+                try {
+                    moving = Moving(message, mail.moveTargets(message), reset)
+                    movingOpen = true
+                } catch (e: CoreException) {
+                    fail(e)
+                    reset()
+                }
+            }
+            Unit
+        }
     }
 
     /** The chosen messages, as the list shows them; acting on them ends the choosing. */
@@ -1118,17 +1155,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 closeSearch()
                 spam(listOf(message))
             }.takeIf { message.canSpam },
-            onFlag = { flagged ->
-                scope.launch {
-                    try {
-                        mail.flag(listOf(message), flagged)
-                    } catch (e: CoreException) {
-                        fail(e)
-                        return@launch
-                    }
-                    messages = messages.map { if (it.id == message.id) it.copy(flagged = flagged) else it }
-                }
-            },
+            onFlag = { flagged -> setFlag(message, flagged) },
             onDone = {
                 // The next message in the list opens in its place, and the toast can undo it there;
                 // after the last, or from search, back to the list.
@@ -1327,6 +1354,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                     tab = next
                                 },
                                 onAccounts = { accountsOpen = true },
+                                lift = lift,
                                 onSearch = { searching = true },
                                 onCompose = { compose() },
                                 onGo = { mailbox = it },
@@ -1354,6 +1382,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         }
         AccountsSheet(
             visible = accountsOpen,
+            lift = lift,
             state = mailboxesState,
             actions = accountsActions,
             holdTip = holdTip,
@@ -1373,6 +1402,20 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 snoozing = null
             },
         )
+        Sheet(
+            visible = movingOpen,
+            onClose = {
+                movingOpen = false
+                moving?.reset?.invoke()
+            },
+        ) {
+            moving?.let { shown ->
+                MoveTargets(shown.targets) { folder, title ->
+                    movingOpen = false
+                    moveToFolder(listOf(shown.message), folder, title, shown.reset)
+                }
+            }
+        }
     }
     crash?.let { report ->
         fun decided() {
@@ -1509,6 +1552,8 @@ private fun InboxList(
     onSwipe: (MessageItem, SwipeAction, reset: () -> Unit) -> Unit,
     onTab: (Category) -> Unit,
     onAccounts: () -> Unit,
+    /** Raises the accounts sheet as a finger drags the dock up. */
+    lift: Lift,
     onSearch: () -> Unit,
     onCompose: () -> Unit,
     onGo: (Mailbox) -> Unit,
@@ -1765,8 +1810,8 @@ private fun InboxList(
                             swipes,
                             enabled = !choosing,
                             onSwipe = { action, reset ->
-                                // Read leaves the row where it is: nothing below has a gap to close.
-                                if (action != SwipeAction.READ) closedAt = index
+                                // Read and Flag leave the row where it is: nothing below has a gap to close.
+                                if (!action.stays) closedAt = index
                                 onSwipe(message, action, reset)
                             },
                             onPull = { rowPull.hold(message.id, index, it) },
@@ -1851,6 +1896,7 @@ private fun InboxList(
                 accounts = scope,
                 onTab = pick,
                 onAccounts = onAccounts,
+                lift = lift,
                 onSearch = onSearch,
                 onCompose = onCompose,
                 empty = empty.takeIf { messages.isNotEmpty() && !choosing },
@@ -1982,6 +2028,7 @@ private fun Dock(
     accounts: List<AccountItem>,
     onTab: (Category, from: Float, velocity: Float) -> Unit,
     onAccounts: () -> Unit,
+    lift: Lift,
     onSearch: () -> Unit,
     onCompose: () -> Unit,
     empty: Pair<Int, () -> Unit>?,
@@ -1999,12 +2046,28 @@ private fun Dock(
         Spacer(modifier.fillMaxWidth().navigationBarsPadding())
         return
     }
+    val open by rememberUpdatedState(onAccounts)
+    // Dragged up, the dock raises the accounts sheet; tabs slide sideways and buttons take taps,
+    // so the first few pixels tell them apart. Not over the bar of the system's own gestures.
+    val raise = Modifier.draggable(
+        rememberDraggableState { delta ->
+            if (lift.risen == null && delta < 0f) {
+                lift.start()
+                open()
+            }
+            lift.drag(delta)
+        },
+        Orientation.Vertical,
+        enabled = !wide && choosing == 0f,
+        onDragStopped = { velocity -> lift.stop(velocity) },
+    )
     Column(
         modifier
             .fillMaxWidth()
             .background(colors.bar)
             .hairline(colors.outlineVariant, top = true)
             .navigationBarsPadding()
+            .then(raise)
             .padding(top = if (short) 6.dp else Gap.barTop, bottom = if (short) 6.dp else Gap.barBottom),
         verticalArrangement = Arrangement.spacedBy(Gap.inBar),
     ) {
