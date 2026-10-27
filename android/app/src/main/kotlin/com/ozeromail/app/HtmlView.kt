@@ -1,8 +1,6 @@
 package com.ozeromail.app
 
 import android.annotation.SuppressLint
-import android.content.ActivityNotFoundException
-import android.content.Intent
 import android.graphics.Color
 import android.view.ViewGroup
 import android.webkit.WebResourceRequest
@@ -85,13 +83,7 @@ private fun WebView.configure(images: List<RemoteImage?>, onShown: () -> Unit) {
         // Only a tap opens a link; a page cannot redirect on its own.
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             if (request.hasGesture() && request.url.scheme?.lowercase() in LINK_SCHEMES) {
-                try {
-                    // Only apps that take links from a browser may open it.
-                    val intent = Intent(Intent.ACTION_VIEW, request.url).addCategory(Intent.CATEGORY_BROWSABLE)
-                    view.context.startActivity(intent)
-                } catch (_: ActivityNotFoundException) {
-                    // Nothing handles this link; ignore the tap.
-                }
+                openLink(view.context, request.url)
             }
             return true
         }

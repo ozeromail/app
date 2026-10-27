@@ -2,10 +2,7 @@
 
 package com.ozeromail.app
 
-import android.content.ActivityNotFoundException
 import android.content.ClipData
-import android.content.Context
-import android.content.Intent
 import android.net.Uri
 import android.util.Log
 import androidx.activity.compose.BackHandler
@@ -163,8 +160,8 @@ fun MessageScreen(
     pane: Boolean = false,
 ) {
     var sheet by remember(message.id) { mutableStateOf<ReaderSheet?>(null) }
-    // Whether the list it came from can be left from here, and the question before it is.
-    var leaves by remember(message.id) { mutableStateOf(false) }
+    // Whether the person left the list it came from here, and the question before they do.
+    var left by remember(message.id) { mutableStateOf(false) }
     var leaving by remember(message.id) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -189,13 +186,6 @@ fun MessageScreen(
         onDispose {
             bodies.cancel()
             expectGone(bodies, "bodies of a closed conversation")
-        }
-    }
-    LaunchedEffect(message.id) {
-        leaves = try {
-            mail.canUnsubscribe(message)
-        } catch (_: CoreException) {
-            false
         }
     }
     LaunchedEffect(message.id) {
@@ -475,7 +465,7 @@ fun MessageScreen(
                             }
                         }
                     }
-                    if (leaves) {
+                    if (message.canUnsubscribe && !left) {
                         SheetAction(R.drawable.ic_unsubscribe, stringResource(R.string.action_unsubscribe), colors.onSurface) {
                             sheet = null
                             leaving = true
@@ -505,26 +495,21 @@ fun MessageScreen(
         }
         if (leaving) {
             Unsubscribe(
-                sender = message.fromName?.takeIf { it.isNotBlank() } ?: message.fromEmail,
+                sender = message.sender,
                 onDismiss = { leaving = false },
                 onConfirm = {
                     leaving = false
                     scope.launch {
-                        val text = try {
+                        try {
                             when (val done = mail.unsubscribe(message)) {
-                                Unsubscribed.Done -> R.string.unsubscribe_done
-                                Unsubscribed.Sent -> R.string.unsubscribe_sent
-                                is Unsubscribed.Page -> {
-                                    openPage(context, done.url)
-                                    null
-                                }
+                                Unsubscribed.Done -> snackbar.showSnackbar(context.getString(R.string.unsubscribe_done))
+                                Unsubscribed.Sent -> snackbar.showSnackbar(context.getString(R.string.unsubscribe_sent))
+                                is Unsubscribed.Page -> openLink(context, Uri.parse(done.url))
                             }
+                            left = true
                         } catch (e: CoreException) {
                             snackbar.showSnackbar(context.getString(e.text()))
-                            return@launch
                         }
-                        leaves = false
-                        text?.let { snackbar.showSnackbar(context.getString(it)) }
                     }
                 },
             )
@@ -556,15 +541,6 @@ private fun Unsubscribe(sender: String, onDismiss: () -> Unit, onConfirm: () -> 
         containerColor = colors.background,
         shape = RoundedCornerShape(Radius.dialog),
     )
-}
-
-/** Opens an `https` page in the browser; nothing if no app takes it. */
-private fun openPage(context: Context, url: String) {
-    try {
-        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE))
-    } catch (_: ActivityNotFoundException) {
-        // Nothing opens pages.
-    }
 }
 
 /** What a sheet of the message screen holds. */

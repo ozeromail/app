@@ -2960,5 +2960,14 @@ fn a_message_keeps_how_to_leave_its_list() {
         .iter()
         .map(|r| store.unsubscribe(r.id).unwrap())
         .collect();
-    assert_eq!(found, [None, Some(leave)]);
+    assert_eq!(found, [None, Some(leave.clone())]);
+    assert!(rows[1].can_unsubscribe && !rows[0].can_unsubscribe);
+
+    // Asked once, it is offered no more; a one-click request waits until it went.
+    store.leave(rows[1].id, true).unwrap();
+    assert_eq!(store.unsubscribe(rows[1].id).unwrap(), None);
+    assert_eq!(store.leaves_due(account).unwrap(), [(rows[1].id, leave)]);
+    assert!(!list(&store, ListScope::Folder(folder), 10, None)[1].can_unsubscribe);
+    store.leave(rows[1].id, false).unwrap();
+    assert!(store.leaves_due(account).unwrap().is_empty());
 }

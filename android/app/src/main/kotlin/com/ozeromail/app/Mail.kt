@@ -336,13 +336,10 @@ class Mail(private val context: Context) {
     /** Where [moveToFolder] can take [message]: its account's inbox, archive and own folders, but its own. */
     suspend fun moveTargets(message: MessageItem): List<FolderItem> = io { core.moveTargets(message.id) }
 
-    /** Whether [message] says how to leave its list in a way [unsubscribe] takes. */
-    suspend fun canUnsubscribe(message: MessageItem): Boolean = io { core.canUnsubscribe(message.id) }
-
-    /** Leaves [message]'s list; a message asking to leave goes out in the background. */
+    /** Leaves [message]'s list; a request or message asking to leave goes out in the background. */
     suspend fun unsubscribe(message: MessageItem): Unsubscribed {
         val done = io { core.unsubscribe(message.id) }
-        if (done == Unsubscribed.Sent) push(message.accountId)
+        push(message.accountId)
         return done
     }
 

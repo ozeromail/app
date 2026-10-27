@@ -413,6 +413,14 @@ impl Store for Memory {
         Ok(None)
     }
 
+    fn leave(&self, _: MessageId, _: bool) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn leaves_due(&self, _: AccountId) -> Result<Vec<(MessageId, Unsubscribe)>, StoreError> {
+        Ok(vec![])
+    }
+
     fn remove_account(&self, _: AccountId) -> Result<(), StoreError> {
         Ok(())
     }

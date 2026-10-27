@@ -562,22 +562,20 @@ impl Core {
         })
     }
 
-    /// Whether the message says how to leave its list in a way `unsubscribe` takes.
-    pub fn can_unsubscribe(&self, message: i64) -> Result<bool, CoreError> {
-        Ok(self.leave(message)?.is_some())
-    }
-
-    /// Leaves the list the message came from, the best way it offers: a one-click request
-    /// now, or a message through the outbox, which `push_actions` sends; a page is left to the
-    /// person to open. Fails with `NotFound` if it offers none.
-    pub async fn unsubscribe(&self, message: i64) -> Result<Unsubscribed, CoreError> {
-        match self.leave(message)?.ok_or(CoreError::NotFound)? {
-            Leave::Post(url) => {
-                ozero_http::one_click(&url, self.tls()?).await?;
+    /// Leaves the list the message came from, the best way it offers: a one-click request or
+    /// a message, which `push_actions` sends; a page is left to the person to open. Either of
+    /// the first two is done on the device at once and offered no more. Fails with
+    /// `NotFound` if it offers none.
+    pub fn unsubscribe(&self, message: i64) -> Result<Unsubscribed, CoreError> {
+        let id = MessageId(message);
+        let leave = self.store.unsubscribe(id)?.and_then(|u| u.leave());
+        match leave.ok_or(CoreError::NotFound)? {
+            Leave::Post(_) => {
+                self.store.leave(id, true)?;
                 Ok(Unsubscribed::Done)
             }
             Leave::Mail { to, subject, body } => {
-                let account = self.store.location(MessageId(message))?.account_id;
+                let account = self.store.location(id)?.account_id;
                 self.send(DraftItem {
                     id: 0,
                     account_id: account.0,
@@ -592,6 +590,7 @@ impl Core {
                     signature: String::new(),
                     cc: String::new(),
                 })?;
+                self.store.leave(id, false)?;
                 Ok(Unsubscribed::Sent)
             }
             Leave::Page(url) => Ok(Unsubscribed::Page { url }),
@@ -1725,13 +1724,6 @@ impl Core {
         self.items(rows)
     }
 
-    fn leave(&self, message: i64) -> Result<Option<Leave>, CoreError> {
-        Ok(self
-            .store
-            .unsubscribe(MessageId(message))?
-            .and_then(|u| u.leave()))
-    }
-
     /// The account's folders that `keep` takes, placed in its folder tree.
     fn account_folders(
         &self,
@@ -2126,6 +2118,7 @@ impl Core {
         // Mail first: an action may take a forwarded message off the device, and its files
         // with it. Mail that cannot go does not hold the actions back.
         let mailed = self.push_mail(account, secret, slot).await;
+        self.push_leaves(account).await?;
         // Boxed, as below: connecting inline overflows a debug build's stack.
         Box::pin(self.send_ops(account, secret, slot)).await?;
         // After the mail, so the copies of drafts just sent go too. Drafts stay on the device
@@ -2147,6 +2140,27 @@ impl Core {
             }
         }
         mailed
+    }
+
+    /// Sends the account's one-click requests to leave a list. One the list refuses is not
+    /// tried again; without a network the rest wait for the next push.
+    async fn push_leaves(&self, account: &Account) -> Result<(), CoreError> {
+        let due = self.store.leaves_due(account.id)?;
+        if due.is_empty() {
+            return Ok(());
+        }
+        let tls = self.tls()?;
+        for (message, leave) in due {
+            if let Some(Leave::Post(url)) = leave.leave() {
+                match ozero_http::one_click(&url, tls.clone()).await {
+                    Ok(()) => {}
+                    Err(e @ ProviderError::Network(_)) => return Err(e.into()),
+                    Err(e) => log::warn!("unsubscribe refused: {e:?}"),
+                }
+            }
+            self.store.leave(message, false)?;
+        }
+        Ok(())
     }
 
     /// Saves the account's drafts into its drafts folder and deletes their stale copies;
@@ -3476,7 +3490,7 @@ fn sandboxed(html: &str, styled: bool) -> String {
 /// What `Core::unsubscribe` did.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum Unsubscribed {
-    /// The list took the request: no more mail from it.
+    /// A one-click request to leave goes with the next push: no more mail from the list.
     Done,
     /// A message asking to leave is in the outbox.
     Sent,
@@ -3517,6 +3531,8 @@ pub struct MessageItem {
     pub can_spam: bool,
     /// It can move to another folder: from the inbox, archive, trash, spam or the user's folders.
     pub can_move: bool,
+    /// `Core::unsubscribe` can leave the list it came from.
+    pub can_unsubscribe: bool,
     /// In mixed lists (the unified inbox, search), set when there is more than one account.
     pub account: Option<AccountMark>,
     /// The names of its attachments, once its body is downloaded; a name may be empty.
@@ -3548,6 +3564,7 @@ impl From<MessageRow> for MessageItem {
             can_snooze: allows(Action::Snooze),
             can_spam: allows(Action::Spam),
             can_move: allows(Action::Move(FolderId(0))),
+            can_unsubscribe: row.can_unsubscribe,
             account: None,
             attachments: row.attachments,
             sending: row.sending,

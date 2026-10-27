@@ -41,6 +41,29 @@ pub fn decode_base64(text: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// `text` with each `%XX` turned into its byte; anything else is left as it is.
+pub fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = bytes
+            .get(i + 1..i + 3)
+            .and_then(|h| std::str::from_utf8(h).ok());
+        match hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
+            Some(byte) if bytes[i] == b'%' => {
+                out.push(byte);
+                i += 3;
+            }
+            _ => {
+                out.push(bytes[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

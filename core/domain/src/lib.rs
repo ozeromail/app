@@ -16,7 +16,7 @@ pub use account::{
     Account, AccountId, AccountKind, MailService, NewAccount, NewMail, Server, default_label,
     email_domain, guess_imap_host, guess_smtp_host, mail_service, saves_sent_itself,
 };
-pub use encoding::{base64, decode_base64};
+pub use encoding::{base64, decode_base64, percent_decode};
 pub use folder::{Folder, FolderId, FolderRole, NewFolder, SNOOZED};
 pub use message::{
     Address, Attachment, Body, Correspondents, Cursor, Flags, ListQuery, ListScope, MessageId,

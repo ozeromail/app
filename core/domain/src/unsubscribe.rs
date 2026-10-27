@@ -1,3 +1,5 @@
+use crate::percent_decode;
+
 /// How a message's sender lets you leave its list: its `List-Unsubscribe` header as sent
 /// (RFC 2369), and whether `List-Unsubscribe-Post` asks for a one-click POST (RFC 8058).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,22 +38,27 @@ impl Unsubscribe {
     /// The way to leave: a one-click POST, else a message, else a page; None if no link is
     /// one the app can use.
     pub fn leave(&self) -> Option<Leave> {
-        let links: Vec<&str> = self
-            .links
-            .split(',')
-            .filter_map(|l| l.trim().strip_prefix('<')?.strip_suffix('>'))
-            .map(str::trim)
-            .collect();
-        let https = links.iter().find(|l| is_scheme(l, "https:"));
-        if self.one_click
-            && let Some(url) = https
-        {
-            return Some(Leave::Post((*url).to_owned()));
+        let (mut https, mut mailto) = (None, None);
+        for link in self.links.split(',') {
+            let Some(link) = link
+                .trim()
+                .strip_prefix('<')
+                .and_then(|l| l.strip_suffix('>'))
+            else {
+                continue;
+            };
+            let link = link.trim();
+            if https.is_none() && is_scheme(link, "https:") {
+                https = Some(link);
+            } else if mailto.is_none() {
+                mailto = mail(link);
+            }
         }
-        links
-            .iter()
-            .find_map(|l| mail(l))
-            .or_else(|| https.map(|url| Leave::Page((*url).to_owned())))
+        match (https, mailto) {
+            (Some(url), _) if self.one_click => Some(Leave::Post(url.to_owned())),
+            (_, Some(mail)) => Some(mail),
+            (url, None) => url.map(|url| Leave::Page(url.to_owned())),
+        }
     }
 }
 
@@ -66,7 +73,7 @@ fn mail(link: &str) -> Option<Leave> {
         return None;
     }
     let (to, query) = link[7..].split_once('?').unwrap_or((&link[7..], ""));
-    let to = decode(to)?;
+    let to = percent_decode(to);
     if !crate::is_address(&to) {
         return None;
     }
@@ -74,33 +81,15 @@ fn mail(link: &str) -> Option<Leave> {
     for pair in query.split('&') {
         let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
         if key.eq_ignore_ascii_case("subject") {
-            subject = decode(value)?;
+            subject = percent_decode(value);
         } else if key.eq_ignore_ascii_case("body") {
-            body = decode(value)?;
+            body = percent_decode(value);
         }
     }
     if subject.trim().is_empty() {
         subject = "unsubscribe".to_owned();
     }
     Some(Leave::Mail { to, subject, body })
-}
-
-/// Percent-decodes `text` as UTF-8; None if it is not.
-fn decode(text: &str) -> Option<String> {
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' {
-            let hex = text.get(i + 1..i + 3)?;
-            out.push(u8::from_str_radix(hex, 16).ok()?);
-            i += 3;
-        } else {
-            out.push(bytes[i]);
-            i += 1;
-        }
-    }
-    String::from_utf8(out).ok()
 }
 
 #[cfg(test)]
@@ -161,7 +150,7 @@ mod tests {
             ),
             None
         );
-        assert_eq!(leave("<mailto:%zz@example.com>", None), None);
+        assert_eq!(leave("<mailto:not-an-address>", None), None);
         assert_eq!(Unsubscribe::new(Some("  "), None), None);
     }
 }

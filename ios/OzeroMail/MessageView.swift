@@ -26,8 +26,8 @@ struct MessageView: View {
     @State private var more = false
     /// The folders the message can move to, picked from More.
     @State private var targets: [(folder: FolderItem, title: String)]?
-    /// Whether the list it came from can be left from here, and the question before it is.
-    @State private var leaves = false
+    /// Whether the person left the list it came from here, and the question before they do.
+    @State private var left = false
     @State private var leaving = false
     @Environment(\.openURL) private var openURL
     @State private var files = Files()
@@ -182,7 +182,7 @@ struct MessageView: View {
                     }
                 }
             }
-            if leaves {
+            if message.canUnsubscribe && !left {
                 Button("action_unsubscribe") { leaving = true }
             }
             if message.canSpam {
@@ -203,13 +203,12 @@ struct MessageView: View {
         } message: { targets in
             if targets.isEmpty { Text("move_none") }
         }
-        .alert(tr("unsubscribe_title", sender), isPresented: $leaving) {
+        .alert(tr("unsubscribe_title", message.sender), isPresented: $leaving) {
             Button("action_unsubscribe", role: .destructive) { Task { await unsubscribe() } }
             Button("action_cancel", role: .cancel) {}
         } message: {
             Text("unsubscribe_text")
         }
-        .task(id: message.id) { leaves = (try? await mail.canUnsubscribe(message)) ?? false }
         .confirmationDialog(
             person?.name ?? "", isPresented: Binding { person != nil } set: { if !$0 { person = nil } },
             titleVisibility: .visible, presenting: person
@@ -426,12 +425,6 @@ struct MessageView: View {
         }
     }
 
-    /// Back to the list, then `act`, so the list shows the toast.
-    /// Who the message is from, as the question before leaving their list names them.
-    private var sender: String {
-        message.fromName.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 } ?? message.fromEmail
-    }
-
     /// Leaves the list the message came from, and says so; a page opens in the browser.
     private func unsubscribe() async {
         do {
@@ -440,12 +433,13 @@ struct MessageView: View {
             case .sent: model.note(tr("unsubscribe_sent"))
             case let .page(url): if let url = URL(string: url) { openURL(url) }
             }
-            leaves = false
+            left = true
         } catch {
             model.error = error.textKey()
         }
     }
 
+    /// Back to the list, then `act`, so the list shows the toast.
     private func leave(_ act: @escaping () async -> Void) {
         Self.close(message, in: model)
         Task { await act() }

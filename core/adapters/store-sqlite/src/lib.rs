@@ -720,6 +720,7 @@ impl Store for SqliteStore {
                 for m in messages {
                     if write_message(&mut save, *folder, m)? > 0 {
                         link_thread(&tx, account.0, *folder, m)?;
+                        write_unsubscribe(&tx, *folder, m)?;
                     }
                     hit.execute(params![folder.0, m.remote_id, words])
                         .map_err(storage)?;
@@ -805,17 +806,51 @@ impl Store for SqliteStore {
 
     fn unsubscribe(&self, message: MessageId) -> Result<Option<Unsubscribe>, StoreError> {
         self.conn()
-            .prepare_cached("SELECT unsubscribe, one_click FROM message WHERE id = ?1")
+            .prepare_cached(
+                "SELECT links, one_click FROM unsubscribe WHERE message_id = ?1 AND state = 0",
+            )
             .and_then(|mut s| {
                 s.query_row([message.0], |r| {
-                    let one_click = r.get(1)?;
-                    Ok(r.get::<_, Option<String>>(0)?
-                        .map(|links| Unsubscribe { links, one_click }))
+                    Ok(Unsubscribe {
+                        links: r.get(0)?,
+                        one_click: r.get(1)?,
+                    })
                 })
                 .optional()
             })
-            .map_err(storage)?
-            .ok_or(StoreError::NotFound)
+            .map_err(storage)
+    }
+
+    fn leave(&self, message: MessageId, queued: bool) -> Result<(), StoreError> {
+        self.conn()
+            .execute(
+                "UPDATE unsubscribe SET state = ?2 WHERE message_id = ?1",
+                params![message.0, if queued { 1 } else { 2 }],
+            )
+            .map_err(storage)?;
+        Ok(())
+    }
+
+    fn leaves_due(&self, account: AccountId) -> Result<Vec<(MessageId, Unsubscribe)>, StoreError> {
+        self.conn()
+            .prepare_cached(
+                "SELECT u.message_id, u.links, u.one_click FROM unsubscribe u
+                 JOIN message m ON m.id = u.message_id JOIN folder f ON f.id = m.folder_id
+                 WHERE u.state = 1 AND f.account_id = ?1",
+            )
+            .and_then(|mut s| {
+                s.query_map([account.0], |r| {
+                    Ok((
+                        MessageId(r.get(0)?),
+                        Unsubscribe {
+                            links: r.get(1)?,
+                            one_click: r.get(2)?,
+                        },
+                    ))
+                })?
+                .collect()
+            })
+            .map_err(storage)
     }
 
     fn location(&self, message: MessageId) -> Result<MessageLocation, StoreError> {
@@ -2096,9 +2131,9 @@ fn copy_into(tx: &Transaction<'_>, message: MessageId, folder: i64) -> Result<i6
         .prepare_cached(
             "INSERT INTO message (folder_id, remote_id, message_id, from_name, from_email,
                                   subject, snippet, date, flags, category, answer_to, recipients,
-                                  unsubscribe, one_click, thread_id, stand_in)
+                                  thread_id, stand_in)
              SELECT ?2, '~' || id, message_id, from_name, from_email, subject, snippet, date,
-                    flags, category, answer_to, recipients, unsubscribe, one_click, thread_id, 1
+                    flags, category, answer_to, recipients, thread_id, 1
              FROM message WHERE id = ?1
              RETURNING id",
         )
@@ -2109,6 +2144,8 @@ fn copy_into(tx: &Transaction<'_>, message: MessageId, folder: i64) -> Result<i6
          SELECT ?2, text, html FROM message_body WHERE message_id = ?1",
         "INSERT INTO attachment (message_id, part, name, mime, size)
          SELECT ?2, part, name, mime, size FROM attachment WHERE message_id = ?1",
+        "INSERT INTO unsubscribe (message_id, links, one_click, state)
+         SELECT ?2, links, one_click, state FROM unsubscribe WHERE message_id = ?1",
         "INSERT INTO message_ref (message_id, ref)
          SELECT ?2, ref FROM message_ref WHERE message_id = ?1",
     ] {
@@ -2176,6 +2213,7 @@ fn upsert_messages(
                 .map_err(storage)?;
         }
         write_message(&mut upsert, folder, m)?;
+        write_unsubscribe(tx, folder, m)?;
         link_thread(tx, account, folder, m)?;
     }
     Ok(())
@@ -2201,10 +2239,27 @@ fn write_message(
             category_ref(m.category),
             m.answer_to.join("\n"),
             people_column(&m.to, &m.cc),
-            m.unsubscribe.as_ref().map(|u| &u.links),
-            m.unsubscribe.as_ref().is_some_and(|u| u.one_click),
         ])
         .map_err(storage)
+}
+
+/// Keeps how to leave the list `m` came from, if it says; what the person did stays.
+fn write_unsubscribe(
+    tx: &Transaction<'_>,
+    folder: FolderId,
+    m: &NewMessage,
+) -> Result<(), StoreError> {
+    let Some(leave) = &m.unsubscribe else {
+        return Ok(());
+    };
+    tx.prepare_cached(
+        "INSERT INTO unsubscribe (message_id, links, one_click)
+         SELECT id, ?3, ?4 FROM message WHERE folder_id = ?1 AND remote_id = ?2
+         ON CONFLICT (message_id) DO UPDATE SET links = excluded.links, one_click = excluded.one_click",
+    )
+    .and_then(|mut s| s.execute(params![folder.0, m.remote_id, leave.links, leave.one_click]))
+    .map_err(storage)?;
+    Ok(())
 }
 
 /// Puts a saved message in the conversation of the messages it answers, that answer it, or
@@ -2471,28 +2526,25 @@ macro_rules! snooze_key {
 /// Mail that came back from a snooze is dated when it came back, in the inbox.
 const SAVE_MESSAGE: &str = concat!(
     "INSERT INTO message (folder_id, remote_id, message_id, from_name, from_email,
-                          subject, snippet, date, flags, category, answer_to, recipients, fresh,
-                          unsubscribe, one_click)
+                          subject, snippet, date, flags, category, answer_to, recipients, fresh)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
              coalesce((SELECT s.wake_at FROM snooze s JOIN folder f ON f.account_id = s.account_id
                        WHERE f.id = ?1 AND f.role = 'inbox' AND s.woke = 1
                          AND s.message_id = coalesce(?3, ?5 || char(31) || ?8 || char(31) || ?6)),
                       ?8),
-             ?9, ?10, ?11, ?12, 1, ?13, ?14)
+             ?9, ?10, ?11, ?12, 1)
      ON CONFLICT (folder_id, remote_id) DO UPDATE SET
          found = 0, message_id = excluded.message_id, from_name = excluded.from_name,
          from_email = excluded.from_email, subject = excluded.subject,
          answer_to = excluded.answer_to, recipients = excluded.recipients,
-         unsubscribe = excluded.unsubscribe, one_click = excluded.one_click,
          snippet = coalesce(nullif(excluded.snippet, ''), snippet),
          date = excluded.date, category = excluded.category, flags = ",
     merged_flags!("excluded.flags"),
     " WHERE (found, message_id, from_name, from_email, subject, snippet, date, category,
-            answer_to, recipients, unsubscribe, one_click, flags)
+            answer_to, recipients, flags)
          IS NOT (0, excluded.message_id, excluded.from_name, excluded.from_email,
                  excluded.subject, coalesce(nullif(excluded.snippet, ''), snippet),
-                 excluded.date, excluded.category, excluded.answer_to, excluded.recipients,
-                 excluded.unsubscribe, excluded.one_click, ",
+                 excluded.date, excluded.category, excluded.answer_to, excluded.recipients, ",
     merged_flags!("excluded.flags"),
     ")"
 );
@@ -2594,7 +2646,8 @@ macro_rules! message_from {
             $thread,
             ", f.role, (SELECT group_concat(part || char(31) || name, char(30)) FROM attachment
                          WHERE message_id = m.id),
-                    m.stand_in = 1 AND EXISTS (SELECT 1 FROM outbox WHERE copy = m.id)",
+                    m.stand_in = 1 AND EXISTS (SELECT 1 FROM outbox WHERE copy = m.id),
+                    EXISTS (SELECT 1 FROM unsubscribe WHERE message_id = m.id AND state = 0)",
             " FROM message m JOIN folder f ON f.id = m.folder_id"
         )
     };
@@ -2755,9 +2808,8 @@ fn hit_words(text: &str) -> Option<String> {
 /// Saves a message a server search found, unless it is saved already; not new mail.
 const SAVE_FOUND: &str = "
     INSERT INTO message (folder_id, remote_id, message_id, from_name, from_email, subject,
-                         snippet, date, flags, category, answer_to, recipients, unsubscribe,
-                         one_click, found)
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 1)
+                         snippet, date, flags, category, answer_to, recipients, found)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1)
     ON CONFLICT (folder_id, remote_id) DO NOTHING";
 
 /// How long mail that came back from a snooze stays dated when it came back, in seconds.
@@ -3114,6 +3166,7 @@ fn message_row(r: &Row<'_>) -> rusqlite::Result<MessageRow> {
         role: r.get::<_, Role>(10)?.0,
         attachments: parse_attachments(&r.get::<_, Option<String>>(11)?.unwrap_or_default()),
         sending: r.get(12)?,
+        can_unsubscribe: r.get(13)?,
     })
 }
 
