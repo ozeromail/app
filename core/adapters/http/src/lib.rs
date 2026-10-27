@@ -254,7 +254,8 @@ impl HttpsClient {
             let addrs = timed(tokio::net::lookup_host((self.host.as_str(), self.port))).await?;
             let public: Vec<_> = addrs.filter(|a| fetch::is_public(a.ip())).collect();
             if public.is_empty() {
-                return Err(ProviderError::Network(format!(
+                // Asking again resolves to the same addresses.
+                return Err(ProviderError::Rejected(format!(
                     "{} is not public",
                     self.host
                 )));
