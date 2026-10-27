@@ -570,7 +570,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     LaunchedEffect(addingAccount) {
         if (!addingAccount) loadAccounts()
     }
-    LaunchedEffect(tab, mailbox) {
+    // Also once the folders show that the mailbox is an account's inbox, with tabs.
+    LaunchedEffect(tab, mailbox, tabbed()) {
         chosen = emptySet()
         open = null
         listSize = PAGE
@@ -591,11 +592,12 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     }
     // Another mailbox brings in what changed in it; the inbox keeps itself up to date. An
     // account's inbox has tabs and counts of its own.
-    LaunchedEffect(mailbox) {
+    LaunchedEffect(mailbox, inboxAccount()) {
         others = emptyMap()
         counts()
         loadOthers()
-        if (mailbox != Mail.INBOX) sync(mailbox)
+        // An account's inbox comes with the inbox sync.
+        if (!tabbed()) sync(mailbox)
     }
     // Folders show once a sync has listed them: they are read after each sync, and each time the sheet opens.
     LaunchedEffect(accountsOpen) {
@@ -621,7 +623,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         if (SystemClock.elapsedRealtime() - lastSync > RESYNC_MS) {
             scope.launch {
                 sync(quiet = true)
-                if (mailbox != Mail.INBOX) sync(mailbox, quiet = true)
+                if (!tabbed()) sync(mailbox, quiet = true)
             }
         }
     }
@@ -641,7 +643,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             backOnline(context).collect {
                 if (offlineSince == null && error != R.string.error_network) return@collect
                 sync(quiet = true)
-                if (mailbox != Mail.INBOX) sync(mailbox, quiet = true)
+                if (!tabbed()) sync(mailbox, quiet = true)
             }
         }
         onStopOrDispose { back.cancel() }
@@ -1208,7 +1210,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                 },
                                 onSync = {
                                     pulled = true
-                                    scope.launch { sync(mailbox) }
+                                    // An account's inbox, as the unified one, with the inbox sync.
+                                    scope.launch { sync(if (tabbed()) Mail.INBOX else mailbox) }
                                 },
                                 mailbox = mailbox,
                                 tabbed = tabbed(),
