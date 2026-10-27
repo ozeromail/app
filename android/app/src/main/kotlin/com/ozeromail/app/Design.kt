@@ -48,6 +48,9 @@ object Gap {
     val card = 16.dp
     val inCard = 14.dp
 
+    /** Captions and hints over and under the cards and fields of a page, in line with what starts their rows. */
+    val inset = screen + card
+
     /** A sheet row's leading icon or dot sits in a slot this wide, so all the labels line up. */
     val slot = 24.dp
     val afterSlot = 14.dp
