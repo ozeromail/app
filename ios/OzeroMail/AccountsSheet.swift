@@ -183,11 +183,14 @@ struct MailboxRows: View {
                 }
                 if editing {
                     ForEach(accounts, id: \.id) { account in
-                        Toggle(isOn: Binding(get: { account.inAll }, set: { actions.onInAll(account, $0) })) {
+                        HStack {
                             Label { Text(verbatim: account.name) } icon: { AccountDot(color: account.tint, size: 12) }
+                            Spacer()
+                            // The unified inbox keeps one account at least; the row still moves.
+                            Toggle(account.name, isOn: Binding(get: { account.inAll }, set: { actions.onInAll(account, $0) }))
+                                .labelsHidden()
+                                .disabled(account.inAll && inAll.count == 1)
                         }
-                        // The unified inbox keeps one account at least.
-                        .disabled(account.inAll && inAll.count == 1)
                     }
                     .onMove { from, to in
                         var order = accounts
@@ -340,20 +343,24 @@ private struct PartHeader<Trailing: View>: View {
 
     var body: some View {
         HStack {
-            Button { onToggle?() } label: {
-                HStack(spacing: 4) {
-                    Text(title)
-                    Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.semibold))
-                        .rotationEffect(.degrees(open ? 90 : 0))
-                }
-                .contentShape(.rect)
+            if let onToggle {
+                Button(action: onToggle) { label.contentShape(.rect) }
+                    .buttonStyle(.plain)
+                    .accessibilityHint(Text(open ? "action_hide" : "action_show"))
+            } else {
+                label
             }
-            .buttonStyle(.plain)
-            .disabled(onToggle == nil)
-            .accessibilityHint(Text(open ? "action_collapse" : "action_expand"))
             Spacer()
             trailing()
+        }
+    }
+
+    private var label: some View {
+        HStack(spacing: 4) {
+            Text(title)
+            Image(systemName: "chevron.right")
+                .font(.caption2.weight(.semibold))
+                .rotationEffect(.degrees(open ? 90 : 0))
         }
     }
 }
