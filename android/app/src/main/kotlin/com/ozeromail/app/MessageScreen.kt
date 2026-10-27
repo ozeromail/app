@@ -938,7 +938,8 @@ private fun From(
                     ) {
                         Text(line, color = colors.onSurfaceVariant, style = Type.Caption, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                         val turn by animateFloatAsState(if (details) 180f else 0f, Motion.calm(Motion.SMALL), label = "details")
-                        Text("▾", color = colors.onSurfaceVariant, style = Type.Caption, modifier = Modifier.rotate(turn))
+                        // Big enough to say the line opens.
+                        Glyph(R.drawable.ic_chevron_down, null, colors.onSurfaceVariant, size = 16.dp, modifier = Modifier.rotate(turn))
                     }
                 }
             }

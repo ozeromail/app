@@ -762,7 +762,7 @@ private struct From: View {
                         Button(action: onDetails) {
                             HStack(spacing: 4) {
                                 Text(verbatim: line).lineLimit(1)
-                                Image(systemName: "chevron.down").imageScale(.small).rotationEffect(.degrees(details ? 180 : 0))
+                                Image(systemName: "chevron.down").font(.caption.weight(.semibold)).rotationEffect(.degrees(details ? 180 : 0))
                             }
                             .font(.footnote)
                             .foregroundStyle(.secondary)
