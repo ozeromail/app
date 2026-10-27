@@ -509,7 +509,10 @@ final class InboxModel {
     /// Delete: into the trash, or for good from there.
     func delete(_ gone: [MessageItem]) async {
         let forever = !gone.contains(where: \.canTrash)
-        await remove(gone, toast: tr(forever ? "inbox_deleted" : "inbox_trashed"), role: forever ? nil : .trash, move: mail.delete)
+        // A conversation goes whole, and the toast says so.
+        let whole = gone.contains { $0.threadCount > 1 }
+        let toast = forever ? (whole ? "inbox_thread_deleted" : "inbox_deleted") : (whole ? "inbox_thread_trashed" : "inbox_trashed")
+        await remove(gone, toast: tr(toast), role: forever ? nil : .trash, move: mail.delete)
     }
 
     /// Snooze: into the snoozed folder, back on top of the inbox at `until`, with a notification

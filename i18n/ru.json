@@ -92,6 +92,8 @@
   "message_quote": "Показать цитату",
   "error_no_trash": "У этого аккаунта нет папки «Корзина».",
   "inbox_trashed": "Перенесено в корзину",
+  "inbox_thread_trashed": "Цепочка перенесена в корзину",
+  "inbox_thread_deleted": "Цепочка удалена навсегда",
   "inbox_undo_late": "Отменить не успели: сервер уже получил изменения",
   "action_delete": "Удалить",
   "action_more": "Ещё",
