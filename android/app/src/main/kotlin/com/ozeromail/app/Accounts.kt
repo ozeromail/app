@@ -55,7 +55,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -66,6 +66,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import uniffi.ozero_api.AccountItem
 import uniffi.ozero_api.FolderItem
@@ -252,16 +253,17 @@ private fun MailboxList(state: MailboxesState, actions: AccountsActions, onAccou
     var editing by rememberSaveable { mutableStateOf(false) }
     val groups = state.groups
     val colors = MaterialTheme.colorScheme
+    val open = editing || groups.open(INBOXES)
     Caption(
         stringResource(R.string.inboxes_title),
-        open = editing || groups.open(INBOXES),
+        open = open,
         onToggle = { actions.onGroups(groups.toggle(INBOXES)) }.takeIf { !editing },
     ) {
         TextButton(onClick = { editing = !editing }) {
             Text(stringResource(if (editing) R.string.action_done else R.string.action_edit), style = Type.Text, fontWeight = Weight.SemiBold)
         }
     }
-    Folding(editing || groups.open(INBOXES)) {
+    Folding(open) {
         val inAll = accounts.filter { it.inAll }
         FolderRow(
             lead = { StackedDots(inAll) },
@@ -465,13 +467,17 @@ private fun Caption(text: String, open: Boolean? = null, onToggle: (() -> Unit)?
     ) {
         Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
             Text(text, color = colors.onSurfaceVariant, style = Type.Label)
-            if (open != null) {
-                val turn by animateFloatAsState(if (open) 90f else 0f, Motion.calm(Motion.SMALL), label = "chevron")
-                Glyph(R.drawable.ic_next, null, colors.onSurfaceVariant, Modifier.padding(start = 4.dp).rotate(turn), size = 14.dp)
-            }
+            if (open != null) Chevron(open, 14.dp)
         }
         action?.invoke()
     }
+}
+
+/** After a heading: points down while what it heads shows, to the side while it is hidden. */
+@Composable
+private fun Chevron(open: Boolean, size: Dp) {
+    val turn by animateFloatAsState(if (open) 90f else 0f, Motion.calm(Motion.SMALL), label = "chevron")
+    Glyph(R.drawable.ic_next, null, MaterialTheme.colorScheme.onSurfaceVariant, Modifier.padding(start = 4.dp).graphicsLayer { rotationZ = turn }, size = size)
 }
 
 /** A part of the list under a [Caption], hiding and showing as calmly as an account's folders. */
@@ -669,7 +675,6 @@ private fun Group(
     onLongClick: (() -> Unit)?,
     folders: @Composable () -> Unit,
 ) {
-    val colors = MaterialTheme.colorScheme
     val haptics = LocalHapticFeedback.current
     Row(
         Modifier
@@ -694,8 +699,7 @@ private fun Group(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false),
             )
-            // Points down while the folders show, to the side while they are hidden.
-            Glyph(R.drawable.ic_next, null, colors.onSurfaceVariant, Modifier.padding(start = 4.dp).rotate(if (open) 90f else 0f), size = 16.dp)
+            Chevron(open, 16.dp)
         }
     }
     Folding(open, folders)
