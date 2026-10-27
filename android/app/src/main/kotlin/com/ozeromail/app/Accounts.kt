@@ -172,7 +172,8 @@ fun AccountsSheet(
                     account != null -> AccountSettings(
                         account,
                         onBack = { page = from },
-                        inAll = account.inAll.takeIf { accounts.size > 1 },
+                        // Not for the last account in the unified inbox, which keeps one at least.
+                        inAll = account.inAll.takeIf { on -> accounts.size > 1 && !(on && accounts.count { it.inAll } == 1) },
                         onInAll = { actions.onInAll(account, it) },
                         onColor = { actions.onColor(account, it) },
                         onLabel = { actions.onLabel(account, it) },
@@ -319,9 +320,11 @@ private fun AllAccounts(state: MailboxesState, actions: AccountsActions) {
     }
     Caption(stringResource(R.string.all_in))
     state.accounts.forEach { account ->
-        SheetRow(onClick = { actions.onInAll(account, !account.inAll) }, lead = { AccountDot(account.tint, size = 12.dp) }) {
+        // The unified inbox keeps one account at least.
+        val last = account.inAll && state.accounts.count { it.inAll } == 1
+        SheetRow(onClick = { if (!last) actions.onInAll(account, !account.inAll) }, lead = { AccountDot(account.tint, size = 12.dp) }) {
             Text(account.name, style = Type.Row, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            Switch(account.inAll, onCheckedChange = null)
+            Switch(account.inAll, onCheckedChange = null, enabled = !last)
         }
     }
 }
@@ -348,11 +351,11 @@ private fun AccountFolders(account: AccountItem, state: MailboxesState, actions:
         val box = Mailbox.Folder(folder.id)
         FolderRow(folder.role.icon(), folder.title(), box == state.mailbox) { actions.onMailbox(box) }
     }
-    val own = mine.filter { it.role == FolderRole.CUSTOM }.sortedBy { it.name.lowercase() }
+    val own = mine.filter { it.role == FolderRole.CUSTOM }
     if (own.isEmpty()) return
     var all by rememberSaveable(account.id) { mutableStateOf(false) }
     val few = own.none { it.pinned } && own.size <= FEW_FOLDERS
-    val shown = if (all || few) own else own.filter { it.pinned }
+    val shown = treeOrder(if (all || few) own else own.filter { it.pinned })
     val ids = shown.map { it.id }.toSet()
     shown.forEach { folder ->
         val box = Mailbox.Folder(folder.id)
@@ -360,7 +363,7 @@ private fun AccountFolders(account: AccountItem, state: MailboxesState, actions:
         val nested = folder.parent in ids
         FolderRow(
             lead = { Glyph(if (folder.pinned && (all || few)) R.drawable.ic_pin else R.drawable.ic_folder, null, colors.primary) },
-            title = if (nested || folder.parent == null) folder.shortName else folder.name,
+            title = folder.shownName(ids),
             open = box == state.mailbox,
             indent = nested,
             onLongClick = { actions.onPin(folder, !folder.pinned) },
@@ -392,6 +395,21 @@ private fun AccountFolders(account: AccountItem, state: MailboxesState, actions:
         )
     }
 }
+
+/**
+ * [folders] in tree order: each folder with the ones inside it right under it, by the names
+ * they show with.
+ */
+private fun treeOrder(folders: List<FolderItem>): List<FolderItem> {
+    val ids = folders.map { it.id }.toSet()
+    val inside = folders.groupBy { folder -> folder.parent?.takeIf { it in ids } }
+    fun under(parent: Long?): List<FolderItem> =
+        inside[parent].orEmpty().sortedBy { it.shownName(ids).lowercase() }.flatMap { listOf(it) + under(it.id) }
+    return under(null)
+}
+
+/** Inside a folder that shows too, among [ids], or at the top, its own name; else the whole path. */
+private fun FolderItem.shownName(ids: Set<Long>): String = if (parent == null || parent in ids) shortName else name
 
 /** An account with no more own folders than this and none pinned shows them all. */
 private const val FEW_FOLDERS = 5

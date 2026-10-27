@@ -388,7 +388,7 @@ final class InboxModel {
         offlineSince = nil
         if let lastSync, ContinuousClock.now - lastSync < Self.resync { return }
         await sync(quiet: true)
-        if !isInbox { await sync(mailbox, quiet: true) }
+        if !tabbed { await sync(mailbox, quiet: true) }
     }
 
     /// The phone is back online: a failed sync goes again at once rather than at its next turn,
@@ -396,7 +396,7 @@ final class InboxModel {
     func backOnline() async {
         guard offlineSince != nil || error == "error_network" else { return }
         await sync(quiet: true)
-        if !isInbox { await sync(mailbox, quiet: true) }
+        if !tabbed { await sync(mailbox, quiet: true) }
     }
 
     /// What changed the mail, here or in the background, shows at once; so does an action the

@@ -44,7 +44,7 @@ fun <T> Reorderable(
             val id = key(item)
             key(id) {
                 val holding = held == id
-                val handle = Modifier.pointerInput(id) {
+                val handle = Modifier.pointerInput(id, items) {
                     detectVerticalDragGestures(
                         onDragStart = {
                             held = id

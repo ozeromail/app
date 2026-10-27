@@ -115,8 +115,16 @@ struct InboxView: View {
                 await model.switched()
                 // An account's inbox has tabs of its own.
                 await model.counts()
-                // Another mailbox brings in what changed in it; the inbox keeps itself up to date.
-                if !model.isInbox { await model.sync(model.mailbox) }
+                // Another mailbox brings in what changed in it; the inbox, and each account's,
+                // keeps itself up to date.
+                if !model.tabbed { await model.sync(model.mailbox) }
+            }
+        }
+        .onChange(of: model.tabbed) {
+            // The folders showed that the mailbox is an account's inbox, with tabs.
+            Task {
+                await model.switched()
+                await model.counts()
             }
         }
         .onChange(of: model.tab) {
@@ -458,7 +466,8 @@ private struct InboxList: View {
         let mine = checks
         Task {
             let started = ContinuousClock.now
-            let synced = await model.sync(model.mailbox)
+            // An account's inbox, as the unified one, with the inbox sync.
+            let synced = await model.sync(model.tabbed ? Mail.inbox : model.mailbox)
             // The pulled drop lands before the gap closes, however quick the sync.
             try? await Task.sleep(until: started + .milliseconds(1100))
             // Not one let go of: nobody waits on it any more, and a newer one may run.

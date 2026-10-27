@@ -83,7 +83,9 @@ struct AccountsSheet: View {
                 case .account(let id):
                     // Gone, say removed meanwhile: nothing to show.
                     if let account = accounts.first(where: { $0.id == id }) {
-                        AccountSettings(account: account, inAll: accounts.count > 1 ? account.inAll : nil,
+                        // Not for the last account in the unified inbox, which keeps one at least.
+                        let last = account.inAll && accounts.filter(\.inAll).count == 1
+                        AccountSettings(account: account, inAll: accounts.count > 1 && !last ? account.inAll : nil,
                                         signature: signature, actions: actions)
                     }
                 }
@@ -214,6 +216,8 @@ struct MailboxRows: View {
                     Toggle(isOn: Binding(get: { account.inAll }, set: { actions.onInAll(account, $0) })) {
                         Label { Text(verbatim: account.name) } icon: { AccountDot(color: account.tint, size: 12) }
                     }
+                    // The unified inbox keeps one account at least.
+                    .disabled(account.inAll && accounts.filter(\.inAll).count == 1)
                 }
             }
         }
@@ -244,16 +248,15 @@ private struct AccountFolders: View {
             let box = Mailbox.folder(id: folder.id)
             FolderRow(icon: folder.role.icon, title: folder.title, open: box == mailbox) { actions.onMailbox(box) }
         }
-        let own = mine.filter { $0.role == .custom }.sorted { $0.name.lowercased() < $1.name.lowercased() }
+        let own = mine.filter { $0.role == .custom }
         let few = !own.contains(where: \.pinned) && own.count <= fewFolders
-        let shown = all || few ? own : own.filter(\.pinned)
+        let shown = treeOrder(all || few ? own : own.filter(\.pinned))
         let ids = Set(shown.map(\.id))
         ForEach(shown, id: \.id) { folder in
             let box = Mailbox.folder(id: folder.id)
             // Inside a folder that shows too, it goes under it by its own name.
             let nested = folder.parent.map(ids.contains) ?? false
-            FolderRow(icon: folder.pinned && (all || few) ? "pin" : "folder",
-                      title: nested || folder.parent == nil ? folder.shortName : folder.name,
+            FolderRow(icon: folder.pinned && (all || few) ? "pin" : "folder", title: folder.shownName(ids),
                       open: box == mailbox, indent: nested) { actions.onMailbox(box) }
                 .contextMenu {
                     Button { actions.onPin(folder, !folder.pinned) } label: {
@@ -277,6 +280,25 @@ private struct AccountFolders: View {
                 Text("folders_pin_hint").font(.footnote).foregroundStyle(.secondary)
             }
         }
+    }
+}
+
+/// `folders` in tree order: each folder with the ones inside it right under it, by the names
+/// they show with.
+private func treeOrder(_ folders: [FolderItem]) -> [FolderItem] {
+    let ids = Set(folders.map(\.id))
+    let inside = Dictionary(grouping: folders) { folder in folder.parent.flatMap { ids.contains($0) ? $0 : nil } }
+    func under(_ parent: Int64?) -> [FolderItem] {
+        (inside[parent] ?? []).sorted { $0.shownName(ids).lowercased() < $1.shownName(ids).lowercased() }
+            .flatMap { [$0] + under($0.id) }
+    }
+    return under(nil)
+}
+
+private extension FolderItem {
+    /// Inside a folder that shows too, among `ids`, or at the top, its own name; else the whole path.
+    func shownName(_ ids: Set<Int64>) -> String {
+        (parent.map(ids.contains) ?? true) ? shortName : name
     }
 }
 
