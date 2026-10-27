@@ -301,6 +301,7 @@ fn sync_an_imap_inbox_into_the_list() {
             forward: None,
             files: vec![],
             signature: String::new(),
+            cc: String::new(),
         })
         .unwrap()
     };
@@ -435,6 +436,7 @@ fn sync_an_imap_inbox_into_the_list() {
         forward: None,
         files: vec![],
         signature: "Test".into(),
+        cc: String::new(),
     };
     for text in ["First", "Second"] {
         draft.text = text.into();
@@ -524,7 +526,8 @@ fn a_unified_list_ends_where_an_account_has_older_mail_to_load() {
                     email: "anna@example.com".into(),
                 },
                 answer_to: vec![],
-                recipients: vec![],
+                to: vec![],
+                cc: vec![],
                 subject: date.to_string(),
                 snippet: String::new(),
                 date,
@@ -552,6 +555,76 @@ fn a_unified_list_ends_where_an_account_has_older_mail_to_load() {
     // Once the other account has nothing older, the first one's mail shows all the way down.
     core.store.set_older_done(b, true).unwrap();
     assert_eq!(dates(), [35, 30, 25, 20, 10]);
+}
+
+#[test]
+fn tells_who_a_message_went_to_and_copies_the_others_on_reply_all() {
+    let db = TempDb::new("people");
+    let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
+    let store = &core.store;
+    let account = store
+        .add_account(&NewAccount {
+            kind: AccountKind::Imap,
+            email: "me@example.com".into(),
+            display_name: "Me".into(),
+            server: None,
+            smtp: None,
+        })
+        .unwrap();
+    let folder = NewFolder {
+        remote_id: "INBOX".into(),
+        name: "Inbox".into(),
+        role: FolderRole::Inbox,
+    };
+    let folder = store.save_folders(account, &[folder]).unwrap()[0].id;
+    let named = |name: Option<&str>, email: &str| Address {
+        name: name.map(str::to_owned),
+        email: email.into(),
+    };
+    let message = ozero_domain::NewMessage {
+        remote_id: "1".into(),
+        message_id: None,
+        references: vec![],
+        from: named(Some("Anna"), "anna@example.com"),
+        answer_to: vec![],
+        to: vec![
+            named(None, "ME@example.com"),
+            named(Some("Bob"), "bob@example.com"),
+        ],
+        cc: vec![named(Some(" "), "cat@example.com")],
+        subject: "Plans".into(),
+        snippet: String::new(),
+        date: 10,
+        flags: Default::default(),
+        category: Category::People,
+    };
+    let checkpoint = store.checkpoint(folder).unwrap().0;
+    let changes = Changes {
+        checkpoint,
+        new: vec![message],
+        flags: vec![],
+        gone: vec![],
+    };
+    store.save_changes(folder, &changes).unwrap();
+    let item = core.unified_inbox(Category::People, 10).unwrap().remove(0);
+
+    let people = core.people(item.clone()).unwrap();
+    let names = |p: &[PersonItem]| p.iter().map(|p| (p.name.clone(), p.me)).collect::<Vec<_>>();
+    assert_eq!(
+        names(&people.to),
+        [("ME@example.com".into(), true), ("Bob".into(), false)]
+    );
+    assert_eq!(names(&people.cc), [("cat@example.com".into(), false)]);
+    assert_eq!(
+        names(&people.others),
+        [("Bob".into(), false), ("cat@example.com".into(), false)]
+    );
+
+    let one = core.reply(item.clone(), false).unwrap();
+    assert_eq!((one.to.as_str(), one.cc.as_str()), ("anna@example.com", ""));
+    let all = core.reply(item, true).unwrap();
+    assert_eq!(all.to, "anna@example.com");
+    assert_eq!(all.cc, "bob@example.com, cat@example.com");
 }
 
 #[test]
@@ -631,6 +704,7 @@ fn keeps_files_with_a_draft_up_to_the_limit() {
         forward: None,
         files: vec![],
         signature: String::new(),
+        cc: String::new(),
     };
     let id = core.save_draft(draft.clone()).unwrap();
     let attach = |name: &str, size: u64| {
@@ -694,6 +768,7 @@ fn saves_a_gmail_account_that_can_send() {
         forward: None,
         files: vec![],
         signature: String::new(),
+        cc: String::new(),
     })
     .unwrap();
 }
@@ -745,6 +820,7 @@ fn signs_with_the_accounts_signature_else_the_default_one() {
         forward: None,
         files: vec![],
         signature: "--\nA.".into(),
+        cc: String::new(),
     };
     let saved = core.save_draft(draft.clone()).unwrap();
     assert_eq!(core.drafts().unwrap()[0].signature, "--\nA.");
@@ -815,6 +891,7 @@ fn saves_an_exchange_account_that_sends_without_smtp() {
         forward: None,
         files: vec![],
         signature: String::new(),
+        cc: String::new(),
     })
     .unwrap();
 }

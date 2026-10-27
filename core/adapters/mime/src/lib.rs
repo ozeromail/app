@@ -37,8 +37,12 @@ impl MessageParser for MimeParser {
                 name: from.and_then(|a| a.name()).map(str::to_owned),
                 email: email.to_owned(),
             },
-            answer_to: emails([header.and_then(|h| h.reply_to())]),
-            recipients: emails([header.and_then(|h| h.to()), header.and_then(|h| h.cc())]),
+            answer_to: addresses(header.and_then(|h| h.reply_to()))
+                .into_iter()
+                .map(|a| a.email)
+                .collect(),
+            to: addresses(header.and_then(|h| h.to())),
+            cc: addresses(header.and_then(|h| h.cc())),
             subject: header
                 .and_then(|h| h.subject())
                 .unwrap_or_default()
@@ -164,14 +168,17 @@ fn name(part: &MessagePart<'_>) -> String {
         .to_owned()
 }
 
-/// The bare addresses of address headers, in order.
-fn emails<const N: usize>(headers: [Option<&Addresses<'_>>; N]) -> Vec<String> {
-    headers
+/// Each address of a header, groups opened, with its name as sent.
+fn addresses(header: Option<&Addresses<'_>>) -> Vec<Address> {
+    header
         .into_iter()
-        .flatten()
         .flat_map(|h| h.iter())
-        .filter_map(|a| a.address())
-        .map(str::to_owned)
+        .filter_map(|a| {
+            Some(Address {
+                name: a.name().map(str::to_owned),
+                email: a.address()?.to_owned(),
+            })
+        })
         .collect()
 }
 
@@ -231,15 +238,14 @@ mod tests {
               Cc: Dan <dan@example.com>\r\n\r\n",
         );
         assert_eq!(m.answer_to, ["list@example.com"]);
+        let emails = |a: &[Address]| a.iter().map(|a| a.email.clone()).collect::<Vec<_>>();
         assert_eq!(
-            m.recipients,
-            [
-                "me@example.com",
-                "bob@example.com",
-                "cat@example.com",
-                "dan@example.com"
-            ]
+            emails(&m.to),
+            ["me@example.com", "bob@example.com", "cat@example.com"]
         );
+        assert_eq!(emails(&m.cc), ["dan@example.com"]);
+        assert_eq!(m.cc[0].name.as_deref(), Some("Dan"));
+        assert_eq!(m.to[0].name, None);
         assert_eq!(m.date, 100);
     }
 

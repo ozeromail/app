@@ -712,10 +712,12 @@ impl Store for SqliteStore {
             .prepare_cached("SELECT from_email, answer_to, recipients FROM message WHERE id = ?1")
             .and_then(|mut s| {
                 s.query_row([message.0], |r| {
+                    let (to, cc) = people(&r.get::<_, String>(2)?);
                     Ok(Correspondents {
                         from: r.get(0)?,
                         answer_to: recipients(&r.get::<_, String>(1)?),
-                        recipients: recipients(&r.get::<_, String>(2)?),
+                        to,
+                        cc,
                     })
                 })
                 .optional()
@@ -1052,9 +1054,9 @@ impl Store for SqliteStore {
         let id = tx
             .query_row(
                 "INSERT INTO outbox (account_id, recipients, subject, text, reply_to, in_reply_to,
-                                     message_id, date, not_before, quote, forward, signature)
+                                     message_id, date, not_before, quote, forward, signature, cc)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
-                         (SELECT id FROM message WHERE id = ?11), ?12)
+                         (SELECT id FROM message WHERE id = ?11), ?12, ?13)
                  RETURNING id",
                 params![
                     draft.account_id.0,
@@ -1069,6 +1071,7 @@ impl Store for SqliteStore {
                     draft.quote,
                     draft.forward.map(|m| m.0),
                     draft.signature,
+                    draft.cc.join("\n"),
                 ],
                 |r| r.get(0),
             )
@@ -1100,7 +1103,7 @@ impl Store for SqliteStore {
         let taken = tx
             .query_row(
                 "SELECT account_id, recipients, subject, text, reply_to, quote, forward, copy,
-                        signature
+                        signature, cc
                  FROM outbox WHERE id = ?1 AND (not_before > ?2 OR failed IS NOT NULL)",
                 params![id.0, now],
                 |r| {
@@ -1108,6 +1111,7 @@ impl Store for SqliteStore {
                         id: None,
                         account_id: Some(AccountId(r.get(0)?)),
                         to: recipients(&r.get::<_, String>(1)?).join(", "),
+                        cc: recipients(&r.get::<_, String>(9)?).join(", "),
                         subject: r.get(2)?,
                         text: r.get(3)?,
                         signature: r.get(8)?,
@@ -1156,7 +1160,7 @@ impl Store for SqliteStore {
                      recipients = ?2, subject = ?3, text = ?4,
                      reply_to = (SELECT id FROM message WHERE id = ?5),
                      quote = ?6, saved = ?7,
-                     forward = (SELECT id FROM message WHERE id = ?9), signature = ?10
+                     forward = (SELECT id FROM message WHERE id = ?9), signature = ?10, cc = ?11
                  WHERE id = ?8 AND gone IS NULL",
                 params![
                     draft.account_id.map(|a| a.0),
@@ -1169,6 +1173,7 @@ impl Store for SqliteStore {
                     id.0,
                     draft.forward.map(|m| m.0),
                     draft.signature,
+                    draft.cc,
                 ],
             )
             .map_err(storage)?;
@@ -1181,7 +1186,7 @@ impl Store for SqliteStore {
         let rows: Result<Vec<SavedDraft>, _> = conn
             .prepare_cached(
                 "SELECT id, account_id, recipients, subject, text, reply_to, quote, saved, forward,
-                        signature
+                        signature, cc
                  FROM draft WHERE gone IS NULL ORDER BY saved DESC, id DESC",
             )
             .and_then(|mut s| {
@@ -1190,6 +1195,7 @@ impl Store for SqliteStore {
                         id: Some(DraftId(r.get(0)?)),
                         account_id: r.get::<_, Option<i64>>(1)?.map(AccountId),
                         to: r.get(2)?,
+                        cc: r.get(10)?,
                         subject: r.get(3)?,
                         text: r.get(4)?,
                         signature: r.get(9)?,
@@ -1242,7 +1248,7 @@ impl Store for SqliteStore {
         let rows = conn
             .prepare_cached(
                 "SELECT d.id, d.saved, d.recipients, d.subject, d.text, d.signature, d.quote,
-                        d.message_id, m.message_id
+                        d.message_id, m.message_id, d.cc
                  FROM draft d LEFT JOIN message m ON m.id = d.reply_to
                  WHERE d.account_id = ?1 AND d.gone IS NULL AND d.pushed IS NOT d.saved
                  ORDER BY d.id",
@@ -1259,6 +1265,7 @@ impl Store for SqliteStore {
                         message: Outgoing {
                             id: OutboxId(0),
                             to: typed_addresses(&r.get::<_, String>(2)?),
+                            cc: typed_addresses(&r.get::<_, String>(9)?),
                             subject: r.get(3)?,
                             text: full_text(&text, &signature, &quote),
                             message_id: r.get::<_, Option<String>>(7)?.unwrap_or_default(),
@@ -1602,7 +1609,7 @@ impl Store for SqliteStore {
         let rows = conn
             .prepare_cached(
                 "SELECT id, recipients, subject, text, message_id, in_reply_to, date, quote, forward,
-                        signature
+                        signature, cc
                  FROM outbox
                  WHERE account_id = ?1 AND not_before <= ?2 AND failed IS NULL ORDER BY id",
             )
@@ -1611,6 +1618,7 @@ impl Store for SqliteStore {
                     Ok(Outgoing {
                         id: OutboxId(r.get(0)?),
                         to: recipients(&r.get::<_, String>(1)?),
+                        cc: recipients(&r.get::<_, String>(10)?),
                         subject: r.get(2)?,
                         text: full_text(
                             &r.get::<_, String>(3)?,
@@ -1934,7 +1942,7 @@ fn copy_into_sent(
                     draft.subject,
                     body.snippet(),
                     date,
-                    draft.to.join("\n"),
+                    people_column(&bare(&draft.to), &bare(&draft.cc)),
                     draft.reply_to.map(|m| m.0),
                     draft.account_id.0,
                 ],
@@ -2075,7 +2083,7 @@ fn write_message(
             flags_bits(m.flags),
             category_ref(m.category),
             m.answer_to.join("\n"),
-            m.recipients.join("\n"),
+            people_column(&m.to, &m.cc),
         ])
         .map_err(storage)
 }
@@ -2663,6 +2671,53 @@ fn recipients(stored: &str) -> Vec<String> {
     stored.lines().map(str::to_owned).collect()
 }
 
+/// A message's `To` and `Cc` for its `recipients` column, one a line: the address, `\x1f`,
+/// `to` or `cc`, `\x1f` and the name, empty for none.
+fn people_column(to: &[Address], cc: &[Address]) -> String {
+    let lines: Vec<String> = (to.iter().map(|a| (a, "to")))
+        .chain(cc.iter().map(|a| (a, "cc")))
+        .map(|(a, kind)| {
+            let name = a.name.as_deref().unwrap_or_default();
+            format!(
+                "{}\x1f{kind}\x1f{}",
+                a.email,
+                name.replace(['\n', '\r'], " ")
+            )
+        })
+        .collect();
+    lines.join("\n")
+}
+
+/// The `To` and `Cc` that `people_column` wrote. A line saved before it, a bare address,
+/// counts as `To`.
+fn people(stored: &str) -> (Vec<Address>, Vec<Address>) {
+    let (mut to, mut cc) = (Vec::new(), Vec::new());
+    for line in stored.lines() {
+        let mut parts = line.splitn(3, '\x1f');
+        let email = parts.next().unwrap_or_default().to_owned();
+        let copy = parts.next() == Some("cc");
+        let name = parts.next().filter(|n| !n.is_empty()).map(str::to_owned);
+        let address = Address { name, email };
+        if copy {
+            cc.push(address)
+        } else {
+            to.push(address)
+        }
+    }
+    (to, cc)
+}
+
+/// Addresses without names.
+fn bare(emails: &[String]) -> Vec<Address> {
+    emails
+        .iter()
+        .map(|email| Address {
+            name: None,
+            email: email.clone(),
+        })
+        .collect()
+}
+
 fn role_ref(role: FolderRole) -> &'static &'static str {
     match role {
         FolderRole::Inbox => &"inbox",
@@ -2793,10 +2848,10 @@ fn insert_file(conn: &Connection, draft: DraftId, file: &OutgoingFile) -> Result
 fn insert_draft(conn: &Connection, draft: &SavedDraft) -> Result<DraftId, StoreError> {
     conn.query_row(
         "INSERT INTO draft (account_id, recipients, subject, text, reply_to, quote, saved, forward,
-                            signature)
+                            signature, cc)
          VALUES ((SELECT id FROM account WHERE id = ?1), ?2, ?3, ?4,
                  (SELECT id FROM message WHERE id = ?5), ?6, ?7,
-                 (SELECT id FROM message WHERE id = ?8), ?9)
+                 (SELECT id FROM message WHERE id = ?8), ?9, ?10)
          RETURNING id",
         params![
             draft.account_id.map(|a| a.0),
@@ -2808,6 +2863,7 @@ fn insert_draft(conn: &Connection, draft: &SavedDraft) -> Result<DraftId, StoreE
             draft.saved,
             draft.forward.map(|m| m.0),
             draft.signature,
+            draft.cc,
         ],
         |r| r.get(0),
     )

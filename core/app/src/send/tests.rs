@@ -7,6 +7,7 @@ fn outgoing(id: i64, to: &str) -> Outgoing {
     Outgoing {
         id: OutboxId(id),
         to: vec![to.into()],
+        cc: vec![],
         subject: format!("Message {id}"),
         text: String::new(),
         message_id: format!("{id}@example.com"),
@@ -34,7 +35,10 @@ fn sends_and_keeps_a_copy_in_sent() {
     };
     let messages = vec![
         outgoing(1, "bob@example.org"),
-        outgoing(2, "cat@example.net"),
+        Outgoing {
+            cc: vec!["dan@example.com".into()],
+            ..outgoing(2, "cat@example.net")
+        },
     ];
     run(push_sends(
         &store,
@@ -56,7 +60,7 @@ fn sends_and_keeps_a_copy_in_sent() {
             ),
             (
                 "anna@example.com".into(),
-                vec!["cat@example.net".to_string()],
+                vec!["cat@example.net".to_string(), "dan@example.com".to_string()],
                 b"Message 2".to_vec()
             ),
         ]

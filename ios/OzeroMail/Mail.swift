@@ -705,6 +705,7 @@ extension Error {
         case .NoTrash?: return "error_no_trash"
         case .NoSnoozed?: return "error_no_snoozed"
         case .BadRecipients?: return "error_bad_recipients"
+        case .BadCopies?: return "error_bad_copies"
         case .NoSmtp?: return "error_no_smtp"
         case .NoServer?: return "error_no_server"
         case .NotFound?: return "error_server_not_found"

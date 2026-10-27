@@ -104,7 +104,8 @@ fn message(uid: u32, date: i64) -> NewMessage {
             email: "anna@example.com".into(),
         },
         answer_to: vec![],
-        recipients: vec![],
+        to: vec![],
+        cc: vec![],
         subject: format!("Subject {uid}"),
         snippet: "Hello".into(),
         date,
@@ -1119,6 +1120,7 @@ fn draft(account: AccountId) -> Draft {
     Draft {
         account_id: account,
         to: vec!["bob@example.org".into(), "cat@example.net".into()],
+        cc: vec![],
         subject: "Hi".into(),
         text: "Hello".into(),
         reply_to: None,
@@ -1134,6 +1136,7 @@ fn saved(draft: &Draft, now: i64) -> SavedDraft {
         id: None,
         account_id: Some(draft.account_id),
         to: draft.to.join(", "),
+        cc: draft.cc.join(", "),
         subject: draft.subject.clone(),
         text: draft.text.clone(),
         signature: draft.signature.clone(),
@@ -1926,21 +1929,68 @@ fn a_new_account_gets_a_free_color() {
 fn keeps_who_a_message_went_to() {
     let store = store();
     let folder = inbox(&store, account(&store, "a@example.com"));
+    let named = |name: Option<&str>, email: &str| Address {
+        name: name.map(str::to_owned),
+        email: email.into(),
+    };
     let sent = NewMessage {
         answer_to: vec!["list@example.com".into()],
-        recipients: vec!["a@example.com".into(), "bob@example.com".into()],
+        to: vec![
+            named(None, "a@example.com"),
+            named(Some("Bob"), "bob@example.com"),
+        ],
+        cc: vec![named(Some("Cat Lee"), "cat@example.com")],
         ..message(1, 100)
     };
-    store.save_messages(folder, &[sent]).unwrap();
+    store
+        .save_messages(folder, std::slice::from_ref(&sent))
+        .unwrap();
     let id = list(&store, ListScope::Inbox(Category::People), 1, None)[0].id;
     assert_eq!(
         store.correspondents(id).unwrap(),
         Correspondents {
             from: "anna@example.com".into(),
             answer_to: vec!["list@example.com".into()],
-            recipients: vec!["a@example.com".into(), "bob@example.com".into()],
+            to: sent.to,
+            cc: sent.cc,
         }
     );
+}
+
+#[test]
+fn reads_who_a_message_went_to_as_saved_before_names() {
+    let store = store();
+    let folder = inbox(&store, account(&store, "a@example.com"));
+    store.save_messages(folder, &[message(1, 100)]).unwrap();
+    let id = list(&store, ListScope::Inbox(Category::People), 1, None)[0].id;
+    store
+        .conn()
+        .execute(
+            "UPDATE message SET recipients = 'a@example.com' || char(10) || 'bob@example.com'",
+            [],
+        )
+        .unwrap();
+    let saved = store.correspondents(id).unwrap();
+    let emails: Vec<_> = saved.to.iter().map(|a| a.email.as_str()).collect();
+    assert_eq!(emails, ["a@example.com", "bob@example.com"]);
+    assert!(saved.cc.is_empty());
+}
+
+#[test]
+fn a_sent_message_keeps_its_copies() {
+    let store = store();
+    let a = account(&store, "a@example.com");
+    let draft = Draft {
+        cc: vec!["dan@example.com".into()],
+        ..draft(a)
+    };
+    let id = store
+        .queue_send(&draft, None, "1@example.com", 100, 105)
+        .unwrap();
+    let due = store.due_sends(a, 200).unwrap();
+    assert_eq!(due[0].cc, ["dan@example.com"]);
+    let back = taken_back(&store, id, 101).unwrap();
+    assert_eq!(back.cc, "dan@example.com");
 }
 
 #[test]
@@ -1997,6 +2047,7 @@ fn a_draft_is_kept_until_it_is_sent_or_thrown_away() {
         id: None,
         account_id: Some(a),
         to: "bob@exam".into(),
+        cc: String::new(),
         subject: String::new(),
         text: "Hel".into(),
         reply_to: None,
@@ -2049,6 +2100,7 @@ fn a_draft_outlives_its_answered_message_but_not_its_account() {
         id: None,
         account_id: Some(a),
         to: String::new(),
+        cc: String::new(),
         subject: "Re: Hi".into(),
         text: "Hello".into(),
         reply_to: Some(MessageId(999)),
@@ -2392,6 +2444,7 @@ fn a_draft_keeps_one_copy_on_its_server() {
         id: None,
         account_id: Some(a),
         to: "bob@example.org, cat".into(),
+        cc: String::new(),
         subject: "Hi".into(),
         text: "Hello".into(),
         signature: "--\nAnna".into(),
@@ -2488,6 +2541,7 @@ fn only_imap_uids_tell_an_older_draft_copy() {
         id: None,
         account_id: Some(a),
         to: String::new(),
+        cc: String::new(),
         subject: "Hi".into(),
         text: "Hello".into(),
         signature: String::new(),
@@ -2525,6 +2579,7 @@ fn a_draft_moved_to_another_account_leaves_its_copy_behind() {
         id: None,
         account_id: Some(a),
         to: String::new(),
+        cc: String::new(),
         subject: "Hi".into(),
         text: "Hello".into(),
         signature: String::new(),

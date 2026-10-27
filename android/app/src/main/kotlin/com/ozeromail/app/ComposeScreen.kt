@@ -117,6 +117,9 @@ fun ComposeScreen(
 ) {
     val start = composing.draft
     var to by rememberSaveable { mutableStateOf(start.to) }
+    var cc by rememberSaveable { mutableStateOf(start.cc) }
+    // Kept while it is emptied, so it does not jump away.
+    var hasCc by rememberSaveable { mutableStateOf(start.cc.isNotBlank()) }
     var subject by rememberSaveable { mutableStateOf(start.subject) }
     var text by rememberSaveable { mutableStateOf(start.text) }
     var accountId by rememberSaveable { mutableStateOf(start.accountId) }
@@ -156,7 +159,7 @@ fun ComposeScreen(
     val from = accounts.find { it.id == accountId } ?: accounts.firstOrNull()
 
     // Account 0 is kept as none, and opens with the first account again.
-    fun current() = DraftItem(0, accountId, to, subject, text, start.replyTo, quote, 0, start.forward, files, signature)
+    fun current() = DraftItem(0, accountId, to, subject, text, start.replyTo, quote, 0, start.forward, files, signature, cc)
     fun keep() {
         if (changed && !finished) keeper.save(current())
     }
@@ -286,15 +289,28 @@ fun ComposeScreen(
     LaunchedEffect(keyboard) { if (!keyboard) unfolded = false }
     val folded = sideways && keyboard && writingText && !unfolded
     val original = composing.original
+    val addresses = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next, autoCorrectEnabled = false)
     val fields = @Composable {
         if (!folded) {
-            Plain(
-                to,
-                { to = it },
-                R.string.compose_to,
-                Type.Body,
-                KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next, autoCorrectEnabled = false),
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Plain(to, { to = it }, R.string.compose_to, Type.Body, addresses, modifier = Modifier.weight(1f))
+                if (!hasCc) {
+                    Text(
+                        stringResource(R.string.compose_cc),
+                        color = colors.primary,
+                        style = Type.Caption,
+                        fontWeight = Weight.SemiBold,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable(role = Role.Button) { hasCc = true }
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                    )
+                }
+            }
+            if (hasCc) {
+                HorizontalDivider(color = colors.outlineVariant)
+                Plain(cc, { cc = it }, R.string.compose_cc, Type.Body, addresses)
+            }
             HorizontalDivider(color = colors.outlineVariant)
             Plain(
                 subject,

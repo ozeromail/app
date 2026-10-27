@@ -12,6 +12,8 @@ pub struct Draft {
     pub account_id: AccountId,
     /// Bare addresses, checked by `parse_recipients`.
     pub to: Vec<String>,
+    /// As `to`; may be empty.
+    pub cc: Vec<String>,
     pub subject: String,
     pub text: String,
     /// The message this answers.
@@ -38,6 +40,8 @@ pub struct SavedDraft {
     pub account_id: Option<AccountId>,
     /// The recipients as typed, checked only when it is sent.
     pub to: String,
+    /// The copies, as `to`.
+    pub cc: String,
     pub subject: String,
     pub text: String,
     pub signature: String,
@@ -109,6 +113,7 @@ pub struct Unsent {
 pub struct Outgoing {
     pub id: OutboxId,
     pub to: Vec<String>,
+    pub cc: Vec<String>,
     pub subject: String,
     /// With the quote under it.
     pub text: String,

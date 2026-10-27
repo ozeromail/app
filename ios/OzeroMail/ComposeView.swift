@@ -24,6 +24,9 @@ struct ComposeView: View {
     let onDiscard: (DraftItem) -> Void
 
     @State private var to = ""
+    @State private var cc = ""
+    /// Kept while it is emptied, so it does not jump away.
+    @State private var hasCc = false
     @State private var subject = ""
     @State private var text = ""
     @State private var accountId: Int64 = 0
@@ -56,7 +59,7 @@ struct ComposeView: View {
     /// To and Subject shown again while the text is typed on its side.
     @State private var unfolded = false
 
-    private enum Field { case to, subject, text, signature }
+    private enum Field { case to, cc, subject, text, signature }
 
     private var start: DraftItem { composing.draft }
 
@@ -67,7 +70,7 @@ struct ComposeView: View {
     private var current: DraftItem {
         DraftItem(
             id: 0, accountId: accountId, to: to, subject: subject, text: text, replyTo: start.replyTo, quote: quote,
-            saved: 0, forward: start.forward, files: files, signature: signature)
+            saved: 0, forward: start.forward, files: files, signature: signature, cc: cc)
     }
 
     /// Something written here or before, which Delete throws away.
@@ -196,14 +199,28 @@ struct ComposeView: View {
     private var fields: some View {
         VStack(alignment: .leading, spacing: 12) {
             if !folded {
-                TextField("compose_to", text: $to)
-                    .keyboardType(.emailAddress)
-                    .textContentType(.emailAddress)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .focused($focus, equals: .to)
-                    .submitLabel(.next)
-                    .onSubmit { focus = .subject }
+                HStack {
+                    TextField("compose_to", text: $to)
+                        .addresses()
+                        .focused($focus, equals: .to)
+                        .submitLabel(.next)
+                        .onSubmit { focus = hasCc ? .cc : .subject }
+                    if !hasCc {
+                        Button("compose_cc") {
+                            hasCc = true
+                            focus = .cc
+                        }
+                        .font(.footnote.weight(.semibold))
+                    }
+                }
+                if hasCc {
+                    Divider()
+                    TextField("compose_cc", text: $cc)
+                        .addresses()
+                        .focused($focus, equals: .cc)
+                        .submitLabel(.next)
+                        .onSubmit { focus = .subject }
+                }
                 Divider()
                 TextField("compose_subject", text: $subject)
                     .font(.title2.bold())
@@ -323,6 +340,8 @@ struct ComposeView: View {
     private func begin() {
         guard firstSeen == nil else { return }
         to = start.to
+        cc = start.cc
+        hasCc = !start.cc.isBlank
         subject = start.subject
         text = start.text
         accountId = start.accountId
@@ -707,5 +726,15 @@ private struct DraftRow: View {
         }
         .padding(.vertical, 6)
         .contentShape(.rect)
+    }
+}
+
+extension View {
+    /// A field for email addresses: no capitals or corrections.
+    fileprivate func addresses() -> some View {
+        keyboardType(.emailAddress)
+            .textContentType(.emailAddress)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
     }
 }
