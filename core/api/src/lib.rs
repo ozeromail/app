@@ -1696,7 +1696,11 @@ impl Core {
                 }
                 Ok((n, Err(e))) => {
                     log::warn!("image {n} not loaded: {e:?}");
-                    failed.get_or_insert(e);
+                    // Only a failed connection may go better on Try again; a missing image,
+                    // or one on a local address, stays as it is.
+                    if matches!(e, ProviderError::Network(_)) {
+                        failed.get_or_insert(e);
+                    }
                     continue;
                 }
                 Err(_) => continue,
@@ -1709,7 +1713,7 @@ impl Core {
                 images[n] = Some(image);
             }
         }
-        // None came: say why, so the reader can try again, instead of a page with gaps.
+        // None came for want of a connection: say so, so the reader can try again.
         if let Some(e) = failed.filter(|_| !any) {
             return Err(e.into());
         }
