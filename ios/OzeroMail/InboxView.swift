@@ -875,7 +875,7 @@ extension MessageItem {
     var participants: String {
         guard senders.count > 1 else { return sender }
         let me = tr("message_me")
-        return senders.map { $0.me ? me : firstName($0.name) }.joined(separator: ", ")
+        return senders.map { $0.me ? me : $0.first }.joined(separator: ", ")
     }
 
     var subjectText: Text {
@@ -889,14 +889,6 @@ func joinNames(_ names: [String]) -> String {
     return tr("message_and", names.dropLast().joined(separator: ", "), last)
 }
 
-/// "Anna" of "Anna Lee", "Lee, Anna" or "anna@x.com".
-private func firstName(_ name: String) -> String {
-    var given = String(name.split(separator: "@", maxSplits: 1).first ?? "")
-    if let comma = given.range(of: ", ") { given = String(given[comma.upperBound...]) }
-    given = given.trimmingCharacters(in: .whitespaces)
-    let first = given.split(separator: " ").first.map(String.init) ?? ""
-    return first.isEmpty ? name : first
-}
 
 /// Time for today, otherwise the day and month; the year only when it is not this year.
 func shortDate(_ seconds: Int64) -> String {
