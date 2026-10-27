@@ -318,6 +318,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     }
     val archived = stringResource(R.string.inbox_archived)
     val movedBack = stringResource(R.string.inbox_moved_back)
+    val spammed = stringResource(R.string.inbox_spammed)
     val trashed = stringResource(R.string.inbox_trashed)
     val undoLate = stringResource(R.string.inbox_undo_late)
     val deleted = stringResource(R.string.inbox_deleted)
@@ -787,6 +788,9 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     fun snooze(gone: List<MessageItem>, until: Long, reset: () -> Unit = {}) =
         remove(gone, context.getString(R.string.inbox_snoozed, snoozeTime(context, until)), FolderRole.SNOOZED, { mail.snooze(it, until) }, reset)
 
+    /** Into the spam folder. */
+    fun spam(gone: List<MessageItem>) = remove(gone, spammed, FolderRole.JUNK, mail::spam)
+
     /** Back into the inbox, out of the archive, trash or spam. */
     fun moveToInbox(gone: List<MessageItem>) = remove(gone, movedBack, FolderRole.INBOX, mail::moveToInbox)
 
@@ -927,6 +931,22 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 closeSearch()
                 moveToInbox(listOf(message))
             }.takeIf { message.canMoveToInbox },
+            onSpam = {
+                open = null
+                closeSearch()
+                spam(listOf(message))
+            }.takeIf { message.canSpam },
+            onFlag = { flagged ->
+                scope.launch {
+                    try {
+                        mail.flag(listOf(message), flagged)
+                    } catch (e: CoreException) {
+                        fail(e)
+                        return@launch
+                    }
+                    messages = messages.map { if (it.id == message.id) it.copy(flagged = flagged) else it }
+                }
+            },
             onDone = {
                 open = null
                 // Back to the list, where the toast can undo it.

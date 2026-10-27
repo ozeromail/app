@@ -152,12 +152,22 @@ struct MessageView: View {
                 Button("message_reply_all") { reply(answer, all: true) }
                 Button("message_forward") { forward(shown.last ?? message) }
             }
+            // As the conversation has it now, flagged here or elsewhere.
+            let flagged = (thread.first { $0.id == message.id } ?? message).flagged
+            Button(flagged ? "action_unflag" : "action_flag") {
+                Task { await model.flag(message, flagged: !flagged) }
+            }
             Button("action_mark_unread") {
                 leave { await model.setRead([message], read: false) }
             }
             if message.canMoveToInbox {
                 Button("action_move_to_inbox") {
                     leave { await model.moveToInbox([message]) }
+                }
+            }
+            if message.canSpam {
+                Button("action_spam", role: .destructive) {
+                    leave { await model.spam([message]) }
                 }
             }
         }

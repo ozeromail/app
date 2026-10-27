@@ -144,6 +144,8 @@ fun MessageScreen(
     onDelete: () -> Unit,
     onUnread: () -> Unit,
     onMoveToInbox: (() -> Unit)?,
+    onSpam: (() -> Unit)?,
+    onFlag: (Boolean) -> Unit,
     onDone: (() -> Unit)?,
     onSnooze: (() -> Unit)?,
     onBack: () -> Unit,
@@ -404,6 +406,12 @@ fun MessageScreen(
                 ReaderSheet.More -> {
                     // Beside the list they are in the row already.
                     if (!pane) replyAllAndForward()
+                    // As the conversation has it now, flagged here or elsewhere.
+                    val flagged = (thread.firstOrNull { it.id == message.id } ?: message).flagged
+                    SheetAction(R.drawable.ic_flag, stringResource(if (flagged) R.string.action_unflag else R.string.action_flag), colors.onSurface) {
+                        sheet = null
+                        onFlag(!flagged)
+                    }
                     SheetAction(R.drawable.ic_unread, stringResource(R.string.action_mark_unread), colors.onSurface) {
                         sheet = null
                         onUnread()
@@ -412,6 +420,12 @@ fun MessageScreen(
                         SheetAction(R.drawable.ic_inbox, stringResource(R.string.action_move_to_inbox), colors.onSurface) {
                             sheet = null
                             move()
+                        }
+                    }
+                    onSpam?.let { spam ->
+                        SheetAction(R.drawable.ic_spam, stringResource(R.string.action_spam), colors.onSurface) {
+                            sheet = null
+                            spam()
                         }
                     }
                 }

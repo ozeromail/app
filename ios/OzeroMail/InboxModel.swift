@@ -538,6 +538,27 @@ final class InboxModel {
         }
     }
 
+    /// Into the spam folder.
+    func spam(_ gone: [MessageItem]) async {
+        await remove(gone, toast: tr("inbox_spammed"), role: .junk, move: mail.spam)
+    }
+
+    /// Flags the message, or takes its flag off; it stays in the list.
+    func flag(_ message: MessageItem, flagged: Bool) async {
+        do {
+            try await mail.flag([message], flagged: flagged)
+        } catch {
+            self.error = error.textKey()
+            return
+        }
+        messages = messages.map { row in
+            guard row.id == message.id else { return row }
+            var changed = row
+            changed.flagged = flagged
+            return changed
+        }
+    }
+
     /// Back into the inbox, out of the archive, trash or spam.
     func moveToInbox(_ gone: [MessageItem]) async {
         await remove(gone, toast: tr("inbox_moved_back"), role: .inbox, move: mail.moveToInbox)

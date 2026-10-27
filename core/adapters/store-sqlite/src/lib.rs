@@ -1822,7 +1822,7 @@ fn queue_thread(
     if ids.is_empty() {
         return Err(StoreError::NotFound);
     }
-    if !matches!(action, Action::Seen(_)) && !folder_role(tx, message)?.allows(action) {
+    if action.removes() && !folder_role(tx, message)?.allows(action) {
         return Err(StoreError::NotAllowed);
     }
     let mut ops = vec![];
@@ -1831,6 +1831,7 @@ fn queue_thread(
         // only the message itself.
         let changes = match action {
             Action::Seen(seen) => seen && flags & SEEN == 0,
+            Action::Flagged(_) => false,
             _ => true,
         };
         if id == message.0 || changes {
@@ -1868,9 +1869,14 @@ fn queue_one(
             set_seen(tx, message.0, seen)?;
             (queued.unwrap_or(i64::from(flags & SEEN != 0)), None)
         }
+        Action::Flagged(flagged) => {
+            set_flagged(tx, message.0, flagged)?;
+            (queued.unwrap_or(i64::from(flags & FLAGGED != 0)), None)
+        }
         // Undone by dropping the op, which shows the message again.
         Action::Archive => (0, Some(role_folder(tx, message, FolderRole::Archive)?)),
         Action::Trash => (0, Some(role_folder(tx, message, FolderRole::Trash)?)),
+        Action::Spam => (0, Some(role_folder(tx, message, FolderRole::Junk)?)),
         Action::Inbox => (0, Some(role_folder(tx, message, FolderRole::Inbox)?)),
         Action::Snooze => (0, Some(role_folder(tx, message, FolderRole::Snoozed)?)),
         Action::Delete | Action::Empty => (0, None),
@@ -2159,6 +2165,7 @@ fn role_folder(
         FolderRole::Trash => StoreError::NoTrash,
         FolderRole::Archive => StoreError::NoArchive,
         FolderRole::Snoozed => StoreError::NoSnoozed,
+        FolderRole::Junk => StoreError::NoSpam,
         _ => StoreError::NotFound,
     };
     tx.prepare_cached(
@@ -2220,6 +2227,7 @@ fn take_back(tx: &Transaction<'_>, sql: &str, op: OpId, arg: i64) -> Result<bool
     };
     match kind.with(undo) {
         Action::Seen(seen) => set_seen(tx, message, seen)?,
+        Action::Flagged(flagged) => set_flagged(tx, message, flagged)?,
         // As the other moves, and nothing waits to come back.
         Action::Snooze => {
             tx.execute(UNSNOOZE, [message]).map_err(storage)?;
@@ -2238,19 +2246,41 @@ fn take_back(tx: &Transaction<'_>, sql: &str, op: OpId, arg: i64) -> Result<bool
 }
 
 fn set_seen(tx: &Transaction<'_>, message: i64, seen: bool) -> Result<(), StoreError> {
+    set_flag(tx, message, SEEN, seen)
+}
+
+fn set_flagged(tx: &Transaction<'_>, message: i64, flagged: bool) -> Result<(), StoreError> {
+    set_flag(tx, message, FLAGGED, flagged)
+}
+
+fn set_flag(tx: &Transaction<'_>, message: i64, flag: u8, on: bool) -> Result<(), StoreError> {
     tx.prepare_cached("UPDATE message SET flags = (flags & ~?2) | ?3 WHERE id = ?1")
-        .and_then(|mut s| s.execute(params![message, SEEN, if seen { SEEN } else { 0 }]))
+        .and_then(|mut s| s.execute(params![message, flag, if on { flag } else { 0 }]))
         .map_err(storage)
         .map(|_| ())
 }
 
-/// The flags to keep for a known message: the server's, except the read state while a
-/// queued "seen" action has not reached the server. `1` is `SEEN`.
+/// The flags the device holds for a message while a queued action has not reached the server:
+/// `1` (`SEEN`) for "seen", `2` (`FLAGGED`) for "flagged".
+macro_rules! held_flags {
+    () => {
+        "(SELECT coalesce(max(CASE op.kind WHEN 'seen' THEN 1 ELSE 0 END), 0)
+                 | coalesce(max(CASE op.kind WHEN 'flagged' THEN 2 ELSE 0 END), 0)
+          FROM op WHERE op.message_id = message.id)"
+    };
+}
+
+/// The flags to keep for a known message: the server's, except those `held_flags` holds.
 macro_rules! merged_flags {
     ($server:literal) => {
         concat!(
-            "CASE WHEN EXISTS (SELECT 1 FROM op WHERE op.message_id = message.id AND op.kind = 'seen')
-              THEN (", $server, " & ~1) | (flags & 1) ELSE ", $server, " END"
+            "((",
+            $server,
+            ") & ~",
+            held_flags!(),
+            ") | (flags & ",
+            held_flags!(),
+            ")"
         )
     };
 }
@@ -2335,7 +2365,7 @@ macro_rules! not_moving {
         concat!(
             "NOT EXISTS (SELECT 1 FROM op WHERE op.message_id = ",
             $m,
-            ".id AND op.kind IN ('archive', 'trash', 'inbox', 'snooze', 'delete', 'empty'))"
+            ".id AND op.kind IN ('archive', 'trash', 'spam', 'inbox', 'snooze', 'delete', 'empty'))"
         )
     };
 }
@@ -2967,6 +2997,8 @@ struct Role(FolderRole);
 #[derive(Clone, Copy)]
 enum StoredAction {
     Seen,
+    Flagged,
+    Spam,
     Archive,
     Trash,
     Inbox,
@@ -2979,6 +3011,8 @@ enum StoredAction {
 fn stored(action: Action) -> (&'static str, i64) {
     match action {
         Action::Seen(seen) => ("seen", i64::from(seen)),
+        Action::Flagged(flagged) => ("flagged", i64::from(flagged)),
+        Action::Spam => ("spam", 1),
         Action::Archive => ("archive", 1),
         Action::Trash => ("trash", 1),
         Action::Inbox => ("inbox", 1),
@@ -2992,6 +3026,8 @@ impl StoredAction {
     fn with(self, value: i64) -> Action {
         match self {
             Self::Seen => Action::Seen(value != 0),
+            Self::Flagged => Action::Flagged(value != 0),
+            Self::Spam => Action::Spam,
             Self::Archive => Action::Archive,
             Self::Trash => Action::Trash,
             Self::Inbox => Action::Inbox,
@@ -3006,6 +3042,8 @@ impl FromSql for StoredAction {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         match value.as_str()? {
             "seen" => Ok(Self::Seen),
+            "flagged" => Ok(Self::Flagged),
+            "spam" => Ok(Self::Spam),
             "archive" => Ok(Self::Archive),
             "trash" => Ok(Self::Trash),
             "inbox" => Ok(Self::Inbox),

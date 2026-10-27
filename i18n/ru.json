@@ -257,5 +257,10 @@
   "message_copy_person": "Копия: %1$s",
   "message_write_to": "Написать",
   "message_copy_address": "Скопировать адрес",
-  "message_full_screen": "На весь экран"
+  "message_full_screen": "На весь экран",
+  "error_no_spam": "У этого аккаунта нет папки «Спам».",
+  "action_flag": "Пометить флажком",
+  "action_unflag": "Снять флажок",
+  "action_spam": "В спам",
+  "inbox_spammed": "Перенесено в спам"
 }

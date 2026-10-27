@@ -257,5 +257,10 @@
   "message_copy_person": "Cc %1$s",
   "message_write_to": "Write to them",
   "message_copy_address": "Copy address",
-  "message_full_screen": "Open full screen"
+  "message_full_screen": "Open full screen",
+  "error_no_spam": "This account has no Spam folder.",
+  "action_flag": "Flag",
+  "action_unflag": "Remove flag",
+  "action_spam": "Spam",
+  "inbox_spammed": "Moved to Spam"
 }

@@ -522,6 +522,23 @@ impl MailProvider for GmailSession {
             .await
     }
 
+    async fn set_flagged(
+        &mut self,
+        _folder: &str,
+        _validity: u32,
+        remote_ids: &[String],
+        flagged: bool,
+    ) -> Result<(), ProviderError> {
+        // A flag is Gmail's star.
+        let (add, remove) = if flagged {
+            (Some("STARRED"), None)
+        } else {
+            (None, Some("STARRED"))
+        };
+        self.modify(remote_ids, add.as_slice(), remove.as_slice())
+            .await
+    }
+
     async fn move_to(
         &mut self,
         folder: &str,
