@@ -43,9 +43,12 @@ class ListTest : TestMail() {
         // The folders may be there before the sheet is laid out: wait until it has come up.
         var at = -1f
         waitFor {
-            val top = if (has(hasText("Empty"))) bounds(hasText("Empty")).top else 0f
+            val top = if (has(hasText("Other folders"))) bounds(hasText("Other folders")).top else 0f
             (top > 0f && top == at).also { at = top }
         }
+        // The test account has more folders of its own than show before any is pinned.
+        rule.onNode(hasText("Other folders")).apply { runCatching { performScrollTo() } }.performClick()
+        waitFor { has(hasText("Empty")) }
         rule.onNode(hasText("Empty")).apply { runCatching { performScrollTo() } }.performClick()
         waitFor { has(hasText("Nothing here")) }
         film("drops", every = 4) {
