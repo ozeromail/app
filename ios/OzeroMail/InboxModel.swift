@@ -37,6 +37,8 @@ final class InboxModel {
     var mailbox = Mail.inbox
     var tab = Category.people
     var tabs: [InboxTab] = []
+    /// Unread People mail of each account's inbox, by account id.
+    var peopleUnread: [Int64: Int] = [:]
     var inboxEmpty = false
     var unsent: [UnsentItem] = []
     var accounts: [AccountItem] = []
@@ -79,8 +81,8 @@ final class InboxModel {
     /// The account being signed in to again.
     var signingIn: AccountItem?
     var accountsOpen = false
-    /// An account just added, whose settings the sheet opens on: its name, when its mail comes.
-    var added: Int64?
+    /// The page the sheet opens on: an account just added, its name and when its mail comes, or the settings.
+    var added: SheetPage?
     /// Messages chosen to act on together.
     var chosen: Set<Int64> = []
     /// Messages waiting on the snooze sheet for a time.
@@ -90,6 +92,9 @@ final class InboxModel {
     }
     var groups = Settings.groups {
         didSet { Settings.groups = groups }
+    }
+    var allBoxes = Settings.allBoxes {
+        didSet { Settings.allBoxes = allBoxes }
     }
     var swipeTip = !Settings.swipeTipSeen
 
@@ -122,6 +127,22 @@ final class InboxModel {
 
     var isInbox: Bool { mailbox == Mail.inbox }
 
+    /// The account whose inbox is open, which keeps its tabs; nil in the unified inbox and elsewhere.
+    var inboxAccount: Int64? { openFolder.flatMap { $0.role == .inbox ? $0.accountId : nil } }
+
+    /// The unified inbox or an account's: the list has tabs.
+    var tabbed: Bool { isInbox || inboxAccount != nil }
+
+    /// Whose mail the list is, for the accounts button: the folder's account, the accounts in
+    /// the unified inbox, or all.
+    var scope: [AccountItem] {
+        if case .folder = mailbox {
+            let mine = accounts.filter { $0.id == openFolder?.accountId }
+            return mine.isEmpty ? accounts : mine
+        }
+        return isInbox ? accounts.filter(\.inAll) : accounts
+    }
+
     var openFolder: FolderItem? {
         if case .folder(let id) = mailbox { folders.first { $0.id == id } } else { nil }
     }
@@ -131,6 +152,8 @@ final class InboxModel {
         switch mailbox {
         case .unified(let role): role.title("")
         case .folder: openFolder?.title ?? ""
+        case .unread: tr("folder_unread")
+        case .files: tr("folder_files")
         }
     }
 
@@ -139,6 +162,7 @@ final class InboxModel {
         switch mailbox {
         case .unified(let role): role
         case .folder: openFolder?.role
+        case .unread, .files: nil
         }
     }
 
@@ -146,8 +170,8 @@ final class InboxModel {
     var owner: String? {
         guard accounts.count > 1 else { return nil }
         switch mailbox {
-        case .unified: return tr("inbox_all_accounts")
         case .folder: return accounts.first { $0.id == openFolder?.accountId }?.name
+        default: return tr("inbox_all_accounts")
         }
     }
 
@@ -157,7 +181,7 @@ final class InboxModel {
     /// What an empty list says: an empty folder, the whole inbox or its first tab done, or another
     /// tab done.
     var emptyWords: (title: LocalizedStringKey, text: LocalizedStringKey) {
-        if !isInbox { return ("tab_empty_title", "folder_empty") }
+        if !tabbed { return ("tab_empty_title", "folder_empty") }
         if inboxEmpty || tab == .people { return ("inbox_zero_title", "inbox_zero_text") }
         return ("tab_empty_title", "tab_empty_text")
     }
@@ -177,7 +201,7 @@ final class InboxModel {
         let shown = (tab, mailbox)
         do {
             let size = listSize
-            let found = isInbox ? try await mail.inbox(tab, limit: size) : try await mail.mailbox(mailbox, limit: size)
+            let found = tabbed ? try await mail.inbox(inboxAccount, tab, limit: size) : try await mail.mailbox(mailbox, limit: size)
             // A tab or mailbox picked meanwhile loads its own list.
             if (tab, mailbox) == shown {
                 // Beside the list, the message goes when its row does, as when it moved on another device.
@@ -199,11 +223,13 @@ final class InboxModel {
 
     func counts() async {
         do {
-            let tabs = try await mail.tabs()
+            let tabs = try await mail.tabs(inboxAccount)
             if tabs != self.tabs { self.tabs = tabs }
             let unsent = try await mail.unsent()
             if unsent != self.unsent { self.unsent = unsent }
-            inboxEmpty = try await mail.inboxEmpty()
+            inboxEmpty = try await mail.inboxEmpty(inboxAccount)
+            let unread = try await mail.peopleUnread()
+            if unread != peopleUnread { peopleUnread = unread }
             let drafts = try await mail.drafts()
             if drafts != self.drafts { self.drafts = drafts }
         } catch {
@@ -754,7 +780,7 @@ final class InboxModel {
         Task {
             await loadAccounts()
             if new, let newest = accounts.map(\.id).max() {
-                added = newest
+                added = .account(newest)
                 accountsOpen = true
             }
             await sync()
@@ -788,6 +814,8 @@ extension Mailbox {
         switch self {
         case .folder(let id): "folder-\(id)"
         case .unified(let role): "\(Mailbox.unifiedKey)\(role)"
+        case .unread: "\(Mailbox.unifiedKey)unread"
+        case .files: "\(Mailbox.unifiedKey)files"
         }
     }
 

@@ -4,6 +4,9 @@ import SwiftUI
 struct AccountsActions {
     let onMailbox: (Mailbox) -> Void
     let onDrafts: () -> Void
+    let onInAll: (AccountItem, Bool) -> Void
+    let onOrder: ([AccountItem]) -> Void
+    let onPin: (FolderItem, Bool) -> Void
     let onAdd: () -> Void
     let onColor: (AccountItem, Int) -> Void
     let onLabel: (AccountItem, String) -> Void
@@ -16,66 +19,59 @@ struct AccountsActions {
     let onWrite: () -> Void
 }
 
-/// The mailboxes, and below them the swipes and a way to add an account. A group's More button,
-/// or Swipes, opens the settings in the same sheet.
+/// A page of the accounts sheet past the mailboxes.
+enum SheetPage: Hashable {
+    case settings
+    case swipes
+    case signature
+    case account(Int64)
+}
+
+/// The mailboxes, for going places, and at the bottom the settings and a way to add an account.
+/// Holding an account opens its settings in the same sheet.
 struct AccountsSheet: View {
     let accounts: [AccountItem]
     let folders: [FolderItem]
     let mailbox: Mailbox
     let drafts: Int
+    /// Unread People mail of each account's inbox, by account id.
+    let unread: [Int64: Int]
     /// The default one, for accounts without their own.
     let signature: String
     @Binding var swipes: Swipes
     @Binding var groups: Groups
+    @Binding var allBoxes: AllBoxes
     let actions: AccountsActions
-    /// The account whose page it opens on, as after adding it.
-    var startOn: Int64?
+    /// The page it opens on: an account's, as after adding it, or the settings.
+    var startOn: SheetPage?
 
-    @Environment(\.dismiss) private var dismiss
-    @State private var path: [Page] = []
+    @State private var path: [SheetPage] = []
 
     var body: some View {
         NavigationStack(path: $path) {
             List {
                 MailboxRows(
-                    accounts: accounts, folders: folders, mailbox: mailbox, drafts: drafts, groups: $groups,
-                    settings: true, onMailbox: actions.onMailbox, onDrafts: actions.onDrafts)
-                Section {
-                    NavigationLink(value: Page.swipes) {
-                        Label {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("swipes_title")
-                                Text(swipes.summary).font(.footnote).foregroundStyle(.secondary)
-                            }
-                        } icon: {
-                            Image(systemName: "hand.draw").foregroundStyle(Color.ozeroAccent)
-                        }
-                    }
-                    NavigationLink(value: Page.signature) {
-                        Label {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("signature_title")
-                                Text(verbatim: signature.components(separatedBy: .newlines).first { !$0.isBlank } ?? tr("signature_none"))
-                                    .font(.footnote).foregroundStyle(.secondary).lineLimit(1)
-                            }
-                        } icon: {
-                            Image(systemName: "signature").foregroundStyle(Color.ozeroAccent)
-                        }
-                    }
-                    SheetAction(icon: "plus", text: "inbox_add_account", color: .ozeroAccent, action: actions.onAdd)
-                    SheetAction(icon: "square.and.pencil", text: "feedback_write", color: .primary, action: actions.onWrite)
-                }
+                    accounts: accounts, folders: folders, mailbox: mailbox, drafts: drafts, unread: unread,
+                    allBoxes: $allBoxes, groups: $groups, actions: actions, onAccount: { path.append(.account($0.id)) })
             }
             .listStyle(.insetGrouped)
             .navigationTitle("folders_title")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("action_close") { dismiss() }
+            .safeAreaInset(edge: .bottom) {
+                HStack(spacing: 10) {
+                    NavigationLink(value: SheetPage.settings) { FootLabel(icon: "gear", text: "settings_title") }
+                    Button(action: actions.onAdd) { FootLabel(icon: "plus", text: "account_add_short") }
                 }
+                .buttonStyle(.bordered)
+                .tint(.primary)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(.bar)
             }
-            .navigationDestination(for: Page.self) { page in
+            .navigationDestination(for: SheetPage.self) { page in
                 switch page {
+                case .settings:
+                    AppSettings(accounts: accounts, swipes: swipes, signature: signature, actions: actions)
                 case .swipes:
                     SwipeSettings(swipes: $swipes)
                 case .signature:
@@ -87,136 +83,272 @@ struct AccountsSheet: View {
                 case .account(let id):
                     // Gone, say removed meanwhile: nothing to show.
                     if let account = accounts.first(where: { $0.id == id }) {
-                        AccountSettings(account: account, signature: signature, actions: actions)
+                        AccountSettings(account: account, inAll: accounts.count > 1 ? account.inAll : nil,
+                                        signature: signature, actions: actions)
                     }
                 }
             }
         }
-        .onAppear { if let startOn { path = [.account(startOn)] } }
+        .onAppear { if let startOn { path = [startOn] } }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
     }
-
 }
 
-/// The drafts on the phone, if there are any, the mailboxes of all accounts together, then each
-/// account's folders: rows of a list, in the accounts sheet and beside the inbox on its side.
-/// A tap on a group's name hides or shows its folders; with `settings` its More button opens the
-/// account's settings in the sheet.
+/// A wide label for a button at the bottom of the sheet.
+private struct FootLabel: View {
+    let icon: String
+    let text: LocalizedStringKey
+
+    var body: some View {
+        Label(text, systemImage: icon)
+            .fontWeight(.medium)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+    }
+}
+
+/// The drafts, if any, then the inboxes, all accounts' and each one's, the mailboxes of all
+/// accounts together and each account's folders. With one account, its inbox and folders.
+/// Rows of a list, in the accounts sheet and beside the inbox on its side. `onAccount`, when an
+/// account is held, opens its settings; nil leaves that out.
 struct MailboxRows: View {
     let accounts: [AccountItem]
     let folders: [FolderItem]
     let mailbox: Mailbox
     let drafts: Int
+    let unread: [Int64: Int]
+    @Binding var allBoxes: AllBoxes
     @Binding var groups: Groups
-    let settings: Bool
-    let onMailbox: (Mailbox) -> Void
-    let onDrafts: () -> Void
+    let actions: AccountsActions
+    var onAccount: ((AccountItem) -> Void)?
 
-    private var many: Bool { accounts.count > 1 }
+    /// The mailboxes of all accounts show as switches to move.
+    @State private var editing = false
 
     var body: some View {
         if drafts > 0 {
-            FolderRow(icon: "square.and.pencil", title: tr("folder_drafts"), open: false, count: drafts) {
-                onDrafts()
-            }
+            FolderRow(icon: "square.and.pencil", title: tr("folder_drafts"), open: false, count: drafts, action: actions.onDrafts)
         }
-        if many {
-            FolderGroup(title: tr("inbox_all_accounts"), open: groups.open(Settings.allAccounts, many: true), lead: {
-                StackedDots(accounts: accounts)
-            }, onToggle: { toggle(Settings.allAccounts) }) {
-                ForEach(unifiedRoles.filter { role in role == .inbox || folders.contains { $0.role == role } }, id: \.self) { role in
-                    let box = Mailbox.unified(role: role)
-                    FolderRow(icon: role.icon, title: role.allTitle, open: box == mailbox) { onMailbox(box) }
+        if let one = accounts.first, accounts.count == 1 {
+            Section {
+                FolderRow(icon: "tray", title: tr("inbox_title"), open: mailbox == Mail.inbox, count: unread[one.id] ?? 0) {
+                    actions.onMailbox(Mail.inbox)
+                }
+                signInAgain(one)
+                AccountFolders(account: one, folders: folders, mailbox: mailbox, actions: actions)
+            }
+        } else {
+            inboxes
+            allAccounts
+            ForEach(Array(accounts.enumerated()), id: \.element.id) { index, account in
+                FolderGroup(
+                    caption: index == 0 ? "account_folders" : nil, title: account.name,
+                    open: groups.open(account.id, many: true),
+                    lead: { AccountDot(color: account.tint, size: 12) },
+                    onToggle: { withAnimation(.smooth) { groups = groups.toggled(account.id, many: true) } },
+                    onHold: onAccount.map { open in { open(account) } }
+                ) {
+                    AccountFolders(account: account, folders: folders, mailbox: mailbox, actions: actions)
                 }
             }
         }
-        ForEach(accounts, id: \.id) { account in
-            FolderGroup(title: account.name, open: groups.open(account.id, many: many), lead: {
-                AccountDot(color: account.tint, size: 12)
-            }, onToggle: { toggle(account.id) }, settings: settings ? account : nil) {
-                ForEach(accountFolders(account), id: \.id) { folder in
-                    // With one account its inbox is the unified one, which keeps the tabs.
-                    let box = folder.role == .inbox && !many ? Mail.inbox : Mailbox.folder(id: folder.id)
-                    FolderRow(icon: folder.role.icon, title: folder.title, open: box == mailbox) { onMailbox(box) }
+    }
+
+    /// All inboxes together, then each account's, with their unread People mail.
+    private var inboxes: some View {
+        Section("inboxes_title") {
+            let inAll = accounts.filter(\.inAll)
+            FolderRow(title: tr("folder_all_inbox"), open: mailbox == Mail.inbox,
+                      count: inAll.reduce(0) { $0 + (unread[$1.id] ?? 0) }, lead: { StackedDots(accounts: inAll) }) {
+                actions.onMailbox(Mail.inbox)
+            }
+            ForEach(accounts, id: \.id) { account in
+                let box = folders.first { $0.accountId == account.id && $0.role == .inbox }.map { Mailbox.folder(id: $0.id) }
+                FolderRow(title: account.name, open: box == mailbox, count: unread[account.id] ?? 0,
+                          lead: { AccountDot(color: account.tint, size: 12) }) {
+                    if let box { actions.onMailbox(box) }
+                }
+                .contextMenu {
+                    if let onAccount {
+                        Button { onAccount(account) } label: { Label("account_settings", systemImage: "gear") }
+                    }
+                }
+                signInAgain(account)
+            }
+        }
+    }
+
+    /// The mailboxes of all accounts together the person chose, in their order; Edit turns them
+    /// all into switches to move, and adds the accounts the unified inbox takes in.
+    @ViewBuilder private var allAccounts: some View {
+        Section {
+            if editing {
+                ForEach(allBoxes.order) { box in
+                    Toggle(isOn: Binding(
+                        get: { allBoxes.shown.contains(box) },
+                        set: { on in if on { allBoxes.shown.insert(box) } else { allBoxes.shown.remove(box) } }
+                    )) {
+                        Label { Text(verbatim: box.title) } icon: { FolderIcon(name: box.icon) }
+                    }
+                }
+                .onMove { allBoxes.order.move(fromOffsets: $0, toOffset: $1) }
+                .environment(\.editMode, .constant(.active))
+            } else {
+                ForEach(allBoxes.order.filter { allBoxes.shown.contains($0) && $0.listed(folders) }) { box in
+                    FolderRow(icon: box.icon, title: box.title, open: box.mailbox == mailbox) { actions.onMailbox(box.mailbox) }
+                }
+            }
+        } header: {
+            HStack {
+                Text("inbox_all_accounts")
+                Spacer()
+                Button(editing ? "action_done" : "action_edit") { withAnimation(.smooth) { editing.toggle() } }
+                    .font(.subheadline.weight(.semibold))
+                    .textCase(nil)
+            }
+        }
+        if editing {
+            Section("all_in") {
+                ForEach(accounts, id: \.id) { account in
+                    Toggle(isOn: Binding(get: { account.inAll }, set: { actions.onInAll(account, $0) })) {
+                        Label { Text(verbatim: account.name) } icon: { AccountDot(color: account.tint, size: 12) }
+                    }
                 }
             }
         }
     }
 
-    private func toggle(_ group: Int64) {
-        withAnimation(.smooth) { groups = groups.toggled(group, many: many) }
-    }
-
-    private func accountFolders(_ account: AccountItem) -> [FolderItem] {
-        folders.filter { $0.accountId == account.id && $0.role != .drafts }
-            .sorted { ($0.role.rank, $0.name.lowercased()) < ($1.role.rank, $1.name.lowercased()) }
+    /// Under an account the server signed out, a way to sign in again.
+    @ViewBuilder private func signInAgain(_ account: AccountItem) -> some View {
+        if account.needsSignIn {
+            SheetAction(icon: "chevron.right", text: "signin_again_title", color: .ozeroError) { actions.onSignIn(account) }
+        }
     }
 }
 
-/// A page of the sheet past the list.
-private enum Page: Hashable {
-    case swipes
-    case signature
-    case account(Int64)
+/// An account's folders: its system ones in the usual order, then its own. Of those, the pinned
+/// ones show, or all while the account has few and none pinned; Other folders shows the rest,
+/// each inside the one it is in. Holding one of its own pins or unpins it.
+private struct AccountFolders: View {
+    let account: AccountItem
+    let folders: [FolderItem]
+    let mailbox: Mailbox
+    let actions: AccountsActions
+
+    @State private var all = false
+
+    var body: some View {
+        let mine = folders.filter { $0.accountId == account.id && $0.role != .drafts }
+        ForEach(mine.filter { $0.role != .custom && $0.role != .inbox }.sorted { $0.role.rank < $1.role.rank }, id: \.id) { folder in
+            let box = Mailbox.folder(id: folder.id)
+            FolderRow(icon: folder.role.icon, title: folder.title, open: box == mailbox) { actions.onMailbox(box) }
+        }
+        let own = mine.filter { $0.role == .custom }.sorted { $0.name.lowercased() < $1.name.lowercased() }
+        let few = !own.contains(where: \.pinned) && own.count <= fewFolders
+        let shown = all || few ? own : own.filter(\.pinned)
+        let ids = Set(shown.map(\.id))
+        ForEach(shown, id: \.id) { folder in
+            let box = Mailbox.folder(id: folder.id)
+            // Inside a folder that shows too, it goes under it by its own name.
+            let nested = folder.parent.map(ids.contains) ?? false
+            FolderRow(icon: folder.pinned && (all || few) ? "pin" : "folder",
+                      title: nested || folder.parent == nil ? folder.shortName : folder.name,
+                      open: box == mailbox, indent: nested) { actions.onMailbox(box) }
+                .contextMenu {
+                    Button { actions.onPin(folder, !folder.pinned) } label: {
+                        Label(folder.pinned ? "action_unpin" : "action_pin", systemImage: folder.pinned ? "pin.slash" : "pin")
+                    }
+                }
+        }
+        if !few {
+            Button { withAnimation(.smooth) { all.toggle() } } label: {
+                HStack(spacing: 14) {
+                    Image(systemName: all ? "chevron.up" : "ellipsis").frame(width: 24)
+                    Text(all ? "folders_pinned_only" : "folders_other")
+                    Spacer()
+                    if !all { Text(verbatim: "\(own.count - shown.count)").font(.footnote) }
+                }
+                .foregroundStyle(.secondary)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            if all {
+                Text("folders_pin_hint").font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+    }
 }
 
-/// The mailboxes shared by all accounts, in order.
-private let unifiedRoles: [FolderRole] = [.inbox, .snoozed, .flagged, .sent, .archive, .trash]
+/// An account with no more own folders than this and none pinned shows them all.
+private let fewFolders = 5
 
-/// A group's name, which hides or shows its folders, and with `settings` a way to that
-/// account's settings.
+/// A group's name, which hides or shows its folders, under `caption` when it starts a part of
+/// the list; holding it runs `onHold`.
 private struct FolderGroup<Lead: View, Folders: View>: View {
+    var caption: LocalizedStringKey?
     let title: String
     let open: Bool
     @ViewBuilder let lead: () -> Lead
     let onToggle: () -> Void
-    var settings: AccountItem?
+    var onHold: (() -> Void)?
     @ViewBuilder let folders: () -> Folders
 
     var body: some View {
         Section {
             if open { folders() }
         } header: {
-            HStack(spacing: 14) {
-                lead().frame(width: 24)
-                Button(action: onToggle) {
-                    HStack(spacing: 4) {
-                        Text(verbatim: title).font(.body.weight(.semibold)).foregroundStyle(.primary).lineLimit(1)
-                        // Points down while the folders show, to the side while they are hidden.
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .rotationEffect(.degrees(open ? 90 : 0))
+            VStack(alignment: .leading, spacing: 12) {
+                if let caption { Text(caption) }
+                HStack(spacing: 14) {
+                    lead().frame(width: 24)
+                    Button(action: onToggle) {
+                        HStack(spacing: 4) {
+                            Text(verbatim: title).font(.body.weight(.semibold)).foregroundStyle(.primary).lineLimit(1)
+                            // Points down while the folders show, to the side while they are hidden.
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .rotationEffect(.degrees(open ? 90 : 0))
+                        }
+                        .contentShape(.rect)
                     }
-                    .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .accessibilityHint(Text(open ? "action_collapse" : "action_expand"))
-                Spacer()
-                if let settings {
-                    NavigationLink(value: Page.account(settings.id)) {
-                        Image(systemName: "ellipsis.circle").font(.title3).foregroundStyle(.secondary)
+                    .buttonStyle(.plain)
+                    .accessibilityHint(Text(open ? "action_collapse" : "action_expand"))
+                    .contextMenu {
+                        if let onHold {
+                            Button(action: onHold) { Label("account_settings", systemImage: "gear") }
+                        }
                     }
-                    .accessibilityLabel(Text("account_settings"))
+                    Spacer()
                 }
+                .textCase(nil)
             }
-            .textCase(nil)
         }
     }
 }
 
-private struct FolderRow: View {
-    let icon: String
+private struct FolderIcon: View {
+    let name: String
+
+    var body: some View {
+        Image(systemName: name).foregroundStyle(Color.ozeroAccent)
+    }
+}
+
+private struct FolderRow<Lead: View>: View {
     let title: String
     let open: Bool
     var count = 0
+    /// Inside the folder above it.
+    var indent = false
+    @ViewBuilder let lead: () -> Lead
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 14) {
-                Image(systemName: icon).foregroundStyle(Color.ozeroAccent).frame(width: 24)
+                lead().frame(width: 24)
                 Text(verbatim: title)
                     .foregroundStyle(open ? Color.ozeroAccent : .primary)
                     .fontWeight(open ? .semibold : .regular)
@@ -226,9 +358,86 @@ private struct FolderRow: View {
                     Text(verbatim: "\(count)").font(.footnote).foregroundStyle(.secondary)
                 }
             }
+            .padding(.leading, indent ? 24 : 0)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+    }
+}
+
+extension FolderRow where Lead == FolderIcon {
+    init(icon: String, title: String, open: Bool, count: Int = 0, indent: Bool = false, action: @escaping () -> Void) {
+        self.init(title: title, open: open, count: count, indent: indent, lead: { FolderIcon(name: icon) }, action: action)
+    }
+}
+
+/// The settings: the accounts, in an order of the person's, each opening its own page; the
+/// swipes, the signature and a letter to the author.
+private struct AppSettings: View {
+    let accounts: [AccountItem]
+    let swipes: Swipes
+    let signature: String
+    let actions: AccountsActions
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(accounts, id: \.id) { account in
+                    NavigationLink(value: SheetPage.account(account.id)) {
+                        Label {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(verbatim: account.name).lineLimit(1)
+                                if account.name != account.email {
+                                    Text(verbatim: account.email).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                            }
+                        } icon: {
+                            AccountDot(color: account.tint, size: 12)
+                        }
+                    }
+                }
+                .onMove { from, to in
+                    var order = accounts
+                    order.move(fromOffsets: from, toOffset: to)
+                    actions.onOrder(order)
+                }
+                SheetAction(icon: "plus", text: "inbox_add_account", color: .ozeroAccent, action: actions.onAdd)
+            } header: {
+                Text("accounts_title")
+            } footer: {
+                if accounts.count > 1 { Text("account_settings_hint") }
+            }
+            Section("mail_settings") {
+                NavigationLink(value: SheetPage.swipes) {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("swipes_title")
+                            Text(swipes.summary).font(.footnote).foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "hand.draw").foregroundStyle(Color.ozeroAccent)
+                    }
+                }
+                NavigationLink(value: SheetPage.signature) {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("signature_title")
+                            Text(verbatim: signature.components(separatedBy: .newlines).first { !$0.isBlank } ?? tr("signature_none"))
+                                .font(.footnote).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    } icon: {
+                        Image(systemName: "signature").foregroundStyle(Color.ozeroAccent)
+                    }
+                }
+                SheetAction(icon: "square.and.pencil", text: "feedback_write", color: .primary, action: actions.onWrite)
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("settings_title")
+        .toolbar {
+            // Edit shows the handles that put the accounts in another order.
+            if accounts.count > 1 { EditButton() }
+        }
     }
 }
 
@@ -270,6 +479,8 @@ private struct SwipeSettings: View {
 /// and a way to remove it. One the server signed out offers to sign in again first.
 private struct AccountSettings: View {
     let account: AccountItem
+    /// Whether the unified inbox takes it in; nil with one account.
+    let inAll: Bool?
     /// The default one, shown while the account has none.
     let signature: String
     let actions: AccountsActions
@@ -280,8 +491,9 @@ private struct AccountSettings: View {
     @State private var confirming = false
     @FocusState private var editing: Bool
 
-    init(account: AccountItem, signature: String, actions: AccountsActions) {
+    init(account: AccountItem, inAll: Bool?, signature: String, actions: AccountsActions) {
         self.account = account
+        self.inAll = inAll
         self.signature = signature
         self.actions = actions
         _label = State(initialValue: account.label)
@@ -321,6 +533,11 @@ private struct AccountSettings: View {
                 let sender = account.displayName.trimmingCharacters(in: .whitespaces)
                 let hint = tr("account_name_hint")
                 Text(verbatim: sender.isEmpty || sender == account.email ? hint : tr("account_sender", hint, sender))
+            }
+            if let inAll {
+                Section {
+                    Toggle("all_in", isOn: Binding(get: { inAll }, set: { actions.onInAll(account, $0) }))
+                }
             }
             SignatureSection(saved: account.signature, label: "account_signature", placeholder: signature,
                              hint: "account_signature_hint") { actions.onAccountSignature(account, $0) }
@@ -521,6 +738,7 @@ extension FolderRole {
         case .flagged: tr("folder_all_flagged")
         case .sent: tr("folder_all_sent")
         case .archive: tr("folder_all_archive")
+        case .junk: tr("folder_all_junk")
         case .trash: tr("folder_all_trash")
         default: tr("folder_all_inbox")
         }

@@ -135,9 +135,10 @@ final class Mail: Sendable {
         vault.forgetPassword(email: account.email)
     }
 
-    /// The newest `limit` conversations of a tab; fewer once the saved mail ends, see `older`.
-    func inbox(_ tab: Category, limit: Int) async throws -> [MessageItem] {
-        try core.unifiedInbox(tab: tab, limit: UInt32(limit))
+    /// The newest `limit` conversations of a tab of `account`'s inbox, or with nil of the
+    /// unified inbox; fewer once the saved mail ends, see `older`.
+    func inbox(_ account: Int64?, _ tab: Category, limit: Int) async throws -> [MessageItem] {
+        try core.inbox(account: account, tab: tab, limit: UInt32(limit))
     }
 
     /// A mailbox other than the unified inbox, which `inbox` shows by tab.
@@ -169,14 +170,34 @@ final class Mail: Sendable {
         try core.forgetNewMail()
     }
 
-    /// The inbox tabs in order, with their unread counts.
-    func tabs() async throws -> [InboxTab] {
-        try core.inboxTabs()
+    /// The tabs of `account`'s inbox, or of the unified one, in order, with their unread counts.
+    func tabs(_ account: Int64?) async throws -> [InboxTab] {
+        try core.inboxTabs(account: account)
     }
 
-    /// Whether every inbox tab is empty.
-    func inboxEmpty() async throws -> Bool {
-        try core.inboxIsEmpty()
+    /// Whether every tab of `account`'s inbox, or of the unified one, is empty.
+    func inboxEmpty(_ account: Int64?) async throws -> Bool {
+        try core.inboxIsEmpty(account: account)
+    }
+
+    /// Unread People mail in each account's inbox, by account id; none for an account without.
+    func peopleUnread() async throws -> [Int64: Int] {
+        try Dictionary(core.peopleUnread().map { ($0.account, Int($0.unread)) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    /// Puts the accounts in this order.
+    func setAccountOrder(_ accounts: [AccountItem]) async throws {
+        try core.setAccountOrder(accounts: accounts.map(\.id))
+    }
+
+    /// Takes `account`'s inbox into the unified one, or leaves it out.
+    func setInAll(_ account: AccountItem, _ inAll: Bool) async throws {
+        try core.setAccountInAll(account: account.id, inAll: inAll)
+    }
+
+    /// Pins `folder` among its account's usual folders, or unpins it.
+    func setPinned(_ folder: FolderItem, _ pinned: Bool) async throws {
+        try core.setFolderPinned(folder: folder.id, pinned: pinned)
     }
 
     /// The core saves the account only after the server has accepted the login.
