@@ -415,8 +415,9 @@ fun ComposeScreen(
                 .then(
                     when {
                         sideways -> Modifier.heightIn(min = 72.dp)
-                        // Room for a few lines from the start.
-                        textFills -> Modifier.weight(1f, fill = false).heightIn(min = if (keyboard) 72.dp else 168.dp)
+                        // Room for a few lines from the start. While typing it takes the whole room, so no part
+                        // of the screen stands empty over it.
+                        textFills -> Modifier.weight(1f, fill = keyboard).heightIn(min = if (keyboard) 72.dp else 168.dp)
                         else -> Modifier.heightIn(min = 168.dp, max = 320.dp)
                     },
                 )
