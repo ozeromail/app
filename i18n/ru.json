@@ -56,6 +56,7 @@
   "message_reply_prompt": "Ответить…",
   "account_color": "Цвет",
   "account_remove": "Удалить аккаунт",
+  "account_folders_of": "Папки: %1$s",
   "account_remove_title": "Удалить «%1$s»?",
   "account_remove_text": "Его письма удалятся с этого телефона. Ящик на сервере останется как есть.",
   "action_remove": "Удалить",

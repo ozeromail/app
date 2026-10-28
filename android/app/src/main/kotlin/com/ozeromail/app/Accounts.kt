@@ -18,7 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
@@ -33,6 +33,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
@@ -287,13 +288,14 @@ private fun Handle(modifier: Modifier) {
 /** At the end of an account's row: shows or hides its folders under it. */
 @Composable
 private fun FoldersArrow(account: String, open: Boolean, onToggle: () -> Unit) {
+    val folders = stringResource(R.string.account_folders_of, account)
     Box(
         Modifier
             .padding(start = 4.dp)
-            .size(END_BUTTON)
+            .minimumInteractiveComponentSize()
             .clip(CircleShape)
             .clickable(onClickLabel = stringResource(if (open) R.string.action_collapse else R.string.action_expand), role = Role.Button, onClick = onToggle)
-            .semantics { contentDescription = account },
+            .semantics { contentDescription = folders },
         contentAlignment = Alignment.Center,
     ) { Chevron(open, 18.dp) }
 }
@@ -425,7 +427,7 @@ private fun Caption(text: String, open: Boolean? = null, onToggle: (() -> Unit)?
     Row(
         Modifier
             .fillMaxWidth()
-            .height(36.dp)
+            .heightIn(min = 36.dp)
             .then(
                 if (onToggle == null) Modifier
                 else Modifier.clickable(onClickLabel = stringResource(if (open == true) R.string.action_hide else R.string.action_show), onClick = onToggle),
@@ -604,7 +606,7 @@ private fun StackedDots(accounts: List<AccountItem>) {
 /** Icons in the rows; dots stay at [AccountDot]'s size. */
 private val ICON = 20.dp
 
-/** A control at a row's end: the arrow to an account's folders, a handle. */
+/** A handle at a row's end. */
 private val END_BUTTON = 40.dp
 
 /** A row with an icon and a coloured label, as at the end of a sheet. */
