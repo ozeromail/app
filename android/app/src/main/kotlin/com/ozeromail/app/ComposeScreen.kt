@@ -412,8 +412,8 @@ fun ComposeScreen(
                         // Under the message being answered, a few lines, so its card stays in sight.
                         original != null && !keyboard -> Modifier.heightIn(min = 168.dp, max = 320.dp)
                         // Otherwise all the room the rest leaves: no half of the screen stands empty over a
-                        // text squeezed into a few lines. Typing a new message, it fills it from the top.
-                        else -> Modifier.heightIn(min = if (keyboard) 72.dp else 168.dp).weight(1f, fill = keyboard && original == null)
+                        // text squeezed into a few lines. While typing it fills it, a reply's card put away.
+                        else -> Modifier.heightIn(min = if (keyboard) 72.dp else 168.dp).weight(1f, fill = keyboard)
                     },
                 )
                 .verticalScroll(rememberScrollState()),
@@ -533,11 +533,11 @@ fun ComposeScreen(
         } else {
             Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
                 // The message being answered takes the room the fields leave; alone, the fields sit low.
-                // With the keyboard up the card may close to nothing, so Send always stays in sight.
-                if (original != null) Original(mail, original, Modifier.weight(1f).heightIn(min = if (keyboard) 0.dp else 112.dp))
+                // With the keyboard down there is room for it; while typing the text has the screen.
+                if (original != null) Original(mail, original, if (keyboard) Modifier.height(0.dp) else Modifier.weight(1f).heightIn(min = 112.dp))
                 // As much room under the text as at its sides, so it never touches the bar.
                 Column(
-                    (if (original == null) Modifier.weight(1f) else Modifier).padding(start = Gap.screen, end = Gap.screen, bottom = Gap.screen),
+                    (if (original == null || keyboard) Modifier.weight(1f) else Modifier).padding(start = Gap.screen, end = Gap.screen, bottom = Gap.screen),
                     verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
                 ) { fields() }
                 errorLine()
