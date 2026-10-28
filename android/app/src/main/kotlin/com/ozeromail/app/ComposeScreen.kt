@@ -11,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -360,7 +361,7 @@ fun ComposeScreen(
     val shownImages = remember(text) { richBlocks(text).filterIsInstance<RichBlock.Image>().associate { it.file to it.size } }
     val images = rememberImages(mail, shownImages.keys.toList(), context.resources.displayMetrics.widthPixels)
     val addresses = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next, autoCorrectEnabled = false)
-    val fields = @Composable {
+    val fields: @Composable ColumnScope.() -> Unit = {
         if (!folded) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Plain(to, { to = it }, R.string.compose_to, Type.Body, addresses, modifier = Modifier.weight(1f).focusRequester(toFocus))
@@ -406,11 +407,13 @@ fun ComposeScreen(
             modifier = Modifier
                 .onFocusChanged { writingText = it.hasFocus }
                 .then(
-                    if (sideways) {
-                        Modifier.heightIn(min = 72.dp)
-                    } else {
-                        // Room for a few lines from the start, less while the keyboard takes the screen.
-                        Modifier.heightIn(min = if (keyboard) 72.dp else 168.dp, max = if (keyboard) 168.dp else 320.dp)
+                    when {
+                        sideways -> Modifier.heightIn(min = 72.dp)
+                        // Under the message being answered, a few lines, so its card stays in sight.
+                        original != null && !keyboard -> Modifier.heightIn(min = 168.dp, max = 320.dp)
+                        // Otherwise all the room the rest leaves: no half of the screen stands empty over a
+                        // text squeezed into a few lines. Typing a new message, it fills it from the top.
+                        else -> Modifier.heightIn(min = if (keyboard) 72.dp else 168.dp).weight(1f, fill = keyboard && original == null)
                     },
                 )
                 .verticalScroll(rememberScrollState()),
