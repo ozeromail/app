@@ -7,6 +7,8 @@ enum Route: Hashable {
     case search
     case drafts
     case settings(SettingsPage)
+    /// All mail with someone.
+    case person(PersonCard)
 }
 
 /// A toast low on the screen: words, and for a while Undo; a move can also show the folder the
@@ -73,6 +75,8 @@ final class InboxModel {
     var toast: Toast?
 
     var path: [Route] = []
+    /// Counts the changes to the mail, for screens that read it themselves.
+    var revision = 0
     /// On its side the list stays on the left and the message opens beside it, here.
     var pane: MessageItem?
     /// On its side: the mailboxes beside the list, and the message beside the list.
@@ -395,6 +399,8 @@ final class InboxModel {
     func returned() async {
         // A failure from before the app was away says nothing about the network now.
         offlineSince = nil
+        // The contacts may have changed meanwhile.
+        await mail.giveContacts()
         if let lastSync, ContinuousClock.now - lastSync < Self.resync { return }
         await sync(quiet: true)
         if !tabbed { await sync(mailbox, quiet: true) }
@@ -411,6 +417,7 @@ final class InboxModel {
     /// What changed the mail, here or in the background, shows at once; so does an action the
     /// server refused and the phone undid.
     func changed() async {
+        revision += 1
         await load()
         await loadAccounts()
         do {

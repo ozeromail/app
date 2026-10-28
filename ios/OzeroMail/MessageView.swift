@@ -232,14 +232,16 @@ struct MessageView: View {
         } message: {
             Text("unsubscribe_text")
         }
-        .confirmationDialog(
-            person?.name ?? "", isPresented: Binding { person != nil } set: { if !$0 { person = nil } },
-            titleVisibility: .visible, presenting: person
-        ) { person in
-            Button("message_write_to") { model.write(to: person.email) }
-            Button("message_copy_address") { UIPasteboard.general.string = person.email }
-        } message: { person in
-            if person.name != person.email { Text(verbatim: person.email) }
+        .sheet(isPresented: Binding { person != nil } set: { if !$0 { person = nil } }) {
+            if let person {
+                PersonSheet(mail: mail, person: person) { email in
+                    self.person = nil
+                    model.write(to: email)
+                } onAllMail: { card in
+                    self.person = nil
+                    model.path.append(.person(card))
+                }
+            }
         }
         .confirmationDialog(
             "invite_answer_title", isPresented: Binding { changing != nil } set: { if !$0 { changing = nil } },

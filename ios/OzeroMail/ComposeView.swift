@@ -175,6 +175,7 @@ struct ComposeView: View {
                                     let frame = proxy.frame(in: .scrollView)
                                     return frame.maxY - max(frame.minY, 0) >= frame.height * 0.6
                                 } action: { headingInSight = $0 }
+                                .zIndex(1)
                             }
                             writing
                         }
@@ -316,17 +317,15 @@ struct ComposeView: View {
 
     private var fields: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if !folded { heading }
+            if !folded { heading.zIndex(1) }
             writing
         }
     }
 
     private var heading: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                TextField("compose_to", text: $to)
-                    .addresses()
-                    .focused($focus, equals: .to)
+            HStack(alignment: .firstTextBaseline) {
+                Recipients(mail: mail, text: $to, placeholder: "compose_to", focus: $focus, field: .to)
                     .submitLabel(.next)
                     .onSubmit { focus = hasCc ? .cc : .subject }
                 if !hasCc {
@@ -337,13 +336,14 @@ struct ComposeView: View {
                     .font(.footnote.weight(.semibold))
                 }
             }
+            // The people found rise over what is around the field.
+            .zIndex(2)
             if hasCc {
                 Divider()
-                TextField("compose_cc", text: $cc)
-                    .addresses()
-                    .focused($focus, equals: .cc)
+                Recipients(mail: mail, text: $cc, placeholder: "compose_cc", focus: $focus, field: .cc)
                     .submitLabel(.next)
                     .onSubmit { focus = .subject }
+                    .zIndex(1)
             }
             Divider()
             TextField("compose_subject", text: $subject)
@@ -922,15 +922,5 @@ final class DraftKeeper: Sendable {
     /// Throws the saved draft away, and stops saving. Returns the id it had, 0 for none.
     func discard() async -> Int64 {
         await state.discard(with: mail)
-    }
-}
-
-extension View {
-    /// A field for email addresses: no capitals or corrections.
-    fileprivate func addresses() -> some View {
-        keyboardType(.emailAddress)
-            .textContentType(.emailAddress)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
     }
 }
