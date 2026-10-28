@@ -296,10 +296,9 @@ fun MessageScreen(
                 replying = coroutineScope {
                     val draft = async { mail.reply(to, all) }
                     val others = (people[to.id] ?: mail.people(to).also { people[to.id] = it }).others
-                    // A reply begun before goes on with its copies.
+                    // The core's copies: the others for reply all, and those of a reply begun before.
                     val begun = draft.await()
-                    val copied = begun.cc.split(", ").filter { it.isNotBlank() } + if (all) others.map { it.email } else emptyList()
-                    Replying(begun, to, others, copied = copied.distinct())
+                    Replying(begun, to, others, copied = begun.cc.split(", ").filter { it.isNotBlank() })
                 }
             } catch (e: CoreException) {
                 error = e.text()

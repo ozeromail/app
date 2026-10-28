@@ -865,14 +865,7 @@ struct MessageRow: View {
                         .background(.quaternary, in: .capsule)
                 }
                 Spacer(minLength: 4)
-                if let account = message.account {
-                    AccountDot(color: account.tint, size: 6)
-                    Text(verbatim: account.name)
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .frame(maxWidth: 70, alignment: .leading)
-                }
+                if let account = message.account { AccountTag(account: account) }
                 // Not out yet: once the server has it, its date shows.
                 Text(verbatim: message.sending ? tr("inbox_sending") : shortDate(message.date))
                     .font(.footnote.monospacedDigit())
@@ -900,6 +893,20 @@ struct MessageRow: View {
                 .animation(.easeOut(duration: 0.15), value: unread)
         }
         .padding(.vertical, 6)
+    }
+}
+
+/// A row's account, when there are several: a dot of its colour and its short name, before the time.
+struct AccountTag: View {
+    let account: AccountMark
+
+    var body: some View {
+        AccountDot(color: account.tint, size: 6)
+        Text(verbatim: account.name)
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .frame(maxWidth: 70, alignment: .leading)
     }
 }
 

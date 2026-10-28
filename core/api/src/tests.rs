@@ -309,7 +309,7 @@ fn sync_an_imap_inbox_into_the_list() {
     assert_eq!(draft.to, "bob@example.org");
     assert_eq!(draft.reply_to, Some(first));
     assert_eq!(draft.quote, "Anna wrote:\n> Hi");
-    assert_eq!(core.drafts().unwrap(), std::slice::from_ref(&draft));
+    assert_eq!(core.drafts().unwrap()[0].draft, draft);
     // A file added to the draft goes with it.
     core.attach_file(
         draft.id,
@@ -459,7 +459,12 @@ fn sync_an_imap_inbox_into_the_list() {
         .unwrap();
     sync().unwrap();
     sync().unwrap();
-    let drafts = core.drafts().unwrap();
+    let drafts: Vec<_> = core
+        .drafts()
+        .unwrap()
+        .into_iter()
+        .map(|r| r.draft)
+        .collect();
     let subjects: Vec<_> = drafts.iter().map(|d| d.subject.as_str()).collect();
     assert_eq!(subjects.len(), 2, "{subjects:?}");
     let laptop = drafts
@@ -641,14 +646,20 @@ fn tells_who_a_message_went_to_and_copies_the_others_on_reply_all() {
             ..one
         })
         .unwrap();
-    let again = core.reply(item, true).unwrap();
+    let again = core.reply(item.clone(), false).unwrap();
     assert_eq!(
         (again.id, again.text.as_str(), again.cc.as_str()),
         (id, "Soon", "")
     );
+    // Reply all copies the others on it too.
+    let copied = core.reply(item, true).unwrap();
+    assert_eq!(
+        (copied.id, copied.cc.as_str()),
+        (id, "bob@example.com, cat@example.com")
+    );
 
     // Its row names who it goes to as the saved mail does.
-    let rows = core.draft_rows().unwrap();
+    let rows = core.drafts().unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(
         (rows[0].people.as_str(), rows[0].snippet.as_str()),
@@ -659,7 +670,7 @@ fn tells_who_a_message_went_to_and_copies_the_others_on_reply_all() {
         ..again
     })
     .unwrap();
-    assert_eq!(core.draft_rows().unwrap()[0].people, "Anna, BOB, new");
+    assert_eq!(core.drafts().unwrap()[0].people, "Anna, BOB, new");
 }
 
 #[test]
@@ -751,9 +762,12 @@ fn keeps_files_with_a_draft_up_to_the_limit() {
     let photo = attach("photo.jpg", FILE_LIMIT - 1).unwrap();
     assert_eq!(attach("more.jpg", 2), Err(CoreError::TooLarge));
     let small = attach("small.jpg", 1).unwrap();
-    assert_eq!(core.drafts().unwrap()[0].files, [photo, small.clone()]);
+    assert_eq!(
+        core.drafts().unwrap()[0].draft.files,
+        [photo, small.clone()]
+    );
     core.detach_file(small.id).unwrap();
-    assert_eq!(core.drafts().unwrap()[0].files.len(), 1);
+    assert_eq!(core.drafts().unwrap()[0].draft.files.len(), 1);
 
     // Thrown away, it comes back with its files and the text as it is now.
     core.delete_draft(id).unwrap();
@@ -766,7 +780,7 @@ fn keeps_files_with_a_draft_up_to_the_limit() {
     };
     let back = core.restore_draft(thrown).unwrap();
     assert_eq!((back.id, back.text.as_str()), (id, "Hello"));
-    assert_eq!(core.drafts().unwrap()[0].files.len(), 1);
+    assert_eq!(core.drafts().unwrap()[0].draft.files.len(), 1);
     // One never saved, or gone for good, comes back new, without files.
     let fresh = core
         .restore_draft(DraftItem {
@@ -860,7 +874,7 @@ fn signs_with_the_accounts_signature_else_the_default_one() {
         cc: String::new(),
     };
     let saved = core.save_draft(draft.clone()).unwrap();
-    assert_eq!(core.drafts().unwrap()[0].signature, "--\nA.");
+    assert_eq!(core.drafts().unwrap()[0].draft.signature, "--\nA.");
     let sent = core.send(DraftItem { id: saved, ..draft }).unwrap();
     let back = core.undo_send(sent).unwrap().unwrap();
     assert_eq!(back.signature, "--\nA.");

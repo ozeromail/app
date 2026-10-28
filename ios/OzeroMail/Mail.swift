@@ -544,13 +544,8 @@ final class Mail: Sendable {
 
     /// Keeps `draft` on the phone; a new one if its id is 0. Returns its id.
     func saveDraft(_ draft: DraftItem) async throws -> Int64 {
-        let id = try core.saveDraft(draft: draft)
-        state.lastSaved = id
-        return id
+        try core.saveDraft(draft: draft)
     }
-
-    /// The draft saved last, by id: the one a toast opens again.
-    var lastSaved: Int64 { state.lastSaved }
 
     /// Saves the drafts into each account's drafts folder too. On failure the next sync
     /// takes them.
@@ -560,7 +555,7 @@ final class Mail: Sendable {
 
     /// The drafts on the phone as their list shows them, last saved first.
     func drafts() async throws -> [DraftRow] {
-        try core.draftRows()
+        try core.drafts()
     }
 
     func deleteDraft(_ id: Int64) async throws {
@@ -769,12 +764,6 @@ private final class MailState: @unchecked Sendable {
     private let lock = NSLock()
     private var _searched: (text: String, at: Date)?
     private var prefetching = false
-    private var _lastSaved: Int64 = 0
-
-    var lastSaved: Int64 {
-        get { lock.withLock { _lastSaved } }
-        set { lock.withLock { _lastSaved = newValue } }
-    }
 
     /// The last server search that went through, and when.
     var searched: (text: String, at: Date)? {

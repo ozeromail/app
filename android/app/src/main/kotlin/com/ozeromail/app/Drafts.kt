@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.HorizontalDivider
@@ -252,17 +251,7 @@ private fun DraftLine(row: DraftRow, modifier: Modifier) {
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(end = 8.dp),
             )
-            row.account?.let {
-                AccountDot(it.tint, size = 6.dp)
-                Text(
-                    it.name,
-                    color = colors.onSurfaceVariant,
-                    style = Type.Label,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.widthIn(max = 70.dp).padding(start = 5.dp, end = 8.dp),
-                )
-            }
+            row.account?.let { AccountTag(it) }
             Text(shortDate(LocalContext.current, draft.saved), color = colors.onSurfaceVariant, style = Type.Caption)
         }
         Text(
