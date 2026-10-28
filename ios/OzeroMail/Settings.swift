@@ -116,7 +116,6 @@ struct Groups: Equatable {
 
     static let inboxes = "inboxes"
     static let allBoxes = "all"
-    static let folders = "folders"
 
     func open(_ account: Int64) -> Bool { expanded.contains(account) }
 

@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.widthIn
@@ -80,6 +81,7 @@ import androidx.compose.ui.semantics.toggleableState
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Velocity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.coroutines.cancellation.CancellationException
@@ -296,7 +298,8 @@ fun SheetTitle(text: String, modifier: Modifier = Modifier.padding(start = Gap.s
 
 /**
  * A row of a sheet: a dot or an icon in a slot of its own, so every label starts at the same
- * place. A row with [onLongClick] does more when held, as [longClickLabel] says.
+ * place, [start] further in. A row with [onLongClick] does more when held, as [longClickLabel]
+ * says. A [fixed] row is always as high, whatever is at its end.
  */
 @Composable
 fun SheetRow(
@@ -304,6 +307,8 @@ fun SheetRow(
     lead: @Composable () -> Unit,
     onLongClick: (() -> Unit)? = null,
     longClickLabel: String? = null,
+    fixed: Boolean = false,
+    start: Dp = 0.dp,
     content: @Composable RowScope.() -> Unit,
 ) {
     // On its side the rows are lower, so more of them fit the short height.
@@ -312,9 +317,10 @@ fun SheetRow(
     Row(
         Modifier
             .fillMaxWidth()
-            .heightIn(min = if (short) 40.dp else 52.dp)
+            .then(if (fixed) Modifier.height(if (short) 40.dp else 48.dp) else Modifier.heightIn(min = if (short) 40.dp else 52.dp))
             .holdable(haptics, onClick, onLongClick, onLongClickLabel = longClickLabel)
-            .padding(horizontal = Gap.sheet, vertical = if (short) 6.dp else 10.dp),
+            .padding(start = Gap.sheet + start, end = Gap.sheet)
+            .padding(vertical = if (fixed) 0.dp else if (short) 6.dp else 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(Gap.slot), contentAlignment = Alignment.Center) { lead() }
