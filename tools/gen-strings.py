@@ -47,7 +47,10 @@ def apple_value(text):
 def apple(strings, locale):
     # A JSON string literal is also a valid .strings value.
     lines = [f'"{k}" = {json.dumps(apple_value(v), ensure_ascii=False)};' for k, v in strings.items()]
-    name = f'"CFBundleDisplayName" = {json.dumps(strings["app_name"], ensure_ascii=False)};\n'
+    name = "".join(
+        f'"{key}" = {json.dumps(strings[k], ensure_ascii=False)};\n'
+        for key, k in [("CFBundleDisplayName", "app_name"), ("NSContactsUsageDescription", "contacts_usage")]
+    )
     folder = Path(f"{locale}.lproj")
     return [(folder / "Localizable.strings", "\n".join(lines) + "\n"), (folder / "InfoPlist.strings", name)]
 

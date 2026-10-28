@@ -398,5 +398,6 @@
   "person_all_mail": "Все письма",
   "person_open_contact": "Контакт",
   "person_add_contact": "В контакты",
-  "person_addresses": "Адреса"
+  "person_addresses": "Адреса",
+  "contacts_usage": "Ozero Mail подсказывает людей из ваших контактов, когда вы вводите адрес, и показывает их имена так, как вы их сохранили. Контакты остаются на телефоне."
 }

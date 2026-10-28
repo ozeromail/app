@@ -398,5 +398,6 @@
   "person_all_mail": "All mail",
   "person_open_contact": "Contact",
   "person_add_contact": "Add to contacts",
-  "person_addresses": "Addresses"
+  "person_addresses": "Addresses",
+  "contacts_usage": "Ozero Mail suggests people from your contacts as you type an address and shows their names as you saved them. Your contacts stay on the phone."
 }

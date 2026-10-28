@@ -42,6 +42,8 @@ struct InboxView: View {
                     SearchView(model: model)
                 case .drafts:
                     DraftsView(model: model)
+                case .person(let person):
+                    PersonMailView(model: model, person: person)
                 case .settings(let page):
                     SettingsView(page: page, accounts: model.accounts, signature: model.signature, swipes: $model.swipes,
                                  mail: model.mail, actions: settingsActions)
@@ -84,6 +86,7 @@ struct InboxView: View {
                 onDiscard: { model.discarded($0, original: composing.original) })
         }
         .task {
+            await model.mail.giveContacts()
             await model.loadAccounts()
             await model.load()
             await model.sync()

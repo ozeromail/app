@@ -21,6 +21,7 @@ final class Mail: Sendable {
     static let smtpsPort: UInt16 = 465
     static let inbox = Mailbox.unified(role: .inbox)
     private static let searchSize: UInt32 = 100
+    private static let peopleSize: UInt32 = 6
     /// A sync writes many times; the screens read again at most this often.
     private static let changePause = Duration.milliseconds(250)
     private static let changeRetry = Duration.seconds(5)
@@ -345,6 +346,46 @@ final class Mail: Sendable {
             try await core.searchServer(account: account.id, secret: password, text: text)
         }
         state.searched = (text, .now)
+    }
+
+    /// Up to `peopleSize` people for what was typed in "To", those written to most and lately first.
+    func findPeople(_ text: String) async throws -> [PersonFound] {
+        try core.findPeople(text: text, limit: Self.peopleSize)
+    }
+
+    /// People in the company directories of the Exchange accounts whose name or address starts
+    /// with `text`; nobody under three letters. The first failure is thrown once all are done.
+    func searchDirectory(_ text: String) async throws -> [PersonFound] {
+        try await eachAccount(Self.inbox, { $0.kind == .exchange }) { core, account, password in
+            try await core.searchDirectory(account: account.id, secret: password, text: text)
+        }.flatMap { $0 }
+    }
+
+    /// What a tap on someone's name shows, `name` as the mail gives it.
+    func person(email: String, name: String?) async throws -> PersonCard {
+        try core.person(email: email, name: name)
+    }
+
+    /// All mail from or to `emails`, newest first.
+    func mail(with emails: [String]) async throws -> [MessageItem] {
+        try core.mailWith(emails: emails, limit: Self.searchSize)
+    }
+
+    /// Hands the phone's contacts to the core, which names people with them, or forgets them once
+    /// the access is gone. Only when they changed: each write makes the screens read again.
+    func giveContacts() async {
+        let core = self.core
+        let state = self.state
+        await Task.detached {
+            let contacts = PhoneContacts.read()
+            guard contacts != state.givenContacts else { return }
+            do {
+                try core.setContacts(contacts: contacts)
+                state.givenContacts = contacts
+            } catch {
+                log.warning("contacts not kept: \(error)")
+            }
+        }.value
     }
 
     /// The message's conversation, oldest first.
@@ -768,12 +809,19 @@ final class Mail: Sendable {
 private final class MailState: @unchecked Sendable {
     private let lock = NSLock()
     private var _searched: (text: String, at: Date)?
+    private var _givenContacts: [ContactItem]?
     private var prefetching = false
     private var _lastSaved: Int64 = 0
 
     var lastSaved: Int64 {
         get { lock.withLock { _lastSaved } }
         set { lock.withLock { _lastSaved = newValue } }
+    }
+
+    /// The contacts the core has from this run, so the same are not written again.
+    var givenContacts: [ContactItem]? {
+        get { lock.withLock { _givenContacts } }
+        set { lock.withLock { _givenContacts = newValue } }
     }
 
     /// The last server search that went through, and when.
