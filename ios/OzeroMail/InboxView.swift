@@ -938,8 +938,11 @@ struct AttachmentChips: View {
 }
 
 extension MessageItem {
-    /// The name, or the address when there is none.
-    var sender: String {
+    /// The name from the contacts, else the mail's, else the address.
+    var sender: String { contactName ?? mailSender }
+
+    /// The sender as the mail names them, for quotes: a contact's name is the user's own.
+    var mailSender: String {
         let name = fromName?.trimmingCharacters(in: .whitespaces) ?? ""
         return name.isEmpty ? fromEmail : name
     }

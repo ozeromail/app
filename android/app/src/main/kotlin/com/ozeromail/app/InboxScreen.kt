@@ -2580,8 +2580,12 @@ internal fun AccountTag(account: AccountMark) {
     )
 }
 
-/** The name, or the address when there is none. */
+/** The name from the contacts, else the mail's, else the address. */
 val MessageItem.sender: String
+    get() = contactName ?: fromName?.takeIf { it.isNotBlank() } ?: fromEmail
+
+/** The sender as the mail names them, for quotes: a contact's name is the user's own. */
+val MessageItem.mailSender: String
     get() = fromName?.takeIf { it.isNotBlank() } ?: fromEmail
 
 /** Who wrote in a conversation, "Anna, me, Boris"; for one person, their whole name. */

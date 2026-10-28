@@ -450,7 +450,7 @@ fun ComposeScreen(
             Quote(quote.takeIf { original == null }, forwarding, onRemove = { quote = "" }.takeUnless { forwarding })
         } else if (original != null && quotable) {
             Pill(stringResource(R.string.compose_add_quote), height = 32.dp, onClick = {
-                val header = context.getString(R.string.compose_quote_header, longDate(context, original.date), original.sender)
+                val header = context.getString(R.string.compose_quote_header, longDate(context, original.date), original.mailSender)
                 scope.launch {
                     try {
                         quote = mail.quote(original, header)
