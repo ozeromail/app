@@ -61,7 +61,17 @@ import uniffi.ozero_api.googleSignIn
 class Mail(private val context: Context) {
     private val vault = Vault(context)
 
+    /**
+     * Opened on first use, off the main thread: loading the library there stalls the start of a
+     * process woken for a background job, and Android then takes the job's late answers for a hang.
+     */
     private val core by lazy {
+        try {
+            CoreNative.init(context)
+        } catch (e: RuntimeException) {
+            // The core then refuses secure connections with a TLS error instead of crashing here.
+            Log.e("Ozero", "certificate checks are not set up", e)
+        }
         Core.open(File(context.noBackupFilesDir, "mail.db").path, vault.databaseKey()).also {
             it.useCertificates(KeyChainCertificates(context))
             it.usePlatformTls(AndroidTls(context))
