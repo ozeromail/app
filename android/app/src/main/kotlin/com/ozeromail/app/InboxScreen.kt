@@ -745,6 +745,20 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         }
     }
 
+    /** A draft from the list, with the message it answers if that is still saved. */
+    fun openDraft(draft: DraftItem) {
+        scope.launch {
+            val original = draft.replyTo?.let { id ->
+                try {
+                    mail.message(id)
+                } catch (_: CoreException) {
+                    null
+                }
+            }
+            composing = Composing(draft, original)
+        }
+    }
+
     /** Closed with something written: the toast says where it went, and can open it again. */
     fun kept() {
         scope.launch {
@@ -778,20 +792,6 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             } catch (e: CoreException) {
                 fail(e)
             }
-        }
-    }
-
-    /** A draft from the list, with the message it answers if that is still saved. */
-    fun openDraft(draft: DraftItem) {
-        scope.launch {
-            val original = draft.replyTo?.let { id ->
-                try {
-                    mail.message(id)
-                } catch (_: CoreException) {
-                    null
-                }
-            }
-            composing = Composing(draft, original)
         }
     }
 
