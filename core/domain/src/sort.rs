@@ -18,12 +18,13 @@ pub struct Signals<'a> {
 }
 
 /// Sender names used only by machines.
-const ROBOTS: [&str; 12] = [
+const ROBOTS: [&str; 14] = [
     "noreply",
     "no-reply",
     "no_reply",
     "donotreply",
     "do-not-reply",
+    "do_not_reply",
     "notification",
     "notifications",
     "notify",
@@ -31,6 +32,7 @@ const ROBOTS: [&str; 12] = [
     "alerts",
     "mailer-daemon",
     "postmaster",
+    "bounce",
 ];
 
 impl Category {
@@ -40,8 +42,7 @@ impl Category {
     /// Machines first: services often send through mailing lists too. A discussion list
     /// (a `List-Id` without bulk signs) is people talking, so it stays in People.
     pub fn of(s: &Signals<'_>) -> Self {
-        let local = s.from.rsplit_once('@').map_or(s.from, |(local, _)| local);
-        let robot = ROBOTS.iter().any(|r| is_robot(local, r));
+        let robot = is_robot(s.from);
         // `no (sent by hand)` is still `no`; RFC 3834 allows a comment after the keyword.
         let auto = s.auto_submitted.is_some_and(|v| {
             let keyword = v
@@ -67,8 +68,14 @@ impl Category {
     }
 }
 
+/// An address no person reads, as `noreply@`: answers to it go nowhere.
+pub fn is_robot(email: &str) -> bool {
+    let local = email.rsplit_once('@').map_or(email, |(local, _)| local);
+    ROBOTS.iter().any(|r| robot_name(local, r))
+}
+
 /// `noreply`, and also `noreply+abc` or `noreply.billing`.
-fn is_robot(local: &str, robot: &str) -> bool {
+fn robot_name(local: &str, robot: &str) -> bool {
     local
         .get(..robot.len())
         .is_some_and(|start| start.eq_ignore_ascii_case(robot))

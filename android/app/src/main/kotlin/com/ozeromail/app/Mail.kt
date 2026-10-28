@@ -36,7 +36,6 @@ import uniffi.ozero_api.AttachmentFile
 import uniffi.ozero_api.AttachmentItem
 import uniffi.ozero_api.Category
 import uniffi.ozero_api.Core
-import uniffi.ozero_api.ContactItem
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.DraftFileItem
 import uniffi.ozero_api.DraftItem
@@ -343,6 +342,9 @@ class Mail(private val context: Context) {
             core.searchDirectory(account.id, password, text)
         }.flatten()
 
+    /** The name to show for each of [emails] on its chip: the contacts', the mail's or the address. */
+    suspend fun recipientNames(emails: List<String>): List<String> = io { core.recipientNames(emails) }
+
     /** What a tap on someone's name shows, [name] as the mail gives it. */
     suspend fun person(email: String, name: String?): PersonCard = io { core.person(email, name) }
 
@@ -359,19 +361,12 @@ class Mail(private val context: Context) {
 
     /** As [readContacts], returning once they are given. */
     suspend fun giveContacts() = io {
-        val contacts = PhoneContacts.read(context)
-        if (contacts == givenContacts) return@io
         try {
-            core.setContacts(contacts)
-            givenContacts = contacts
+            core.setContacts(PhoneContacts.read(context))
         } catch (e: CoreException) {
             Log.w("Ozero", "contacts not kept", e)
         }
     }
-
-    /** The contacts the core has from this run, so the same are not written again. */
-    @Volatile
-    private var givenContacts: List<ContactItem>? = null
 
     /** The message's conversation, oldest first. */
     suspend fun thread(message: MessageItem): List<MessageItem> = io { core.thread(message.id) }

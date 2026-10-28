@@ -944,6 +944,10 @@ impl Store for SqliteStore {
     }
 
     fn set_contacts(&self, contacts: &[Contact]) -> Result<(), StoreError> {
+        // The same as kept: no write, so nothing is read again for it.
+        if self.contacts()? == contacts {
+            return Ok(());
+        }
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(storage)?;
         tx.execute("DELETE FROM contact", []).map_err(storage)?;
