@@ -839,6 +839,30 @@ impl Store for SqliteStore {
             .map_err(storage)
     }
 
+    fn names(&self, emails: &[String]) -> Result<HashMap<String, String>, StoreError> {
+        let mut names = HashMap::new();
+        if emails.is_empty() {
+            return Ok(names);
+        }
+        let wanted: HashSet<String> = emails.iter().map(|e| e.to_lowercase()).collect();
+        let conn = self.conn();
+        let marks = vec!["?"; wanted.len()].join(", ");
+        // The newest name wins: older rows come first and are written over.
+        let sql = format!(
+            "SELECT lower(from_email), from_name FROM message
+             WHERE lower(from_email) IN ({marks}) AND trim(coalesce(from_name, '')) <> ''
+             ORDER BY date, id"
+        );
+        let rows: Result<Vec<(String, String)>, _> = conn.prepare(&sql).and_then(|mut s| {
+            s.query_map(rusqlite::params_from_iter(&wanted), |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?
+            .collect()
+        });
+        names.extend(rows.map_err(storage)?);
+        Ok(names)
+    }
+
     fn correspondents(&self, message: MessageId) -> Result<Correspondents, StoreError> {
         self.conn()
             .prepare_cached("SELECT from_email, answer_to, recipients FROM message WHERE id = ?1")

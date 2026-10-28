@@ -630,9 +630,36 @@ fn tells_who_a_message_went_to_and_copies_the_others_on_reply_all() {
 
     let one = core.reply(item.clone(), false).unwrap();
     assert_eq!((one.to.as_str(), one.cc.as_str()), ("anna@example.com", ""));
-    let all = core.reply(item, true).unwrap();
+    let all = core.reply(item.clone(), true).unwrap();
     assert_eq!(all.to, "anna@example.com");
     assert_eq!(all.cc, "bob@example.com, cat@example.com");
+
+    // A reply begun goes on, rather than starting a second draft.
+    let id = core
+        .save_draft(DraftItem {
+            text: "Soon".into(),
+            ..one
+        })
+        .unwrap();
+    let again = core.reply(item, true).unwrap();
+    assert_eq!(
+        (again.id, again.text.as_str(), again.cc.as_str()),
+        (id, "Soon", "")
+    );
+
+    // Its row names who it goes to as the saved mail does.
+    let rows = core.draft_rows().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        (rows[0].people.as_str(), rows[0].snippet.as_str()),
+        ("Anna", "Soon")
+    );
+    core.save_draft(DraftItem {
+        to: "anna@example.com, BOB@example.com, new@example.com".into(),
+        ..again
+    })
+    .unwrap();
+    assert_eq!(core.draft_rows().unwrap()[0].people, "Anna, BOB, new");
 }
 
 #[test]

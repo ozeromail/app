@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 
 use crate::{
@@ -126,6 +127,9 @@ pub trait Store: Send + Sync {
     /// Whether all mail's images load without asking, but in junk.
     fn images_always(&self) -> Result<bool, StoreError>;
     fn set_images_always(&self, always: bool) -> Result<(), StoreError>;
+    /// The names the saved mail gives these addresses, by lowercase address; one without a
+    /// name is left out.
+    fn names(&self, emails: &[String]) -> Result<HashMap<String, String>, StoreError>;
     /// Who the message came from and went to.
     fn correspondents(&self, message: MessageId) -> Result<Correspondents, StoreError>;
     /// How to leave the list the message came from, if it says and the person has not yet.

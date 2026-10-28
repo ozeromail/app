@@ -66,6 +66,7 @@
   "compose_forwarded": "Пересылаемое письмо пойдёт под вашим текстом",
   "message_images_hidden": "Картинки скрыты, чтобы отправитель не узнал, что письмо открыто.",
   "action_show": "Показать",
+  "action_open": "Открыть",
   "action_hide": "Скрыть",
   "feedback_write": "Написать автору",
   "feedback_subject": "Об Ozero Mail",

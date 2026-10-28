@@ -901,6 +901,15 @@ impl Core {
     /// An answer to `message` from the account that got it, `Re: ` once: to its sender, and
     /// with `all` a copy to everyone else it went to, `PeopleItem::others`.
     pub fn reply(&self, message: MessageItem, all: bool) -> Result<DraftItem, CoreError> {
+        // A reply begun before goes on, so one answer is never two drafts.
+        let begun = self
+            .store
+            .drafts()?
+            .into_iter()
+            .find(|d| d.reply_to == Some(MessageId(message.id)));
+        if let Some(draft) = begun {
+            return Ok(DraftItem::from(draft));
+        }
         let account = self.account(AccountId(message.account_id))?;
         let correspondents = self.store.correspondents(MessageId(message.id))?;
         let cc: Vec<&str> = if all {
@@ -1041,6 +1050,57 @@ impl Core {
             .drafts()?
             .into_iter()
             .map(DraftItem::from)
+            .collect())
+    }
+
+    /// The drafts as their list shows them, last saved first.
+    pub fn draft_rows(&self) -> Result<Vec<DraftRow>, CoreError> {
+        let drafts = self.store.drafts()?;
+        let emails: Vec<String> = drafts
+            .iter()
+            .flat_map(|d| ozero_domain::typed_addresses(&d.to))
+            .collect();
+        let names = self.store.names(&emails)?;
+        let accounts = self.store.accounts()?;
+        // Marked with their account when there is more than one, as mail is.
+        let marks: HashMap<AccountId, AccountMark> = if accounts.len() > 1 {
+            accounts
+                .iter()
+                .map(|a| (a.id, AccountMark::from(a)))
+                .collect()
+        } else {
+            HashMap::new()
+        };
+        Ok(drafts
+            .into_iter()
+            .map(|d| {
+                let people: Vec<String> = ozero_domain::typed_addresses(&d.to)
+                    .into_iter()
+                    .map(|e| names.get(&e.to_lowercase()).cloned().unwrap_or(e))
+                    .collect();
+                // One person by their whole name, several by their first ones; what is not an
+                // address yet as typed.
+                let people = match people.as_slice() {
+                    [] => d.to.trim().to_owned(),
+                    [one] => one.clone(),
+                    many => many
+                        .iter()
+                        .map(|n| first_name(n))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                };
+                let snippet = Body {
+                    text: ozero_domain::rich::shown(&d.text),
+                    ..Body::default()
+                }
+                .snippet();
+                DraftRow {
+                    people,
+                    snippet,
+                    account: d.account_id.and_then(|a| marks.get(&a).cloned()),
+                    draft: DraftItem::from(d),
+                }
+            })
             .collect())
     }
 
@@ -3614,6 +3674,19 @@ pub struct DraftItem {
     /// Copies (`Cc`), as `to`; empty for none.
     #[uniffi(default = "")]
     pub cc: String,
+}
+
+/// A draft as its list shows it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct DraftRow {
+    pub draft: DraftItem,
+    /// Who it goes to: the name the saved mail gives them, else the address; one person
+    /// whole, several by first names. Empty for nobody yet.
+    pub people: String,
+    /// The start of the text on one line.
+    pub snippet: String,
+    /// Its account, when there is more than one.
+    pub account: Option<AccountMark>,
 }
 
 /// A file of saved mail, offered to send on.

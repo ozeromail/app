@@ -220,8 +220,8 @@ private const val SHORT = 0.25f
 private const val LONG = 0.6f
 
 /**
- * A row that does [swipes] when swiped; a side whose short action does not apply to [message]
- * stays still, as the whole row does unless [enabled]. [onSwipe] gets a way to bring the row
+ * A row that does [swipes] when swiped; a side whose short action [applies] says no to stays
+ * still, as the whole row does unless [enabled]. [label] names an action on the row. [onSwipe] gets a way to bring the row
  * back. [onPull] hears how far the row is held from its place, so its neighbours can be drawn along.
  *
  * The row slides off a bare strip. The short action's icon waits at the edge in a pale round
@@ -231,9 +231,10 @@ private const val LONG = 0.6f
  */
 @Composable
 fun SwipeRow(
-    message: MessageItem,
     swipes: Swipes,
     enabled: Boolean,
+    applies: (SwipeAction) -> Boolean,
+    label: (SwipeAction) -> Int,
     onSwipe: (SwipeAction, reset: () -> Unit) -> Unit,
     onPull: (Float) -> Unit,
     content: @Composable () -> Unit,
@@ -244,7 +245,7 @@ fun SwipeRow(
     val swiped by rememberUpdatedState(onSwipe)
     val pulled by rememberUpdatedState(onPull)
     val current by rememberUpdatedState(swipes)
-    val shown by rememberUpdatedState(message)
+    val applying by rememberUpdatedState(applies)
     // Not saved: the list keeps a row's saved state while it is gone, so a row brought back
     // by Undo would come back swiped and do its action again.
     var offset by remember { mutableFloatStateOf(0f) }
@@ -257,9 +258,9 @@ fun SwipeRow(
     // The short and long action of the side the row goes to; a long one that does not apply is no long one.
     fun side(left: Boolean): Pair<SwipeAction, SwipeAction?> {
         val (short, long) = if (left) current.left to current.leftLong else current.right to current.rightLong
-        return short to long?.takeIf { it.appliesTo(shown) }
+        return short to long?.takeIf(applying)
     }
-    fun open(left: Boolean) = enabled && side(left).first.appliesTo(shown)
+    fun open(left: Boolean) = enabled && applying(side(left).first)
     // 0 while letting go does nothing, 1 for the short action, 2 for the long one.
     val stage by remember {
         derivedStateOf {
@@ -381,7 +382,7 @@ fun SwipeRow(
                 ) {
                     val word = @Composable {
                         Text(
-                            stringResource(action.label(message)),
+                            stringResource(label(action)),
                             color = lerp(fill, on, flood),
                             style = Type.Text,
                             fontWeight = Weight.SemiBold,
