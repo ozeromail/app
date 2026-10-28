@@ -464,8 +464,7 @@ impl Core {
     /// was last called, newest first: what a notification shows. Older mail that comes back,
     /// say after a mailbox reset, is not news.
     pub fn take_new_mail(&self) -> Result<Vec<MessageItem>, CoreError> {
-        let rows = self.with_contact_names(self.store.take_fresh(now() / 1_000 - NEWS_AGE)?)?;
-        Ok(rows.into_iter().map(MessageItem::from).collect())
+        self.with_contacts(self.store.take_fresh(now() / 1_000 - NEWS_AGE)?)
     }
 
     /// Mail that arrived so far is not new any more: the inbox calls it after a sync it shows,
@@ -519,8 +518,7 @@ impl Core {
 
     /// The conversation of a message, oldest first.
     pub fn thread(&self, message: i64) -> Result<Vec<MessageItem>, CoreError> {
-        let rows = self.with_contact_names(self.store.thread(MessageId(message))?)?;
-        Ok(rows.into_iter().map(MessageItem::from).collect())
+        self.with_contacts(self.store.thread(MessageId(message))?)
     }
 
     /// Who `message` went to, and who answering all would add.
@@ -565,11 +563,20 @@ impl Core {
     pub fn set_contacts(&self, contacts: Vec<ContactItem>) -> Result<(), CoreError> {
         let contacts: Vec<Contact> = contacts
             .into_iter()
-            .filter(|c| !c.name.trim().is_empty() && !c.emails.is_empty())
-            .map(|c| Contact {
-                key: c.key,
-                name: c.name.trim().to_owned(),
-                emails: c.emails,
+            .filter(|c| !c.emails.is_empty())
+            .map(|c| {
+                // A phone calls a contact without a name by its address: no name, then.
+                let name = c.name.trim();
+                let name = if c.emails.iter().any(|e| e.trim().eq_ignore_ascii_case(name)) {
+                    ""
+                } else {
+                    name
+                };
+                Contact {
+                    key: c.key,
+                    name: name.to_owned(),
+                    emails: c.emails,
+                }
             })
             .collect();
         self.store.set_contacts(&contacts)?;
@@ -2182,36 +2189,32 @@ impl Core {
     /// List rows, marked with their account when there is more than one.
     fn items(&self, rows: Vec<MessageRow>) -> Result<Vec<MessageItem>, CoreError> {
         let marks = self.account_marks()?;
-        Ok(self
-            .with_contact_names(rows)?
+        let mut items = self.with_contacts(rows)?;
+        for item in &mut items {
+            item.account = marks.get(&AccountId(item.account_id)).cloned();
+        }
+        Ok(items)
+    }
+
+    /// The rows as items, their senders named as in the contacts. The mail's own name stays in
+    /// `from_name`, for quotes and forwards: a contact's name is the user's own.
+    fn with_contacts(&self, rows: Vec<MessageRow>) -> Result<Vec<MessageItem>, CoreError> {
+        let names = self.contact_names()?;
+        Ok(rows
             .into_iter()
-            .map(|row| {
-                let account = marks.get(&row.account_id).cloned();
+            .map(|mut row| {
+                for sender in row.senders.iter_mut().filter(|s| !s.me) {
+                    if let Some(name) = names.get(&sender.email) {
+                        sender.name = name.clone();
+                    }
+                }
+                let contact_name = names.get(&row.from.email.to_lowercase()).cloned();
                 MessageItem {
-                    account,
+                    contact_name,
                     ..MessageItem::from(row)
                 }
             })
             .collect())
-    }
-
-    /// The rows with the contacts' names for their senders.
-    fn with_contact_names(&self, mut rows: Vec<MessageRow>) -> Result<Vec<MessageRow>, CoreError> {
-        let names = self.contact_names()?;
-        if names.is_empty() {
-            return Ok(rows);
-        }
-        for row in &mut rows {
-            if let Some(name) = names.get(&row.from.email.to_lowercase()) {
-                row.from.name = Some(name.clone());
-            }
-            for sender in row.senders.iter_mut().filter(|s| !s.me) {
-                if let Some(name) = names.get(&sender.email) {
-                    sender.name = name.clone();
-                }
-            }
-        }
-        Ok(rows)
     }
 
     /// The contacts' names by lowercase address.
@@ -2221,7 +2224,13 @@ impl Core {
             return Ok(names.clone());
         }
         let mut names = HashMap::new();
-        for contact in self.store.contacts()? {
+        // A contact with only an address names nobody.
+        for contact in self
+            .store
+            .contacts()?
+            .into_iter()
+            .filter(|c| !c.name.is_empty())
+        {
             for email in &contact.emails {
                 names
                     .entry(email.to_lowercase())
@@ -4396,7 +4405,10 @@ impl From<InviteRow> for InviteMark {
 pub struct MessageItem {
     pub id: i64,
     pub account_id: i64,
+    /// The name the mail gives its sender, as quotes and forwards say it.
     pub from_name: Option<String>,
+    /// The name the contacts give the sender, which the app shows in place of `from_name`.
+    pub contact_name: Option<String>,
     pub from_email: String,
     pub subject: String,
     pub snippet: String,
@@ -4443,6 +4455,7 @@ impl From<MessageRow> for MessageItem {
             id: row.id.0,
             account_id: row.account_id.0,
             from_name: row.from.name,
+            contact_name: None,
             from_email: row.from.email,
             subject: row.subject,
             snippet: row.snippet,

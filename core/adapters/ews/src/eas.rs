@@ -1033,9 +1033,10 @@ impl MailProvider for EasSession {
             return Err(protocol("Search without a store"));
         };
         match store.text_at(&["Search:Status"]) {
-            "" | "1" => {}
-            // Too many matches to tell, or none.
-            "6" | "12" => return Ok(vec![]),
+            // 12: more match than the range asked for, which still comes.
+            "" | "1" | "12" => {}
+            // None.
+            "6" => return Ok(vec![]),
             status => return Err(ProviderError::Rejected(format!("Search status {status}"))),
         }
         Ok(store

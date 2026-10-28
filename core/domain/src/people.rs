@@ -112,19 +112,33 @@ impl People {
         for (at, contact) in contacts.iter().enumerate() {
             for email in &contact.emails {
                 let lower = email.to_lowercase();
+                index.entry(lower.clone()).or_insert(at);
                 if !wanted(&lower) {
                     continue;
                 }
-                index.entry(lower.clone()).or_insert(at);
-                let person = Person {
-                    name: contact.name.clone(),
-                    email: email.clone(),
-                    contact: Some(contact.key.clone()),
+                // A contact with only an address keeps the name the mail gives.
+                let named = |mail: Option<&Person>| {
+                    if contact.name.is_empty() {
+                        mail.map_or_else(|| email.clone(), |p| p.name.clone())
+                    } else {
+                        contact.name.clone()
+                    }
                 };
                 match by_email.get(&lower) {
-                    Some(&i) if known[i].person.contact.is_none() => known[i].person = person,
+                    Some(&i) if known[i].person.contact.is_none() => {
+                        known[i].person = Person {
+                            name: named(Some(&known[i].person)),
+                            email: email.clone(),
+                            contact: Some(contact.key.clone()),
+                        };
+                    }
                     Some(_) => {}
                     None => {
+                        let person = Person {
+                            name: named(None),
+                            email: email.clone(),
+                            contact: Some(contact.key.clone()),
+                        };
                         by_email.insert(lower, known.len());
                         known.push(Known {
                             person,
@@ -186,6 +200,11 @@ impl People {
             };
         };
         let contact = &self.cards[at];
+        let name = Some(contact.name.as_str())
+            .filter(|n| !n.is_empty())
+            .or(name.filter(|n| !n.trim().is_empty()))
+            .unwrap_or(email)
+            .to_owned();
         let rank = |e: &String| {
             self.known
                 .iter()
@@ -202,7 +221,7 @@ impl People {
         let mut emails = vec![email.to_owned()];
         emails.extend(others);
         Card {
-            name: contact.name.clone(),
+            name,
             emails,
             contact: Some(contact.key.clone()),
         }
@@ -362,6 +381,30 @@ mod tests {
         assert_eq!(
             (stranger.name.as_str(), stranger.contact),
             ("anna@example.com", None)
+        );
+    }
+
+    #[test]
+    fn a_contact_without_a_name_or_with_a_robot_address_is_still_a_contact() {
+        let people = People::new(
+            vec![mail("anna@example.com", "Anna Lee", 1, 0, 0)],
+            vec![
+                contact("1", "", &["anna@example.com"]),
+                contact("2", "Help desk", &["bounce-desk@corp.example"]),
+            ],
+            &[],
+            0,
+        );
+        let anna = &people.find("anna", 5)[0];
+        assert_eq!(
+            (anna.name.as_str(), anna.contact.as_deref()),
+            ("Anna Lee", Some("1"))
+        );
+        assert_eq!(people.card("anna@example.com", Some("Anna")).name, "Anna");
+        let desk = people.card("bounce-desk@corp.example", None);
+        assert_eq!(
+            (desk.name.as_str(), desk.contact.as_deref()),
+            ("Help desk", Some("2"))
         );
     }
 }

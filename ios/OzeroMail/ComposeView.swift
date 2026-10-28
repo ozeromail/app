@@ -675,7 +675,7 @@ struct ComposeView: View {
     }
 
     private func addQuote(_ original: MessageItem) {
-        let header = tr("compose_quote_header", longDate(original.date), original.sender)
+        let header = tr("compose_quote_header", longDate(original.date), original.mailSender)
         Task {
             do {
                 quote = try await mail.quote(original, header: header)

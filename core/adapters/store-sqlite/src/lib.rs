@@ -871,10 +871,12 @@ impl Store for SqliteStore {
         // With max(), SQLite takes the name of each sender's newest message, as in `names`.
         let mut received = conn
             .prepare_cached(
-                "SELECT m.from_email, m.from_name, count(*), max(m.date)
+                // A message in several folders, as Gmail's labels, counts once.
+                "SELECT m.from_email, m.from_name, count(DISTINCT coalesce(m.message_id, m.id)),
+                        max(m.date)
                  FROM message m JOIN folder f ON f.id = m.folder_id
                  WHERE f.role NOT IN ('trash', 'junk', 'drafts', 'sent')
-                   AND m.category = 'people'
+                   AND m.category = 'people' AND m.from_email <> ''
                  GROUP BY lower(m.from_email)",
             )
             .map_err(storage)?;

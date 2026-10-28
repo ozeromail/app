@@ -1353,13 +1353,25 @@ fn suggests_people_and_names_them_as_the_contacts_do() {
             .collect::<Vec<_>>(),
         [("Мама", true), ("Мама", true)]
     );
-    assert!(core.find_people("nobody".into(), 5).unwrap().is_empty());
+    // A contact with only an address is still one, by its address.
+    let nobody = core.find_people("nobody".into(), 5).unwrap();
+    assert_eq!(
+        (nobody[0].name.as_str(), nobody[0].contact),
+        ("nobody@example.com", true)
+    );
     let rows = core.inbox(None, Category::People, 10).unwrap();
     let senders: Vec<_> = rows
         .iter()
-        .map(|r| r.from_name.clone().unwrap_or_default())
+        .map(|r| {
+            r.contact_name
+                .clone()
+                .or(r.from_name.clone())
+                .unwrap_or_default()
+        })
         .collect();
     assert_eq!(senders, ["Pavel", "Pavel", "Мама"]);
+    // Quotes and forwards keep the name the mail gives.
+    assert_ne!(rows[2].from_name.as_deref(), Some("Мама"));
     assert_eq!(rows[2].senders[0].name, "Мама");
     let card = core
         .person("patimat@example.com".into(), Some("Patimat M.".into()))
