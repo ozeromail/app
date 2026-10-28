@@ -845,11 +845,14 @@ impl Store for SqliteStore {
         }
         let wanted: HashSet<String> = emails.iter().map(|e| e.to_lowercase()).collect();
         let marks = vec!["?"; wanted.len()].join(", ");
-        // With max(), SQLite takes the name of the newest message of each sender.
+        // With max(), SQLite takes the name of the newest message of each sender; not from
+        // junk or trash, where a sender's name may be forged.
         let sql = format!(
-            "SELECT lower(from_email), from_name, max(date) FROM message
-             WHERE lower(from_email) IN ({marks}) AND trim(coalesce(from_name, '')) <> ''
-             GROUP BY lower(from_email)"
+            "SELECT lower(m.from_email), m.from_name, max(m.date)
+             FROM message m JOIN folder f ON f.id = m.folder_id
+             WHERE lower(m.from_email) IN ({marks}) AND trim(coalesce(m.from_name, '')) <> ''
+               AND f.role NOT IN ('junk', 'trash')
+             GROUP BY lower(m.from_email)"
         );
         self.conn()
             .prepare(&sql)

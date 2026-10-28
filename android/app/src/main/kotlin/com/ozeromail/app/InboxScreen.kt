@@ -756,8 +756,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             }
         }
         scope.launch {
-            // The draft saved last, saved by now: the save goes as soon as the screen closes.
-            if (note(draftSaved, openAgain)) mail.drafts.value.firstOrNull()?.let { openDraft(it.draft) }
+            if (!note(draftSaved, openAgain)) return@launch
+            // Saved by now: the save goes as soon as the screen closes. A draft from another device may be newer.
+            val saved = mail.drafts.value
+            (saved.find { it.draft.id == mail.lastSaved } ?: saved.firstOrNull())?.let { openDraft(it.draft) }
         }
     }
 
