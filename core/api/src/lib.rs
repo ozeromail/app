@@ -907,17 +907,25 @@ impl Core {
             .drafts()?
             .into_iter()
             .find(|d| d.reply_to == Some(MessageId(message.id)));
-        if let Some(draft) = begun {
-            return Ok(DraftItem::from(draft));
-        }
         let account = self.account(AccountId(message.account_id))?;
         let correspondents = self.store.correspondents(MessageId(message.id))?;
-        let cc: Vec<&str> = if all {
-            let others = correspondents.others(&account.email);
-            others.into_iter().map(|a| a.email.as_str()).collect()
-        } else {
-            vec![]
-        };
+        let mut cc: Vec<String> = begun
+            .as_ref()
+            .map(|d| ozero_domain::typed_addresses(&d.cc))
+            .unwrap_or_default();
+        if all {
+            for other in correspondents.others(&account.email) {
+                if !cc.iter().any(|c| c.eq_ignore_ascii_case(&other.email)) {
+                    cc.push(other.email.clone());
+                }
+            }
+        }
+        if let Some(draft) = begun {
+            return Ok(DraftItem {
+                cc: cc.join(", "),
+                ..DraftItem::from(draft)
+            });
+        }
         Ok(DraftItem {
             id: 0,
             account_id: message.account_id,
@@ -1043,34 +1051,15 @@ impl Core {
         }
     }
 
-    /// The drafts kept on the device, last saved first.
-    pub fn drafts(&self) -> Result<Vec<DraftItem>, CoreError> {
-        Ok(self
-            .store
-            .drafts()?
-            .into_iter()
-            .map(DraftItem::from)
-            .collect())
-    }
-
-    /// The drafts as their list shows them, last saved first.
-    pub fn draft_rows(&self) -> Result<Vec<DraftRow>, CoreError> {
+    /// The drafts kept on the device as their list shows them, last saved first.
+    pub fn drafts(&self) -> Result<Vec<DraftRow>, CoreError> {
         let drafts = self.store.drafts()?;
         let emails: Vec<String> = drafts
             .iter()
             .flat_map(|d| ozero_domain::typed_addresses(&d.to))
             .collect();
         let names = self.store.names(&emails)?;
-        let accounts = self.store.accounts()?;
-        // Marked with their account when there is more than one, as mail is.
-        let marks: HashMap<AccountId, AccountMark> = if accounts.len() > 1 {
-            accounts
-                .iter()
-                .map(|a| (a.id, AccountMark::from(a)))
-                .collect()
-        } else {
-            HashMap::new()
-        };
+        let marks = self.account_marks()?;
         Ok(drafts
             .into_iter()
             .map(|d| {
@@ -2073,15 +2062,7 @@ impl Core {
 
     /// List rows, marked with their account when there is more than one.
     fn items(&self, rows: Vec<MessageRow>) -> Result<Vec<MessageItem>, CoreError> {
-        let accounts = self.store.accounts()?;
-        let marks: HashMap<AccountId, AccountMark> = if accounts.len() > 1 {
-            accounts
-                .iter()
-                .map(|a| (a.id, AccountMark::from(a)))
-                .collect()
-        } else {
-            HashMap::new()
-        };
+        let marks = self.account_marks()?;
         Ok(rows
             .into_iter()
             .map(|row| {
@@ -2092,6 +2073,19 @@ impl Core {
                 }
             })
             .collect())
+    }
+
+    /// The marks of the accounts, for rows of mail and drafts: none while there is only one.
+    fn account_marks(&self) -> Result<HashMap<AccountId, AccountMark>, CoreError> {
+        let accounts = self.store.accounts()?;
+        Ok(if accounts.len() > 1 {
+            accounts
+                .iter()
+                .map(|a| (a.id, AccountMark::from(a)))
+                .collect()
+        } else {
+            HashMap::new()
+        })
     }
 
     /// What goes under the mail of `account`.

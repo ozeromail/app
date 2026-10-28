@@ -77,10 +77,6 @@ class Mail(private val context: Context) {
     /** The drafts on the phone as their list shows them, last saved first; read again each time the database changes. */
     val drafts: StateFlow<List<DraftRow>> = savedDrafts
 
-    /** The draft saved last, by id: the one a toast opens again. */
-    @Volatile
-    var lastSaved = 0L
-
     /** This run's downloaded attachments; those of earlier runs go, as an id may name another message by now. */
     private val downloads = File(context.cacheDir, "attachments/${UUID.randomUUID()}")
 
@@ -475,7 +471,7 @@ class Mail(private val context: Context) {
     }
 
     /** Keeps [draft] on the phone; a new one if its id is 0. Returns its id. */
-    suspend fun saveDraft(draft: DraftItem): Long = io { core.saveDraft(draft) }.also { lastSaved = it }
+    suspend fun saveDraft(draft: DraftItem): Long = io { core.saveDraft(draft) }
 
     /** Saves the drafts into each account's drafts folder too, once there is a network. */
     suspend fun pushDrafts() = pushAll()
@@ -483,7 +479,7 @@ class Mail(private val context: Context) {
     /** Reads [drafts] again; on failure they stay as they were. */
     private suspend fun loadDrafts() {
         try {
-            savedDrafts.value = io { core.draftRows() }
+            savedDrafts.value = io { core.drafts() }
         } catch (e: CoreException) {
             Log.w("Ozero", "drafts not read", e)
         }

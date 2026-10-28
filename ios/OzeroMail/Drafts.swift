@@ -67,14 +67,7 @@ private struct DraftLine: View {
                     .font(.body.weight(.medium))
                     .lineLimit(1)
                 Spacer(minLength: 4)
-                if let account = row.account {
-                    AccountDot(color: account.tint, size: 6)
-                    Text(verbatim: account.name)
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .frame(maxWidth: 70, alignment: .leading)
-                }
+                if let account = row.account { AccountTag(account: account) }
                 Text(verbatim: shortDate(draft.saved))
                     .font(.footnote.monospacedDigit())
                     .foregroundStyle(.secondary)

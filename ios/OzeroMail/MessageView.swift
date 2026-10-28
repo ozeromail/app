@@ -453,11 +453,10 @@ struct MessageView: View {
                     people[to.id] = found
                     others = found.others
                 }
-                // A reply begun before goes on with its copies.
+                // The core's copies: the others for reply all, and those of a reply begun before.
                 let begun = try await draft
-                var copied = begun.cc.split(separator: ", ").map(String.init).filter { !$0.isBlank }
-                if all { copied += others.map(\.email).filter { !copied.contains($0) } }
-                replying = Replying(draft: begun, original: to, others: others, copied: copied)
+                replying = Replying(draft: begun, original: to, others: others,
+                                    copied: begun.cc.split(separator: ", ").map(String.init).filter { !$0.isBlank })
             } catch {
                 self.error = error.text()
             }

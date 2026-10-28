@@ -669,10 +669,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         onStopOrDispose { back.cancel() }
     }
 
-    /** Shows a toast without undo, in place of any other. */
-    suspend fun note(text: String) {
+    /** Shows a toast without undo, in place of any other; true if its [action] was tapped. */
+    suspend fun note(text: String, action: String? = null): Boolean {
         snackbar.currentSnackbarData?.dismiss()
-        snackbar.showSnackbar(text)
+        return snackbar.showSnackbar(text, action, duration = SnackbarDuration.Short) == SnackbarResult.ActionPerformed
     }
 
     /**
@@ -756,11 +756,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             }
         }
         scope.launch {
-            snackbar.currentSnackbarData?.dismiss()
-            if (snackbar.showSnackbar(draftSaved, openAgain, duration = SnackbarDuration.Short) != SnackbarResult.ActionPerformed) return@launch
-            // Saved by now: the save goes as soon as the screen closes.
-            val saved = mail.drafts.value
-            (saved.find { it.draft.id == mail.lastSaved } ?: saved.firstOrNull())?.let { openDraft(it.draft) }
+            // The draft saved last, saved by now: the save goes as soon as the screen closes.
+            if (note(draftSaved, openAgain)) mail.drafts.value.firstOrNull()?.let { openDraft(it.draft) }
         }
     }
 
@@ -769,7 +766,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         composing = null
         scope.launch {
             // Nothing written is not worth bringing back.
-            if (draft.isBlank()) return@launch note(draftDeleted)
+            if (draft.isBlank()) {
+                note(draftDeleted)
+                return@launch
+            }
             if (!offerUndo(draftDeleted)) return@launch
             try {
                 composing = Composing(mail.restoreDraft(draft), original)
@@ -2526,17 +2526,7 @@ private fun MessageLine(message: MessageItem, unread: Boolean, dot: Float, accou
                         )
                     }
                 }
-                account?.let {
-                    AccountDot(it.tint, size = 6.dp)
-                    Text(
-                        it.name,
-                        color = colors.onSurfaceVariant,
-                        style = Type.Label,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.widthIn(max = 70.dp).padding(start = 5.dp, end = 8.dp),
-                    )
-                }
+                account?.let { AccountTag(it) }
                 Text(
                     // Not out yet: once the server has it, its date shows.
                     if (message.sending) stringResource(R.string.inbox_sending) else shortDate(LocalContext.current, message.date),
@@ -2564,6 +2554,20 @@ private fun MessageLine(message: MessageItem, unread: Boolean, dot: Float, accou
             if (message.attachments.isNotEmpty()) AttachmentChips(message.attachments)
         }
     }
+}
+
+/** A row's account, when there are several: a dot of its colour and its short name, before the time. */
+@Composable
+internal fun AccountTag(account: AccountMark) {
+    AccountDot(account.tint, size = 6.dp)
+    Text(
+        account.name,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        style = Type.Label,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.widthIn(max = 70.dp).padding(start = 5.dp, end = 8.dp),
+    )
 }
 
 /** The name, or the address when there is none. */

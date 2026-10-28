@@ -788,9 +788,8 @@ final class InboxModel {
         composing = nil
         mail.pushDrafts()
         note(tr("draft_saved"), extra: tr("action_open")) { [self] in
-            // Saved by now: the save goes as soon as the screen closes.
-            let saved = drafts.first { $0.draft.id == mail.lastSaved } ?? drafts.first
-            if let saved { openDraft(saved.draft) }
+            // The draft saved last, saved by now: the save goes as soon as the screen closes.
+            if let saved = drafts.first { openDraft(saved.draft) }
         }
     }
 
@@ -803,10 +802,8 @@ final class InboxModel {
                 self.error = error.textKey()
                 return
             }
-            await counts()
             guard await offerUndo(tr("draft_deleted")) else { return }
             _ = try? await mail.restoreDraft(draft)
-            await counts()
         }
     }
 

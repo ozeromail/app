@@ -840,27 +840,26 @@ impl Store for SqliteStore {
     }
 
     fn names(&self, emails: &[String]) -> Result<HashMap<String, String>, StoreError> {
-        let mut names = HashMap::new();
         if emails.is_empty() {
-            return Ok(names);
+            return Ok(HashMap::new());
         }
         let wanted: HashSet<String> = emails.iter().map(|e| e.to_lowercase()).collect();
-        let conn = self.conn();
         let marks = vec!["?"; wanted.len()].join(", ");
-        // The newest name wins: older rows come first and are written over.
+        // With max(), SQLite takes the name of the newest message of each sender.
         let sql = format!(
-            "SELECT lower(from_email), from_name FROM message
+            "SELECT lower(from_email), from_name, max(date) FROM message
              WHERE lower(from_email) IN ({marks}) AND trim(coalesce(from_name, '')) <> ''
-             ORDER BY date, id"
+             GROUP BY lower(from_email)"
         );
-        let rows: Result<Vec<(String, String)>, _> = conn.prepare(&sql).and_then(|mut s| {
-            s.query_map(rusqlite::params_from_iter(&wanted), |r| {
-                Ok((r.get(0)?, r.get(1)?))
-            })?
-            .collect()
-        });
-        names.extend(rows.map_err(storage)?);
-        Ok(names)
+        self.conn()
+            .prepare(&sql)
+            .and_then(|mut s| {
+                s.query_map(rusqlite::params_from_iter(&wanted), |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                })?
+                .collect()
+            })
+            .map_err(storage)
     }
 
     fn correspondents(&self, message: MessageId) -> Result<Correspondents, StoreError> {

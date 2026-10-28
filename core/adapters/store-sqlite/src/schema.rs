@@ -427,4 +427,6 @@ pub const MIGRATIONS: &[&str] = &[
           AND (a.mime IN ('text/calendar', 'application/ics') OR lower(a.name) LIKE '%.ics')
     );
     ",
+    // 42: the names of the people drafts go to, found by sender address.
+    "CREATE INDEX message_from ON message(lower(from_email));",
 ];
