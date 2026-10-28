@@ -58,11 +58,8 @@ import uniffi.ozero_api.PersonFound
 /** A pause in typing this long looks the people up, so each key does not. */
 private const val LOOKUP_PAUSE_MS = 60L
 
-/** A longer one asks the company directories too. */
+/** A longer one asks the company directories too, which answer from three letters. */
 private const val DIRECTORY_PAUSE_MS = 400L
-
-/** The directories answer only from this many letters. */
-private const val DIRECTORY_MIN = 3
 
 /**
  * Who a message goes to, as one field: the people picked, each a chip with their name, then the
@@ -106,12 +103,12 @@ fun Recipients(
     val typing = parts.typing.trim()
     LaunchedEffect(parts.done) {
         // Addresses that came with the draft get the name the mail or the contacts give them.
-        for (email in parts.done.filter { it !in names }) {
-            try {
-                mail.findPeople(email).find { it.email.equals(email, ignoreCase = true) }?.let { names[email] = it.name }
-            } catch (_: CoreException) {
-                // The address it is, then.
-            }
+        val unnamed = parts.done.filter { it !in names }
+        if (unnamed.isEmpty()) return@LaunchedEffect
+        try {
+            names.putAll(unnamed.zip(mail.recipientNames(unnamed)))
+        } catch (_: CoreException) {
+            // The addresses they are, then.
         }
     }
     LaunchedEffect(typing, contactsGiven) {
@@ -124,7 +121,7 @@ fun Recipients(
         }
     }
     LaunchedEffect(typing) {
-        if (typing.length < DIRECTORY_MIN) return@LaunchedEffect
+        if (typing.isEmpty()) return@LaunchedEffect
         delay(DIRECTORY_PAUSE_MS)
         directory = try {
             typing to mail.searchDirectory(typing)

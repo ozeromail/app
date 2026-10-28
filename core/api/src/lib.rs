@@ -47,6 +47,8 @@ const SERVER_HITS: u32 = 50;
 const DIRECTORY_MIN: usize = 3;
 /// How many people a company directory search brings.
 const DIRECTORY_HITS: u32 = 10;
+/// How long "To" may suggest from mail this old while more keeps coming.
+const PEOPLE_FRESH: Duration = Duration::from_secs(30);
 /// Seconds in a day, for how long an account keeps its mail.
 const DAY: i64 = 86_400;
 /// How many of the newest inbox messages `prefetch` downloads whole.
@@ -191,8 +193,8 @@ pub struct Core {
     answers: Mutex<HashMap<MessageId, Answered>>,
     /// How many writes changed the database since it was opened, for `changed`.
     changes: Arc<tokio::sync::watch::Sender<u64>>,
-    /// Who "To" suggests, and the `changes` count it was made at.
-    people: Mutex<Option<(u64, Arc<People>)>>,
+    /// Who "To" suggests, with the `changes` count and the time it was made at.
+    people: Mutex<Option<(u64, Instant, Arc<People>)>>,
     /// The contacts' names by lowercase address, read once after each `set_contacts`.
     contact_names: Mutex<Option<Arc<HashMap<String, String>>>>,
 }
@@ -572,6 +574,7 @@ impl Core {
             .collect();
         self.store.set_contacts(&contacts)?;
         *self.contact_names.lock().unwrap_or_else(|p| p.into_inner()) = None;
+        *self.people.lock().unwrap_or_else(|p| p.into_inner()) = None;
         Ok(())
     }
 
@@ -583,6 +586,16 @@ impl Core {
             .find(&text, limit as usize)
             .into_iter()
             .map(PersonFound::from)
+            .collect())
+    }
+
+    /// The name to show for each of `emails`, as on its chip in "To": the contacts', else the
+    /// newest the mail gives, else the address.
+    pub fn recipient_names(&self, emails: Vec<String>) -> Result<Vec<String>, CoreError> {
+        let names = self.names_of(&emails)?;
+        Ok(emails
+            .into_iter()
+            .map(|e| names.get(&e.to_lowercase()).cloned().unwrap_or(e))
             .collect())
     }
 
@@ -1122,12 +1135,7 @@ impl Core {
             })
             .collect();
         let emails: Vec<String> = drafts.iter().flat_map(|(_, to)| to.clone()).collect();
-        let mut names = self.store.names(&emails)?;
-        names.extend(
-            self.contact_names()?
-                .iter()
-                .map(|(e, n)| (e.clone(), n.clone())),
-        );
+        let names = self.names_of(&emails)?;
         let marks = self.account_marks()?;
         Ok(drafts
             .into_iter()
@@ -1702,8 +1710,9 @@ impl Core {
         if let Some(remote) = slot {
             remote.close().await;
         }
+        let found = self.refused(&account, found)?;
         let names = self.contact_names()?;
-        Ok(found?
+        Ok(found
             .into_iter()
             .filter(|l| !l.email.eq_ignore_ascii_case(&account.email))
             .map(|l| {
@@ -2224,12 +2233,27 @@ impl Core {
         Ok(names)
     }
 
-    /// Who "To" suggests, made again once the database changed.
+    /// The names to show for `emails`, by lowercase address: the contacts', else the newest
+    /// the mail gives.
+    fn names_of(&self, emails: &[String]) -> Result<HashMap<String, String>, CoreError> {
+        let mut names = self.store.names(emails)?;
+        let contacts = self.contact_names()?;
+        for email in emails {
+            let email = email.to_lowercase();
+            if let Some(name) = contacts.get(&email) {
+                names.insert(email, name.clone());
+            }
+        }
+        Ok(names)
+    }
+
+    /// Who "To" suggests, made again once the database changed; while mail keeps coming, at
+    /// most every `PEOPLE_FRESH`, as each sync writes many times.
     fn people_index(&self) -> Result<Arc<People>, CoreError> {
         let version = *self.changes.borrow();
         let mut kept = self.people.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some((made, people)) = &*kept
-            && *made == version
+        if let Some((made, at, people)) = &*kept
+            && (*made == version || at.elapsed() < PEOPLE_FRESH)
         {
             return Ok(people.clone());
         }
@@ -2245,7 +2269,7 @@ impl Core {
             &own,
             now() / 1_000,
         ));
-        *kept = Some((version, people.clone()));
+        *kept = Some((version, Instant::now(), people.clone()));
         Ok(people)
     }
 

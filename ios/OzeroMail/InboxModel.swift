@@ -400,7 +400,7 @@ final class InboxModel {
         // A failure from before the app was away says nothing about the network now.
         offlineSince = nil
         // The contacts may have changed meanwhile.
-        await mail.giveContacts()
+        Task { await mail.giveContacts() }
         if let lastSync, ContinuousClock.now - lastSync < Self.resync { return }
         await sync(quiet: true)
         if !tabbed { await sync(mailbox, quiet: true) }

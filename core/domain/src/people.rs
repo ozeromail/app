@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 
+use crate::sort::is_robot;
+
 /// Someone in the phone's contacts, as the app read them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Contact {
@@ -170,13 +172,6 @@ impl People {
             .collect()
     }
 
-    /// The name the contacts give the address, if they have it.
-    pub fn contact_name(&self, email: &str) -> Option<&str> {
-        self.contacts
-            .get(&email.to_lowercase())
-            .map(|&i| self.cards[i].name.as_str())
-    }
-
     /// The person behind `email`, with `name` as the mail gives it when the contacts do not.
     pub fn card(&self, email: &str, name: Option<&str>) -> Card {
         let Some(&at) = self.contacts.get(&email.to_lowercase()) else {
@@ -231,25 +226,6 @@ fn words(person: &Person) -> Vec<String> {
             .map(str::to_owned),
     );
     words
-}
-
-/// Addresses no person reads: answers to them go nowhere.
-pub fn is_robot(email: &str) -> bool {
-    let local = email
-        .split('@')
-        .next()
-        .unwrap_or_default()
-        .to_lowercase()
-        .replace(['-', '_', '.'], "");
-    [
-        "noreply",
-        "donotreply",
-        "mailerdaemon",
-        "postmaster",
-        "bounce",
-    ]
-    .iter()
-    .any(|r| local.starts_with(r))
 }
 
 #[cfg(test)]
@@ -340,8 +316,7 @@ mod tests {
         );
         assert_eq!(people.find("patimat", 5).len(), 1);
         assert_eq!(emails(people.find("олеся", 5)), ["olesya@example.com"]);
-        assert_eq!(people.contact_name("PATIMAT@example.com"), Some("Мама"));
-        assert_eq!(people.contact_name("anna@example.com"), None);
+        assert_eq!(people.card("PATIMAT@example.com", None).name, "Мама");
     }
 
     #[test]

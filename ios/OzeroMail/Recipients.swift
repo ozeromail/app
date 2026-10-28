@@ -56,12 +56,9 @@ struct Recipients<Field: Hashable>: View {
         }
         .task(id: parts.done) {
             // Addresses that came with the draft get the name the mail or the contacts give them.
-            for email in parts.done where names[email] == nil {
-                let found = try? await mail.findPeople(email)
-                if let person = found?.first(where: { $0.email.caseInsensitiveCompare(email) == .orderedSame }) {
-                    names[email] = person.name
-                }
-            }
+            let unnamed = parts.done.filter { names[$0] == nil }
+            guard !unnamed.isEmpty, let found = try? await mail.recipientNames(unnamed) else { return }
+            for (email, name) in zip(unnamed, found) { names[email] = name }
         }
         .task(id: "\(contactsGiven) \(typing)") {
             guard !typing.isEmpty else { return }
@@ -70,7 +67,8 @@ struct Recipients<Field: Hashable>: View {
             local = Found(text: typing, people: (try? await mail.findPeople(typing)) ?? [])
         }
         .task(id: typing) {
-            guard typing.count >= Self.directoryMin else { return }
+            guard !typing.isEmpty else { return }
+            // A longer pause asks the company directories too, which answer from three letters.
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled else { return }
             // Offline or refused: the people on the phone are enough.
@@ -78,8 +76,6 @@ struct Recipients<Field: Hashable>: View {
         }
     }
 
-    /// The directories answer only from this many letters.
-    private static var directoryMin: Int { 3 }
     private static var maxHeight: CGFloat { 320 }
 
     @ViewBuilder

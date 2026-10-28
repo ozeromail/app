@@ -86,7 +86,7 @@ struct InboxView: View {
                 onDiscard: { model.discarded($0, original: composing.original) })
         }
         .task {
-            await model.mail.giveContacts()
+            Task { await model.mail.giveContacts() }
             await model.loadAccounts()
             await model.load()
             await model.sync()

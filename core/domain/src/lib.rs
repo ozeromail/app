@@ -34,7 +34,7 @@ pub use outbox::{
     SavedDraft, ServerDraft, Unsent, forward_quote, forward_subject, full_text, is_address,
     parse_recipients, quote, reply_subject, typed_addresses,
 };
-pub use people::{Card, Contact, Correspondent, Listed, People, Person, is_robot};
+pub use people::{Card, Contact, Correspondent, Listed, People, Person};
 pub use provider::{
     Changes, Checkpoint, MailProvider, MailSender, MessageBuilder, MessageParser, Moved, Older,
     ProviderError, ProviderState, RawMessage,
