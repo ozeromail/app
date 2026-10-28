@@ -8,12 +8,13 @@ use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
 use ozero_domain::{
-    Account, AccountId, Action, Address, Answer, Body, Category, Changes, Checkpoint,
-    Correspondents, DayEvent, Draft, DraftCopy, DraftFile, DraftId, DraftToPush, FileId, Flags,
-    Folder, FolderId, FolderRole, ListQuery, MailProvider, MailSender, MessageBuilder, MessageId,
-    MessageLocation, MessageParser, MessageRow, Moved, NewAccount, NewFolder, NewMail, NewMessage,
-    Older, Op, OpId, OutboxId, Outgoing, OutgoingFile, ProviderError, RawMessage, RecentFile,
-    SavedDraft, SavedInvite, ServerDraft, Store, StoreError, Unsent, Unsubscribe,
+    Account, AccountId, Action, Address, Answer, Body, Category, Changes, Checkpoint, Contact,
+    Correspondent, Correspondents, DayEvent, Draft, DraftCopy, DraftFile, DraftId, DraftToPush,
+    FileId, Flags, Folder, FolderId, FolderRole, ListQuery, MailProvider, MailSender,
+    MessageBuilder, MessageId, MessageLocation, MessageParser, MessageRow, Moved, NewAccount,
+    NewFolder, NewMail, NewMessage, Older, Op, OpId, OutboxId, Outgoing, OutgoingFile,
+    ProviderError, RawMessage, RecentFile, SavedDraft, SavedInvite, ServerDraft, Store, StoreError,
+    Unsent, Unsubscribe,
 };
 
 /// Fakes answer at once, so one poll finishes the future.
@@ -423,6 +424,22 @@ impl Store for Memory {
 
     fn names(&self, _: &[String]) -> Result<HashMap<String, String>, StoreError> {
         Ok(HashMap::new())
+    }
+
+    fn mail_people(&self) -> Result<Vec<Correspondent>, StoreError> {
+        Ok(vec![])
+    }
+
+    fn contacts(&self) -> Result<Vec<Contact>, StoreError> {
+        Ok(vec![])
+    }
+
+    fn set_contacts(&self, _: &[Contact]) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn mail_with(&self, _: &[String], _: u32) -> Result<Vec<MessageRow>, StoreError> {
+        Ok(vec![])
     }
 
     fn image_senders(&self) -> Result<Vec<String>, StoreError> {

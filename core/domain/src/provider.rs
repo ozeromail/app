@@ -2,7 +2,7 @@ use std::fmt;
 use std::future::Future;
 use std::time::Duration;
 
-use crate::{Address, Answer, Body, Flags, NewFolder, NewMessage, Outgoing};
+use crate::{Address, Answer, Body, Flags, Listed, NewFolder, NewMessage, Outgoing};
 
 /// A message as the server returns it, before MIME parsing.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -216,6 +216,18 @@ pub trait MailProvider: Send {
     ) -> impl Future<Output = Result<(), ProviderError>> + Send {
         let _ = (folder, validity, remote_id, answer);
         async { Ok(()) }
+    }
+
+    /// Up to `limit` people in the server's address book, as an Exchange company directory,
+    /// whose name or address starts with `text`. A provider without one keeps this, which
+    /// finds nobody.
+    fn directory(
+        &mut self,
+        text: &str,
+        limit: u32,
+    ) -> impl Future<Output = Result<Vec<Listed>, ProviderError>> + Send {
+        let _ = (text, limit);
+        async { Ok(vec![]) }
     }
 
     /// Waits until a folder may have changed since `since`, at most `wait`: true if it may

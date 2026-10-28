@@ -674,3 +674,69 @@ async fn answers_an_invitation_in_the_calendar() {
     assert_eq!(asked("MeetingResponse:CollectionId"), "1");
     assert_eq!(asked("MeetingResponse:RequestId"), "1:5");
 }
+
+#[tokio::test]
+async fn finds_people_in_the_company_directory() {
+    let (mut eas, _, took, _) = server(|_, request, _| {
+        let query = request.text_at(&["Search:Store", "Search:Query"]);
+        let store = if query == "оль" {
+            let person = |name: &str, email: &str, title: &str| {
+                n(
+                    "Search:Result",
+                    vec![n(
+                        "Search:Properties",
+                        vec![
+                            t("GAL:DisplayName", name),
+                            t("GAL:EmailAddress", email),
+                            t("GAL:Title", title),
+                        ],
+                    )],
+                )
+            };
+            vec![
+                t("Search:Status", "1"),
+                person("Ольга Белова", "o.belova@corp.ru", "Дизайн"),
+                person("Конференц-зал", "", ""),
+                person("", "olga@corp.ru", ""),
+            ]
+        } else {
+            vec![t("Search:Status", "6")]
+        };
+        (
+            200,
+            Some(n(
+                "Search:Search",
+                vec![
+                    t("Search:Status", "1"),
+                    n("Search:Response", vec![n("Search:Store", store)]),
+                ],
+            )),
+        )
+    })
+    .await;
+    let found = eas.directory("оль", 10).await.unwrap();
+    assert_eq!(
+        found,
+        [
+            Listed {
+                name: "Ольга Белова".into(),
+                email: "o.belova@corp.ru".into(),
+                title: Some("Дизайн".into()),
+            },
+            Listed {
+                name: "olga@corp.ru".into(),
+                email: "olga@corp.ru".into(),
+                title: None,
+            },
+        ]
+    );
+    assert!(eas.directory("zz", 10).await.unwrap().is_empty());
+    let took = took.lock().unwrap();
+    let (cmd, request) = &took[0];
+    assert_eq!(cmd, "Search");
+    assert_eq!(request.text_at(&["Search:Store", "Search:Name"]), "GAL");
+    assert_eq!(
+        request.text_at(&["Search:Store", "Search:Options", "Search:Range"]),
+        "0-9"
+    );
+}

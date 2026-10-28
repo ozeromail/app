@@ -15,13 +15,13 @@ use ozero_app::sync::{
     sync_folders, sync_mail, wait_for_mail,
 };
 use ozero_domain::{
-    Account, AccountId, AccountKind, Action, Address, Answer, Attachment, Body, Category, Changes,
-    Checkpoint, DayEvent, Draft, DraftFile, DraftId, FileId, Folder, FolderId, FolderRole,
-    Frequency, Invite, InviteKind, InviteRow, Leave, ListQuery, ListScope, MailProvider,
-    MailSender, MailService, MessageId, MessageRow, Moved, NewAccount, NewFolder, NewMail, Older,
-    OpId, OutboxId, Outgoing, OutgoingFile, ProviderError, ProviderState, RawMessage, RecentFile,
-    SavedDraft, Sender, Server, Store, StoreError, close_blank_lines, html, parse_recipients,
-    saves_sent_itself,
+    Account, AccountId, AccountKind, Action, Address, Answer, Attachment, Body, Card, Category,
+    Changes, Checkpoint, Contact, DayEvent, Draft, DraftFile, DraftId, FileId, Folder, FolderId,
+    FolderRole, Frequency, Invite, InviteKind, InviteRow, Leave, ListQuery, ListScope, Listed,
+    MailProvider, MailSender, MailService, MessageId, MessageRow, Moved, NewAccount, NewFolder,
+    NewMail, Older, OpId, OutboxId, Outgoing, OutgoingFile, People, Person, ProviderError,
+    ProviderState, RawMessage, RecentFile, SavedDraft, Sender, Server, Store, StoreError,
+    close_blank_lines, html, parse_recipients, saves_sent_itself,
 };
 use ozero_ews::{EasSession, EwsSession, discover};
 use ozero_gmail::{GmailSession, oauth};
@@ -43,6 +43,10 @@ const SYNC_LIMIT: u32 = 200;
 const OLDER_PAGE: u32 = 100;
 /// How many of the newest matches in each folder a server search brings in.
 const SERVER_HITS: u32 = 50;
+/// The shortest text a company directory is searched for: fewer letters match half of it.
+const DIRECTORY_MIN: usize = 3;
+/// How many people a company directory search brings.
+const DIRECTORY_HITS: u32 = 10;
 /// Seconds in a day, for how long an account keeps its mail.
 const DAY: i64 = 86_400;
 /// How many of the newest inbox messages `prefetch` downloads whole.
@@ -187,6 +191,10 @@ pub struct Core {
     answers: Mutex<HashMap<MessageId, Answered>>,
     /// How many writes changed the database since it was opened, for `changed`.
     changes: Arc<tokio::sync::watch::Sender<u64>>,
+    /// Who "To" suggests, and the `changes` count it was made at.
+    people: Mutex<Option<(u64, Arc<People>)>>,
+    /// The contacts' names by lowercase address, read once after each `set_contacts`.
+    contact_names: Mutex<Option<Arc<HashMap<String, String>>>>,
 }
 
 /// A page with its images, and the message HTML it was made from.
@@ -248,6 +256,8 @@ impl Core {
             pages: Mutex::default(),
             answers: Mutex::default(),
             changes,
+            people: Mutex::default(),
+            contact_names: Mutex::default(),
         }))
     }
 
@@ -452,12 +462,8 @@ impl Core {
     /// was last called, newest first: what a notification shows. Older mail that comes back,
     /// say after a mailbox reset, is not news.
     pub fn take_new_mail(&self) -> Result<Vec<MessageItem>, CoreError> {
-        Ok(self
-            .store
-            .take_fresh(now() / 1_000 - NEWS_AGE)?
-            .into_iter()
-            .map(MessageItem::from)
-            .collect())
+        let rows = self.with_contact_names(self.store.take_fresh(now() / 1_000 - NEWS_AGE)?)?;
+        Ok(rows.into_iter().map(MessageItem::from).collect())
     }
 
     /// Mail that arrived so far is not new any more: the inbox calls it after a sync it shows,
@@ -511,7 +517,7 @@ impl Core {
 
     /// The conversation of a message, oldest first.
     pub fn thread(&self, message: i64) -> Result<Vec<MessageItem>, CoreError> {
-        let rows = self.store.thread(MessageId(message))?;
+        let rows = self.with_contact_names(self.store.thread(MessageId(message))?)?;
         Ok(rows.into_iter().map(MessageItem::from).collect())
     }
 
@@ -519,8 +525,13 @@ impl Core {
     pub fn people(&self, message: MessageItem) -> Result<PeopleItem, CoreError> {
         let own = self.account(AccountId(message.account_id))?.email;
         let saved = self.store.correspondents(MessageId(message.id))?;
+        let names = self.contact_names()?;
         let person = |a: &Address| {
-            let name = shown_name(a.name.as_deref()).unwrap_or(&a.email);
+            let name = names
+                .get(&a.email.to_lowercase())
+                .map(String::as_str)
+                .or_else(|| shown_name(a.name.as_deref()))
+                .unwrap_or(&a.email);
             PersonItem {
                 first: first_name(name).to_owned(),
                 name: name.to_owned(),
@@ -545,6 +556,50 @@ impl Core {
             shown,
             others,
         })
+    }
+
+    /// Keeps the phone's contacts the app read, in place of those before: they name people in
+    /// lists and in "To". None, once the person took the access back, forgets them.
+    pub fn set_contacts(&self, contacts: Vec<ContactItem>) -> Result<(), CoreError> {
+        let contacts: Vec<Contact> = contacts
+            .into_iter()
+            .filter(|c| !c.name.trim().is_empty() && !c.emails.is_empty())
+            .map(|c| Contact {
+                key: c.key,
+                name: c.name.trim().to_owned(),
+                emails: c.emails,
+            })
+            .collect();
+        self.store.set_contacts(&contacts)?;
+        *self.contact_names.lock().unwrap_or_else(|p| p.into_inner()) = None;
+        Ok(())
+    }
+
+    /// Up to `limit` people for what the person typed in "To": those they write to most and
+    /// lately first, then contacts never written to. Nobody for empty text.
+    pub fn find_people(&self, text: String, limit: u32) -> Result<Vec<PersonFound>, CoreError> {
+        Ok(self
+            .people_index()?
+            .find(&text, limit as usize)
+            .into_iter()
+            .map(PersonFound::from)
+            .collect())
+    }
+
+    /// The card a tap on a person's name opens: the name from the contacts, else `name` as the
+    /// mail gives it, and all their addresses.
+    pub fn person(&self, email: String, name: Option<String>) -> Result<PersonCard, CoreError> {
+        Ok(self.people_index()?.card(&email, name.as_deref()).into())
+    }
+
+    /// Messages from or to any of `emails`, newest first: all mail with a person.
+    pub fn mail_with(
+        &self,
+        emails: Vec<String>,
+        limit: u32,
+    ) -> Result<Vec<MessageItem>, CoreError> {
+        let rows = self.store.mail_with(&emails, limit)?;
+        self.items(rows)
     }
 
     /// Flags the messages, or takes their flags off, on the device at once; `push_actions`
@@ -1067,7 +1122,12 @@ impl Core {
             })
             .collect();
         let emails: Vec<String> = drafts.iter().flat_map(|(_, to)| to.clone()).collect();
-        let names = self.store.names(&emails)?;
+        let mut names = self.store.names(&emails)?;
+        names.extend(
+            self.contact_names()?
+                .iter()
+                .map(|(e, n)| (e.clone(), n.clone())),
+        );
         let marks = self.account_marks()?;
         Ok(drafts
             .into_iter()
@@ -1617,6 +1677,47 @@ impl Core {
         Ok(())
     }
 
+    /// People in the company directory of an Exchange account whose name or address starts with
+    /// `text`; nobody for other accounts or under three letters. `secret` as for
+    /// `push_actions`.
+    pub async fn search_directory(
+        &self,
+        account: i64,
+        secret: String,
+        text: String,
+    ) -> Result<Vec<PersonFound>, CoreError> {
+        let text = text.trim();
+        if text.chars().count() < DIRECTORY_MIN {
+            return Ok(vec![]);
+        }
+        let Some(account) = self.find(AccountId(account))? else {
+            return Ok(vec![]);
+        };
+        if account.kind != AccountKind::Exchange {
+            return Ok(vec![]);
+        }
+        let mut slot = None;
+        let remote = self.remote(&mut slot, &account, &secret).await?;
+        let found = remote.directory(text, DIRECTORY_HITS).await;
+        if let Some(remote) = slot {
+            remote.close().await;
+        }
+        let names = self.contact_names()?;
+        Ok(found?
+            .into_iter()
+            .filter(|l| !l.email.eq_ignore_ascii_case(&account.email))
+            .map(|l| {
+                let contact = names.get(&l.email.to_lowercase());
+                PersonFound {
+                    name: contact.cloned().unwrap_or(l.name),
+                    email: l.email,
+                    contact: contact.is_some(),
+                    title: l.title,
+                }
+            })
+            .collect())
+    }
+
     /// Keeps the account's mail of the last `days` days on the device, or all of it with 0:
     /// older mail goes at once, and lists stop loading older mail there. Returns after a sync
     /// under way, which may save mail by the old limit, and takes that out too.
@@ -2072,7 +2173,8 @@ impl Core {
     /// List rows, marked with their account when there is more than one.
     fn items(&self, rows: Vec<MessageRow>) -> Result<Vec<MessageItem>, CoreError> {
         let marks = self.account_marks()?;
-        Ok(rows
+        Ok(self
+            .with_contact_names(rows)?
             .into_iter()
             .map(|row| {
                 let account = marks.get(&row.account_id).cloned();
@@ -2082,6 +2184,69 @@ impl Core {
                 }
             })
             .collect())
+    }
+
+    /// The rows with the contacts' names for their senders.
+    fn with_contact_names(&self, mut rows: Vec<MessageRow>) -> Result<Vec<MessageRow>, CoreError> {
+        let names = self.contact_names()?;
+        if names.is_empty() {
+            return Ok(rows);
+        }
+        for row in &mut rows {
+            if let Some(name) = names.get(&row.from.email.to_lowercase()) {
+                row.from.name = Some(name.clone());
+            }
+            for sender in row.senders.iter_mut().filter(|s| !s.me) {
+                if let Some(name) = names.get(&sender.email) {
+                    sender.name = name.clone();
+                }
+            }
+        }
+        Ok(rows)
+    }
+
+    /// The contacts' names by lowercase address.
+    fn contact_names(&self) -> Result<Arc<HashMap<String, String>>, CoreError> {
+        let mut kept = self.contact_names.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(names) = &*kept {
+            return Ok(names.clone());
+        }
+        let mut names = HashMap::new();
+        for contact in self.store.contacts()? {
+            for email in &contact.emails {
+                names
+                    .entry(email.to_lowercase())
+                    .or_insert_with(|| contact.name.clone());
+            }
+        }
+        let names = Arc::new(names);
+        *kept = Some(names.clone());
+        Ok(names)
+    }
+
+    /// Who "To" suggests, made again once the database changed.
+    fn people_index(&self) -> Result<Arc<People>, CoreError> {
+        let version = *self.changes.borrow();
+        let mut kept = self.people.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some((made, people)) = &*kept
+            && *made == version
+        {
+            return Ok(people.clone());
+        }
+        let own: Vec<String> = self
+            .store
+            .accounts()?
+            .into_iter()
+            .map(|a| a.email)
+            .collect();
+        let people = Arc::new(People::new(
+            self.store.mail_people()?,
+            self.store.contacts()?,
+            &own,
+            now() / 1_000,
+        ));
+        *kept = Some((version, people.clone()));
+        Ok(people)
     }
 
     /// The marks of the accounts, for rows of mail and drafts: none while there is only one.
@@ -3085,6 +3250,14 @@ impl MailProvider for Remote {
         }
     }
 
+    async fn directory(&mut self, text: &str, limit: u32) -> Result<Vec<Listed>, ProviderError> {
+        match self {
+            Self::Imap(_) | Self::Gmail(_) => Ok(vec![]),
+            Self::Ews(p) => p.directory(text, limit).await,
+            Self::Eas(p) => p.directory(text, limit).await,
+        }
+    }
+
     async fn move_to(
         &mut self,
         folder: &str,
@@ -3524,6 +3697,58 @@ pub struct PersonItem {
     pub email: String,
     /// The account the message is in.
     pub me: bool,
+}
+
+/// Someone in the phone's contacts, as the app read them.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ContactItem {
+    /// What the phone calls the contact by: Android's lookup key, iOS's identifier.
+    pub key: String,
+    pub name: String,
+    pub emails: Vec<String>,
+}
+
+/// Someone "To" suggests.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PersonFound {
+    /// From the contacts, else from the mail or the directory; the address when none says.
+    pub name: String,
+    pub email: String,
+    /// The address is in the phone's contacts.
+    pub contact: bool,
+    /// Their job title or office, from a company directory.
+    pub title: Option<String>,
+}
+
+impl From<Person> for PersonFound {
+    fn from(p: Person) -> Self {
+        Self {
+            name: p.name,
+            email: p.email,
+            contact: p.contact.is_some(),
+            title: None,
+        }
+    }
+}
+
+/// What a tap on a person's name shows.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PersonCard {
+    pub name: String,
+    /// The tapped address first, then the contact's others, most used first.
+    pub emails: Vec<String>,
+    /// The contact's key to open it in the phone's contacts; None to offer adding it.
+    pub contact: Option<String>,
+}
+
+impl From<Card> for PersonCard {
+    fn from(c: Card) -> Self {
+        Self {
+            name: c.name,
+            emails: c.emails,
+            contact: c.contact,
+        }
+    }
 }
 
 /// Someone who wrote in a conversation.

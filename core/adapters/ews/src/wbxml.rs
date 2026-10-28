@@ -373,6 +373,32 @@ const PAGES: &[(u8, &[(u8, &str)])] = &[
         ],
     ),
     (
+        15,
+        &[
+            (0x05, "Search:Search"),
+            (0x07, "Search:Store"),
+            (0x08, "Search:Name"),
+            (0x09, "Search:Query"),
+            (0x0a, "Search:Options"),
+            (0x0b, "Search:Range"),
+            (0x0c, "Search:Status"),
+            (0x0d, "Search:Response"),
+            (0x0e, "Search:Result"),
+            (0x0f, "Search:Properties"),
+            (0x10, "Search:Total"),
+        ],
+    ),
+    (
+        16,
+        &[
+            (0x05, "GAL:DisplayName"),
+            (0x07, "GAL:Office"),
+            (0x08, "GAL:Title"),
+            (0x09, "GAL:Company"),
+            (0x0f, "GAL:EmailAddress"),
+        ],
+    ),
+    (
         17,
         &[
             (0x05, "AirSyncBase:BodyPreference"),

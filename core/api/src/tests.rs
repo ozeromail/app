@@ -1275,3 +1275,111 @@ ATTENDEE;PARTSTAT=ACCEPTED:mailto:ivan@example.org\r\nEND:VEVENT\r\nEND:VCALENDA
     assert_eq!(store.due_sends(account, i64::MAX).unwrap(), vec![]);
     assert!(core.drafts().unwrap().is_empty());
 }
+
+#[test]
+fn suggests_people_and_names_them_as_the_contacts_do() {
+    let db = TempDb::new("contacts");
+    let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
+    let store = &core.store;
+    let account = store
+        .add_account(&NewAccount {
+            kind: AccountKind::Imap,
+            email: "me@example.com".into(),
+            display_name: "Me".into(),
+            server: None,
+            smtp: None,
+        })
+        .unwrap();
+    let folder = NewFolder {
+        remote_id: "INBOX".into(),
+        name: "Inbox".into(),
+        role: FolderRole::Inbox,
+    };
+    let folder = store.save_folders(account, &[folder]).unwrap()[0].id;
+    let message = |uid: &str, name: &str, email: &str, date: i64| ozero_domain::NewMessage {
+        remote_id: uid.into(),
+        message_id: None,
+        references: vec![],
+        from: Address {
+            name: Some(name.into()),
+            email: email.into(),
+        },
+        answer_to: vec![],
+        to: vec![],
+        cc: vec![],
+        subject: "Hi".into(),
+        snippet: String::new(),
+        date,
+        flags: Default::default(),
+        category: Category::People,
+        unsubscribe: None,
+    };
+    let changes = Changes {
+        checkpoint: store.checkpoint(folder).unwrap().0,
+        new: vec![
+            message("1", "Patimat M.", "patimat@example.com", 10),
+            message("2", "Pavel", "pavel@example.com", 20),
+            message("3", "Pavel", "pavel@example.com", 30),
+        ],
+        flags: vec![],
+        gone: vec![],
+    };
+    store.save_changes(folder, &changes).unwrap();
+    let emails =
+        |found: Vec<PersonFound>| -> Vec<String> { found.into_iter().map(|p| p.email).collect() };
+    assert_eq!(
+        emails(core.find_people("pa".into(), 5).unwrap()),
+        ["pavel@example.com", "patimat@example.com"]
+    );
+
+    core.set_contacts(vec![
+        ContactItem {
+            key: "k1".into(),
+            name: "Мама".into(),
+            emails: vec!["patimat@example.com".into(), "mama@home.example".into()],
+        },
+        ContactItem {
+            key: "k2".into(),
+            name: " ".into(),
+            emails: vec!["nobody@example.com".into()],
+        },
+    ])
+    .unwrap();
+    let found = core.find_people("мам".into(), 5).unwrap();
+    assert_eq!(
+        found
+            .iter()
+            .map(|p| (p.name.as_str(), p.contact))
+            .collect::<Vec<_>>(),
+        [("Мама", true), ("Мама", true)]
+    );
+    assert!(core.find_people("nobody".into(), 5).unwrap().is_empty());
+    let rows = core.inbox(None, Category::People, 10).unwrap();
+    let senders: Vec<_> = rows
+        .iter()
+        .map(|r| r.from_name.clone().unwrap_or_default())
+        .collect();
+    assert_eq!(senders, ["Pavel", "Pavel", "Мама"]);
+    assert_eq!(rows[2].senders[0].name, "Мама");
+    let card = core
+        .person("patimat@example.com".into(), Some("Patimat M.".into()))
+        .unwrap();
+    assert_eq!(card.name, "Мама");
+    assert_eq!(card.emails, ["patimat@example.com", "mama@home.example"]);
+    assert_eq!(card.contact.as_deref(), Some("k1"));
+    let mail = core
+        .mail_with(vec!["pavel@example.com".into()], 10)
+        .unwrap();
+    assert_eq!(mail.len(), 2);
+
+    // Without access, the mail's names come back.
+    core.set_contacts(vec![]).unwrap();
+    let rows = core.inbox(None, Category::People, 10).unwrap();
+    assert_eq!(rows[2].from_name.as_deref(), Some("Patimat M."));
+    assert_eq!(
+        core.person("patimat@example.com".into(), None)
+            .unwrap()
+            .contact,
+        None
+    );
+}
