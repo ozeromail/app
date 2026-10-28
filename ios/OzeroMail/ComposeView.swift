@@ -863,52 +863,6 @@ final class DraftKeeper: Sendable {
     }
 }
 
-/// The drafts on the phone, last saved first; a tap opens one to go on writing.
-struct DraftsView: View {
-    let model: InboxModel
-
-    var body: some View {
-        List {
-            if model.drafts.isEmpty {
-                ContentUnavailableView("drafts_empty", systemImage: "square.and.pencil")
-                    .listRowSeparator(.hidden)
-            }
-            ForEach(model.drafts, id: \.id) { draft in
-                Button { model.openDraft(draft) } label: { DraftRow(draft: draft) }
-                    .buttonStyle(.plain)
-            }
-        }
-        .listStyle(.plain)
-        .middle(Room.list)
-        .navigationTitle("folder_drafts")
-        .task { await model.counts() }
-    }
-}
-
-/// Who it goes to and when it was saved, then the subject and the start of the text.
-private struct DraftRow: View {
-    let draft: DraftItem
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack {
-                Text(verbatim: draft.to.isBlank ? tr("drafts_no_recipients") : draft.to)
-                    .font(.body.weight(.medium)).lineLimit(1)
-                Spacer()
-                Text(verbatim: shortDate(draft.saved)).font(.footnote).foregroundStyle(.secondary)
-            }
-            Text(verbatim: draft.subject.isBlank ? tr("inbox_no_subject") : draft.subject)
-                .font(.subheadline).lineLimit(1)
-            let text = richShown(text: draft.text).trimmingCharacters(in: .whitespacesAndNewlines)
-            if !text.isEmpty {
-                Text(verbatim: text).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
-            }
-        }
-        .padding(.vertical, 6)
-        .contentShape(.rect)
-    }
-}
-
 extension View {
     /// A field for email addresses: no capitals or corrections.
     fileprivate func addresses() -> some View {

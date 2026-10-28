@@ -258,6 +258,10 @@ suspend fun SnackbarHostState.offerUndo(text: String, undo: String, go: Mailbox?
     return result == SnackbarResult.ActionPerformed
 }
 
+/** How long a toast without Undo stays, as Material's own short and long ones. */
+private const val TOAST_SHORT_MS = 4_000L
+private const val TOAST_LONG_MS = 10_000L
+
 /**
  * The undo toast: dark, rounded, low on the screen; it rises a little and fades in. A
  * [MovedToast] also offers to show the folder, through [onGo].
@@ -277,6 +281,18 @@ fun Toast(state: SnackbarHostState, onGo: (Mailbox) -> Unit, modifier: Modifier 
         label = "toast",
     ) { data ->
         if (data != null) {
+            // Material's own host times its toasts out; this one does it itself.
+            val shortFor = when (data.visuals.duration) {
+                SnackbarDuration.Short -> TOAST_SHORT_MS
+                SnackbarDuration.Long -> TOAST_LONG_MS
+                SnackbarDuration.Indefinite -> null
+            }
+            if (shortFor != null) {
+                LaunchedEffect(data) {
+                    delay(shortFor)
+                    data.dismiss()
+                }
+            }
             val moved = data.visuals as? MovedToast
             val go = moved?.go
             Snackbar(

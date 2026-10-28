@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.HorizontalDivider
@@ -20,10 +21,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -41,7 +44,7 @@ import kotlinx.coroutines.sync.withLock
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.DraftFileItem
 import uniffi.ozero_api.DraftItem
-import uniffi.ozero_api.richShown
+import uniffi.ozero_api.DraftRow
 
 /**
  * Keeps a message being written on the phone as it changes. Saves run one at a time in
@@ -160,23 +163,53 @@ fun SaveOnPause(
 fun DraftItem.isBlank(): Boolean = text.isBlank() && files.isEmpty() && (replyTo != null || (to.isBlank() && cc.isBlank() && subject.isBlank()))
 
 /**
- * The drafts on the phone, last saved first; a tap opens one to go on writing. The toast
- * shows here too, so a draft thrown away from here can come back.
+ * The drafts on the phone, last saved first, in rows like mail's; a tap opens one to go on
+ * writing, and the swipe that deletes mail throws one away, which the toast can bring back.
  */
 @Composable
-fun DraftsScreen(mail: Mail, snackbar: SnackbarHostState, onOpen: (DraftItem) -> Unit, onBack: () -> Unit) {
+fun DraftsScreen(mail: Mail, swipes: Swipes, snackbar: SnackbarHostState, onOpen: (DraftItem) -> Unit, onBack: () -> Unit) {
     val drafts by mail.drafts.collectAsState()
     val colors = MaterialTheme.colorScheme
+    val scope = rememberCoroutineScope()
+    val pull = remember { Pull() }
+    val draftSwipes = remember(swipes) { swipes.forDrafts() }
+    val deleted = stringResource(R.string.draft_deleted)
+    val undo = stringResource(R.string.action_undo)
+    fun delete(draft: DraftItem, reset: () -> Unit) {
+        scope.launch {
+            try {
+                mail.deleteDraft(draft.id)
+            } catch (e: CoreException) {
+                Log.w("Ozero", "draft not deleted", e)
+                return@launch reset()
+            }
+            if (!snackbar.offerUndo(deleted, undo)) return@launch
+            try {
+                mail.restoreDraft(draft)
+            } catch (e: CoreException) {
+                Log.w("Ozero", "draft not restored", e)
+            }
+        }
+    }
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
         Hero(stringResource(R.string.folder_drafts), null, onBack)
         LazyColumn(Modifier.weight(1f)) {
             if (drafts.isEmpty()) {
                 item { EmptyNote(R.drawable.ic_compose, stringResource(R.string.drafts_empty)) }
             }
-            itemsIndexed(drafts, key = { _, it -> it.id }) { index, draft ->
-                Column(rowMove()) {
-                    if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.screen), color = colors.outlineVariant)
-                    DraftRow(draft, onClick = { onOpen(draft) })
+            itemsIndexed(drafts, key = { _, it -> it.draft.id }) { index, row ->
+                Column(rowMove().graphicsLayer { translationX = pull.near(index) }) {
+                    if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.row), color = colors.outlineVariant)
+                    SwipeRow(
+                        draftSwipes,
+                        enabled = true,
+                        applies = { it == SwipeAction.DELETE },
+                        label = { it.label },
+                        onSwipe = { _, reset -> delete(row.draft, reset) },
+                        onPull = { pull.hold(row.draft.id, index, it) },
+                    ) {
+                        DraftLine(row, Modifier.clickable { onOpen(row.draft) })
+                    }
                 }
             }
         }
@@ -184,26 +217,52 @@ fun DraftsScreen(mail: Mail, snackbar: SnackbarHostState, onOpen: (DraftItem) ->
     }
 }
 
-/** Who it goes to and when it was saved, then the subject and the start of the text. */
+/**
+ * Only Delete applies to a draft: a short swipe to the side whose swipes delete mail, else to
+ * the left. The other side's action never applies, so that side stays still.
+ */
+private fun Swipes.forDrafts(): Swipes {
+    val right = right == SwipeAction.DELETE || rightLong == SwipeAction.DELETE
+    val left = left == SwipeAction.DELETE || leftLong == SwipeAction.DELETE || !right
+    return Swipes(
+        left = if (left) SwipeAction.DELETE else SwipeAction.DONE,
+        right = if (right) SwipeAction.DELETE else SwipeAction.READ,
+        leftLong = null,
+        rightLong = null,
+    )
+}
+
+/** As a row of mail: who it goes to, its account and when it was saved, then the subject, the start of the text and its files. */
 @Composable
-private fun DraftRow(draft: DraftItem, onClick: () -> Unit) {
+private fun DraftLine(row: DraftRow, modifier: Modifier) {
     val colors = MaterialTheme.colorScheme
+    val draft = row.draft
     Column(
-        Modifier
+        modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(start = Gap.screen, end = 16.dp, top = 12.dp, bottom = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
+            .padding(start = Gap.row, end = Gap.screen, top = 16.dp, bottom = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                draft.to.ifBlank { stringResource(R.string.drafts_no_recipients) },
+                row.people.ifBlank { stringResource(R.string.drafts_no_recipients) },
                 style = Type.Row,
                 fontWeight = Weight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(end = 8.dp),
             )
+            row.account?.let {
+                AccountDot(it.tint, size = 6.dp)
+                Text(
+                    it.name,
+                    color = colors.onSurfaceVariant,
+                    style = Type.Label,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 70.dp).padding(start = 5.dp, end = 8.dp),
+                )
+            }
             Text(shortDate(LocalContext.current, draft.saved), color = colors.onSurfaceVariant, style = Type.Caption)
         }
         Text(
@@ -212,15 +271,15 @@ private fun DraftRow(draft: DraftItem, onClick: () -> Unit) {
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        val shown = remember(draft.text) { richShown(draft.text).trim() }
-        if (shown.isNotEmpty()) {
+        if (row.snippet.isNotBlank()) {
             Text(
-                shown,
+                row.snippet,
                 color = colors.onSurfaceVariant,
                 style = Type.Text,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        if (draft.files.isNotEmpty()) AttachmentChips(draft.files.map { it.name })
     }
 }

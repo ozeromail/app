@@ -1,5 +1,6 @@
 //! Fake ports for use case tests.
 
+use std::collections::HashMap;
 use std::future::{Future, ready};
 use std::pin::pin;
 use std::sync::Mutex;
@@ -418,6 +419,10 @@ impl Store for Memory {
 
     fn allow_images(&self, _: MessageId) -> Result<(), StoreError> {
         Ok(())
+    }
+
+    fn names(&self, _: &[String]) -> Result<HashMap<String, String>, StoreError> {
+        Ok(HashMap::new())
     }
 
     fn image_senders(&self) -> Result<Vec<String>, StoreError> {

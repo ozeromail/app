@@ -82,7 +82,9 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
@@ -358,6 +360,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     val undo = stringResource(R.string.action_undo)
     val sending = stringResource(R.string.inbox_sending)
     val draftSaved = stringResource(R.string.draft_saved)
+    val openAgain = stringResource(R.string.action_open)
     val draftDeleted = stringResource(R.string.draft_deleted)
     val folderPinned = stringResource(R.string.folder_pinned)
     val folderUnpinned = stringResource(R.string.folder_unpinned)
@@ -742,7 +745,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         }
     }
 
-    /** Closed with something written: the toast says where it went. */
+    /** Closed with something written: the toast says where it went, and can open it again. */
     fun kept() {
         scope.launch {
             try {
@@ -751,7 +754,13 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 // Saved on the phone; the next sync takes it to the server.
                 Log.w("Ozero", "drafts not pushed", e)
             }
-            note(draftSaved)
+        }
+        scope.launch {
+            snackbar.currentSnackbarData?.dismiss()
+            if (snackbar.showSnackbar(draftSaved, openAgain, duration = SnackbarDuration.Short) != SnackbarResult.ActionPerformed) return@launch
+            // Saved by now: the save goes as soon as the screen closes.
+            val saved = mail.drafts.value
+            (saved.find { it.draft.id == mail.lastSaved } ?: saved.firstOrNull())?.let { openDraft(it.draft) }
         }
     }
 
@@ -1229,7 +1238,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         onKept = ::kept,
                         onDiscard = { discarded(it, shown.composing.original) },
                     )
-                    Screen.Drafts -> Middle(LIST_MAX, Modifier.fillMaxSize()) { DraftsScreen(mail, snackbar, onOpen = ::openDraft, onBack = ::back) }
+                    Screen.Drafts -> Middle(LIST_MAX, Modifier.fillMaxSize()) { DraftsScreen(mail, swipes, snackbar, onOpen = ::openDraft, onBack = ::back) }
                     is Screen.SettingsPage -> Middle(LIST_MAX, Modifier.fillMaxSize()) {
                         SettingsScreen(
                             mail,
@@ -1842,9 +1851,10 @@ private fun InboxList(
                     ) {
                         if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.row), color = colors.outlineVariant)
                         SwipeRow(
-                            message,
                             swipes,
                             enabled = !choosing,
+                            applies = { it.appliesTo(message) },
+                            label = { it.label(message) },
                             onSwipe = { action, reset ->
                                 // Read and Flag leave the row where it is: nothing below has a gap to close.
                                 if (!action.stays) closedAt = index

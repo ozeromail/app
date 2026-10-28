@@ -48,7 +48,7 @@ final class InboxModel {
     /// The default signature, for accounts without their own.
     var signature = ""
     var folders: [FolderItem] = []
-    var drafts: [DraftItem] = []
+    var drafts: [DraftRow] = []
     var syncing = false
     /// Until the saved list is read, an empty one says nothing.
     var listLoaded = false
@@ -422,14 +422,16 @@ final class InboxModel {
 
     // MARK: Toasts
 
-    /// Shows a toast without undo, in place of any other.
-    func note(_ text: String) {
+    /// Shows a toast without undo, in place of any other; with `extra`, a button named so that
+    /// does `run`.
+    func note(_ text: String, extra: String? = nil, run: (() -> Void)? = nil) {
         answer(false)
-        toast = Toast(text: text)
-        let shown = toast
+        let shown = Toast(text: text, extra: extra)
+        toast = shown
+        extraAction = run
         Task {
             try? await Task.sleep(for: .seconds(4))
-            if toast == shown { toast = nil }
+            if toast == shown { answer(false) }
         }
     }
 
@@ -785,7 +787,27 @@ final class InboxModel {
     func kept() {
         composing = nil
         mail.pushDrafts()
-        note(tr("draft_saved"))
+        note(tr("draft_saved"), extra: tr("action_open")) { [self] in
+            // Saved by now: the save goes as soon as the screen closes.
+            let saved = drafts.first { $0.draft.id == mail.lastSaved } ?? drafts.first
+            if let saved { openDraft(saved.draft) }
+        }
+    }
+
+    /// Throws a draft away from the list; the toast can bring it back.
+    func deleteDraft(_ draft: DraftItem) {
+        Task {
+            do {
+                try await mail.deleteDraft(draft.id)
+            } catch {
+                self.error = error.textKey()
+                return
+            }
+            await counts()
+            guard await offerUndo(tr("draft_deleted")) else { return }
+            _ = try? await mail.restoreDraft(draft)
+            await counts()
+        }
     }
 
     /// Thrown away: the toast can bring it back, with its files, saved again to go on writing.
