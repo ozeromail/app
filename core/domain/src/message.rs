@@ -142,6 +142,8 @@ pub struct MessageRow {
 pub struct Sender {
     /// The name, or the address when there is none.
     pub name: String,
+    /// Lower case.
+    pub email: String,
     /// The user, writing from the sent folder.
     pub me: bool,
 }
@@ -151,22 +153,22 @@ impl Sender {
     /// oldest first, each address once. An address the user wrote from is the user's.
     pub fn collect(mut wrote: Vec<(i64, bool, &str, &str)>) -> Vec<Self> {
         wrote.sort_by_key(|w| w.0);
-        let mut senders: Vec<(String, Self)> = Vec::new();
+        let mut senders: Vec<Self> = Vec::new();
         for (_, me, email, name) in wrote {
             let email = email.to_lowercase();
-            match senders.iter_mut().find(|(e, _)| *e == email) {
-                Some((_, known)) => known.me |= me,
+            match senders.iter_mut().find(|s| s.email == email) {
+                Some(known) => known.me |= me,
                 None => {
                     let name = if name.trim().is_empty() {
                         email.clone()
                     } else {
                         name.to_owned()
                     };
-                    senders.push((email, Self { name, me }));
+                    senders.push(Self { name, email, me });
                 }
             }
         }
-        senders.into_iter().map(|(_, s)| s).collect()
+        senders
     }
 }
 

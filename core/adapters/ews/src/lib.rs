@@ -22,8 +22,8 @@ use std::time::{Duration, Instant};
 
 use mail_parser::DateTime;
 use ozero_domain::{
-    Answer, Changes, Checkpoint, Flags, FolderRole, MailProvider, MailSender, Moved, NewFolder,
-    Older, ProviderError, RawMessage, Server, base64, decode_base64,
+    Answer, Changes, Checkpoint, Flags, FolderRole, Listed, MailProvider, MailSender, Moved,
+    NewFolder, Older, ProviderError, RawMessage, Server, base64, decode_base64,
 };
 use tokio_rustls::rustls::ClientConfig;
 
@@ -706,6 +706,56 @@ SuppressReadReceipts=\"true\"><m:ItemChanges>{changes}</m:ItemChanges></m:Update
             )
             .await?;
         first(&answer, "CreateItem").map(drop)
+    }
+
+    async fn directory(&mut self, text: &str, limit: u32) -> Result<Vec<Listed>, ProviderError> {
+        let answer = self
+            .call(
+                &format!(
+                    "<m:ResolveNames ReturnFullContactData=\"true\" SearchScope=\"ActiveDirectory\">\
+<m:UnresolvedEntry>{}</m:UnresolvedEntry></m:ResolveNames>",
+                    escape(text)
+                ),
+                true,
+            )
+            .await?;
+        let mut found = Vec::new();
+        for message in messages(&answer) {
+            if message.text_at(&["ResponseCode"]) == "ErrorNameResolutionNoResults" {
+                continue;
+            }
+            // Several matches come as a warning, which `check` lets through.
+            check(message)?;
+            let resolutions = message.at(&["ResolutionSet"]).into_iter();
+            for r in resolutions.flat_map(|s| s.all("Resolution")) {
+                let email = r.text_at(&["Mailbox", "EmailAddress"]).trim();
+                if !email.contains('@') {
+                    continue;
+                }
+                let name = [
+                    r.text_at(&["Mailbox", "Name"]),
+                    r.text_at(&["Contact", "DisplayName"]),
+                ]
+                .into_iter()
+                .map(str::trim)
+                .find(|n| !n.is_empty())
+                .unwrap_or(email);
+                let title = [
+                    r.text_at(&["Contact", "JobTitle"]),
+                    r.text_at(&["Contact", "Department"]),
+                ]
+                .into_iter()
+                .map(str::trim)
+                .find(|t| !t.is_empty());
+                found.push(Listed {
+                    name: name.to_owned(),
+                    email: email.to_owned(),
+                    title: title.map(str::to_owned),
+                });
+            }
+        }
+        found.truncate(limit as usize);
+        Ok(found)
     }
 
     async fn wait(

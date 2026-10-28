@@ -3179,3 +3179,172 @@ fn a_day_shows_each_meeting_as_its_newest_invitation_has_it() {
     assert_eq!(update.before, Some((eight, eight + 3_600)));
     assert_eq!(store.invite(id(1)).unwrap().unwrap().before, None);
 }
+
+/// An account with an inbox and a sent folder.
+fn inbox_and_sent(store: &SqliteStore) -> (FolderId, FolderId) {
+    let a = account(store, "me@example.com");
+    let folders = store
+        .save_folders(
+            a,
+            &[
+                NewFolder {
+                    remote_id: "INBOX".into(),
+                    name: "Inbox".into(),
+                    role: FolderRole::Inbox,
+                },
+                NewFolder {
+                    remote_id: "Sent".into(),
+                    name: "Sent".into(),
+                    role: FolderRole::Sent,
+                },
+            ],
+        )
+        .unwrap();
+    (folders[0].id, folders[1].id)
+}
+
+fn from(uid: u32, date: i64, email: &str, name: &str, category: Category) -> NewMessage {
+    NewMessage {
+        from: Address {
+            name: (!name.is_empty()).then(|| name.into()),
+            email: email.into(),
+        },
+        category,
+        ..message(uid, date)
+    }
+}
+
+fn to(uid: u32, date: i64, to: &[(&str, &str)], cc: &[(&str, &str)]) -> NewMessage {
+    let addresses = |list: &[(&str, &str)]| {
+        list.iter()
+            .map(|(email, name)| Address {
+                name: (!name.is_empty()).then(|| (*name).into()),
+                email: (*email).into(),
+            })
+            .collect()
+    };
+    NewMessage {
+        to: addresses(to),
+        cc: addresses(cc),
+        ..from(uid, date, "me@example.com", "Me", Category::People)
+    }
+}
+
+#[test]
+fn counts_people_the_user_writes_to_and_hears_from() {
+    let store = store();
+    let (inbox, sent) = inbox_and_sent(&store);
+    store
+        .save_messages(
+            inbox,
+            &[
+                from(1, 100, "Anna@example.com", "Anna", Category::People),
+                from(2, 300, "anna@example.com", "Anna Lee", Category::People),
+                from(3, 200, "news@shop.example", "Shop", Category::Newsletters),
+            ],
+        )
+        .unwrap();
+    store
+        .save_messages(
+            sent,
+            &[
+                to(
+                    4,
+                    400,
+                    &[("anna@example.com", "Annie")],
+                    &[("bob@example.com", "Bob")],
+                ),
+                to(5, 500, &[("bob@example.com", "")], &[]),
+            ],
+        )
+        .unwrap();
+    let mut people = store.mail_people().unwrap();
+    people.sort_by_key(|p| p.email.to_lowercase());
+    assert_eq!(
+        people,
+        [
+            Correspondent {
+                email: "anna@example.com".into(),
+                name: Some("Anna Lee".into()),
+                sent: 1,
+                received: 2,
+                last: 400,
+            },
+            Correspondent {
+                email: "bob@example.com".into(),
+                name: Some("Bob".into()),
+                sent: 2,
+                received: 0,
+                last: 500,
+            },
+        ]
+    );
+}
+
+#[test]
+fn keeps_the_contacts_the_app_gave_last() {
+    let store = store();
+    let contact = |key: &str, name: &str, emails: &[&str]| Contact {
+        key: key.into(),
+        name: name.into(),
+        emails: emails.iter().map(|e| (*e).into()).collect(),
+    };
+    let first = [
+        contact("1", "Мама", &["patimat@example.com"]),
+        contact("2", "Oleg", &["oleg@work.example", "oleg@home.example"]),
+    ];
+    store.set_contacts(&first).unwrap();
+    assert_eq!(store.contacts().unwrap(), first);
+    store.set_contacts(&first[1..]).unwrap();
+    assert_eq!(store.contacts().unwrap(), first[1..]);
+    store.set_contacts(&[]).unwrap();
+    assert!(store.contacts().unwrap().is_empty());
+}
+
+#[test]
+fn finds_all_mail_with_a_person() {
+    let store = store();
+    let (inbox, sent) = inbox_and_sent(&store);
+    store
+        .save_messages(
+            inbox,
+            &[
+                from(1, 100, "Oleg@Work.example", "Oleg", Category::People),
+                from(2, 200, "anna@example.com", "Anna", Category::People),
+            ],
+        )
+        .unwrap();
+    store
+        .save_messages(
+            sent,
+            &[
+                to(
+                    3,
+                    300,
+                    &[("anna@example.com", "")],
+                    &[("oleg@home.example", "")],
+                ),
+                to(4, 400, &[("noleg@home.example", "")], &[]),
+            ],
+        )
+        .unwrap();
+    let dates = |emails: &[&str]| -> Vec<i64> {
+        let emails: Vec<String> = emails.iter().map(|e| (*e).into()).collect();
+        let rows = store.mail_with(&emails, 10).unwrap();
+        rows.iter().map(|r| r.date).collect()
+    };
+    assert_eq!(
+        dates(&["oleg@work.example", "OLEG@home.example"]),
+        [300, 100]
+    );
+    assert_eq!(dates(&["anna@example.com"]), [300, 200]);
+    assert!(dates(&[]).is_empty());
+    store
+        .conn()
+        .execute(
+            "UPDATE message SET recipients = 'oleg@home.example' WHERE date = 400",
+            [],
+        )
+        .unwrap();
+    assert_eq!(dates(&["oleg@home.example"]), [400, 300]);
+}

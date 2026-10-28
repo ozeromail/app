@@ -429,4 +429,12 @@ pub const MIGRATIONS: &[&str] = &[
     ",
     // 42: the names of the people drafts go to, found by sender address.
     "CREATE INDEX message_from ON message(lower(from_email));",
+    // 43: the phone's contacts, as the app last read them: their addresses one a line.
+    "
+    CREATE TABLE contact (
+        key    TEXT PRIMARY KEY,
+        name   TEXT NOT NULL,
+        emails TEXT NOT NULL
+    );
+    ",
 ];

@@ -8,12 +8,12 @@ use std::sync::{Mutex, MutexGuard};
 
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Answer, Attachment, Body, Category, Changes,
-    Checkpoint, Correspondents, DayEvent, Draft, DraftCopy, DraftFile, DraftId, DraftToPush,
-    FileId, Flags, Folder, FolderId, FolderRole, Invite, InviteKind, InviteRow, ListQuery,
-    ListScope, MessageId, MessageLocation, MessageRow, Moved, NewAccount, NewFolder, NewMail,
-    NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile, RecentFile, SavedDraft, SavedInvite,
-    Sender, Server, ServerDraft, Store, StoreError, Unsent, Unsubscribe, default_label, full_text,
-    typed_addresses,
+    Checkpoint, Contact, Correspondent, Correspondents, DayEvent, Draft, DraftCopy, DraftFile,
+    DraftId, DraftToPush, FileId, Flags, Folder, FolderId, FolderRole, Invite, InviteKind,
+    InviteRow, ListQuery, ListScope, MessageId, MessageLocation, MessageRow, Moved, NewAccount,
+    NewFolder, NewMail, NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile, RecentFile,
+    SavedDraft, SavedInvite, Sender, Server, ServerDraft, Store, StoreError, Unsent, Unsubscribe,
+    default_label, full_text, typed_addresses,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{
@@ -863,6 +863,132 @@ impl Store for SqliteStore {
                 .collect()
             })
             .map_err(storage)
+    }
+
+    fn mail_people(&self) -> Result<Vec<Correspondent>, StoreError> {
+        let conn = self.conn();
+        let mut by_email: HashMap<String, Correspondent> = HashMap::new();
+        // With max(), SQLite takes the name of each sender's newest message, as in `names`.
+        let mut received = conn
+            .prepare_cached(
+                "SELECT m.from_email, m.from_name, count(*), max(m.date)
+                 FROM message m JOIN folder f ON f.id = m.folder_id
+                 WHERE f.role NOT IN ('trash', 'junk', 'drafts', 'sent')
+                   AND m.category = 'people'
+                 GROUP BY lower(m.from_email)",
+            )
+            .map_err(storage)?;
+        let rows = received
+            .query_map([], |r| {
+                Ok(Correspondent {
+                    email: r.get(0)?,
+                    name: r.get(1)?,
+                    sent: 0,
+                    received: r.get(2)?,
+                    last: r.get(3)?,
+                })
+            })
+            .map_err(storage)?;
+        for c in rows {
+            let c = c.map_err(storage)?;
+            by_email.insert(c.email.to_lowercase(), c);
+        }
+        let mut sent = conn
+            .prepare_cached(
+                "SELECT m.recipients, m.date FROM message m JOIN folder f ON f.id = m.folder_id
+                 WHERE f.role = 'sent' ORDER BY m.date",
+            )
+            .map_err(storage)?;
+        let rows = sent
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+            .map_err(storage)?;
+        for row in rows {
+            let (stored, date) = row.map_err(storage)?;
+            let (to, cc) = people(&stored);
+            for a in to.into_iter().chain(cc) {
+                let c = by_email
+                    .entry(a.email.to_lowercase())
+                    .or_insert_with(|| Correspondent {
+                        email: a.email.clone(),
+                        name: None,
+                        sent: 0,
+                        received: 0,
+                        last: date,
+                    });
+                c.sent += 1;
+                // The name a sender gives themselves beats the one the user typed; of those,
+                // the newest.
+                if c.received == 0 && a.name.is_some() {
+                    c.name = a.name;
+                }
+                c.last = c.last.max(date);
+            }
+        }
+        Ok(by_email.into_values().collect())
+    }
+
+    fn contacts(&self) -> Result<Vec<Contact>, StoreError> {
+        self.conn()
+            .prepare_cached("SELECT key, name, emails FROM contact ORDER BY rowid")
+            .and_then(|mut s| {
+                s.query_map([], |r| {
+                    Ok(Contact {
+                        key: r.get(0)?,
+                        name: r.get(1)?,
+                        emails: recipients(&r.get::<_, String>(2)?),
+                    })
+                })?
+                .collect()
+            })
+            .map_err(storage)
+    }
+
+    fn set_contacts(&self, contacts: &[Contact]) -> Result<(), StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        tx.execute("DELETE FROM contact", []).map_err(storage)?;
+        {
+            let mut insert = tx
+                .prepare_cached(
+                    "INSERT OR REPLACE INTO contact (key, name, emails) VALUES (?1, ?2, ?3)",
+                )
+                .map_err(storage)?;
+            for c in contacts {
+                insert
+                    .execute(params![c.key, c.name, c.emails.join("\n")])
+                    .map_err(storage)?;
+            }
+        }
+        tx.commit().map_err(storage)
+    }
+
+    fn mail_with(&self, emails: &[String], limit: u32) -> Result<Vec<MessageRow>, StoreError> {
+        let emails: Vec<String> = emails
+            .iter()
+            .map(|e| e.trim().to_lowercase())
+            .filter(|e| !e.is_empty() && !e.contains(['\n', '\x1f']))
+            .collect();
+        if emails.is_empty() {
+            return Ok(vec![]);
+        }
+        let conn = self.conn();
+        let mut statement = conn.prepare_cached(MAIL_WITH).map_err(storage)?;
+        let mut rows: Vec<MessageRow> = Vec::new();
+        // One address at a time keeps the statement cached; few people have more than two.
+        for email in &emails {
+            let found = statement
+                .query_map(params![email, limit], message_row)
+                .map_err(storage)?;
+            for row in found {
+                let row = row.map_err(storage)?;
+                if !rows.iter().any(|r| r.id == row.id) {
+                    rows.push(row);
+                }
+            }
+        }
+        rows.sort_by(|a, b| b.date.cmp(&a.date).then(b.id.0.cmp(&a.id.0)));
+        rows.truncate(limit as usize);
+        Ok(rows)
     }
 
     fn correspondents(&self, message: MessageId) -> Result<Correspondents, StoreError> {
@@ -2997,6 +3123,28 @@ const SEARCH: &str = concat!(
     message_from!(),
     " WHERE m.id IN (SELECT rowid FROM message_search WHERE message_search MATCH ?1
                      UNION SELECT message_id FROM search_hit WHERE words = ?3)
+       AND ",
+    shown_role!("f"),
+    " AND ",
+    not_moving!(),
+    " AND NOT EXISTS (
+         SELECT 1 FROM message d JOIN folder g ON g.id = d.folder_id
+         WHERE d.message_id = m.message_id AND d.id > m.id AND g.account_id = f.account_id
+           AND ",
+    shown_role!("g"),
+    " AND ",
+    not_moving!("d"),
+    ")
+     ORDER BY m.date DESC, m.id DESC LIMIT ?2"
+);
+
+/// Messages from or to address ?1, at most ?2, as `SEARCH` shows them. A `recipients` line
+/// is the address and `\x1f`, or the bare address in mail saved before names were.
+const MAIL_WITH: &str = concat!(
+    message_from!(),
+    " WHERE (lower(m.from_email) = ?1
+            OR instr(char(10) || lower(m.recipients), char(10) || ?1 || char(31)) > 0
+            OR instr(char(10) || lower(m.recipients) || char(10), char(10) || ?1 || char(10)) > 0)
        AND ",
     shown_role!("f"),
     " AND ",

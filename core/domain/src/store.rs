@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::{
-    Account, AccountId, Action, Body, Category, Changes, Checkpoint, Correspondents, DayEvent,
-    Draft, DraftCopy, DraftFile, DraftId, DraftToPush, FileId, Folder, FolderId, ListQuery,
-    MessageId, MessageLocation, MessageRow, Moved, NewAccount, NewFolder, NewMail, NewMessage, Op,
-    OpId, OutboxId, Outgoing, OutgoingFile, RecentFile, SavedDraft, SavedInvite, ServerDraft,
-    Unsent, Unsubscribe,
+    Account, AccountId, Action, Body, Category, Changes, Checkpoint, Contact, Correspondent,
+    Correspondents, DayEvent, Draft, DraftCopy, DraftFile, DraftId, DraftToPush, FileId, Folder,
+    FolderId, ListQuery, MessageId, MessageLocation, MessageRow, Moved, NewAccount, NewFolder,
+    NewMail, NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile, RecentFile, SavedDraft,
+    SavedInvite, ServerDraft, Unsent, Unsubscribe,
 };
 
 /// Local database port. The UI reads only from here; sync writes here.
@@ -130,6 +130,15 @@ pub trait Store: Send + Sync {
     /// The names the saved mail gives these addresses, by lowercase address; one without a
     /// name is left out.
     fn names(&self, emails: &[String]) -> Result<HashMap<String, String>, StoreError>;
+    /// Every address the user's mail went to from the sent folder, or came from as people's
+    /// mail, each once; not from trash, junk or drafts.
+    fn mail_people(&self) -> Result<Vec<Correspondent>, StoreError>;
+    /// The phone's contacts as the app last gave them.
+    fn contacts(&self) -> Result<Vec<Contact>, StoreError>;
+    /// Keeps these contacts in place of those before; none forgets them all.
+    fn set_contacts(&self, contacts: &[Contact]) -> Result<(), StoreError>;
+    /// Messages from or to any of `emails`, newest first, as `search` finds them.
+    fn mail_with(&self, emails: &[String], limit: u32) -> Result<Vec<MessageRow>, StoreError>;
     /// Who the message came from and went to.
     fn correspondents(&self, message: MessageId) -> Result<Correspondents, StoreError>;
     /// How to leave the list the message came from, if it says and the person has not yet.

@@ -14,8 +14,8 @@ use std::time::Duration;
 
 use mail_parser::DateTime;
 use ozero_domain::{
-    Answer, Changes, Checkpoint, Flags, FolderRole, MailProvider, MailSender, Moved, NewFolder,
-    Older, ProviderError, ProviderState, RawMessage, Server,
+    Answer, Changes, Checkpoint, Flags, FolderRole, Listed, MailProvider, MailSender, Moved,
+    NewFolder, Older, ProviderError, ProviderState, RawMessage, Server,
 };
 use ozero_http::Tls;
 
@@ -1008,6 +1008,54 @@ impl MailProvider for EasSession {
                 "MeetingResponse status {status}"
             ))),
         }
+    }
+
+    async fn directory(&mut self, text: &str, limit: u32) -> Result<Vec<Listed>, ProviderError> {
+        let request = Node::new(
+            "Search:Search",
+            vec![Node::new(
+                "Search:Store",
+                vec![
+                    Node::text("Search:Name", "GAL"),
+                    Node::text("Search:Query", text),
+                    Node::new(
+                        "Search:Options",
+                        vec![Node::text(
+                            "Search:Range",
+                            format!("0-{}", limit.max(1) - 1),
+                        )],
+                    ),
+                ],
+            )],
+        );
+        let answer = self.command("Search", &request, true).await?;
+        let Some(store) = answer.at(&["Search:Response", "Search:Store"]) else {
+            return Err(protocol("Search without a store"));
+        };
+        match store.text_at(&["Search:Status"]) {
+            "" | "1" => {}
+            // Too many matches to tell, or none.
+            "6" | "12" => return Ok(vec![]),
+            status => return Err(ProviderError::Rejected(format!("Search status {status}"))),
+        }
+        Ok(store
+            .all("Search:Result")
+            .filter_map(|r| r.child("Search:Properties"))
+            .filter_map(|p| {
+                let email = p.text_at(&["GAL:EmailAddress"]).trim();
+                let name = p.text_at(&["GAL:DisplayName"]).trim();
+                let title = [p.text_at(&["GAL:Title"]), p.text_at(&["GAL:Office"])]
+                    .into_iter()
+                    .map(str::trim)
+                    .find(|t| !t.is_empty());
+                email.contains('@').then(|| Listed {
+                    name: if name.is_empty() { email } else { name }.to_owned(),
+                    email: email.to_owned(),
+                    title: title.map(str::to_owned),
+                })
+            })
+            .take(limit as usize)
+            .collect())
     }
 
     async fn wait(

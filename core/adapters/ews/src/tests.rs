@@ -528,6 +528,43 @@ async fn answers_an_invitation_on_the_server() {
 }
 
 #[tokio::test]
+async fn finds_people_in_the_company_directory() {
+    let (mut ews, seen) = session(|body: &str| {
+        let message = if body.contains("<m:UnresolvedEntry>оль</m:UnresolvedEntry>") {
+            "<m:ResolveNamesResponseMessage ResponseClass=\"Warning\">\
+<m:ResponseCode>ErrorNameResolutionMultipleResults</m:ResponseCode>\
+<m:ResolutionSet TotalItemsInView=\"3\">\
+<t:Resolution><t:Mailbox><t:Name>Ольга Белова</t:Name><t:EmailAddress>o.belova@corp.ru</t:EmailAddress>\
+<t:RoutingType>SMTP</t:RoutingType></t:Mailbox><t:Contact><t:JobTitle>Дизайн</t:JobTitle></t:Contact></t:Resolution>\
+<t:Resolution><t:Mailbox><t:Name>Ольгин список</t:Name></t:Mailbox></t:Resolution>\
+<t:Resolution><t:Mailbox><t:EmailAddress>olga@corp.ru</t:EmailAddress></t:Mailbox>\
+<t:Contact><t:DisplayName>Ольга Ким</t:DisplayName></t:Contact></t:Resolution>\
+</m:ResolutionSet></m:ResolveNamesResponseMessage>"
+                .to_owned()
+        } else {
+            "<m:ResolveNamesResponseMessage ResponseClass=\"Error\">\
+<m:ResponseCode>ErrorNameResolutionNoResults</m:ResponseCode></m:ResolveNamesResponseMessage>"
+                .to_owned()
+        };
+        response("ResolveNames", &[message])
+    })
+    .await;
+    let found = ews.directory("оль", 1).await.unwrap();
+    assert_eq!(
+        found,
+        [Listed {
+            name: "Ольга Белова".into(),
+            email: "o.belova@corp.ru".into(),
+            title: Some("Дизайн".into()),
+        }]
+    );
+    assert_eq!(ews.directory("оль", 9).await.unwrap()[1].name, "Ольга Ким");
+    assert!(ews.directory("zz", 9).await.unwrap().is_empty());
+    let body = seen.lock().unwrap().last().unwrap().body.clone();
+    assert!(body.contains("SearchScope=\"ActiveDirectory\""));
+}
+
+#[tokio::test]
 async fn saves_a_draft_and_tells_its_id() {
     let made = "<m:Items><t:Message><t:ItemId Id=\"d1\" ChangeKey=\"c\"/></t:Message></m:Items>";
     let (mut ews, seen) = session(move |_| response("CreateItem", &[ok("CreateItem", made)])).await;
