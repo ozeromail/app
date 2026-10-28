@@ -165,10 +165,6 @@ struct InboxView: View {
                     await model.loadFolders()
                 }
             },
-            onAdd: {
-                model.accountsOpen = false
-                model.addingAccount = true
-            },
             onSignIn: { account in
                 model.accountsOpen = false
                 model.signingIn = account

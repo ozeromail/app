@@ -1057,10 +1057,6 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             }
         },
         onGroups = ::keepGroups,
-        onAdd = {
-            accountsOpen = false
-            addingAccount = true
-        },
         onSignIn = { account ->
             accountsOpen = false
             signingIn = account.id

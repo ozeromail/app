@@ -7,15 +7,14 @@ struct AccountsActions {
     let onInAll: (AccountItem, Bool) -> Void
     let onOrder: ([AccountItem]) -> Void
     let onPin: (FolderItem, Bool) -> Void
-    let onAdd: () -> Void
     let onSignIn: (AccountItem) -> Void
     /// Opens an account's settings.
     let onAccount: (AccountItem) -> Void
     let onSettings: () -> Void
 }
 
-/// The mailboxes, for going places, and at the bottom the settings and a way to add an account.
-/// Holding an account opens its settings; `holdTip` says so until it was done.
+/// The mailboxes, for going places, and at the bottom the settings. Holding an account opens its
+/// settings; `holdTip` says so until it was done.
 struct AccountsSheet: View {
     let accounts: [AccountItem]
     let folders: [FolderItem]
@@ -34,6 +33,9 @@ struct AccountsSheet: View {
                 MailboxRows(
                     accounts: accounts, folders: folders, mailbox: mailbox, drafts: drafts, unread: unread,
                     allBoxes: $allBoxes, groups: $groups, actions: actions)
+                Section {
+                    FolderRow(icon: "gear", title: tr("settings_title"), open: false, action: actions.onSettings)
+                }
                 if holdTip && accounts.count > 1 {
                     Section { } footer: { Text("account_settings_hint") }
                 }
@@ -41,38 +43,15 @@ struct AccountsSheet: View {
             .listStyle(.insetGrouped)
             .navigationTitle("folders_title")
             .navigationBarTitleDisplayMode(.inline)
-            .safeAreaInset(edge: .bottom) {
-                HStack(spacing: 10) {
-                    Button(action: actions.onSettings) { FootLabel(icon: "gear", text: "settings_title") }
-                    Button(action: actions.onAdd) { FootLabel(icon: "plus", text: "account_add_short") }
-                }
-                .buttonStyle(.bordered)
-                .tint(.primary)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background(.bar)
-            }
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
     }
 }
 
-/// A wide label for a button at the bottom of the sheet.
-private struct FootLabel: View {
-    let icon: String
-    let text: LocalizedStringKey
-
-    var body: some View {
-        Label(text, systemImage: icon)
-            .fontWeight(.medium)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 6)
-    }
-}
-
-/// The drafts, if any, then the inboxes, all accounts' and each one's, the mailboxes of all
-/// accounts together and each account's folders. With one account, its inbox and folders.
+/// The drafts, if any, then all inboxes, which always shows, the inboxes of the accounts, each
+/// with its folders a tap on its arrow away, and the mailboxes of all accounts together. With one
+/// account, its inbox and folders.
 /// Rows of a list, in the accounts sheet and beside the inbox on its side. An account, when held,
 /// opens its settings.
 struct MailboxRows: View {
@@ -101,50 +80,32 @@ struct MailboxRows: View {
                 AccountFolders(account: one, folders: folders, mailbox: mailbox, actions: actions)
             }
         } else {
+            Section {
+                let inAll = accounts.filter(\.inAll)
+                FolderRow(title: tr("folder_all_inbox"), open: mailbox == Mail.inbox,
+                          count: inAll.reduce(0) { $0 + (unread[$1.id] ?? 0) }, lead: { StackedDots(accounts: inAll) }) {
+                    actions.onMailbox(Mail.inbox)
+                }
+            }
             inboxes
             allAccounts
-            if groups.open(Groups.folders) {
-                ForEach(Array(accounts.enumerated()), id: \.element.id) { index, account in
-                    FolderGroup(
-                        title: account.name,
-                        open: groups.open(account.id),
-                        caption: { if index == 0 { foldersHeader } },
-                        lead: { AccountDot(color: account.tint, size: 12) },
-                        onToggle: { toggle { $0.toggled(account.id) } },
-                        onHold: { actions.onAccount(account) }
-                    ) {
-                        AccountFolders(account: account, folders: folders, mailbox: mailbox, actions: actions)
-                    }
-                }
-            } else {
-                Section { } header: { foldersHeader }
-            }
         }
-    }
-
-    private var foldersHeader: some View {
-        PartHeader(title: "account_folders", open: groups.open(Groups.folders), onToggle: { toggle { $0.toggled(Groups.folders) } })
     }
 
     private func toggle(_ change: (Groups) -> Groups) {
         withAnimation(.smooth) { groups = change(groups) }
     }
 
-    /// All inboxes together, then each account's, with their unread People mail; Edit turns the
-    /// accounts into switches for All inboxes to move.
+    /// Each account's inbox with its unread People mail, and its folders under it when its arrow
+    /// is open; Edit turns the accounts into switches for All inboxes to move.
     private var inboxes: some View {
         let open = editing || groups.open(Groups.inboxes)
         return Section {
             if open {
-                let inAll = accounts.filter(\.inAll)
-                FolderRow(title: tr("folder_all_inbox"), open: mailbox == Mail.inbox,
-                          count: inAll.reduce(0) { $0 + (unread[$1.id] ?? 0) }, lead: { StackedDots(accounts: inAll) }) {
-                    actions.onMailbox(Mail.inbox)
-                }
                 if editing {
                     ForEach(accounts, id: \.id) { account in
                         HStack {
-                            Label { Text(verbatim: account.name) } icon: { AccountDot(color: account.tint, size: 12) }
+                            Label { Text(verbatim: account.name) } icon: { AccountDot(color: account.tint) }
                             Spacer()
                             // The unified inbox keeps one account at least; the row still moves.
                             Toggle(account.name, isOn: Binding(get: { account.inAll }, set: { actions.onInAll(account, $0) }))
@@ -161,21 +122,39 @@ struct MailboxRows: View {
                 } else {
                     ForEach(accounts, id: \.id) { account in
                         let box = folders.first { $0.accountId == account.id && $0.role == .inbox }.map { Mailbox.folder(id: $0.id) }
-                        FolderRow(title: account.name, open: box == mailbox, count: unread[account.id] ?? 0,
-                                  lead: { AccountDot(color: account.tint, size: 12) }) {
-                            if let box { actions.onMailbox(box) }
+                        let shown = groups.open(account.id)
+                        HStack(spacing: 4) {
+                            FolderRow(title: account.name, open: box == mailbox, count: unread[account.id] ?? 0,
+                                      lead: { AccountDot(color: account.tint) }) {
+                                if let box { actions.onMailbox(box) }
+                            }
+                            // Shows or hides the account's folders under it.
+                            Button { toggle { $0.toggled(account.id) } } label: {
+                                Image(systemName: "chevron.right")
+                                    .font(.footnote.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .rotationEffect(.degrees(shown ? 90 : 0))
+                                    .frame(width: 36, height: 36)
+                                    .contentShape(.rect)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(Text(verbatim: account.name))
+                            .accessibilityHint(Text(shown ? "action_collapse" : "action_expand"))
                         }
                         .contextMenu {
                             Button { actions.onAccount(account) } label: { Label("account_settings", systemImage: "gear") }
                         }
                         signInAgain(account)
+                        if shown {
+                            AccountFolders(account: account, folders: folders, mailbox: mailbox, actions: actions, depth: 1)
+                        }
                     }
                 }
             }
         } header: {
             PartHeader(title: "inboxes_title", open: open, onToggle: editing ? nil : { toggle { $0.toggled(Groups.inboxes) } }) {
                 Button(editing ? "action_done" : "action_edit") { withAnimation(.smooth) { editing.toggle() } }
-                    .font(.subheadline.weight(.semibold))
+                    .font(.footnote.weight(.semibold))
                     .textCase(nil)
             }
         } footer: {
@@ -217,14 +196,15 @@ struct MailboxRows: View {
     }
 }
 
-/// An account's folders: its system ones in the usual order, then its own. Of those, the pinned
-/// ones show, or all while the account has few and none pinned; Other folders shows the rest,
-/// each inside the one it is in. Holding one of its own pins or unpins it.
+/// An account's folders, `depth` steps in: its system ones in the usual order, then its own. Of
+/// those, the pinned ones show, or all while the account has few and none pinned; Other folders
+/// shows the rest, each inside the one it is in. Holding one of its own pins or unpins it.
 private struct AccountFolders: View {
     let account: AccountItem
     let folders: [FolderItem]
     let mailbox: Mailbox
     let actions: AccountsActions
+    var depth = 0
 
     @State private var all = false
 
@@ -232,7 +212,7 @@ private struct AccountFolders: View {
         let mine = folders.filter { $0.accountId == account.id && $0.role != .drafts }
         ForEach(mine.filter { $0.role != .custom && $0.role != .inbox }.sorted { $0.role.rank < $1.role.rank }, id: \.id) { folder in
             let box = Mailbox.folder(id: folder.id)
-            FolderRow(icon: folder.role.icon, title: folder.title, open: box == mailbox) { actions.onMailbox(box) }
+            FolderRow(icon: folder.role.icon, title: folder.title, open: box == mailbox, depth: depth) { actions.onMailbox(box) }
         }
         let own = mine.filter { $0.role == .custom }
         let few = !own.contains(where: \.pinned) && own.count <= fewFolders
@@ -243,7 +223,7 @@ private struct AccountFolders: View {
             // Inside a folder that shows too, it goes under it by its own name.
             let nested = folder.parent.map(ids.contains) ?? false
             FolderRow(icon: folder.pinned && (all || few) ? "pin" : "folder", title: folder.shownName(ids),
-                      open: box == mailbox, indent: nested) { actions.onMailbox(box) }
+                      open: box == mailbox, depth: depth + (nested ? 1 : 0)) { actions.onMailbox(box) }
                 .contextMenu {
                     Button { actions.onPin(folder, !folder.pinned) } label: {
                         Label(folder.pinned ? "action_unpin" : "action_pin", systemImage: folder.pinned ? "pin.slash" : "pin")
@@ -259,11 +239,12 @@ private struct AccountFolders: View {
                     if !all { Text(verbatim: "\(own.count - shown.count)").font(.footnote) }
                 }
                 .foregroundStyle(.secondary)
+                .padding(.leading, indent(depth))
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
             if all {
-                Text("folders_pin_hint").font(.footnote).foregroundStyle(.secondary)
+                Text("folders_pin_hint").font(.footnote).foregroundStyle(.secondary).padding(.leading, indent(depth + 1))
             }
         }
     }
@@ -337,65 +318,26 @@ extension PartHeader where Trailing == EmptyView {
     }
 }
 
-/// A group's name, which hides or shows its folders, under `caption` when it starts a part of
-/// the list; holding it runs `onHold`.
-private struct FolderGroup<Caption: View, Lead: View, Folders: View>: View {
-    let title: String
-    let open: Bool
-    @ViewBuilder let caption: () -> Caption
-    @ViewBuilder let lead: () -> Lead
-    let onToggle: () -> Void
-    var onHold: (() -> Void)?
-    @ViewBuilder let folders: () -> Folders
-
-    var body: some View {
-        Section {
-            if open { folders() }
-        } header: {
-            VStack(alignment: .leading, spacing: 12) {
-                caption()
-                HStack(spacing: 14) {
-                    lead().frame(width: 24)
-                    Button(action: onToggle) {
-                        HStack(spacing: 4) {
-                            Text(verbatim: title).font(.body.weight(.semibold)).foregroundStyle(.primary).lineLimit(1)
-                            // Points down while the folders show, to the side while they are hidden.
-                            Image(systemName: "chevron.right")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                                .rotationEffect(.degrees(open ? 90 : 0))
-                        }
-                        .contentShape(.rect)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityHint(Text(open ? "action_collapse" : "action_expand"))
-                    .contextMenu {
-                        if let onHold {
-                            Button(action: onHold) { Label("account_settings", systemImage: "gear") }
-                        }
-                    }
-                    Spacer()
-                }
-                .textCase(nil)
-            }
-        }
-    }
-}
-
+/// A mailbox's icon: as quiet as the headings, so colour in the list means an account or the
+/// open one.
 private struct FolderIcon: View {
     let name: String
+    var open = false
 
     var body: some View {
-        Image(systemName: name).foregroundStyle(Color.ozeroAccent)
+        Image(systemName: name).foregroundStyle(open ? Color.ozeroAccent : .secondary)
     }
 }
+
+/// How far in a row `depth` steps down goes: one slot and its gap a step.
+private func indent(_ depth: Int) -> CGFloat { CGFloat(depth) * 38 }
 
 private struct FolderRow<Lead: View>: View {
     let title: String
     let open: Bool
     var count = 0
-    /// Inside the folder above it.
-    var indent = false
+    /// Steps in, under the account or folder it is in.
+    var depth = 0
     @ViewBuilder let lead: () -> Lead
     let action: () -> Void
 
@@ -409,10 +351,10 @@ private struct FolderRow<Lead: View>: View {
                     .lineLimit(1)
                 Spacer()
                 if count > 0 {
-                    Text(verbatim: "\(count)").font(.footnote).foregroundStyle(.secondary)
+                    Text(verbatim: "\(count)").font(.footnote).foregroundStyle(open ? Color.ozeroAccent : .secondary)
                 }
             }
-            .padding(.leading, indent ? 24 : 0)
+            .padding(.leading, indent(depth))
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -420,8 +362,8 @@ private struct FolderRow<Lead: View>: View {
 }
 
 extension FolderRow where Lead == FolderIcon {
-    init(icon: String, title: String, open: Bool, count: Int = 0, indent: Bool = false, action: @escaping () -> Void) {
-        self.init(title: title, open: open, count: count, indent: indent, lead: { FolderIcon(name: icon) }, action: action)
+    init(icon: String, title: String, open: Bool, count: Int = 0, depth: Int = 0, action: @escaping () -> Void) {
+        self.init(title: title, open: open, count: count, depth: depth, lead: { FolderIcon(name: icon, open: open) }, action: action)
     }
 }
 

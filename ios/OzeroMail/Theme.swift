@@ -59,11 +59,11 @@ struct StackedDots: View {
     var body: some View {
         ZStack(alignment: .leading) {
             ForEach(Array(accounts.prefix(3).enumerated()), id: \.offset) { i, account in
-                AccountDot(color: account.tint, size: 11)
+                AccountDot(color: account.tint)
                     .overlay(Circle().stroke(Color(uiColor: .systemBackground), lineWidth: 1.5))
-                    .offset(x: 6.5 * CGFloat(i))
+                    .offset(x: 7 * CGFloat(i))
             }
         }
-        .frame(width: 24, height: 11, alignment: .leading)
+        .frame(width: 24, height: 10, alignment: .leading)
     }
 }
