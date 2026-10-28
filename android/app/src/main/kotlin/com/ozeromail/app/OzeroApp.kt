@@ -3,7 +3,6 @@ package com.ozeromail.app
 import android.app.Activity
 import android.app.Application
 import android.os.Bundle
-import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 
 class OzeroApp : Application() {
@@ -17,12 +16,6 @@ class OzeroApp : Application() {
     override fun onCreate() {
         super.onCreate()
         Crashes.install(this)
-        try {
-            CoreNative.init(this)
-        } catch (e: RuntimeException) {
-            // The core then refuses secure connections with a TLS error instead of crashing here.
-            Log.e("Ozero", "certificate checks are not set up", e)
-        }
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityStarted(activity: Activity) {
                 shown.value = ++started > 0

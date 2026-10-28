@@ -1,6 +1,7 @@
 package com.ozeromail.app
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -28,6 +29,7 @@ import uniffi.ozero_api.NewMail
  * set to, and tells about mail from people.
  */
 class MailWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    @SuppressLint("ApplySharedPref")
     override suspend fun doWork(): Result {
         val app = applicationContext as OzeroApp
         val checked = applicationContext.getSharedPreferences(CHECKED, Context.MODE_PRIVATE)
@@ -57,7 +59,8 @@ class MailWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         if (ids?.isEmpty() == true) return Result.success()
         // A failed sync leaves its accounts due, so the next run tries them again.
         if (checkMail(app) { ids == null || it.id in ids } && ids != null) {
-            checked.edit().apply { ids.forEach { putLong(it.toString(), now) } }.apply()
+            // Not apply(): Android makes the main thread wait for its writes when it stops a service or screen.
+            checked.edit().apply { ids.forEach { putLong(it.toString(), now) } }.commit()
         }
         return Result.success()
     }
