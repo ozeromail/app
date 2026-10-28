@@ -10,8 +10,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -32,6 +32,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -46,6 +47,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -57,9 +59,12 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -354,21 +359,26 @@ fun ComposeScreen(
     var unfolded by remember { mutableStateOf(false) }
     LaunchedEffect(keyboard) { if (!keyboard) unfolded = false }
     val folded = sideways && keyboard && writingText && !unfolded
+    // Upright, the message is one page pinned over the keyboard. When a long text takes To and
+    // Subject out of sight, a line over the bar names them, and a tap brings them down over it.
+    var headingInSight by remember { mutableStateOf(true) }
+    val docked = !sideways && unfolded
+    LaunchedEffect(writingText) { if (writingText && !sideways) unfolded = false }
     // A forward or a new message starts where it is missing: who it goes to.
     val toFocus = remember { FocusRequester() }
+    LaunchedEffect(docked) { if (docked) toFocus.requestFocus() }
     LaunchedEffect(Unit) { if (to.isBlank() && !folded) toFocus.requestFocus() }
     val original = composing.original
     // A tap on the message being answered puts the keyboard away, so the message gets the room to read.
     val focusManager = LocalFocusManager.current
     val readOriginal = { focusManager.clearFocus() }.takeIf { keyboard }
-    // A longer text takes all the room there is, but beside the message being answered with the keyboard down.
-    val textFills = original == null || keyboard
+    val summary = listOf(to.ifBlank { stringResource(R.string.compose_to) }, subject.ifBlank { stringResource(R.string.compose_subject) }).joinToString(" · ")
     // The images the text shows, and the files that go under it.
     val shownImages = remember(text) { richBlocks(text).filterIsInstance<RichBlock.Image>().associate { it.file to it.size } }
     val images = rememberImages(mail, shownImages.keys.toList(), context.resources.displayMetrics.widthPixels)
     val addresses = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next, autoCorrectEnabled = false)
-    val fields: @Composable ColumnScope.() -> Unit = {
-        if (!folded) {
+    val heading = @Composable { modifier: Modifier ->
+        Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Plain(to, { to = it }, R.string.compose_to, Type.Body, addresses, modifier = Modifier.weight(1f).focusRequester(toFocus))
                 if (!hasCc) {
@@ -397,6 +407,8 @@ fun ComposeScreen(
                 KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Next),
             )
         }
+    }
+    val writing = @Composable {
         RichBody(
             textState,
             files,
@@ -410,18 +422,8 @@ fun ComposeScreen(
                 lastImage = it
             },
             onLink = { url, apply -> linking = Linking(url, apply) },
-            modifier = Modifier
-                .onFocusChanged { writingText = it.hasFocus }
-                .then(
-                    when {
-                        sideways -> Modifier.heightIn(min = 72.dp)
-                        // Room for a few lines from the start. While typing it takes the whole room, so no part
-                        // of the screen stands empty over it.
-                        textFills -> Modifier.weight(1f, fill = keyboard).heightIn(min = if (keyboard) 72.dp else 168.dp)
-                        else -> Modifier.heightIn(min = 168.dp, max = 320.dp)
-                    },
-                )
-                .verticalScroll(rememberScrollState()),
+            // No frame of its own: the page it is on scrolls.
+            modifier = Modifier.onFocusChanged { writingText = it.hasFocus },
         )
         val attached = files.filter { it.id !in shownImages }
         if (attached.isNotEmpty() || adding.isNotEmpty()) FileChips(attached, adding, ::detach)
@@ -497,7 +499,7 @@ fun ComposeScreen(
                             IconTile(R.drawable.ic_close, stringResource(R.string.action_close), onCancel, shape = CircleShape)
                             if (folded) {
                                 Text(
-                                    listOf(to.ifBlank { stringResource(R.string.compose_to) }, subject.ifBlank { stringResource(R.string.compose_subject) }).joinToString(" · "),
+                                    summary,
                                     color = colors.onSurfaceVariant,
                                     style = Type.Text,
                                     maxLines = 1,
@@ -522,7 +524,10 @@ fun ComposeScreen(
                         Column(
                             Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = Gap.screen, vertical = 8.dp),
                             verticalArrangement = Arrangement.spacedBy(12.dp),
-                        ) { fields() }
+                        ) {
+                            if (!folded) heading(Modifier)
+                            writing()
+                        }
                         errorLine()
                     }
                 }
@@ -537,16 +542,53 @@ fun ComposeScreen(
             }
         } else {
             Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
-                // The message being answered takes the room the fields leave; alone, the fields sit low.
-                // With the keyboard up the text takes the room, and the card a strip of it.
-                if (original != null) {
-                    Original(mail, original, if (keyboard) Modifier.heightIn(max = 112.dp) else Modifier.weight(1f).heightIn(min = 112.dp), readOriginal)
+                // One page, low by the thumb: the message being answered, To and Subject, the text.
+                // A longer text grows up and scrolls with the rest, with no frame of its own.
+                val page = rememberScrollState()
+                // Held at its end, where the writing goes on, as the page grows above or the keyboard
+                // takes room; scrolled up by hand, it stays where it was put.
+                var atEnd by remember { mutableStateOf(true) }
+                LaunchedEffect(page) {
+                    launch { snapshotFlow { page.maxValue }.collect { if (atEnd && it != Int.MAX_VALUE) page.scrollTo(it) } }
+                    snapshotFlow { page.isScrollInProgress }.collect { if (!it) atEnd = page.value >= page.maxValue }
                 }
-                // As much room under the text as at its sides, so it never touches the bar.
-                Column(
-                    (if (textFills) Modifier.weight(1f) else Modifier).padding(start = Gap.screen, end = Gap.screen, bottom = Gap.screen),
-                    verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
-                ) { fields() }
+                BoxWithConstraints(Modifier.weight(1f)) {
+                    val room = maxHeight
+                    Column(Modifier.fillMaxSize().verticalScroll(page)) {
+                        // As much room under the text as at its sides, so it never touches the bar.
+                        Column(
+                            Modifier.fillMaxWidth().heightIn(min = room).padding(bottom = Gap.screen),
+                            verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
+                        ) {
+                            if (original != null) Original(mail, original, Modifier, readOriginal, whole = true)
+                            Column(Modifier.padding(horizontal = Gap.screen), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                if (!docked) {
+                                    heading(Modifier.onGloballyPositioned { headingInSight = it.boundsInWindow().height >= it.size.height * 0.6f })
+                                }
+                                writing()
+                            }
+                        }
+                    }
+                }
+                if (docked) {
+                    heading(Modifier.fillMaxWidth().hairline(colors.outlineVariant, top = true).padding(horizontal = Gap.screen, vertical = 8.dp))
+                } else {
+                    Reveal(summary.takeUnless { headingInSight }) {
+                        Row(
+                            Modifier
+                                .padding(start = Gap.bar, end = Gap.bar, bottom = 6.dp)
+                                .fillMaxWidth()
+                                .clip(CircleShape)
+                                .background(colors.surfaceVariant)
+                                .clickable(role = Role.Button) { unfolded = true }
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(it, color = colors.onSurface, style = Type.Text, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                            Icon(painterResource(R.drawable.ic_chevron_down), null, Modifier.size(18.dp).rotate(180f), tint = colors.onSurfaceVariant)
+                        }
+                    }
+                }
                 errorLine()
                 Row(
                     Modifier
@@ -632,9 +674,9 @@ fun ComposeScreen(
     }
 }
 
-/** The message being answered, whole, scrolling in the room it gets; [onClick] gives it more. */
+/** The message being answered, scrolling in the room it gets or [whole]; [onClick] gives it more. */
 @Composable
-private fun Original(mail: Mail, message: MessageItem, modifier: Modifier, onClick: (() -> Unit)? = null) {
+private fun Original(mail: Mail, message: MessageItem, modifier: Modifier, onClick: (() -> Unit)? = null, whole: Boolean = false) {
     val colors = MaterialTheme.colorScheme
     var text by remember(message.id) { mutableStateOf(message.snippet) }
     LaunchedEffect(message.id) {
@@ -669,8 +711,9 @@ private fun Original(mail: Mail, message: MessageItem, modifier: Modifier, onCli
                 text,
                 color = colors.onSurfaceVariant,
                 style = Type.Quote,
+                // Whole on a page that scrolls, else scrolling in the room it gets.
                 modifier = Modifier
-                    .verticalScroll(rememberScrollState())
+                    .then(if (whole) Modifier else Modifier.verticalScroll(rememberScrollState()))
                     .padding(start = Gap.inCard, end = Gap.inCard, bottom = 12.dp),
             )
         }

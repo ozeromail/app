@@ -68,7 +68,9 @@ struct ComposeView: View {
     @Environment(\.sideways) private var sideways
     /// To and Subject shown again while the text is typed on its side.
     @State private var unfolded = false
-    @State private var textHeight: CGFloat = 0
+    /// Upright: the height of the page, and whether To and Subject are on it in sight.
+    @State private var room: CGFloat = 0
+    @State private var headingInSight = true
     /// The files the text shows as images, which go without a chip.
     @State private var shownFiles: [Int64] = []
 
@@ -117,8 +119,7 @@ struct ComposeView: View {
                                 Button {
                                     unfolded = true
                                 } label: {
-                                    Text(verbatim: [to.isBlank ? tr("compose_to") : to, subject.isBlank ? tr("compose_subject") : subject]
-                                        .joined(separator: " · "))
+                                    Text(verbatim: summary)
                                         .font(.subheadline)
                                         .foregroundStyle(.secondary)
                                         .lineLimit(1)
@@ -156,22 +157,58 @@ struct ComposeView: View {
                 }
             } else {
                 VStack(spacing: 0) {
-                    if let original = composing.original {
-                        Original(mail: mail, message: original)
-                            .frame(maxHeight: editing ? 112 : .infinity, alignment: .top)
-                            // A tap puts the keyboard away, so the message gets the room to read.
-                            .onTapGesture {
-                                focus = nil
-                                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                    // One page, low by the thumb: the message being answered, To and Subject, the text.
+                    // A longer text grows up and scrolls with the rest, with no frame of its own.
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) {
+                            if let original = composing.original {
+                                Original(mail: mail, message: original)
+                                    // A tap puts the keyboard away, so the message gets the room to read.
+                                    .onTapGesture {
+                                        focus = nil
+                                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                                    }
                             }
-                    } else {
-                        Spacer(minLength: 0)
+                            if !docked {
+                                heading.onGeometryChange(for: Bool.self) { proxy in
+                                    // Most of it within the page's visible part.
+                                    let frame = proxy.frame(in: .scrollView)
+                                    return frame.maxY - max(frame.minY, 0) >= frame.height * 0.6
+                                } action: { headingInSight = $0 }
+                            }
+                            writing
+                        }
+                        .padding(.bottom, 20)
+                        .frame(maxWidth: .infinity, minHeight: room, alignment: .bottom)
                     }
-                    // The text has the room first, the message being answered what is left.
-                    fields.layoutPriority(1)
+                    .defaultScrollAnchor(.bottom)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { room = $0 }
+                    // When a long text takes To and Subject out of sight, a line names them, and a tap
+                    // brings them down here.
+                    if docked {
+                        Divider()
+                        heading.padding(.vertical, 8)
+                    } else if !headingInSight {
+                        Button {
+                            unfolded = true
+                        } label: {
+                            HStack {
+                                Text(verbatim: summary).lineLimit(1)
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.up").foregroundStyle(.secondary)
+                            }
+                            .font(.subheadline)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(Color.ozeroCard, in: .capsule)
+                            .contentShape(.capsule)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 6)
+                    }
                     errorLine
-                    // As much room under the text as at its sides, so it never touches the bar.
-                    Divider().padding(.top, 20)
+                    Divider()
                     HStack(spacing: 8) {
                         RoundButton(icon: "xmark", label: "action_close", size: 44, action: close)
                         if hasDraft { deleteButton }
@@ -187,6 +224,13 @@ struct ComposeView: View {
         }
         .onChange(of: editing) { _, now in
             if !now { unfolded = false }
+        }
+        // Back to the text, To and Subject go back up the page.
+        .onChange(of: textFocused) { _, now in
+            if now && !sideways { unfolded = false }
+        }
+        .onChange(of: docked) { _, now in
+            if now { focus = .to }
         }
         .onChange(of: focus) { _, now in
             // Taken out, a tap brings it back.
@@ -255,6 +299,14 @@ struct ComposeView: View {
     /// the little height the keyboard leaves; a tap on the line brings them back.
     private var folded: Bool { sideways && textFocused && !unfolded }
 
+    /// Upright, To and Subject brought down over the bar.
+    private var docked: Bool { !sideways && unfolded }
+
+    /// To and Subject in one line.
+    private var summary: String {
+        [to.isBlank ? tr("compose_to") : to, subject.isBlank ? tr("compose_subject") : subject].joined(separator: " · ")
+    }
+
     /// The files `text` shows as images, which go without a chip.
     private static func shown(in text: String) -> [Int64] {
         richBlocks(text: text).compactMap { block in
@@ -264,36 +316,47 @@ struct ComposeView: View {
 
     private var fields: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if !folded {
-                HStack {
-                    TextField("compose_to", text: $to)
-                        .addresses()
-                        .focused($focus, equals: .to)
-                        .submitLabel(.next)
-                        .onSubmit { focus = hasCc ? .cc : .subject }
-                    if !hasCc {
-                        Button("compose_cc") {
-                            hasCc = true
-                            focus = .cc
-                        }
-                        .font(.footnote.weight(.semibold))
-                    }
-                }
-                if hasCc {
-                    Divider()
-                    TextField("compose_cc", text: $cc)
-                        .addresses()
-                        .focused($focus, equals: .cc)
-                        .submitLabel(.next)
-                        .onSubmit { focus = .subject }
-                }
-                Divider()
-                TextField("compose_subject", text: $subject)
-                    .font(.title2.bold())
-                    .focused($focus, equals: .subject)
+            if !folded { heading }
+            writing
+        }
+    }
+
+    private var heading: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                TextField("compose_to", text: $to)
+                    .addresses()
+                    .focused($focus, equals: .to)
                     .submitLabel(.next)
-                    .onSubmit { textRequest += 1 }
+                    .onSubmit { focus = hasCc ? .cc : .subject }
+                if !hasCc {
+                    Button("compose_cc") {
+                        hasCc = true
+                        focus = .cc
+                    }
+                    .font(.footnote.weight(.semibold))
+                }
             }
+            if hasCc {
+                Divider()
+                TextField("compose_cc", text: $cc)
+                    .addresses()
+                    .focused($focus, equals: .cc)
+                    .submitLabel(.next)
+                    .onSubmit { focus = .subject }
+            }
+            Divider()
+            TextField("compose_subject", text: $subject)
+                .font(.title2.bold())
+                .focused($focus, equals: .subject)
+                .submitLabel(.next)
+                .onSubmit { textRequest += 1 }
+        }
+        .padding(.horizontal, 20)
+    }
+
+    private var writing: some View {
+        VStack(alignment: .leading, spacing: 12) {
             textField
             let chips = files.filter { !shownFiles.contains($0.id) }
             if !chips.isEmpty || !adding.isEmpty {
@@ -325,28 +388,18 @@ struct ComposeView: View {
         .padding(.horizontal, 20)
     }
 
-    /// As tall as the text, scrolling past the room it has; while typing it takes the whole room.
+    /// As tall as the text, with no frame of its own: the page it is on scrolls.
     private var textField: some View {
-        let line = UIFont.preferredFont(forTextStyle: .body).lineHeight
-        let lines: ClosedRange<CGFloat> = editing ? 3...7 : 7...14
-        let least = line * lines.lowerBound
-        // A longer text takes all the room there is, but on its side or by the message being answered.
-        let most = sideways || (composing.original != nil && !editing) ? line * lines.upperBound : .infinity
-        return ScrollView {
-            RichBody(
-                text: $text, files: files, images: images, focusRequest: textRequest,
-                onCaret: { caret = $0 },
-                onFocus: { textFocused = $0 },
-                onLink: { url, apply in
-                    linkURL = url ?? "https://"
-                    linking = Linking(url: url, apply: apply)
-                },
-                imageMenu: imageMenu
-            )
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { textHeight = $0 }
-        }
-        .scrollBounceBehavior(.basedOnSize)
-        .frame(minHeight: least, maxHeight: editing && !sideways ? .infinity : max(least, min(textHeight, most)))
+        RichBody(
+            text: $text, files: files, images: images, focusRequest: textRequest,
+            onCaret: { caret = $0 },
+            onFocus: { textFocused = $0 },
+            onLink: { url, apply in
+                linkURL = url ?? "https://"
+                linking = Linking(url: url, apply: apply)
+            },
+            imageMenu: imageMenu
+        )
     }
 
     /// What can be done with an image in the text.
