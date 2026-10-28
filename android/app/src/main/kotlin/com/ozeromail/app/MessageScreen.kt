@@ -1324,9 +1324,11 @@ private fun QuickReply(
             Type.Writing,
             KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
             singleLine = false,
+            // Grows with the text, up to all the room over the keyboard; the buttons stay under it.
             modifier = Modifier
+                .weight(1f, fill = false)
                 .padding(horizontal = Gap.screen, vertical = 6.dp)
-                .heightIn(min = 54.dp, max = 162.dp)
+                .heightIn(min = 54.dp)
                 .focusRequester(focus),
         )
         Reveal(error) { Text(stringResource(it), color = colors.error, style = Type.Caption, modifier = Modifier.padding(horizontal = Gap.screen)) }

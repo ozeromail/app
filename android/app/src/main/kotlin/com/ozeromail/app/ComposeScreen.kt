@@ -11,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -58,6 +59,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -356,11 +358,16 @@ fun ComposeScreen(
     val toFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { if (to.isBlank() && !folded) toFocus.requestFocus() }
     val original = composing.original
+    // A tap on the message being answered puts the keyboard away, so the message gets the room to read.
+    val focusManager = LocalFocusManager.current
+    val readOriginal = { focusManager.clearFocus() }.takeIf { keyboard }
+    // A longer text takes all the room there is, but beside the message being answered with the keyboard down.
+    val textFills = original == null || keyboard
     // The images the text shows, and the files that go under it.
     val shownImages = remember(text) { richBlocks(text).filterIsInstance<RichBlock.Image>().associate { it.file to it.size } }
     val images = rememberImages(mail, shownImages.keys.toList(), context.resources.displayMetrics.widthPixels)
     val addresses = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next, autoCorrectEnabled = false)
-    val fields = @Composable {
+    val fields: @Composable ColumnScope.() -> Unit = {
         if (!folded) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Plain(to, { to = it }, R.string.compose_to, Type.Body, addresses, modifier = Modifier.weight(1f).focusRequester(toFocus))
@@ -406,11 +413,11 @@ fun ComposeScreen(
             modifier = Modifier
                 .onFocusChanged { writingText = it.hasFocus }
                 .then(
-                    if (sideways) {
-                        Modifier.heightIn(min = 72.dp)
-                    } else {
-                        // Room for a few lines from the start, less while the keyboard takes the screen.
-                        Modifier.heightIn(min = if (keyboard) 72.dp else 168.dp, max = if (keyboard) 168.dp else 320.dp)
+                    when {
+                        sideways -> Modifier.heightIn(min = 72.dp)
+                        // Room for a few lines from the start.
+                        textFills -> Modifier.weight(1f, fill = false).heightIn(min = if (keyboard) 72.dp else 168.dp)
+                        else -> Modifier.heightIn(min = 168.dp, max = 320.dp)
                     },
                 )
                 .verticalScroll(rememberScrollState()),
@@ -530,11 +537,13 @@ fun ComposeScreen(
         } else {
             Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
                 // The message being answered takes the room the fields leave; alone, the fields sit low.
-                // With the keyboard up the card may close to nothing, so Send always stays in sight.
-                if (original != null) Original(mail, original, Modifier.weight(1f).heightIn(min = if (keyboard) 0.dp else 112.dp))
+                // With the keyboard up the text takes the room, and the card a strip of it.
+                if (original != null) {
+                    Original(mail, original, if (keyboard) Modifier.heightIn(max = 112.dp) else Modifier.weight(1f).heightIn(min = 112.dp), readOriginal)
+                }
                 // As much room under the text as at its sides, so it never touches the bar.
                 Column(
-                    (if (original == null) Modifier.weight(1f) else Modifier).padding(start = Gap.screen, end = Gap.screen, bottom = Gap.screen),
+                    (if (textFills) Modifier.weight(1f) else Modifier).padding(start = Gap.screen, end = Gap.screen, bottom = Gap.screen),
                     verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
                 ) { fields() }
                 errorLine()
@@ -622,9 +631,9 @@ fun ComposeScreen(
     }
 }
 
-/** The message being answered, whole, scrolling in the room it gets. */
+/** The message being answered, whole, scrolling in the room it gets; [onClick] gives it more. */
 @Composable
-private fun Original(mail: Mail, message: MessageItem, modifier: Modifier) {
+private fun Original(mail: Mail, message: MessageItem, modifier: Modifier, onClick: (() -> Unit)? = null) {
     val colors = MaterialTheme.colorScheme
     var text by remember(message.id) { mutableStateOf(message.snippet) }
     LaunchedEffect(message.id) {
@@ -641,7 +650,8 @@ private fun Original(mail: Mail, message: MessageItem, modifier: Modifier) {
                 .fillMaxWidth()
                 .padding(start = Gap.card, end = Gap.card, top = 12.dp, bottom = 10.dp)
                 .clip(RoundedCornerShape(Radius.tile))
-                .background(colors.surfaceVariant),
+                .background(colors.surfaceVariant)
+                .then(if (onClick == null) Modifier else Modifier.clickable(onClick = onClick)),
         ) {
             Row(Modifier.padding(start = Gap.inCard, end = Gap.inCard, top = 12.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(

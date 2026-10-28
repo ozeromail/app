@@ -159,10 +159,16 @@ struct ComposeView: View {
                     if let original = composing.original {
                         Original(mail: mail, message: original)
                             .frame(maxHeight: editing ? 112 : .infinity, alignment: .top)
+                            // A tap puts the keyboard away, so the message gets the room to read.
+                            .onTapGesture {
+                                focus = nil
+                                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                            }
                     } else {
                         Spacer(minLength: 0)
                     }
-                    fields
+                    // The text has the room first, the message being answered what is left.
+                    fields.layoutPriority(1)
                     errorLine
                     // As much room under the text as at its sides, so it never touches the bar.
                     Divider().padding(.top, 20)
@@ -323,6 +329,9 @@ struct ComposeView: View {
     private var textField: some View {
         let line = UIFont.preferredFont(forTextStyle: .body).lineHeight
         let lines: ClosedRange<CGFloat> = editing ? 3...7 : 7...14
+        let least = line * lines.lowerBound
+        // A longer text takes all the room there is, but on its side or by the message being answered.
+        let most = sideways || (composing.original != nil && !editing) ? line * lines.upperBound : .infinity
         return ScrollView {
             RichBody(
                 text: $text, files: files, images: images, focusRequest: textRequest,
@@ -337,7 +346,7 @@ struct ComposeView: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { textHeight = $0 }
         }
         .scrollBounceBehavior(.basedOnSize)
-        .frame(height: min(max(textHeight, line * lines.lowerBound), line * lines.upperBound))
+        .frame(minHeight: least, maxHeight: max(least, min(textHeight, most)))
     }
 
     /// What can be done with an image in the text.

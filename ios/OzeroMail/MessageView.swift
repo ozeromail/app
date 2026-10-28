@@ -1129,7 +1129,8 @@ private struct QuickReply: View {
             .padding(.top, 10)
             TextField("message_reply_prompt", text: $text, axis: .vertical)
                 .font(.body)
-                .lineLimit(2...6)
+                // Grows with the text, about as far as the room over the keyboard goes.
+                .lineLimit(2...12)
                 .focused($focused)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 8)
