@@ -138,6 +138,11 @@ class Settings(context: Context) {
         get() = prefs.getBoolean(HOLD_TIP, false)
         set(value) = prefs.edit().putBoolean(HOLD_TIP, value).apply()
 
+    /** The phone asked for its contacts once, from "To": the line offering them shows no more. */
+    var contactsAsked: Boolean
+        get() = prefs.getBoolean(CONTACTS_ASKED, false)
+        set(value) = prefs.edit().putBoolean(CONTACTS_ASKED, value).apply()
+
     /** The mailboxes synced on this phone, by [Mailbox] key: only one never synced waits for its first mail. */
     var syncedBoxes: Set<Long>
         get() = ids(SYNCED)
@@ -181,6 +186,7 @@ class Settings(context: Context) {
         private const val ALL_SHOWN = "all_boxes_shown"
         private const val TEXT_SIZE = "text_size"
         private const val HOLD_TIP = "hold_tip_seen"
+        private const val CONTACTS_ASKED = "contacts_asked"
     }
 }
 

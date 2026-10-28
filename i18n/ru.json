@@ -389,5 +389,14 @@
   "invite_reason_title": "Комментарий для %1$s",
   "invite_reason_text": "Уйдёт вместе с ответом «Нет».",
   "invite_reason_prompt": "Почему не получится (можно пропустить)",
-  "invite_reason_skip": "Без комментария"
+  "invite_reason_skip": "Без комментария",
+  "compose_contacts_ask": "Искать и в контактах телефона",
+  "compose_directory": "Справочник компании",
+  "compose_remove_person": "Убрать: %1$s",
+  "person_in_contacts": "В ваших контактах",
+  "person_not_in_contacts": "Нет в ваших контактах",
+  "person_all_mail": "Все письма",
+  "person_open_contact": "Контакт",
+  "person_add_contact": "В контакты",
+  "person_addresses": "Адреса"
 }

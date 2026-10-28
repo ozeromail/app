@@ -30,11 +30,13 @@ import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import uniffi.ozero_api.AccountItem
+import uniffi.ozero_api.AccountKind
 import uniffi.ozero_api.Answered
 import uniffi.ozero_api.AttachmentFile
 import uniffi.ozero_api.AttachmentItem
 import uniffi.ozero_api.Category
 import uniffi.ozero_api.Core
+import uniffi.ozero_api.ContactItem
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.DraftFileItem
 import uniffi.ozero_api.DraftItem
@@ -52,6 +54,8 @@ import uniffi.ozero_api.Mailbox
 import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
 import uniffi.ozero_api.NewMail
+import uniffi.ozero_api.PersonCard
+import uniffi.ozero_api.PersonFound
 import uniffi.ozero_api.RecentFileItem
 import uniffi.ozero_api.Unsubscribed
 import uniffi.ozero_api.UnsentItem
@@ -326,6 +330,48 @@ class Mail(private val context: Context) {
 
     /** The last server search that went through, and when. */
     private var searched: Pair<String, Long>? = null
+
+    /** Up to [PEOPLE_SIZE] people for what was typed in "To", those written to most and lately first. */
+    suspend fun findPeople(text: String): List<PersonFound> = io { core.findPeople(text, PEOPLE_SIZE) }
+
+    /**
+     * People in the company directories of the Exchange accounts whose name or address starts with
+     * [text]; nobody under three letters. The first failure is thrown once all are done.
+     */
+    suspend fun searchDirectory(text: String): List<PersonFound> =
+        eachAccount(INBOX, which = { it.kind == AccountKind.EXCHANGE }) { account, password ->
+            core.searchDirectory(account.id, password, text)
+        }.flatten()
+
+    /** What a tap on someone's name shows, [name] as the mail gives it. */
+    suspend fun person(email: String, name: String?): PersonCard = io { core.person(email, name) }
+
+    /** All mail from or to [emails], newest first. */
+    suspend fun mailWith(emails: List<String>): List<MessageItem> = io { core.mailWith(emails, SEARCH_SIZE) }
+
+    /**
+     * Hands the phone's contacts to the core, which names people with them, or forgets them once
+     * the access is gone. Only when they changed: each write makes the screens read again.
+     */
+    fun readContacts() {
+        background.launch { giveContacts() }
+    }
+
+    /** As [readContacts], returning once they are given. */
+    suspend fun giveContacts() = io {
+        val contacts = PhoneContacts.read(context)
+        if (contacts == givenContacts) return@io
+        try {
+            core.setContacts(contacts)
+            givenContacts = contacts
+        } catch (e: CoreException) {
+            Log.w("Ozero", "contacts not kept", e)
+        }
+    }
+
+    /** The contacts the core has from this run, so the same are not written again. */
+    @Volatile
+    private var givenContacts: List<ContactItem>? = null
 
     /** The message's conversation, oldest first. */
     suspend fun thread(message: MessageItem): List<MessageItem> = io { core.thread(message.id) }
@@ -673,6 +719,7 @@ class Mail(private val context: Context) {
         const val IMAPS_PORT = 993
         const val SMTPS_PORT = 465
         private const val SEARCH_SIZE = 100u
+        private const val PEOPLE_SIZE = 6u
         private const val WATCH_PAUSE_MS = 5_000L
         /** A sync writes many times; the screens read again at most this often. */
         private const val CHANGE_PAUSE_MS = 250L

@@ -189,6 +189,7 @@ import uniffi.ozero_api.InviteAnswer
 import uniffi.ozero_api.InviteItem
 import uniffi.ozero_api.Mailbox
 import uniffi.ozero_api.MessageItem
+import uniffi.ozero_api.PersonCard
 import uniffi.ozero_api.UnsentItem
 import uniffi.ozero_api.undoSeconds
 import java.time.Instant
@@ -304,6 +305,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var inboxEmpty by remember { mutableStateOf(false) }
     var unsent by remember { mutableStateOf(emptyList<UnsentItem>()) }
     var searching by rememberSaveable { mutableStateOf(false) }
+    // Whose mail the search screen lists instead of a search: from a person's card.
+    var person by remember { mutableStateOf<PersonCard?>(null) }
     var draftsOpen by rememberSaveable { mutableStateOf(false) }
     var addingAccount by rememberSaveable { mutableStateOf(false) }
     // The account being signed in to again, by id.
@@ -638,6 +641,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     // On opening and on every return to the app: mail that came meanwhile shows without a pull.
     // Not again right after one, as when back from the file picker or a link.
     LifecycleEventEffect(Lifecycle.Event.ON_START) {
+        // Contacts may have changed meanwhile, or the access to them.
+        mail.readContacts()
         // A failure from before the app was away says nothing about the network now.
         offlineSince = null
         if (SystemClock.elapsedRealtime() - lastSync > RESYNC_MS) {
@@ -978,6 +983,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     fun closeSearch() {
         searching = false
         query = ""
+        person = null
     }
 
     fun back() {
@@ -1162,6 +1168,11 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             onWrite = { composing = it },
             onKept = ::kept,
             onWriteTo = { compose(it) },
+            onAllMail = {
+                person = it
+                searching = true
+                open = null
+            },
             onForward = { original ->
                 write(original) { mail.forward(original, forwardLabels(context), longDate(context, original.date)) }
             },
@@ -1282,6 +1293,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                         SearchScreen(
                             mail,
                             query,
+                            person,
                             onQuery = { query = it },
                             onOpen = {
                                 open = it
