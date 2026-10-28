@@ -325,7 +325,7 @@ struct ComposeView: View {
         .padding(.horizontal, 20)
     }
 
-    /// As tall as the text, up to some lines, scrolling past them.
+    /// As tall as the text, scrolling past the room it has; while typing it takes the whole room.
     private var textField: some View {
         let line = UIFont.preferredFont(forTextStyle: .body).lineHeight
         let lines: ClosedRange<CGFloat> = editing ? 3...7 : 7...14
@@ -346,7 +346,7 @@ struct ComposeView: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { textHeight = $0 }
         }
         .scrollBounceBehavior(.basedOnSize)
-        .frame(minHeight: least, maxHeight: max(least, min(textHeight, most)))
+        .frame(minHeight: least, maxHeight: editing && !sideways ? .infinity : max(least, min(textHeight, most)))
     }
 
     /// What can be done with an image in the text.
