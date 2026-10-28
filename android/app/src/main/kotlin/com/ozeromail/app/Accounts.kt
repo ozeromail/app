@@ -276,7 +276,7 @@ private fun AllAccounts(state: MailboxesState, actions: AccountsActions, editing
     }
 }
 
-/** What a row is dragged by to move it; no higher than the row. */
+/** What a row is dragged by to move it. */
 @Composable
 private fun Handle(modifier: Modifier) {
     Box(modifier.padding(start = 4.dp).size(END_BUTTON), contentAlignment = Alignment.Center) {
@@ -605,7 +605,7 @@ private fun StackedDots(accounts: List<AccountItem>) {
 private val ICON = 20.dp
 
 /** A control at a row's end: the arrow to an account's folders, a handle. */
-private val END_BUTTON = 36.dp
+private val END_BUTTON = 40.dp
 
 /** A row with an icon and a coloured label, as at the end of a sheet. */
 @Composable

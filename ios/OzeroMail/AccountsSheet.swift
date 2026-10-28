@@ -128,18 +128,7 @@ struct MailboxRows: View {
                                       lead: { AccountDot(color: account.tint) }) {
                                 if let box { actions.onMailbox(box) }
                             }
-                            // Shows or hides the account's folders under it.
-                            Button { toggle { $0.toggled(account.id) } } label: {
-                                Image(systemName: "chevron.right")
-                                    .font(.footnote.weight(.semibold))
-                                    .foregroundStyle(.secondary)
-                                    .rotationEffect(.degrees(shown ? 90 : 0))
-                                    .frame(width: 36, height: 36)
-                                    .contentShape(.rect)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel(Text(verbatim: account.name))
-                            .accessibilityHint(Text(shown ? "action_collapse" : "action_expand"))
+                            FoldersArrow(account: account.name, open: shown) { toggle { $0.toggled(account.id) } }
                         }
                         .contextMenu {
                             Button { actions.onAccount(account) } label: { Label("account_settings", systemImage: "gear") }
@@ -232,8 +221,8 @@ private struct AccountFolders: View {
         }
         if !few {
             Button { withAnimation(.smooth) { all.toggle() } } label: {
-                HStack(spacing: 14) {
-                    Image(systemName: all ? "chevron.up" : "ellipsis").frame(width: 24)
+                HStack(spacing: afterSlot) {
+                    Image(systemName: all ? "chevron.up" : "ellipsis").frame(width: slot)
                     Text(all ? "folders_pinned_only" : "folders_other")
                     Spacer()
                     if !all { Text(verbatim: "\(own.count - shown.count)").font(.footnote) }
@@ -329,8 +318,33 @@ private struct FolderIcon: View {
     }
 }
 
+/// At the end of an account's row: shows or hides its folders under it.
+private struct FoldersArrow: View {
+    let account: String
+    let open: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "chevron.right")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .rotationEffect(.degrees(open ? 90 : 0))
+                .frame(width: 36, height: 36)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(verbatim: account))
+        .accessibilityHint(Text(open ? "action_collapse" : "action_expand"))
+    }
+}
+
+/// A row's icon or dot sits in a slot this wide, the label this far after it.
+private let slot: CGFloat = 24
+private let afterSlot: CGFloat = 14
+
 /// How far in a row `depth` steps down goes: one slot and its gap a step.
-private func indent(_ depth: Int) -> CGFloat { CGFloat(depth) * 38 }
+private func indent(_ depth: Int) -> CGFloat { CGFloat(depth) * (slot + afterSlot) }
 
 private struct FolderRow<Lead: View>: View {
     let title: String
@@ -343,8 +357,8 @@ private struct FolderRow<Lead: View>: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 14) {
-                lead().frame(width: 24)
+            HStack(spacing: afterSlot) {
+                lead().frame(width: slot)
                 Text(verbatim: title)
                     .foregroundStyle(open ? Color.ozeroAccent : .primary)
                     .fontWeight(open ? .semibold : .regular)

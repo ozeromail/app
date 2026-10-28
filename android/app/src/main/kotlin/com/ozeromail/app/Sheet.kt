@@ -26,7 +26,6 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.widthIn
@@ -299,7 +298,7 @@ fun SheetTitle(text: String, modifier: Modifier = Modifier.padding(start = Gap.s
 /**
  * A row of a sheet: a dot or an icon in a slot of its own, so every label starts at the same
  * place, [start] further in. A row with [onLongClick] does more when held, as [longClickLabel]
- * says. A [fixed] row is always as high, whatever is at its end.
+ * says. A [fixed] row is as high whatever is at its end; only larger text makes it higher.
  */
 @Composable
 fun SheetRow(
@@ -314,13 +313,18 @@ fun SheetRow(
     // On its side the rows are lower, so more of them fit the short height.
     val short = LocalRoom.current.short
     val haptics = LocalHapticFeedback.current
+    val min = when {
+        short -> 40.dp
+        fixed -> 48.dp
+        else -> 52.dp
+    }
+    val pad = if (fixed) 0.dp else if (short) 6.dp else 10.dp
     Row(
         Modifier
             .fillMaxWidth()
-            .then(if (fixed) Modifier.height(if (short) 40.dp else 48.dp) else Modifier.heightIn(min = if (short) 40.dp else 52.dp))
+            .heightIn(min = min)
             .holdable(haptics, onClick, onLongClick, onLongClickLabel = longClickLabel)
-            .padding(start = Gap.sheet + start, end = Gap.sheet)
-            .padding(vertical = if (fixed) 0.dp else if (short) 6.dp else 10.dp),
+            .padding(start = Gap.sheet + start, end = Gap.sheet, top = pad, bottom = pad),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(Gap.slot), contentAlignment = Alignment.Center) { lead() }
