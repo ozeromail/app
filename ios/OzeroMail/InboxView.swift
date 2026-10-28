@@ -612,9 +612,6 @@ private struct Mailboxes: View {
             MailboxRows(
                 accounts: model.accounts, folders: model.folders, mailbox: model.mailbox, drafts: model.drafts.count,
                 unread: model.peopleUnread, allBoxes: $model.allBoxes, groups: $model.groups, actions: actions)
-            Section {
-                SheetAction(icon: "gear", text: "settings_title", color: .primary) { model.openSettings(.home) }
-            }
         }
         .listStyle(.sidebar)
         .environment(\.defaultMinListRowHeight, 36)

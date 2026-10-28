@@ -33,9 +33,6 @@ struct AccountsSheet: View {
                 MailboxRows(
                     accounts: accounts, folders: folders, mailbox: mailbox, drafts: drafts, unread: unread,
                     allBoxes: $allBoxes, groups: $groups, actions: actions)
-                Section {
-                    FolderRow(icon: "gear", title: tr("settings_title"), open: false, action: actions.onSettings)
-                }
                 if holdTip && accounts.count > 1 {
                     Section { } footer: { Text("account_settings_hint") }
                 }
@@ -50,8 +47,8 @@ struct AccountsSheet: View {
 }
 
 /// The drafts, if any, then all inboxes, which always shows, the inboxes of the accounts, each
-/// with its folders a tap on its arrow away, and the mailboxes of all accounts together. With one
-/// account, its inbox and folders.
+/// with its folders a tap on its arrow away, the mailboxes of all accounts together, and the
+/// settings. With one account, its inbox and folders.
 /// Rows of a list, in the accounts sheet and beside the inbox on its side. An account, when held,
 /// opens its settings.
 struct MailboxRows: View {
@@ -89,6 +86,9 @@ struct MailboxRows: View {
             }
             inboxes
             allAccounts
+        }
+        Section {
+            FolderRow(icon: "gear", title: tr("settings_title"), open: false, action: actions.onSettings)
         }
     }
 
@@ -330,11 +330,11 @@ private struct FoldersArrow: View {
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .rotationEffect(.degrees(open ? 90 : 0))
-                .frame(width: 36, height: 36)
+                .frame(width: 44, height: 44)
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(Text(verbatim: account))
+        .accessibilityLabel(Text(verbatim: tr("account_folders_of", account)))
         .accessibilityHint(Text(open ? "action_collapse" : "action_expand"))
     }
 }

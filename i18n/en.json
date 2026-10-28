@@ -56,6 +56,7 @@
   "message_reply_prompt": "Reply…",
   "account_color": "Color",
   "account_remove": "Remove account",
+  "account_folders_of": "Folders of %1$s",
   "account_remove_title": "Remove %1$s?",
   "account_remove_text": "Its mail is removed from this phone. The mailbox on the server stays as it is.",
   "action_remove": "Remove",
