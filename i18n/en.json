@@ -389,5 +389,14 @@
   "invite_reason_title": "Comment for %1$s",
   "invite_reason_text": "Goes with your answer No.",
   "invite_reason_prompt": "Why it won’t work (optional)",
-  "invite_reason_skip": "No comment"
+  "invite_reason_skip": "No comment",
+  "compose_contacts_ask": "Search phone contacts too",
+  "compose_directory": "Company directory",
+  "compose_remove_person": "Remove %1$s",
+  "person_in_contacts": "In your contacts",
+  "person_not_in_contacts": "Not in your contacts",
+  "person_all_mail": "All mail",
+  "person_open_contact": "Contact",
+  "person_add_contact": "Add to contacts",
+  "person_addresses": "Addresses"
 }

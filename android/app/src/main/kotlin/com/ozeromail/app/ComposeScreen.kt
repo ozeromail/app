@@ -380,7 +380,7 @@ fun ComposeScreen(
     val heading = @Composable { modifier: Modifier ->
         Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Plain(to, { to = it }, R.string.compose_to, Type.Body, addresses, modifier = Modifier.weight(1f).focusRequester(toFocus))
+                Recipients(mail, to, { to = it }, R.string.compose_to, addresses, Modifier.weight(1f), Modifier.focusRequester(toFocus))
                 if (!hasCc) {
                     Text(
                         stringResource(R.string.compose_cc),
@@ -396,7 +396,7 @@ fun ComposeScreen(
             }
             if (hasCc) {
                 HorizontalDivider(color = colors.outlineVariant)
-                Plain(cc, { cc = it }, R.string.compose_cc, Type.Body, addresses)
+                Recipients(mail, cc, { cc = it }, R.string.compose_cc, addresses)
             }
             HorizontalDivider(color = colors.outlineVariant)
             Plain(
@@ -762,12 +762,12 @@ private fun Sender(from: AccountItem, enabled: Boolean, onClick: () -> Unit) {
     }
 }
 
-/** A field with no frame: just the text, or its placeholder. */
+/** A field with no frame: just the text, or its placeholder, if it has one. */
 @Composable
 internal fun Plain(
     value: String,
     onChange: (String) -> Unit,
-    @StringRes placeholder: Int,
+    @StringRes placeholder: Int?,
     style: TextStyle,
     keyboard: KeyboardOptions,
     singleLine: Boolean = true,
@@ -785,7 +785,7 @@ internal fun Plain(
         modifier = modifier.fillMaxWidth(),
         decorationBox = { field ->
             Box {
-                if (value.isEmpty()) Text(stringResource(placeholder), style = style, color = colors.onSurfaceVariant)
+                if (value.isEmpty() && placeholder != null) Text(stringResource(placeholder), style = style, color = colors.onSurfaceVariant)
                 field()
             }
         },

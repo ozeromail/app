@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.MessageItem
+import uniffi.ozero_api.PersonCard
 
 /** A pause in typing this long starts a search, so each key does not. */
 private const val TYPING_PAUSE_MS = 150L
@@ -41,12 +42,14 @@ private const val SERVER_PAUSE_MS = 700L
 /**
  * Search over the saved mail, newest first, as the user types; once typing stops, the servers
  * are asked too and what they find joins the list. The field sits at the bottom, in reach of
- * the thumb; Close or back returns to the inbox.
+ * the thumb; Close or back returns to the inbox. With a [person], all mail with them instead,
+ * under their name.
  */
 @Composable
 fun SearchScreen(
     mail: Mail,
     query: String,
+    person: PersonCard?,
     onQuery: (String) -> Unit,
     onOpen: (MessageItem) -> Unit,
     onBack: () -> Unit,
@@ -58,8 +61,20 @@ fun SearchScreen(
     var asking by remember { mutableStateOf(false) }
     val focus = remember { FocusRequester() }
     // Not on the way back from a result: the keyboard would cover the results.
-    LaunchedEffect(Unit) { if (query.isEmpty()) focus.requestFocus() }
+    LaunchedEffect(Unit) { if (query.isEmpty() && person == null) focus.requestFocus() }
+    if (person != null) {
+        LaunchedEffect(person) {
+            mail.changes.collect {
+                try {
+                    found = "" to mail.mailWith(person.emails)
+                } catch (e: CoreException) {
+                    error = e.text()
+                }
+            }
+        }
+    }
     LaunchedEffect(query) {
+        if (person != null) return@LaunchedEffect
         error = null
         if (query.isBlank()) {
             found = null
@@ -87,8 +102,10 @@ fun SearchScreen(
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
         BackArrow(onBack, Modifier.padding(top = 4.dp))
         LazyColumn(Modifier.weight(1f)) {
+            if (person != null) item(key = "title") { LargeTitle(person.name, Modifier.padding(horizontal = Gap.screen, vertical = 8.dp)) }
             val (shownFor, messages) = found ?: ("" to emptyList())
-            if (shownFor == query && query.isNotBlank() && messages.isEmpty() && !asking) {
+            val answered = if (person != null) found != null else shownFor == query && query.isNotBlank()
+            if (answered && messages.isEmpty() && !asking) {
                 item { EmptyNote(R.drawable.ic_search, stringResource(R.string.inbox_empty)) }
             }
             // No motion in this list: when the servers' answer joins it, rows sliding to their
@@ -119,7 +136,7 @@ fun SearchScreen(
                 modifier = Modifier.padding(horizontal = Gap.screen, vertical = 8.dp),
             )
         }
-        Row(
+        if (person == null) Row(
             Modifier
                 .fillMaxWidth()
                 .padding(start = Gap.bar, end = Gap.bar, top = Gap.barTop, bottom = Gap.barBottom),

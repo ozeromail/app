@@ -93,6 +93,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -123,6 +124,7 @@ import uniffi.ozero_api.Mailbox
 import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
 import uniffi.ozero_api.PeopleItem
+import uniffi.ozero_api.PersonCard
 import uniffi.ozero_api.PersonItem
 import uniffi.ozero_api.RemoteImage
 import uniffi.ozero_api.Unsubscribed
@@ -148,6 +150,8 @@ fun MessageScreen(
     onWrite: (Composing) -> Unit,
     /** A new message to someone the message is from or went to. */
     onWriteTo: (String) -> Unit,
+    /** All mail with someone the message is from or went to. */
+    onAllMail: (PersonCard) -> Unit,
     /** A reply closed with something written: it is in the drafts. */
     onKept: () -> Unit,
     onForward: (MessageItem) -> Unit,
@@ -571,10 +575,15 @@ fun MessageScreen(
                     onAnswer(shown.message, shown.invite, InviteAnswer.NO, reason)
                 }
                 is ReaderSheet.Person -> PersonSheet(
+                    mail,
                     shown.person,
                     onWrite = {
                         sheet = null
-                        onWriteTo(shown.person.email)
+                        onWriteTo(it)
+                    },
+                    onAllMail = {
+                        sheet = null
+                        onAllMail(it)
                     },
                     onCopied = { sheet = null },
                 )
@@ -1231,22 +1240,89 @@ private fun Title(message: MessageItem) {
     }
 }
 
-/** What to do with someone a message is from or went to. */
+/**
+ * Someone a message is from or went to: their name as the contacts give it, Write, all mail
+ * with them and their contact, then all their addresses. A tap on one writes to it; held, it
+ * is copied.
+ */
 @Composable
-private fun PersonSheet(person: PersonItem, onWrite: () -> Unit, onCopied: () -> Unit) {
+private fun PersonSheet(
+    mail: Mail,
+    person: PersonItem,
+    onWrite: (String) -> Unit,
+    onAllMail: (PersonCard) -> Unit,
+    onCopied: () -> Unit,
+) {
     val colors = MaterialTheme.colorScheme
+    val context = LocalContext.current
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
-    SheetTitle(person.name, Modifier.padding(start = Gap.sheet, end = Gap.sheet))
-    if (person.name != person.email) {
-        Text(person.email, color = colors.onSurfaceVariant, style = Type.Text, modifier = Modifier.padding(start = Gap.sheet, end = Gap.sheet, bottom = 10.dp))
-    }
-    SheetAction(R.drawable.ic_compose, stringResource(R.string.message_write_to), colors.onSurface, onWrite)
-    SheetAction(R.drawable.ic_share, stringResource(R.string.message_copy_address), colors.onSurface) {
-        scope.launch {
-            clipboard.setClipEntry(ClipEntry(ClipData.newPlainText(person.email, person.email)))
-            onCopied()
+    var card by remember(person) { mutableStateOf(PersonCard(person.name, listOf(person.email), null)) }
+    LaunchedEffect(person) {
+        try {
+            card = mail.person(person.email, person.name.takeIf { it != person.email })
+        } catch (_: CoreException) {
+            // What the message says is enough.
         }
+    }
+    SheetTitle(card.name, Modifier.padding(start = Gap.sheet, end = Gap.sheet))
+    Text(
+        stringResource(if (card.contact != null) R.string.person_in_contacts else R.string.person_not_in_contacts),
+        color = colors.onSurfaceVariant,
+        style = Type.Text,
+        modifier = Modifier.padding(start = Gap.sheet, end = Gap.sheet, bottom = 12.dp),
+    )
+    Row(Modifier.padding(horizontal = Gap.sheet), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        PersonAction(R.drawable.ic_compose, stringResource(R.string.message_write_to)) { onWrite(card.emails.first()) }
+        PersonAction(R.drawable.ic_search, stringResource(R.string.person_all_mail)) { onAllMail(card) }
+        val contact = card.contact
+        if (contact != null) {
+            PersonAction(R.drawable.ic_person, stringResource(R.string.person_open_contact)) { PhoneContacts.open(context, contact) }
+        } else {
+            PersonAction(R.drawable.ic_person_add, stringResource(R.string.person_add_contact)) {
+                PhoneContacts.add(context, card.name, card.emails.first())
+            }
+        }
+    }
+    Text(
+        stringResource(R.string.person_addresses),
+        color = colors.onSurfaceVariant,
+        style = Type.Label,
+        modifier = Modifier.padding(start = Gap.sheet, end = Gap.sheet, top = 16.dp, bottom = 2.dp),
+    )
+    card.emails.forEach { email ->
+        SheetRow(
+            onClick = { onWrite(email) },
+            lead = { Glyph(R.drawable.ic_letter, null, colors.onSurfaceVariant) },
+            onLongClick = {
+                scope.launch {
+                    clipboard.setClipEntry(ClipEntry(ClipData.newPlainText(email, email)))
+                    onCopied()
+                }
+            },
+            longClickLabel = stringResource(R.string.message_copy_address),
+        ) {
+            Text(email, style = Type.Row, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/** One of the person's actions: a tile with its icon over its name. */
+@Composable
+private fun RowScope.PersonAction(@DrawableRes icon: Int, label: String, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Column(
+        Modifier
+            .weight(1f)
+            .clip(RoundedCornerShape(Radius.tile))
+            .background(colors.surfaceVariant)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(vertical = 12.dp, horizontal = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Glyph(icon, null, colors.primary, size = 22.dp)
+        Text(label, style = Type.Label, textAlign = TextAlign.Center, maxLines = 2)
     }
 }
 
