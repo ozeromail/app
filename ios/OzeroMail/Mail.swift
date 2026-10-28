@@ -544,8 +544,13 @@ final class Mail: Sendable {
 
     /// Keeps `draft` on the phone; a new one if its id is 0. Returns its id.
     func saveDraft(_ draft: DraftItem) async throws -> Int64 {
-        try core.saveDraft(draft: draft)
+        let id = try core.saveDraft(draft: draft)
+        state.lastSaved = id
+        return id
     }
+
+    /// The draft saved last, by id: the one the toast after writing opens again.
+    var lastSaved: Int64 { state.lastSaved }
 
     /// Saves the drafts into each account's drafts folder too. On failure the next sync
     /// takes them.
@@ -764,6 +769,12 @@ private final class MailState: @unchecked Sendable {
     private let lock = NSLock()
     private var _searched: (text: String, at: Date)?
     private var prefetching = false
+    private var _lastSaved: Int64 = 0
+
+    var lastSaved: Int64 {
+        get { lock.withLock { _lastSaved } }
+        set { lock.withLock { _lastSaved = newValue } }
+    }
 
     /// The last server search that went through, and when.
     var searched: (text: String, at: Date)? {

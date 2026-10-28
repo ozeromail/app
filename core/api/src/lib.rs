@@ -909,13 +909,17 @@ impl Core {
             .find(|d| d.reply_to == Some(MessageId(message.id)));
         let account = self.account(AccountId(message.account_id))?;
         let correspondents = self.store.correspondents(MessageId(message.id))?;
-        let mut cc: Vec<String> = begun
-            .as_ref()
-            .map(|d| ozero_domain::typed_addresses(&d.cc))
-            .unwrap_or_default();
+        // A begun reply's copies as typed, what is not an address yet too; reply all adds the
+        // others it lacks.
+        let typed = begun.as_ref().map_or("", |d| d.cc.trim());
+        let has = ozero_domain::typed_addresses(typed);
+        let mut cc: Vec<String> = Some(typed.to_owned())
+            .filter(|t| !t.is_empty())
+            .into_iter()
+            .collect();
         if all {
             for other in correspondents.others(&account.email) {
-                if !cc.iter().any(|c| c.eq_ignore_ascii_case(&other.email)) {
+                if !has.iter().any(|c| c.eq_ignore_ascii_case(&other.email)) {
                     cc.push(other.email.clone());
                 }
             }
@@ -1053,17 +1057,22 @@ impl Core {
 
     /// The drafts kept on the device as their list shows them, last saved first.
     pub fn drafts(&self) -> Result<Vec<DraftRow>, CoreError> {
-        let drafts = self.store.drafts()?;
-        let emails: Vec<String> = drafts
-            .iter()
-            .flat_map(|d| ozero_domain::typed_addresses(&d.to))
+        let drafts: Vec<(SavedDraft, Vec<String>)> = self
+            .store
+            .drafts()?
+            .into_iter()
+            .map(|d| {
+                let to = ozero_domain::typed_addresses(&d.to);
+                (d, to)
+            })
             .collect();
+        let emails: Vec<String> = drafts.iter().flat_map(|(_, to)| to.clone()).collect();
         let names = self.store.names(&emails)?;
         let marks = self.account_marks()?;
         Ok(drafts
             .into_iter()
-            .map(|d| {
-                let people: Vec<String> = ozero_domain::typed_addresses(&d.to)
+            .map(|(d, to)| {
+                let people: Vec<String> = to
                     .into_iter()
                     .map(|e| names.get(&e.to_lowercase()).cloned().unwrap_or(e))
                     .collect();
