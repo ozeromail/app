@@ -310,7 +310,6 @@ private fun AccountSettings(
         saved = account.senderName,
         label = stringResource(R.string.account_sender_name),
         placeholder = account.email,
-        hint = stringResource(R.string.account_sender_hint),
         capitalization = KeyboardCapitalization.Words,
     ) { actions.onSender(account, it) }
     // Empty, it shows the default signature it goes out with.
@@ -323,7 +322,6 @@ private fun AccountSettings(
         saved = account.label,
         label = stringResource(R.string.account_name),
         placeholder = account.email,
-        hint = stringResource(R.string.account_name_hint),
         capitalization = KeyboardCapitalization.Sentences,
     ) { actions.onLabel(account, it) }
     Hint(stringResource(R.string.account_color), top = 8.dp)
@@ -368,7 +366,6 @@ private fun AccountSettings(
             SettingRow(
                 R.drawable.ic_key,
                 stringResource(if (google) R.string.signin_again_title else R.string.account_password),
-                caption = if (google) null else stringResource(R.string.account_password_hint),
             ) { actions.onSignIn(account) }
         }
     }
@@ -698,7 +695,6 @@ private fun NameField(
     saved: String,
     label: String,
     placeholder: String,
-    hint: String,
     capitalization: KeyboardCapitalization,
     onSave: (String) -> Unit,
 ) {
@@ -720,7 +716,6 @@ private fun NameField(
         onValueChange = { text = it },
         label = { Text(label) },
         placeholder = { Text(placeholder) },
-        supportingText = { Text(hint) },
         trailingIcon = if (text.trim() != sent) {
             {
                 TextButton(onClick = {

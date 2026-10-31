@@ -465,7 +465,7 @@ fun SwipeAction.colors(): Pair<Color, Color> = with(MaterialTheme.colorScheme) {
     when (this@colors) {
         SwipeAction.DONE -> accent to onAccent
         SwipeAction.READ -> secondary to onSecondary
-        SwipeAction.DELETE -> error to onError
+        SwipeAction.DELETE -> errorFill to onError
         SwipeAction.SNOOZE -> tertiary to onTertiary
         SwipeAction.FLAG -> Color(0xFFEA7A1E) to Color.White
         SwipeAction.MOVE -> Color(0xFF7A6FF0) to Color.White

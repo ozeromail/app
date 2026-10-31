@@ -245,8 +245,8 @@ private struct InboxList: View {
     }
 
     private var checking: LakeWords? {
-        if waiting { return LakeWords(title: "lake_loading_title", text: slow > 0 ? "lake_loading_slow" : "lake_loading_text") }
-        if refreshing { return LakeWords(title: "lake_checking_title", text: slow > 0 ? "status_slow" : "lake_checking_text") }
+        if waiting { return LakeWords(title: "lake_loading_title", text: slow > 0 ? "lake_loading_slow" : nil) }
+        if refreshing { return LakeWords(title: "lake_checking_title", text: slow > 0 ? "status_slow" : nil) }
         return nil
     }
 
@@ -265,7 +265,7 @@ private struct InboxList: View {
         if model.syncing && slow == 2 && !waiting { return (tr("status_background"), false) }
         // An empty list's words say it themselves.
         if refreshing && !model.messages.isEmpty { return (tr(slow > 0 ? "status_slow" : "status_checking"), false) }
-        if upToDate { return (tr("status_up_to_date"), false) }
+        if upToDate { return (tr("lake_checked_now"), false) }
         return nil
     }
 
@@ -287,7 +287,7 @@ private struct InboxList: View {
                 .listRowBackground(Color.clear)
                 .selectionDisabled()
             if let owner = model.owner {
-                Text(verbatim: choosing ? tr("select_hint") : owner)
+                Text(verbatim: owner)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .listRowSeparator(.hidden)
@@ -307,8 +307,7 @@ private struct InboxList: View {
                 SwipeTip(swipes: model.swipes, lift: !model.sideways, onDismiss: model.closeSwipeTip)
             }
             if lake {
-                let words = model.emptyWords
-                LakeNote(title: words.title, text: words.text, drawIn: model.hadMail, grey: !model.tabbed,
+                LakeNote(title: model.emptyTitle, drawIn: model.hadMail, grey: !model.tabbed,
                          checking: checking, checkedAt: model.isInbox ? model.checkedAt : nil,
                          refreshing: refreshing, pull: pull)
                     .id(model.mailbox)

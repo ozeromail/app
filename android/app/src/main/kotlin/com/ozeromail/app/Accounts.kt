@@ -353,7 +353,8 @@ private fun AccountFolders(account: AccountItem, state: MailboxesState, actions:
         )
         if (!all) Text((own.size - shown.size).toString(), color = colors.onSurfaceVariant, style = Type.Caption)
     }
-    if (all) {
+    // Until the first folder is pinned.
+    if (all && own.none { it.pinned }) {
         Text(
             stringResource(R.string.folders_pin_hint),
             color = colors.onSurfaceVariant,

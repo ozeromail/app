@@ -9,7 +9,6 @@ import SwiftUI
 /// pulled, a drop gathers over the water, growing with the pull, and falls on each of `drops`.
 struct LakeNote: View {
     let title: LocalizedStringKey
-    let text: LocalizedStringKey
     var drawIn = false
     var grey = false
     var checking: LakeWords?
@@ -23,10 +22,9 @@ struct LakeNote: View {
 
     private var waiting: Bool { checking != nil }
 
-    init(title: LocalizedStringKey, text: LocalizedStringKey, drawIn: Bool = false, grey: Bool = false,
+    init(title: LocalizedStringKey, drawIn: Bool = false, grey: Bool = false,
          checking: LakeWords? = nil, checkedAt: Date? = nil, refreshing: Bool = false, pull: PullState) {
         self.title = title
-        self.text = text
         self.drawIn = drawIn
         self.grey = grey
         self.checking = checking
@@ -47,7 +45,7 @@ struct LakeNote: View {
                 })
             ZStack(alignment: .top) {
                 VStack(spacing: 6) {
-                    words(title, text)
+                    words(title, nil)
                     if let checkedAt {
                         // "Just now" turns into a time.
                         TimelineView(.explicit([checkedAt, checkedAt.addingTimeInterval(60)])) { now in
@@ -64,7 +62,7 @@ struct LakeNote: View {
                 .offset(y: waiting ? 8 : (1 - still.wordsShown) * 8)
                 // Until then the water is not empty yet, only checking: these words take its place.
                 if let shown = checking ?? shownChecking {
-                    VStack(spacing: 6) { words(LocalizedStringKey(shown.title), LocalizedStringKey(shown.text)) }
+                    VStack(spacing: 6) { words(LocalizedStringKey(shown.title), shown.text.map { LocalizedStringKey($0) }) }
                         .opacity(waiting ? 1 : 0)
                         .offset(y: waiting ? 0 : 8)
                 }
@@ -82,22 +80,25 @@ struct LakeNote: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func words(_ title: LocalizedStringKey, _ text: LocalizedStringKey) -> some View {
+    /// A title, and a second line only when it tells something: a slow wait.
+    private func words(_ title: LocalizedStringKey, _ text: LocalizedStringKey?) -> some View {
         Group {
             Text(title).font(.title3.weight(.semibold)).multilineTextAlignment(.center)
-            Text(text)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 280)
-                .padding(.horizontal, 32)
+            if let text {
+                Text(text)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 280)
+                    .padding(.horizontal, 32)
+            }
         }
     }
 }
 
-/// What an empty list waits for: the keys of its title and of the line under it.
+/// What an empty list waits for: the keys of its title and of the line under it, if any.
 struct LakeWords: Equatable {
     let title: String
-    let text: String
+    let text: String?
 }
 
 /// The same water as an empty list's, in the gap a pull opens over the rows: the water stays where
