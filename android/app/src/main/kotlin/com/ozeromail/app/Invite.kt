@@ -201,12 +201,14 @@ private fun DayLine(invite: InviteItem) {
             val hours = (span / HOUR).toInt()
             val step = maxOf(1, (hours + 2) / 3)
             for (h in 0..hours step step) {
+                // The first and last hours sit at the ends, inside the card.
                 val x = maxWidth * (h * HOUR / span)
+                val last = h * HOUR >= span
                 Text(
                     hourText(context, from + h * HOUR),
                     color = colors.onSurfaceVariant,
                     style = Type.Label,
-                    modifier = Modifier.offset(x = if (h == 0) 0.dp else x - 6.dp),
+                    modifier = if (last) Modifier.align(Alignment.TopEnd) else Modifier.offset(x = if (h == 0) 0.dp else x - 6.dp),
                 )
             }
         }

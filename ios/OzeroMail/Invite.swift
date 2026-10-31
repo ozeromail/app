@@ -149,10 +149,14 @@ private struct DayLine: View {
             .frame(height: Self.thickness)
             GeometryReader { geometry in
                 ForEach(Array(stride(from: 0, through: hours, by: step)), id: \.self) { h in
+                    // The first and last hours sit at the ends, inside the card.
+                    let at = CGFloat(Int64(h) * Self.hour)
+                    let last = at >= span
                     Text(verbatim: hourText(from + Int64(h) * Self.hour))
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.secondary)
-                        .offset(x: h == 0 ? 0 : geometry.size.width * CGFloat(Int64(h) * Self.hour) / span - 6)
+                        .frame(maxWidth: last ? .infinity : nil, alignment: .trailing)
+                        .offset(x: last || h == 0 ? 0 : geometry.size.width * at / span - 6)
                 }
             }
             .frame(height: 14)
