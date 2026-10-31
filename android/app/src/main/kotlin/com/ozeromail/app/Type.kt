@@ -14,13 +14,11 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 
-/** Weights the app uses; a variable font draws each one exactly. */
+/** The four weights the app uses, a clear step apart; a variable font draws each one exactly. */
 object Weight {
     val Regular = FontWeight(400)
     val Medium = FontWeight(500)
-    val Firm = FontWeight(550)
     val SemiBold = FontWeight(600)
-    val Strong = FontWeight(650)
     val Bold = FontWeight(700)
 }
 
@@ -32,13 +30,13 @@ private fun variable(font: Int, weights: List<FontWeight>, optical: TextUnit? = 
     },
 )
 
-private val UiWeights = with(Weight) { listOf(Regular, Medium, Firm, SemiBold, Strong, Bold) }
+private val UiWeights = with(Weight) { listOf(Regular, Medium, SemiBold, Bold) }
 
 /** Inter for everything but what is read at length, at its text optical size. */
 private val Inter = variable(R.font.inter, UiWeights)
 
 /** Inter cut for large sizes: tighter, with finer details. */
-private val InterDisplay = variable(R.font.inter, listOf(Weight.Strong, Weight.Bold), optical = 32.sp)
+private val InterDisplay = variable(R.font.inter, listOf(Weight.Bold), optical = 32.sp)
 
 /** Literata for reading messages, at its default optical size, as in the web view. */
 private val Literata = variable(R.font.literata, listOf(Weight.Regular, Weight.SemiBold, Weight.Bold))
@@ -74,10 +72,10 @@ object Type {
     val Display = ui(32f, 38f, Weight.Bold, -0.022f, InterDisplay, LineBreak.Heading)
 
     /** An open message's subject, and the subject being written. */
-    val Title = ui(24f, 30f, Weight.Strong, -0.017f, InterDisplay, LineBreak.Heading)
+    val Title = ui(24f, 30f, Weight.Bold, -0.017f, InterDisplay, LineBreak.Heading)
 
     /** Titles of sheets and notes. */
-    val Heading = ui(19f, 25f, Weight.Strong, -0.01f, lineBreak = LineBreak.Heading)
+    val Heading = ui(19f, 25f, Weight.SemiBold, -0.01f, lineBreak = LineBreak.Heading)
 
     /** A message's text. */
     val Reading = ui(17.5f, 28f, family = Literata, lineBreak = LineBreak.Paragraph).copy(hyphens = Hyphens.Auto)

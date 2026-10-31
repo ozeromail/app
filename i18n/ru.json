@@ -220,7 +220,7 @@
   "compose_attach_photos": "Фото и видео",
   "compose_attach_files": "Файлы",
   "compose_files_too_large": "В одно письмо помещается до 25 МБ файлов.",
-  "compose_file_unreadable": "Не получается прочитать файл. Попробуйте другой.",
+  "compose_file_unreadable": "Не удаётся прочитать файл. Попробуйте другой.",
   "compose_attach_recent": "Из почты",
   "action_snooze": "Отложить",
   "snooze_title": "Отложить до",

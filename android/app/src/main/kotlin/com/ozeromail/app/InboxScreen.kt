@@ -2494,7 +2494,7 @@ private fun MessageLine(message: MessageItem, unread: Boolean, dot: Float, accou
                     Text(
                         message.participants(),
                         style = Type.Row,
-                        fontWeight = if (unread) Weight.Strong else Weight.Medium,
+                        fontWeight = if (unread) Weight.Bold else Weight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier
@@ -2527,7 +2527,7 @@ private fun MessageLine(message: MessageItem, unread: Boolean, dot: Float, accou
             Text(
                 message.subjectText(),
                 style = Type.Subject,
-                fontWeight = if (unread) Weight.Firm else Weight.Regular,
+                fontWeight = if (unread) Weight.Medium else Weight.Regular,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
