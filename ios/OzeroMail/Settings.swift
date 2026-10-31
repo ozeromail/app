@@ -9,6 +9,12 @@ enum SwipeAction: String, CaseIterable, Identifiable {
     case flag = "FLAG"
     case move = "MOVE"
     case spam = "SPAM"
+    /// Not picked: it takes the place of one that does not apply where the message is, see
+    /// `Swipes.on(_:)`.
+    case inbox = "INBOX"
+
+    /// What the person picks from for a swipe.
+    static let picked = allCases.filter { $0 != .inbox }
 
     var id: Self { self }
 
@@ -21,6 +27,7 @@ enum SwipeAction: String, CaseIterable, Identifiable {
         case .flag: tr("swipe_flag")
         case .move: tr("swipe_move")
         case .spam: tr("action_spam")
+        case .inbox: tr("action_move_to_inbox")
         }
     }
 
@@ -53,6 +60,7 @@ enum SwipeAction: String, CaseIterable, Identifiable {
         case .flag: "flag"
         case .move: "folder"
         case .spam: "xmark.bin"
+        case .inbox: "tray.and.arrow.down"
         }
     }
 
@@ -65,6 +73,7 @@ enum SwipeAction: String, CaseIterable, Identifiable {
         case .flag: .orange
         case .move: .purple
         case .spam: .gray
+        case .inbox: .ozeroFill
         }
     }
 
@@ -76,6 +85,7 @@ enum SwipeAction: String, CaseIterable, Identifiable {
         case .snooze: message.canSnooze
         case .move: message.canMove
         case .spam: message.canSpam
+        case .inbox: message.canMoveToInbox
         case .read, .delete, .flag: true
         }
     }
@@ -88,6 +98,23 @@ struct Swipes: Equatable {
     var right = SwipeAction.read
     var leftLong: SwipeAction? = .delete
     var rightLong: SwipeAction? = .snooze
+
+    /// The swipes as they work on `message`, so every folder has them: a short one that does
+    /// not apply where it lies gives way to Move to Inbox out of the archive, trash, spam or
+    /// snoozed folder, on one side only, else to the side's long one, as Delete in Sent. A side with nothing that
+    /// applies keeps its short one and stays still.
+    func on(_ message: MessageItem) -> Swipes {
+        func side(_ short: SwipeAction, _ long: SwipeAction?, inbox: Bool) -> (SwipeAction, SwipeAction?) {
+            if short.applies(to: message) { return (short, long) }
+            if inbox && SwipeAction.inbox.applies(to: message) { return (.inbox, long) }
+            if let long, long.applies(to: message) { return (long, nil) }
+            return (short, long)
+        }
+        // Move to Inbox on one side only, so the other keeps a choice of the person's own.
+        let (left, leftLong) = side(left, leftLong, inbox: true)
+        let (right, rightLong) = side(right, rightLong, inbox: left != .inbox)
+        return Swipes(left: left, right: right, leftLong: leftLong, rightLong: rightLong)
+    }
 
     /// What a row's menu offers: each swipe's action, once.
     var actions: [SwipeAction] {

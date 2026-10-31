@@ -630,7 +630,9 @@ final class InboxModel {
     }
 
     /// Back into the inbox, out of the archive, trash or spam.
+    /// Out of the snoozed folder it is back already, so its reminder goes.
     func moveToInbox(_ gone: [MessageItem]) async {
+        BackgroundCheck.forgetReminders(about: gone)
         await remove(gone, toast: tr("inbox_moved_back"), role: .inbox, move: mail.moveToInbox)
     }
 
@@ -663,6 +665,7 @@ final class InboxModel {
             case .snooze: snoozing = Snoozing(messages: [message])
             case .flag: await flag(message, flagged: !message.flagged)
             case .spam: await spam([message])
+            case .inbox: await moveToInbox([message])
             // The same: a list asks where to.
             case .move:
                 do {
