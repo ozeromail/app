@@ -21,7 +21,7 @@ use ozero_domain::{
     MailProvider, MailSender, MailService, MessageId, MessageRow, Moved, NewAccount, NewFolder,
     NewMail, Older, OpId, OutboxId, Outgoing, OutgoingFile, People, Person, ProviderError,
     ProviderState, RawMessage, RecentFile, SavedDraft, Sender, Server, Store, StoreError,
-    close_blank_lines, html, parse_recipients, saves_sent_itself,
+    close_blank_lines, html, parse_recipients, saves_sent_itself, typo,
 };
 use ozero_ews::{EasSession, EwsSession, discover};
 use ozero_gmail::{GmailSession, oauth};
@@ -2095,9 +2095,8 @@ impl Core {
             })
             .collect();
         let shown = html::with_images(&page.html, &sources);
-        let folded = html::fold_quote(&shown);
         Ok(Some(ImagesPage {
-            html: sandboxed(&folded.html, folded.styled),
+            html: shown_page(&shown).0,
             images,
         }))
     }
@@ -4114,16 +4113,25 @@ impl From<Body> for MessageBody {
     fn from(body: Body) -> Self {
         let page = body.html.as_deref().map(html::clean);
         let (text, quote) = body.split_quote();
-        let folded = page.as_ref().map(|p| html::fold_quote(&p.html));
+        let remote_images = page
+            .as_ref()
+            .map_or(0, |p| u32::try_from(p.images.len()).unwrap_or(u32::MAX));
+        let (html, styled) = page.map(|p| shown_page(&p.html)).unzip();
+        // The apps show the text only when there is no page.
+        let set = |t: &str| {
+            if html.is_some() {
+                t.to_owned()
+            } else {
+                typo::text(t, typo::Lang::of(text))
+            }
+        };
         Self {
-            remote_images: page
-                .as_ref()
-                .map_or(0, |p| u32::try_from(p.images.len()).unwrap_or(u32::MAX)),
-            styled: folded.as_ref().is_some_and(|f| f.styled),
-            html: folded.map(|f| sandboxed(&f.html, f.styled)),
+            remote_images,
+            styled: styled.unwrap_or(false),
             shows_images: false,
-            text: close_blank_lines(text),
-            quote: quote.to_owned(),
+            text: set(&close_blank_lines(text)),
+            quote: set(quote),
+            html,
             attachments: body
                 .attachments
                 .into_iter()
@@ -4159,6 +4167,18 @@ impl RemoteImage {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '+' | '-'));
         (mime.starts_with("image/") && plain).then_some(Self { mime, data })
     }
+}
+
+/// A message's cleaned HTML as the reader shows it, its quote folded and typeset unless it sets
+/// its own look; and whether it does.
+fn shown_page(html: &str) -> (String, bool) {
+    let folded = html::fold_quote(html);
+    let page = if folded.styled {
+        sandboxed(&folded.html, true)
+    } else {
+        sandboxed(&html::typeset(&folded), false)
+    };
+    (page, folded.styled)
 }
 
 /// Wraps a message's HTML so the page can load nothing from outside, even if the
@@ -4218,6 +4238,10 @@ fn sandboxed(html: &str, styled: bool) -> String {
         "a{color:#1a6fe0!important;text-decoration-thickness:1px;text-underline-offset:3px}",
         "blockquote{padding-left:14px;border-left:2px solid #e3e9f2;color:#76829a!important}",
         "li::marker{color:#76829a}",
+        // A quote that opens a line hangs in the margin; a list item's text hangs past its mark.
+        ".ozero-hang{margin-left:-.42em}",
+        ".ozero-li{display:flex;gap:.45em}",
+        ".ozero-li>:first-child{flex:none;min-width:1.1em;font-variant-numeric:tabular-nums}",
         "@media(prefers-color-scheme:dark){a{color:#6ab2ff!important}",
         "blockquote{border-color:#2b3343;color:#8792a7!important}}}",
         ".ozero-styled{color-scheme:light;background:#fff;color:#142036;font:16px/normal sans-serif;",
