@@ -362,7 +362,7 @@ struct MessageView: View {
     private func letter(_ m: MessageItem, many: Bool) -> some View {
         Letter(
             mail: mail, files: files, bodies: bodies, message: m, people: people[m.id], open: isOpen(m),
-            unread: unread?.contains(m.id) == true, inThread: many, details: details.contains(m.id),
+            unread: unread?.contains(m.id) == true, details: details.contains(m.id),
             onToggle: many ? { withAnimation(.smooth) { opened[m.id] = !isOpen(m) } } : nil,
             onDetails: {
                 withAnimation(.smooth) {
@@ -370,9 +370,11 @@ struct MessageView: View {
                 }
             },
             onPerson: { person = $0 },
-            onReply: { reply(m, all: false) },
-            onForward: { forward(m) },
-            onDelete: { deleteAlone(m) },
+            actions: many ? LetterActions(
+                reply: m.sent ? nil : { reply(m, all: false) },
+                replyAll: { reply(m, all: true) },
+                forward: { forward(m) },
+                delete: { deleteAlone(m) }) : nil,
             invite: meetings[m.id],
             onChangeAnswer: { changing = m },
             onAddToCalendar: { adding = Adding(invite: $0) })
@@ -659,8 +661,48 @@ final class Bodies {
     }
 }
 
+/// What can be done with one message of a conversation, from its ⋯ or a long press on it.
+private struct LetterActions {
+    let reply: (() -> Void)?
+    let replyAll: () -> Void
+    let forward: () -> Void
+    let delete: () -> Void
+
+    @ViewBuilder
+    var buttons: some View {
+        if let reply { Button("message_reply", systemImage: "arrowshape.turn.up.left", action: reply) }
+        Button("message_reply_all", systemImage: "arrowshape.turn.up.left.2", action: replyAll)
+        Button("message_forward", systemImage: "arrowshape.turn.up.right", action: forward)
+        Button("action_delete_message", systemImage: "trash", role: .destructive, action: delete)
+    }
+}
+
+/// The ⋯ by a message's time, grey and small, so the header stays light.
+private struct LetterMore: View {
+    let actions: LetterActions
+
+    var body: some View {
+        Menu { actions.buttons } label: {
+            Image(systemName: "ellipsis")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 32, height: 24)
+                .contentShape(.rect)
+        }
+        .accessibilityLabel(Text("action_more"))
+    }
+}
+
+extension View {
+    /// A long press offers the message's actions, as its ⋯ does.
+    @ViewBuilder
+    fileprivate func letterMenu(_ actions: LetterActions?) -> some View {
+        if let actions { contextMenu { actions.buttons } } else { self }
+    }
+}
+
 /// One message: its line, and under it the message when open. In a conversation `onToggle`
-/// opens or closes it, and Reply and Forward under it answer this one.
+/// opens or closes it, and `actions` act on this one.
 private struct Letter: View {
     let mail: Mail
     let files: Files
@@ -669,14 +711,11 @@ private struct Letter: View {
     let people: PeopleItem?
     let open: Bool
     let unread: Bool
-    let inThread: Bool
     let details: Bool
     let onToggle: (() -> Void)?
     let onDetails: () -> Void
     let onPerson: (PersonItem) -> Void
-    let onReply: () -> Void
-    let onForward: () -> Void
-    let onDelete: () -> Void
+    let actions: LetterActions?
     let invite: InviteItem?
     let onChangeAnswer: () -> Void
     let onAddToCalendar: (InviteItem) -> Void
@@ -687,7 +726,7 @@ private struct Letter: View {
             if open {
                 From(
                     message: message, people: people, unread: unread, files: bodies.files(of: message), details: details,
-                    onToggle: onToggle, onDetails: onDetails, onPerson: onPerson)
+                    onToggle: onToggle, onDetails: onDetails, onPerson: onPerson, actions: actions)
                 if let invite {
                     InviteCard(
                         invite: invite, onChange: invite.canAnswer ? onChangeAnswer : nil,
@@ -696,39 +735,10 @@ private struct Letter: View {
                 }
                 LetterBody(mail: mail, files: files, bodies: bodies, message: message)
                     .transition(.opacity.combined(with: .move(edge: .top)))
-                if inThread {
-                    HStack(spacing: 8) {
-                        if !message.sent { Chip(icon: "arrowshape.turn.up.left", label: "message_reply", action: onReply) }
-                        Chip(icon: "arrowshape.turn.up.right", label: "message_forward", action: onForward)
-                        Chip(icon: "trash", label: "action_delete", tint: .red, action: onDelete)
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 14)
-                }
             } else {
-                Closed(message: message, unread: unread, onToggle: onToggle)
+                Closed(message: message, unread: unread, onToggle: onToggle, actions: actions)
             }
         }
-    }
-}
-
-/// A small rounded button under a message.
-private struct Chip: View {
-    let icon: String
-    let label: LocalizedStringKey
-    var tint = Color.ozeroAccent
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Label(label, systemImage: icon)
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(tint)
-                .padding(.horizontal, 12)
-                .frame(minHeight: 36)
-                .background(Color.ozeroCard, in: .capsule)
-        }
-        .buttonStyle(.plain)
     }
 }
 
@@ -939,6 +949,7 @@ private struct From: View {
     let onToggle: (() -> Void)?
     let onDetails: () -> Void
     let onPerson: (PersonItem) -> Void
+    let actions: LetterActions?
 
     var body: some View {
         let author = PersonItem(name: message.sender, first: message.sender, email: message.fromEmail, me: message.sent)
@@ -973,11 +984,13 @@ private struct From: View {
                     }
                 }
                 .padding(.top, 2)
+                if let actions { LetterMore(actions: actions).padding(.trailing, -8) }
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
             .contentShape(.rect)
             .onTapGesture { onToggle?() }
+            .letterMenu(actions)
             if details, let people {
                 Details(message: message, author: author, people: people, onPerson: onPerson)
                     .transition(.opacity)
@@ -1042,6 +1055,7 @@ private struct Closed: View {
     let message: MessageItem
     let unread: Bool
     let onToggle: (() -> Void)?
+    let actions: LetterActions?
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -1054,11 +1068,13 @@ private struct Closed: View {
                 .font(.footnote.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .padding(.top, 2)
+            if let actions { LetterMore(actions: actions).padding(.trailing, -8) }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
         .contentShape(.rect)
         .onTapGesture { onToggle?() }
+        .letterMenu(actions)
     }
 }
 
