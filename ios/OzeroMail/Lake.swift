@@ -53,7 +53,7 @@ struct LakeNote: View {
                                  ? tr("lake_checked_now")
                                  : tr("lake_checked_at", shortDate(Int64(checkedAt.timeIntervalSince1970))))
                         }
-                        .font(.footnote)
+                        .font(.small)
                         .foregroundStyle(.secondary)
                         .padding(.top, 4)
                     }
@@ -83,7 +83,7 @@ struct LakeNote: View {
     /// A title, and a second line only when it tells something: a slow wait.
     private func words(_ title: LocalizedStringKey, _ text: LocalizedStringKey?) -> some View {
         Group {
-            Text(title).font(.title3.weight(.semibold)).multilineTextAlignment(.center)
+            Text(title).font(.heading).multilineTextAlignment(.center)
             if let text {
                 Text(text)
                     .foregroundStyle(.secondary)

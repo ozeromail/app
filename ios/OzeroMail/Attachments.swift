@@ -76,11 +76,11 @@ struct AttachmentList: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("message_attachments").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+                Text("message_attachments").font(.smallStrong).foregroundStyle(.secondary)
                 Spacer()
                 if items.count > 1 {
                     Button("attachment_save_all") { files.save(mail, message, items) }
-                        .font(.footnote.weight(.semibold))
+                        .font(.smallStrong)
                 }
             }
             .padding(.horizontal, 6)
@@ -91,7 +91,7 @@ struct AttachmentList: View {
             }
             .background(Color.ozeroCard, in: .rect(cornerRadius: 16))
             if let error = files.error ?? files.note {
-                Text(error).font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 6)
+                Text(error).font(.small).foregroundStyle(.secondary).padding(.horizontal, 6)
             }
         }
         .padding(.horizontal, 16)
@@ -118,14 +118,14 @@ private struct AttachmentRow: View {
                         if files.isLoading(message, file) {
                             ProgressView()
                         } else if let kind = file.kind {
-                            Text(verbatim: kind).font(.caption2.weight(.bold)).foregroundStyle(.secondary)
+                            Text(verbatim: kind).font(.label).foregroundStyle(.secondary)
                         } else {
                             Image(systemName: "doc").foregroundStyle(.secondary)
                         }
                     }
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(verbatim: file.title).font(.subheadline.weight(.medium)).lineLimit(1).truncationMode(.middle)
-                        Text(verbatim: file.details).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        Text(verbatim: file.title).font(.textStrong).lineLimit(1).truncationMode(.middle)
+                        Text(verbatim: file.details).font(.small).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer(minLength: 0)
                 }

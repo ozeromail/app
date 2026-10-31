@@ -64,20 +64,20 @@ private struct DraftLine: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(verbatim: row.people.isBlank ? tr("drafts_no_recipients") : row.people)
-                    .font(.body.weight(.medium))
+                    .font(.row)
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 if let account = row.account { AccountTag(account: account) }
                 Text(verbatim: shortDate(draft.saved))
-                    .font(.footnote.monospacedDigit())
+                    .font(.time)
                     .foregroundStyle(.secondary)
             }
             Text(verbatim: draft.subject.isBlank ? tr("inbox_no_subject") : draft.subject)
-                .font(.subheadline)
+                .font(.text)
                 .lineLimit(1)
             if !row.snippet.isBlank {
                 Text(verbatim: row.snippet)
-                    .font(.subheadline)
+                    .font(.text)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }

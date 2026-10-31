@@ -134,7 +134,7 @@ struct SignInView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(error).foregroundStyle(Color.ozeroError)
                     if let detail {
-                        Text(verbatim: detail).font(.footnote).foregroundStyle(.secondary)
+                        Text(verbatim: detail).font(.small).foregroundStyle(.secondary)
                     }
                     if let untrusted {
                         Button("signin_trust_certificate") { untrusted.trust(untrusted.fingerprint) }
@@ -311,7 +311,7 @@ private struct Start: View {
             VStack(alignment: .leading, spacing: 12) {
                 if let onCancel {
                     StepBack(label: "action_back", onBack: onCancel, busy: busy)
-                    Text("signin_title").font(.largeTitle.bold())
+                    Text("signin_title").font(.screenTitle)
                 } else {
                     Image("Mark")
                         .resizable()
@@ -320,8 +320,8 @@ private struct Start: View {
                         .padding(.bottom, 6)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("app_name").font(.largeTitle.bold())
-                        Text("signin_welcome").font(.title3).foregroundStyle(.secondary)
+                        Text("app_name").font(.screenTitle)
+                        Text("signin_welcome").font(.lead).foregroundStyle(.secondary)
                     }
                 }
                 Spacer()
@@ -334,7 +334,7 @@ private struct Start: View {
                 .disabled(busy)
                 HStack(spacing: 12) {
                     VStack { Divider() }
-                    Text("signin_or").font(.footnote).foregroundStyle(.secondary)
+                    Text("signin_or").font(.small).foregroundStyle(.secondary)
                     VStack { Divider() }
                 }
                 EmailField(text: $email)
@@ -348,7 +348,7 @@ private struct Start: View {
                     .disabled(busy)
                 if onCancel == nil {
                     Text("signin_trust")
-                        .font(.footnote)
+                        .font(.small)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: .infinity)
@@ -368,7 +368,7 @@ private struct Manual: View {
         Fitting {
             VStack(alignment: .leading, spacing: 12) {
                 StepBack(label: "action_back", onBack: onBack, busy: busy)
-                Text("signin_manual").font(.largeTitle.bold())
+                Text("signin_manual").font(.screenTitle)
                 Spacer()
                 VStack(spacing: 0) {
                     Choice(label: "signin_exchange", enabled: !busy) { onPick(.servers(imap: false)) }
@@ -392,7 +392,7 @@ private struct Choice: View {
     var body: some View {
         Button(action: action) {
             HStack {
-                Text(label).font(.body.weight(.medium)).foregroundStyle(.primary)
+                Text(label).font(.row).foregroundStyle(.primary)
                 Spacer()
                 Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
             }
@@ -444,9 +444,9 @@ private struct StepTitle: View {
 
     var body: some View {
         if typed {
-            Text(label).font(.largeTitle.bold())
+            Text(label).font(.screenTitle)
         } else {
-            Text(verbatim: email.trimmingCharacters(in: .whitespacesAndNewlines)).font(.title2.bold())
+            Text(verbatim: email.trimmingCharacters(in: .whitespacesAndNewlines)).font(.subjectTitle)
         }
     }
 }
@@ -469,7 +469,7 @@ private struct Again: View {
         Fitting {
             VStack(alignment: .leading, spacing: 12) {
                 StepBack(label: "action_back", onBack: onCancel, busy: busy)
-                Text("signin_again_title").font(.largeTitle.bold())
+                Text("signin_again_title").font(.screenTitle)
                 Text(tr(google ? "signin_again_google" : "signin_again_password", account.email))
                     .foregroundStyle(.secondary)
                 Spacer()

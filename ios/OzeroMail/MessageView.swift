@@ -684,7 +684,7 @@ private struct LetterMore: View {
     var body: some View {
         Menu { actions.buttons } label: {
             Image(systemName: "ellipsis")
-                .font(.footnote.weight(.semibold))
+                .font(.smallStrong)
                 .foregroundStyle(.secondary)
                 .frame(width: 32, height: 24)
                 .contentShape(.rect)
@@ -752,7 +752,7 @@ private struct FoldedLine: View {
             Divider().padding(.horizontal, 20)
             Button(action: action) {
                 Text(verbatim: tr("message_more", count))
-                    .font(.subheadline.weight(.semibold))
+                    .font(.textStrong)
                     .foregroundStyle(Color.ozeroAccent)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 20)
@@ -886,7 +886,7 @@ private struct PlainText: View {
                     withAnimation(.smooth) { showQuote.toggle() }
                 } label: {
                     Text(verbatim: "•••")
-                        .font(.caption.weight(.bold))
+                        .font(.label)
                         .kerning(1)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 10)
@@ -915,10 +915,10 @@ private struct HiddenImages: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Text(note).font(.footnote).foregroundStyle(.secondary)
+            Text(note).font(.small).foregroundStyle(.secondary)
             Spacer()
             Button("action_show", action: onShow)
-                .font(.footnote.weight(.semibold))
+                .font(.smallStrong)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 7)
                 .background(Color(uiColor: .systemBackground), in: .capsule)
@@ -957,7 +957,7 @@ private struct From: View {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
                     Button { onPerson(author) } label: {
-                        Text(verbatim: message.from).font(.body.weight(unread ? .bold : .semibold)).lineLimit(1)
+                        Text(verbatim: message.from).font(unread ? .rowBold : .rowStrong).lineLimit(1)
                     }
                     .buttonStyle(.plain)
                     .disabled(message.sent)
@@ -967,7 +967,7 @@ private struct From: View {
                                 Text(verbatim: line).lineLimit(1)
                                 Image(systemName: "chevron.down").font(.caption.weight(.semibold)).rotationEffect(.degrees(details ? 180 : 0))
                             }
-                            .font(.footnote)
+                            .font(.small)
                             .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
@@ -976,10 +976,10 @@ private struct From: View {
                 Spacer()
                 VStack(alignment: .trailing, spacing: 4) {
                     Text(verbatim: message.sending ? tr("inbox_sending") : shortDate(message.date))
-                        .font(.footnote.monospacedDigit())
+                        .font(.time)
                         .foregroundStyle(.secondary)
                     if files > 0 {
-                        Label(String(files), systemImage: "paperclip").font(.footnote).foregroundStyle(.secondary)
+                        Label(String(files), systemImage: "paperclip").font(.small).foregroundStyle(.secondary)
                             .accessibilityLabel(Text(verbatim: tr("attachment_count", files)))
                     }
                 }
@@ -1022,7 +1022,7 @@ private struct Details: View {
                 Text(verbatim: longDate(message.date))
             }
         }
-        .font(.footnote)
+        .font(.small)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -1060,12 +1060,12 @@ private struct Closed: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(verbatim: message.from).font(.body.weight(unread ? .bold : .semibold)).lineLimit(1)
-                Text(verbatim: message.snippet).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
+                Text(verbatim: message.from).font(unread ? .rowBold : .rowStrong).lineLimit(1)
+                Text(verbatim: message.snippet).font(.small).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()
             Text(verbatim: shortDate(message.date))
-                .font(.footnote.monospacedDigit())
+                .font(.time)
                 .foregroundStyle(.secondary)
                 .padding(.top, 2)
             if let actions { LetterMore(actions: actions).padding(.trailing, -8) }
@@ -1084,12 +1084,12 @@ private struct Title: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            message.subjectText.font(.title2.weight(.bold)).textSelection(.enabled)
+            message.subjectText.font(.subjectTitle).textSelection(.enabled)
             if let account = message.account {
                 // A dot and the name, as in the list.
                 HStack(spacing: 6) {
                     AccountDot(color: account.tint, size: 6)
-                    Text(verbatim: account.name).font(.footnote).foregroundStyle(.secondary)
+                    Text(verbatim: account.name).font(.small).foregroundStyle(.secondary)
                 }
             }
         }
@@ -1147,14 +1147,14 @@ private struct QuickReply: View {
             .padding(.horizontal, 20)
             .padding(.top, 10)
             TextField("message_reply_prompt", text: $text, axis: .vertical)
-                .font(.body)
+                .font(.rowPlain)
                 // Grows with the text, about as far as the room over the keyboard goes.
                 .lineLimit(2...12)
                 .focused($focused)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 8)
             if let error {
-                Text(error).font(.footnote).foregroundStyle(.red).padding(.horizontal, 20)
+                Text(error).font(.small).foregroundStyle(.red).padding(.horizontal, 20)
             }
             HStack(spacing: 8) {
                 RoundButton(icon: "xmark", label: "action_close", size: 44, action: close)
@@ -1238,7 +1238,7 @@ private struct Person: View {
     var body: some View {
         Button { action?() } label: {
             Text(verbatim: text)
-                .font(.footnote.weight(.medium))
+                .font(.smallStrong)
                 .foregroundStyle(primary ? Color.ozeroAccent : .primary)
                 .lineLimit(1)
                 .padding(.horizontal, 10)
@@ -1262,7 +1262,7 @@ struct RoundButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.body.weight(.medium))
+                .font(.row)
                 .foregroundStyle(tint)
                 .frame(width: size, height: size)
                 .background(background, in: .circle)
@@ -1283,7 +1283,7 @@ struct BarAction: View {
         Button(action: action) {
             VStack(spacing: 3) {
                 Image(systemName: icon).font(.system(size: 19, weight: .medium))
-                Text(label).font(.caption2.weight(.medium)).lineLimit(1)
+                Text(label).font(.label).lineLimit(1)
             }
             .foregroundStyle(tint)
             .frame(maxWidth: .infinity, minHeight: 52)

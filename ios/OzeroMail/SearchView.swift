@@ -28,7 +28,7 @@ struct SearchView: View {
             }
             if asking {
                 Text("search_server")
-                    .font(.footnote)
+                    .font(.small)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
                     .listRowSeparator(.hidden)
@@ -40,7 +40,7 @@ struct SearchView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 8) {
                 if let error {
-                    Text(error).font(.footnote).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                    Text(error).font(.small).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 HStack(spacing: 8) {
                     HStack {

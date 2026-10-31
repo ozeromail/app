@@ -106,7 +106,7 @@ private struct RichImage: View {
             .overlay(alignment: .bottomTrailing) {
                 if let file {
                     Text(verbatim: ByteCountFormatter.string(fromByteCount: Int64(clamping: file.size), countStyle: .file))
-                        .font(.caption2.weight(.semibold))
+                        .font(.label)
                         .foregroundStyle(.white)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)

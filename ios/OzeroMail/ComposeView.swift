@@ -120,7 +120,7 @@ struct ComposeView: View {
                                     unfolded = true
                                 } label: {
                                     Text(verbatim: summary)
-                                        .font(.subheadline)
+                                        .font(.text)
                                         .foregroundStyle(.secondary)
                                         .lineLimit(1)
                                         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
@@ -198,7 +198,7 @@ struct ComposeView: View {
                                 Spacer(minLength: 0)
                                 Image(systemName: "chevron.up").foregroundStyle(.secondary)
                             }
-                            .font(.subheadline)
+                            .font(.text)
                             .padding(.horizontal, 14)
                             .padding(.vertical, 10)
                             .background(Color.ozeroCard, in: .capsule)
@@ -333,7 +333,7 @@ struct ComposeView: View {
                         hasCc = true
                         focus = .cc
                     }
-                    .font(.footnote.weight(.semibold))
+                    .font(.smallStrong)
                 }
             }
             // The people found rise over what is around the field.
@@ -347,7 +347,7 @@ struct ComposeView: View {
             }
             Divider()
             TextField("compose_subject", text: $subject)
-                .font(.title2.bold())
+                .font(.subjectTitle)
                 .focused($focus, equals: .subject)
                 .submitLabel(.next)
                 .onSubmit { textRequest += 1 }
@@ -369,7 +369,7 @@ struct ComposeView: View {
             // Its own for this message: a change here stays here. Taken out, a tap brings it back.
             if !signature.isEmpty || !(from?.signsWith.isBlank ?? true) {
                 TextField("account_signature", text: $signature, axis: .vertical)
-                    .font(.subheadline)
+                    .font(.text)
                     .foregroundStyle(.secondary)
                     .lineLimit(1...6)
                     .focused($focus, equals: .signature)
@@ -380,7 +380,7 @@ struct ComposeView: View {
                           onRemove: forwarding ? nil : { quote = "" })
             } else if let original = composing.original, quotable {
                 Button("compose_add_quote") { addQuote(original) }
-                    .font(.subheadline)
+                    .font(.text)
                     .buttonStyle(.bordered)
                     .buttonBorderShape(.capsule)
             }
@@ -464,7 +464,7 @@ struct ComposeView: View {
             } label: {
                 HStack(spacing: 8) {
                     AccountInitial(name: from.name, color: from.tint, size: 22)
-                    Text(verbatim: from.email).font(.subheadline).lineLimit(1).foregroundStyle(.primary)
+                    Text(verbatim: from.email).font(.text).lineLimit(1).foregroundStyle(.primary)
                 }
                 .padding(.leading, 8)
                 .padding(.trailing, 12)
@@ -492,7 +492,7 @@ struct ComposeView: View {
             }
         } label: {
             Image(systemName: "paperclip")
-                .font(.body.weight(.medium))
+                .font(.row)
                 .foregroundStyle(.primary)
                 .frame(width: 44, height: 44)
                 .background(Color.ozeroCard, in: .circle)
@@ -697,9 +697,9 @@ private struct Original: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(verbatim: message.sender).font(.subheadline.weight(.semibold)).lineLimit(1)
+                Text(verbatim: message.sender).font(.textStrong).lineLimit(1)
                 Spacer()
-                Text(verbatim: shortDate(message.date)).font(.footnote).foregroundStyle(.secondary)
+                Text(verbatim: shortDate(message.date)).font(.small).foregroundStyle(.secondary)
             }
             // As tall as its text, scrolling only when the room is short.
             ViewThatFits(in: .vertical) {
@@ -738,7 +738,7 @@ private struct QuoteLine: View {
     var body: some View {
         HStack {
             Text(verbatim: text ?? tr(forwarding ? "compose_forwarded" : "compose_quoted"))
-                .font(.subheadline)
+                .font(.text)
                 .foregroundStyle(.secondary)
                 .lineLimit(text == nil ? 1 : 6)
                 .padding(.leading, 12)

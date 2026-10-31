@@ -98,7 +98,7 @@ struct Recipients<Field: Hashable>: View {
                         case .person(let person): PersonRow(person: person) { pick(person, done: done) }
                         case .header:
                             Text("compose_directory")
-                                .font(.caption.weight(.semibold))
+                                .font(.label)
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal, 16)
@@ -171,7 +171,7 @@ private struct PersonRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(verbatim: person.name).lineLimit(1)
                 Text(verbatim: [person.email == person.name ? nil : person.email, person.title].compactMap { $0 }.joined(separator: " · "))
-                    .font(.caption)
+                    .font(.small)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -194,7 +194,7 @@ private struct RecipientChip: View {
             Text(verbatim: name).lineLimit(1)
             Button(action: onRemove) {
                 Image(systemName: "xmark")
-                    .font(.caption.weight(.semibold))
+                    .font(.label)
                     .foregroundStyle(.secondary)
                     .frame(width: 32, height: 32)
                     .contentShape(.rect)
