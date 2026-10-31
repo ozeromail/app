@@ -58,6 +58,11 @@ object Gap {
 
 /** Corner radii, from a segment's thumb to a sheet. */
 object Radius {
+    /** A file chip, a tag on an image. */
+    val chip = 8.dp
+
+    /** A file tile, a small button on a card. */
+    val small = 10.dp
     val thumb = 11.dp
     val medium = 14.dp
     val tile = 16.dp

@@ -155,7 +155,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.LifecycleStartEffect
@@ -2229,8 +2228,8 @@ private fun AccountsButton(accounts: List<AccountItem>, onClick: () -> Unit) {
         if (one != null) {
             AccountInitial(one.name, one.tint, 24.dp)
         } else {
-            // Past four, the fourth place says how many more there are.
-            val shown = if (accounts.size > 4) accounts.take(3) else accounts
+            // Up to four colours; the sheet lists the rest.
+            val shown = accounts.take(4)
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     shown.take(2).forEach { AccountDot(it.tint) }
@@ -2238,18 +2237,6 @@ private fun AccountsButton(accounts: List<AccountItem>, onClick: () -> Unit) {
                 if (shown.size > 2) {
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                         shown.drop(2).forEach { AccountDot(it.tint) }
-                        if (accounts.size > 4) {
-                            Box(Modifier.size(10.dp), contentAlignment = Alignment.Center) {
-                                Text(
-                                    "+${accounts.size - 3}",
-                                    color = colors.onSurfaceVariant,
-                                    style = Type.Caption.copy(fontSize = 9.sp, lineHeight = 10.sp),
-                                    fontWeight = Weight.Strong,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                )
-                            }
-                        }
                     }
                 }
             }
@@ -2529,10 +2516,7 @@ private fun MessageLine(message: MessageItem, unread: Boolean, dot: Float, accou
                             message.threadCount.toString(),
                             color = colors.onSurfaceVariant,
                             style = Type.Badge,
-                            modifier = Modifier
-                                .padding(start = 6.dp)
-                                .background(colors.surfaceContainerHighest, CircleShape)
-                                .padding(horizontal = 6.dp, vertical = 1.dp),
+                            modifier = Modifier.padding(start = 6.dp),
                         )
                     }
                 }

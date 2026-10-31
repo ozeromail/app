@@ -325,7 +325,7 @@ private fun RichImage(file: DraftFileItem?, bitmap: ImageBitmap?, size: ImageSiz
         ImageSize.MEDIUM -> 0.66f
         ImageSize.FULL -> 1f
     }
-    val shape = RoundedCornerShape(10.dp)
+    val shape = RoundedCornerShape(Radius.small)
     Box(
         Modifier
             .padding(vertical = 4.dp)
@@ -347,7 +347,7 @@ private fun RichImage(file: DraftFileItem?, bitmap: ImageBitmap?, size: ImageSiz
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(8.dp)
-                    .clip(RoundedCornerShape(6.dp))
+                    .clip(RoundedCornerShape(Radius.chip))
                     .background(colors.inverseSurface.copy(alpha = 0.7f))
                     .padding(horizontal = 6.dp, vertical = 2.dp),
             )
@@ -396,7 +396,7 @@ private class FormatBar : TextToolbar {
         Popup(popupPositionProvider = Over(rect), properties = PopupProperties(focusable = false)) {
             Column(
                 Modifier
-                    .clip(RoundedCornerShape(14.dp))
+                    .clip(RoundedCornerShape(Radius.medium))
                     .background(colors.inverseSurface)
                     .padding(4.dp),
             ) {
@@ -458,7 +458,7 @@ private fun BarButton(label: String, description: String, style: TextStyle, onCl
         color = colors.inverseOnSurface,
         style = Type.Text.merge(style),
         modifier = Modifier
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(Radius.small))
             .clickable(onClickLabel = description, role = Role.Button, onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 10.dp),
     )

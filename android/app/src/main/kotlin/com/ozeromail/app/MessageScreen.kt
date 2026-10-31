@@ -973,7 +973,7 @@ private fun PlainText(text: String, quote: String, modifier: Modifier) {
                     letterSpacing = 1.sp,
                     modifier = Modifier
                         .padding(top = 10.dp)
-                        .clip(RoundedCornerShape(9.dp))
+                        .clip(RoundedCornerShape(Radius.chip))
                         .background(colors.surfaceVariant)
                         .clickable(role = Role.Button) { showQuote = !showQuote }
                         .semantics { contentDescription = label }
@@ -1226,14 +1226,12 @@ private fun Title(message: MessageItem) {
             message.account?.let { account ->
                 Row(
                     Modifier
-                        .padding(start = Gap.screen, end = Gap.screen, bottom = 8.dp)
-                        .background(colors.surfaceVariant, CircleShape)
-                        .padding(horizontal = 11.dp, vertical = 6.dp),
+                        .padding(start = Gap.screen, end = Gap.screen, bottom = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    AccountDot(account.tint, size = 8.dp)
-                    Text(account.name, color = colors.onSurfaceVariant, style = Type.Caption, fontWeight = Weight.Medium)
+                    AccountDot(account.tint, size = 6.dp)
+                    Text(account.name, color = colors.onSurfaceVariant, style = Type.Caption)
                 }
             }
         }

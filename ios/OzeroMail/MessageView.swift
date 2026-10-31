@@ -1070,13 +1070,11 @@ private struct Title: View {
         VStack(alignment: .leading, spacing: 10) {
             message.subjectText.font(.title2.weight(.bold)).textSelection(.enabled)
             if let account = message.account {
-                HStack(spacing: 7) {
-                    AccountDot(color: account.tint, size: 8)
-                    Text(verbatim: account.name).font(.footnote.weight(.medium)).foregroundStyle(.secondary)
+                // A dot and the name, as in the list.
+                HStack(spacing: 6) {
+                    AccountDot(color: account.tint, size: 6)
+                    Text(verbatim: account.name).font(.footnote).foregroundStyle(.secondary)
                 }
-                .padding(.horizontal, 11)
-                .padding(.vertical, 6)
-                .background(Color.ozeroCard, in: .capsule)
             }
         }
         .padding(.horizontal, 20)

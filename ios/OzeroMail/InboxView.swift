@@ -719,8 +719,8 @@ private struct AccountsButton: View {
                 if let one = accounts.first, accounts.count == 1 {
                     AccountInitial(name: one.name, color: one.tint)
                 } else {
-                    // Past four, the fourth place says how many more there are.
-                    let shown = accounts.count > 4 ? Array(accounts.prefix(3)) : accounts
+                    // Up to four colours; the sheet lists the rest.
+                    let shown = Array(accounts.prefix(4))
                     Grid(horizontalSpacing: 4, verticalSpacing: 4) {
                         GridRow {
                             ForEach(shown.prefix(2), id: \.id) { AccountDot(color: $0.tint) }
@@ -728,13 +728,6 @@ private struct AccountsButton: View {
                         if shown.count > 2 {
                             GridRow {
                                 ForEach(shown.dropFirst(2), id: \.id) { AccountDot(color: $0.tint) }
-                                if accounts.count > 4 {
-                                    Text(verbatim: "+\(accounts.count - 3)")
-                                        .font(.system(size: 9, weight: .bold))
-                                        .foregroundStyle(.secondary)
-                                        .fixedSize()
-                                        .frame(width: 10, height: 10)
-                                }
                             }
                         }
                     }
@@ -856,9 +849,6 @@ struct MessageRow: View {
                     Text(verbatim: "\(message.threadCount)")
                         .font(.caption2.weight(.semibold).monospacedDigit())
                         .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(.quaternary, in: .capsule)
                 }
                 Spacer(minLength: 4)
                 if let account = message.account { AccountTag(account: account) }

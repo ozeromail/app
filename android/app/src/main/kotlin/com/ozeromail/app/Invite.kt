@@ -158,7 +158,7 @@ private fun CardButton(text: String, onClick: () -> Unit) {
         style = Type.Caption,
         fontWeight = Weight.SemiBold,
         modifier = Modifier
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(Radius.small))
             .background(colors.background)
             .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 8.dp),
