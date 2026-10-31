@@ -437,4 +437,13 @@ pub const MIGRATIONS: &[&str] = &[
         emails TEXT NOT NULL
     );
     ",
+    // 44: what the user searched for, the latest first; one row for the same words in any
+    // case, by their lower case `key`.
+    "
+    CREATE TABLE recent_search (
+        key  TEXT PRIMARY KEY,
+        text TEXT NOT NULL,
+        at   INTEGER NOT NULL
+    );
+    ",
 ];

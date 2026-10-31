@@ -20,8 +20,8 @@ use ozero_domain::{
     FolderRole, Frequency, Invite, InviteKind, InviteRow, Leave, ListQuery, ListScope, Listed,
     MailProvider, MailSender, MailService, MessageId, MessageRow, Moved, NewAccount, NewFolder,
     NewMail, Older, OpId, OutboxId, Outgoing, OutgoingFile, People, Person, ProviderError,
-    ProviderState, RawMessage, RecentFile, SavedDraft, Sender, Server, Store, StoreError,
-    close_blank_lines, html, parse_recipients, saves_sent_itself, typo,
+    ProviderState, RawMessage, RecentFile, SavedDraft, SearchFilter, Sender, Server, Store,
+    StoreError, close_blank_lines, html, parse_recipients, saves_sent_itself, typo,
 };
 use ozero_ews::{EasSession, EwsSession, discover};
 use ozero_gmail::{GmailSession, oauth};
@@ -105,6 +105,8 @@ async fn resolves(host: &str) -> bool {
 
 /// How many files of saved mail compose offers to send on.
 const RECENT_FILES: usize = 6;
+/// People the search screen shows before anything is typed.
+const FREQUENT_PEOPLE: usize = 8;
 /// The most bytes the files a person adds to one message may take together: what Gmail takes.
 const FILE_LIMIT: u64 = 25 * 1024 * 1024;
 
@@ -510,10 +512,45 @@ impl Core {
     }
 
     /// Messages matching every word of `text`, newest first, with what `search_server`
-    /// found for the same words.
-    pub fn search(&self, text: String, limit: u32) -> Result<Vec<MessageItem>, CoreError> {
-        let rows = self.store.search(&text, limit)?;
+    /// found for the same words; only those `filter` keeps. With no words, all it keeps.
+    pub fn search(
+        &self,
+        text: String,
+        filter: SearchFilterItem,
+        limit: u32,
+    ) -> Result<Vec<MessageItem>, CoreError> {
+        let rows = self.store.search(&text, &filter.into(), limit)?;
         self.items(rows)
+    }
+
+    /// What the user searched for, the latest first.
+    pub fn recent_searches(&self) -> Result<Vec<String>, CoreError> {
+        Ok(self.store.recent_searches()?)
+    }
+
+    /// Keeps `text` as the latest search, its words one space apart: once a message it found
+    /// is opened, not every key.
+    pub fn remember_search(&self, text: String) -> Result<(), CoreError> {
+        let words = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        if !words.is_empty() {
+            self.store.remember_search(&words, now())?;
+        }
+        Ok(())
+    }
+
+    /// Forgets all searches.
+    pub fn forget_searches(&self) -> Result<(), CoreError> {
+        Ok(self.store.forget_searches()?)
+    }
+
+    /// The people the user has the most mail with lately, for the search screen.
+    pub fn frequent_people(&self) -> Result<Vec<PersonFound>, CoreError> {
+        Ok(self
+            .people_index()?
+            .frequent(FREQUENT_PEOPLE)
+            .into_iter()
+            .map(PersonFound::from)
+            .collect())
     }
 
     /// The conversation of a message, oldest first.
@@ -3737,6 +3774,31 @@ pub struct ContactItem {
     pub key: String,
     pub name: String,
     pub emails: Vec<String>,
+}
+
+/// What a search keeps besides its words: only the messages with all that is on.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, uniffi::Record)]
+pub struct SearchFilterItem {
+    #[uniffi(default = false)]
+    pub unread: bool,
+    #[uniffi(default = false)]
+    pub flagged: bool,
+    /// With a file attached.
+    #[uniffi(default = false)]
+    pub files: bool,
+    #[uniffi(default = None)]
+    pub account_id: Option<i64>,
+}
+
+impl From<SearchFilterItem> for SearchFilter {
+    fn from(f: SearchFilterItem) -> Self {
+        Self {
+            unread: f.unread,
+            flagged: f.flagged,
+            files: f.files,
+            account: f.account_id.map(AccountId),
+        }
+    }
 }
 
 /// Someone "To" suggests.

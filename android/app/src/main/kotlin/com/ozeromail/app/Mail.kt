@@ -56,6 +56,7 @@ import uniffi.ozero_api.NewMail
 import uniffi.ozero_api.PersonCard
 import uniffi.ozero_api.PersonFound
 import uniffi.ozero_api.RecentFileItem
+import uniffi.ozero_api.SearchFilterItem
 import uniffi.ozero_api.Unsubscribed
 import uniffi.ozero_api.UnsentItem
 import uniffi.ozero_api.googleSignIn
@@ -312,8 +313,24 @@ class Mail(private val context: Context) {
         files
     }
 
-        /** Messages matching every word of [text], newest first, with what [searchServer] found for it. */
-    suspend fun search(text: String): List<MessageItem> = io { core.search(text, SEARCH_SIZE) }
+    /**
+     * Messages matching every word of [text], newest first, with what [searchServer] found for it;
+     * only those [filter] keeps. With no words, all it keeps.
+     */
+    suspend fun search(text: String, filter: SearchFilterItem = SearchFilterItem()): List<MessageItem> =
+        io { core.search(text, filter, SEARCH_SIZE) }
+
+    /** What the user searched for, the latest first. */
+    suspend fun recentSearches(): List<String> = io { core.recentSearches() }
+
+    /** Keeps [text] as the latest search, once a message it found is opened. */
+    suspend fun rememberSearch(text: String) = io { core.rememberSearch(text) }
+
+    /** Forgets all searches. */
+    suspend fun forgetSearches() = io { core.forgetSearches() }
+
+    /** The people the user has the most mail with lately. */
+    suspend fun frequentPeople(): List<PersonFound> = io { core.frequentPeople() }
 
     /**
      * Searches every account's mail on its server for [text], older mail than the phone keeps

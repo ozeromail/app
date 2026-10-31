@@ -27,7 +27,7 @@ pub use invite::{
 };
 pub use message::{
     Address, Attachment, Body, Correspondents, Cursor, Flags, ListQuery, ListScope, MessageId,
-    MessageLocation, MessageRow, NewMessage, RecentFile, Sender, close_blank_lines,
+    MessageLocation, MessageRow, NewMessage, RecentFile, SearchFilter, Sender, close_blank_lines,
 };
 pub use op::{Action, Op, OpId};
 pub use outbox::{

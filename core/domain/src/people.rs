@@ -1,6 +1,6 @@
 //! The people the user writes to: found by what they type in "To", named as in their contacts.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::sort::is_robot;
 
@@ -186,6 +186,20 @@ impl People {
             .collect()
     }
 
+    /// Up to `limit` people the user has mail with, most written to first: contacts never
+    /// written to are left out.
+    /// A contact with several addresses shows once, by the most used.
+    pub fn frequent(&self, limit: usize) -> Vec<Person> {
+        let mut seen = HashSet::new();
+        self.known
+            .iter()
+            .take_while(|k| k.score > 0.0)
+            .filter(|k| k.person.contact.as_ref().is_none_or(|c| seen.insert(c)))
+            .take(limit)
+            .map(|k| k.person.clone())
+            .collect()
+    }
+
     /// The person behind `email`, with `name` as the mail gives it when the contacts do not.
     pub fn card(&self, email: &str, name: Option<&str>) -> Card {
         let Some(&at) = self.contacts.get(&email.to_lowercase()) else {
@@ -273,6 +287,28 @@ mod tests {
 
     fn emails(found: Vec<Person>) -> Vec<String> {
         found.into_iter().map(|p| p.email).collect()
+    }
+
+    #[test]
+    fn frequent_leaves_out_contacts_never_written_to() {
+        let people = People::new(
+            vec![
+                mail("anna@example.com", "Anna Lee", 0, 9, 100 * DAY),
+                mail("oleg@example.com", "Oleg Smirnov", 4, 0, 100 * DAY),
+                mail("oleg@home.example", "Oleg", 1, 0, 100 * DAY),
+            ],
+            vec![
+                contact("1", "Ivan", &["ivan@example.com"]),
+                contact("2", "Oleg", &["oleg@example.com", "oleg@home.example"]),
+            ],
+            &[],
+            100 * DAY,
+        );
+        assert_eq!(
+            emails(people.frequent(5)),
+            ["oleg@example.com", "anna@example.com"]
+        );
+        assert_eq!(emails(people.frequent(1)), ["oleg@example.com"]);
     }
 
     #[test]

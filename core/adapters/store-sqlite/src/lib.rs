@@ -12,8 +12,8 @@ use ozero_domain::{
     DraftId, DraftToPush, FileId, Flags, Folder, FolderId, FolderRole, Invite, InviteKind,
     InviteRow, ListQuery, ListScope, MessageId, MessageLocation, MessageRow, Moved, NewAccount,
     NewFolder, NewMail, NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile, RecentFile,
-    SavedDraft, SavedInvite, Sender, Server, ServerDraft, Store, StoreError, Unsent, Unsubscribe,
-    default_label, full_text, typed_addresses,
+    SavedDraft, SavedInvite, SearchFilter, Sender, Server, ServerDraft, Store, StoreError, Unsent,
+    Unsubscribe, default_label, full_text, typed_addresses,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{
@@ -697,16 +697,68 @@ impl Store for SqliteStore {
             .map_err(storage)
     }
 
-    fn search(&self, text: &str, limit: u32) -> Result<Vec<MessageRow>, StoreError> {
-        let (Some(query), Some(words)) = (fts_query(text), hit_words(text)) else {
-            return Ok(vec![]);
+    fn search(
+        &self,
+        text: &str,
+        filter: &SearchFilter,
+        limit: u32,
+    ) -> Result<Vec<MessageRow>, StoreError> {
+        // Text with no words to look for, as quotes alone, asks for what the filter keeps.
+        let (sql, query, words) = match (fts_query(text), hit_words(text)) {
+            (Some(query), Some(words)) => (SEARCH, Some(query), Some(words)),
+            _ if filter.is_empty() => return Ok(vec![]),
+            _ => (FILTERED, None, None),
         };
         let conn = self.conn();
-        conn.prepare_cached(SEARCH)
+        conn.prepare_cached(sql)
             .and_then(|mut s| {
-                s.query_map(params![query, limit, words], message_row)?
-                    .collect()
+                s.query_map(
+                    params![
+                        query,
+                        limit,
+                        words,
+                        filter.unread,
+                        filter.flagged,
+                        filter.files,
+                        filter.account.map(|a| a.0),
+                    ],
+                    message_row,
+                )?
+                .collect()
             })
+            .map_err(storage)
+    }
+
+    fn recent_searches(&self) -> Result<Vec<String>, StoreError> {
+        self.conn()
+            .prepare_cached("SELECT text FROM recent_search ORDER BY at DESC, rowid DESC")
+            .and_then(|mut s| s.query_map([], |r| r.get(0))?.collect())
+            .map_err(storage)
+    }
+
+    fn remember_search(&self, text: &str, at: i64) -> Result<(), StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        // The words keep the case typed last.
+        tx.execute(
+            "INSERT INTO recent_search (key, text, at) VALUES (?1, ?2, ?3)
+             ON CONFLICT (key) DO UPDATE SET text = excluded.text, at = excluded.at",
+            params![text.to_lowercase(), text, at],
+        )
+        .map_err(storage)?;
+        tx.execute(
+            "DELETE FROM recent_search WHERE rowid NOT IN (
+                 SELECT rowid FROM recent_search ORDER BY at DESC, rowid DESC LIMIT ?1)",
+            [RECENT_SEARCHES],
+        )
+        .map_err(storage)?;
+        tx.commit().map_err(storage)
+    }
+
+    fn forget_searches(&self) -> Result<(), StoreError> {
+        self.conn()
+            .execute("DELETE FROM recent_search", [])
+            .map(|_| ())
             .map_err(storage)
     }
 
@@ -3123,26 +3175,53 @@ const FIND_THREADS: &str = "
         JOIN folder f ON f.id = m.folder_id
     WHERE r.ref = ?3 AND f.account_id = ?1 AND m.id != ?2 AND m.thread_id IS NOT NULL";
 
-/// Copies of one message in several folders of an account show once: the newest copy.
+/// Searches kept, the latest first.
+const RECENT_SEARCHES: u32 = 5;
+
+/// Only what the filter in `?4`–`?7` keeps: unread, flagged, with files, of one account.
+macro_rules! search_filter {
+    () => {
+        " AND (?4 = 0 OR m.flags & 1 = 0) AND (?5 = 0 OR m.flags & 2 != 0)
+          AND (?6 = 0 OR m.id IN (SELECT message_id FROM attachment WHERE name != ''))
+          AND (?7 IS NULL OR f.account_id = ?7)"
+    };
+}
+
+/// Messages a search shows: those `$found` keeps that `search_filter` keeps; copies of one
+/// message in several folders of an account show once, the newest copy.
 /// Sorting by date reads every match; fine for one person's mail.
-const SEARCH: &str = concat!(
-    message_from!(),
-    " WHERE m.id IN (SELECT rowid FROM message_search WHERE message_search MATCH ?1
-                     UNION SELECT message_id FROM search_hit WHERE words = ?3)
-       AND ",
-    shown_role!("f"),
-    " AND ",
-    not_moving!(),
-    " AND NOT EXISTS (
-         SELECT 1 FROM message d JOIN folder g ON g.id = d.folder_id
-         WHERE d.message_id = m.message_id AND d.id > m.id AND g.account_id = f.account_id
-           AND ",
-    shown_role!("g"),
-    " AND ",
-    not_moving!("d"),
-    ")
-     ORDER BY m.date DESC, m.id DESC LIMIT ?2"
+macro_rules! search_sql {
+    ($found:literal) => {
+        concat!(
+            message_from!(),
+            " WHERE ",
+            $found,
+            search_filter!(),
+            " AND ",
+            shown_role!("f"),
+            " AND ",
+            not_moving!(),
+            " AND NOT EXISTS (
+                 SELECT 1 FROM message d JOIN folder g ON g.id = d.folder_id
+                 WHERE d.message_id = m.message_id AND d.id > m.id
+                   AND g.account_id = f.account_id AND ",
+            shown_role!("g"),
+            " AND ",
+            not_moving!("d"),
+            ")
+             ORDER BY m.date DESC, m.id DESC LIMIT ?2"
+        )
+    };
+}
+
+/// Messages with the words in `?1` (or the server found for `?3`), as `search_sql` shows them.
+const SEARCH: &str = search_sql!(
+    "m.id IN (SELECT rowid FROM message_search WHERE message_search MATCH ?1
+              UNION SELECT message_id FROM search_hit WHERE words = ?3)"
 );
+
+/// All messages the filter keeps, as `search_sql` shows them; `?1` and `?3` are unused.
+const FILTERED: &str = search_sql!("?1 IS NULL AND ?3 IS NULL");
 
 /// Messages from or to address ?1, at most ?2, as `SEARCH` shows them. A `recipients` line
 /// is the address and `\x1f`, or the bare address in mail saved before names were.

@@ -189,6 +189,7 @@ import uniffi.ozero_api.InviteItem
 import uniffi.ozero_api.Mailbox
 import uniffi.ozero_api.MessageItem
 import uniffi.ozero_api.PersonCard
+import uniffi.ozero_api.SearchFilterItem
 import uniffi.ozero_api.UnsentItem
 import uniffi.ozero_api.undoSeconds
 import java.time.Instant
@@ -306,6 +307,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var searching by rememberSaveable { mutableStateOf(false) }
     // Whose mail the search screen lists instead of a search: from a person's card.
     var person by remember { mutableStateOf<PersonCard?>(null) }
+    // The person was picked on the search screen, so back returns there.
+    var personFromSearch by remember { mutableStateOf(false) }
     var draftsOpen by rememberSaveable { mutableStateOf(false) }
     var addingAccount by rememberSaveable { mutableStateOf(false) }
     // The account being signed in to again, by id.
@@ -335,6 +338,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var swipeTip by remember { mutableStateOf(!settings.swipeTipSeen) }
     var holdTip by remember { mutableStateOf(!settings.holdTipSeen) }
     var query by rememberSaveable { mutableStateOf("") }
+    var searchFilter by remember { mutableStateOf(SearchFilterItem()) }
     // Messages chosen to act on together, in the order they were chosen.
     var chosen by remember { mutableStateOf(emptySet<Long>()) }
     // Messages waiting on the snooze sheet for a time.
@@ -971,7 +975,9 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     // Where back leads: the same screens with the top one gone.
     val behind: Screen? = when (screen) {
         Screen.Inbox -> null
-        Screen.Search, Screen.Drafts -> Screen.Inbox
+        // All mail with a person picked there goes back to the search, without the slide.
+        Screen.Search -> Screen.Inbox.takeUnless { personFromSearch }
+        Screen.Drafts -> Screen.Inbox
         // Opened from the settings, they go back there.
         is Screen.AddAccount, is Screen.SignInAgain -> screenOf(null, null, wide, false, null, false, false, settingsPages)
         is Screen.SettingsPage -> screenOf(null, null, wide, false, null, false, false, settingsPages.dropLast(1))
@@ -982,13 +988,20 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     fun closeSearch() {
         searching = false
         query = ""
+        searchFilter = SearchFilterItem()
         person = null
+        personFromSearch = false
     }
 
     fun back() {
         when (screen) {
             Screen.Inbox -> Unit
-            Screen.Search -> closeSearch()
+            Screen.Search -> if (personFromSearch) {
+                person = null
+                personFromSearch = false
+            } else {
+                closeSearch()
+            }
             is Screen.AddAccount -> addingAccount = false
             is Screen.SignInAgain -> signingIn = null
             Screen.Drafts -> draftsOpen = false
@@ -1149,6 +1162,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     }
     // Before that, back closes the message beside the list.
     BackHandler(enabled = screen == Screen.Inbox && open != null && !accountsOpen, onBack = ::closePane)
+    BackHandler(enabled = screen == Screen.Search && personFromSearch, onBack = ::back)
 
     /** A message on its own screen, or beside the list in a [pane]; done with it, it closes. */
     @Composable
@@ -1169,6 +1183,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             onWriteTo = { compose(it) },
             onAllMail = {
                 person = it
+                personFromSearch = false
                 searching = true
                 open = null
             },
@@ -1293,8 +1308,18 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                             mail,
                             query,
                             person,
+                            searchFilter,
+                            accounts,
                             onQuery = { query = it },
+                            onFilter = { searchFilter = it },
+                            onPerson = {
+                                person = it
+                                personFromSearch = true
+                            },
                             onOpen = {
+                                // Kept here, as the wide screen closes the search at once.
+                                val searched = query
+                                if (searched.isNotBlank()) scope.launch { runCatching { mail.rememberSearch(searched) } }
                                 open = it
                                 // Beside the list, the message opens in the inbox's pane.
                                 if (wide) closeSearch()
