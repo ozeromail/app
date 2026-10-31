@@ -75,6 +75,7 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -408,7 +409,7 @@ fun ComposeScreen(
             )
         }
     }
-    val writing = @Composable {
+    val writing = @Composable { writingRoom: Dp ->
         RichBody(
             textState,
             files,
@@ -424,6 +425,7 @@ fun ComposeScreen(
             onLink = { url, apply -> linking = Linking(url, apply) },
             // No frame of its own: the page it is on scrolls.
             modifier = Modifier.onFocusChanged { writingText = it.hasFocus },
+            minHeight = writingRoom,
         )
         val attached = files.filter { it.id !in shownImages }
         if (attached.isNotEmpty() || adding.isNotEmpty()) FileChips(attached, adding, ::detach)
@@ -437,7 +439,7 @@ fun ComposeScreen(
                 signature,
                 { signature = it },
                 R.string.account_signature,
-                Type.Text,
+                Type.Writing,
                 KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 singleLine = false,
                 color = colors.onSurfaceVariant,
@@ -526,7 +528,7 @@ fun ComposeScreen(
                             verticalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             if (!folded) heading(Modifier)
-                            writing()
+                            writing(0.dp)
                         }
                         errorLine()
                     }
@@ -565,7 +567,8 @@ fun ComposeScreen(
                                 if (!docked) {
                                     heading(Modifier.onGloballyPositioned { headingInSight = it.boundsInWindow().height >= it.size.height * 0.6f })
                                 }
-                                writing()
+                                // A new message starts with room to write in, not one line under an empty page.
+                                writing(if (original == null) room / 3 else 0.dp)
                             }
                         }
                     }

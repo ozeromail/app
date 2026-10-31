@@ -16,10 +16,13 @@ struct RichBody<ImageMenu: View>: View {
     let onCaret: (Int) -> Void
     let onFocus: (Bool) -> Void
     let onLink: (String?, @escaping (String?) -> Void) -> Void
+    /// The least height of the last text block, so a tap anywhere there writes.
+    var minHeight: CGFloat = 0
     @ViewBuilder let imageMenu: (Int64, ImageSize) -> ImageMenu
 
     var body: some View {
         let parts = parts
+        let last = parts.last { if case .text = $0.block { true } else { false } }?.id
         VStack(alignment: .leading, spacing: 4) {
             ForEach(parts) { part in
                 switch part.block {
@@ -30,7 +33,8 @@ struct RichBody<ImageMenu: View>: View {
                         onChange: { segment, caret in change(part.id, to: segment, caret: caret) },
                         onCaret: { caret in onCaret(Int(start) + caret) },
                         onFocus: onFocus,
-                        onLink: onLink
+                        onLink: onLink,
+                        minHeight: part.id == last ? minHeight : 0
                     )
                     .overlay(alignment: .topLeading) {
                         if text.isEmpty {
@@ -143,6 +147,7 @@ private struct RichTextView: UIViewRepresentable {
     let onCaret: (Int) -> Void
     let onFocus: (Bool) -> Void
     let onLink: (String?, @escaping (String?) -> Void) -> Void
+    let minHeight: CGFloat
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -183,7 +188,7 @@ private struct RichTextView: UIViewRepresentable {
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
         let width = proposal.width ?? 320
         let fits = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
-        return CGSize(width: width, height: max(fits.height, Rich.font.lineHeight))
+        return CGSize(width: width, height: max(fits.height, Rich.font.lineHeight, minHeight))
     }
 
     final class Coordinator: NSObject, UITextViewDelegate, NSLayoutManagerDelegate {
