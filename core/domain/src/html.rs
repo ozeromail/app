@@ -103,40 +103,57 @@ const FOLD_OPEN: &str =
     "<details class=\"ozero-quote\"><summary>\u{2022}\u{2022}\u{2022}</summary>";
 const FOLD_CLOSE: &str = "</details>";
 
-/// The page sets its own look, with colours, backgrounds or a table layout, as newsletters
-/// do: it keeps the light page it was made for. Plain mail takes the reader's colours.
-/// Only the markup counts, tags and `<style>` sheets, never the words of the mail.
-pub fn is_styled(html: &str) -> bool {
-    let sets_colours = |s: &str| {
-        ["bgcolor", "background", "color:", "color="]
-            .iter()
-            .any(|n| s.contains(n))
-    };
+/// The quote `fold_quote` folds is wrapped in this when it sets its own look, so a plain page
+/// can keep it light.
+const STYLED_OPEN: &str = "<div class=\"ozero-styled\">";
+const STYLED_CLOSE: &str = "</div>";
+
+/// A message's HTML with its quote folded, and whether it sets its own look.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Folded<'a> {
+    pub html: Cow<'a, str>,
+    /// The page sets its own look, with backgrounds or a table layout, as newsletters do: it
+    /// keeps the light page it was made for. Plain mail takes the reader's colours and type,
+    /// even with a coloured word or a newsletter in the folded quote under it.
+    /// Only the markup counts, tags and `<style>` sheets, never the words of the mail.
+    pub styled: bool,
+}
+
+fn sets_look(html: &str) -> bool {
+    let paints = |s: &str| ["bgcolor", "background"].iter().any(|n| s.contains(n));
     html.split('<').skip(1).any(|part| {
         let (tag, after) = part.split_once('>').unwrap_or((part, ""));
         let tag = tag.to_ascii_lowercase();
         tag.starts_with("table")
-            || sets_colours(&tag)
-            || (tag.starts_with("style") && sets_colours(&after.to_ascii_lowercase()))
+            || paints(&tag)
+            || (tag.starts_with("style") && paints(&after.to_ascii_lowercase()))
     })
 }
 
 /// Folds the quoted mail at the end of a reply under a mark that opens it. Answers written
 /// between quotes stay open, and so does a forward with nothing written above it.
-pub fn fold_quote(html: &str) -> Cow<'_, str> {
-    match last_quote(html) {
-        Some((start, end)) if has_text(&html[..start]) && !has_text(&html[end..]) => Cow::Owned(
-            [
-                &html[..start],
-                FOLD_OPEN,
-                &html[start..end],
-                FOLD_CLOSE,
-                &html[end..],
-            ]
-            .concat(),
-        ),
-        _ => Cow::Borrowed(html),
+pub fn fold_quote(html: &str) -> Folded<'_> {
+    let Some((start, end)) = folded(html) else {
+        return Folded {
+            html: Cow::Borrowed(html),
+            styled: sets_look(html),
+        };
+    };
+    let (before, quote, after) = (&html[..start], &html[start..end], &html[end..]);
+    let (open, close) = if sets_look(quote) {
+        (STYLED_OPEN, STYLED_CLOSE)
+    } else {
+        ("", "")
+    };
+    Folded {
+        html: Cow::Owned([before, FOLD_OPEN, open, quote, close, FOLD_CLOSE, after].concat()),
+        styled: sets_look(before) || sets_look(after),
     }
+}
+
+/// Where the quote `fold_quote` folds starts and ends.
+fn folded(html: &str) -> Option<(usize, usize)> {
+    last_quote(html).filter(|&(start, end)| has_text(&html[..start]) && !has_text(&html[end..]))
 }
 
 /// Where the last quote that is not inside another one starts and ends.
@@ -488,7 +505,7 @@ mod tests {
             "<br>&nbsp;",
         );
         assert_eq!(
-            fold_quote(html),
+            fold_quote(html).html,
             concat!(
                 "<div>Sounds good</div><details class=\"ozero-quote\"><summary>\u{2022}\u{2022}\u{2022}</summary>",
                 "<div class=\"gmail_quote\"><div>On Mon, Anna wrote:</div>",
@@ -498,7 +515,7 @@ mod tests {
         );
         let apple = "Yes<BLOCKQUOTE type=Cite>On Mon<blockquote type=cite>old</blockquote>";
         assert_eq!(
-            fold_quote(apple),
+            fold_quote(apple).html,
             format!("Yes{FOLD_OPEN}{}{FOLD_CLOSE}", &apple[3..])
         );
     }
@@ -509,26 +526,48 @@ mod tests {
             "<div dir=ltr>Hi <b>Anna</b></div><blockquote type=cite>old</blockquote>",
             "<p>Did the background check pass? Favourite color: blue</p>",
             "<style>p{margin:0}</style><p>Hi</p>",
+            "<p>Hi</p><font color=#888888>Anna</font>",
+            "<style>a:link{color:#0563C1}</style><p style='color:black'>Hi</p>",
         ] {
-            assert!(!is_styled(plain), "{plain}");
+            assert!(!fold_quote(plain).styled, "{plain}");
         }
         for styled in [
             "<style>BODY { Background: #f4f4f4 }</style><p>Hi</p>",
             "<table width=600><tr><td>News</td></tr></table>",
-            "<div style='Color: #222'>Hi</div>",
+            "<div style='Background-Color: #222'>Hi</div>",
             "<body BGCOLOR=#fff>Hi</body>",
-            "<font color=red>Hi</font>",
         ] {
-            assert!(is_styled(styled), "{styled}");
+            assert!(fold_quote(styled).styled, "{styled}");
         }
+    }
+
+    #[test]
+    fn reads_a_reply_to_a_newsletter_as_plain_mail() {
+        // A plain answer from Gmail, with the newsletter it answers quoted under it.
+        let news = "<table bgcolor=\"#f6f6f6\" width=600><tr><td>News</td></tr></table>";
+        let reply = format!(
+            "<div dir=\"auto\">Hi<br/>Please send it</div><br><div class=\"gmail_extra\">\
+             <div>On Fri, Anna wrote:<br><blockquote class=\"gmail_quote\">{news}</blockquote></div></div>"
+        );
+        assert!(!fold_quote(&reply).styled);
+        assert!(
+            fold_quote(&reply)
+                .html
+                .contains(&format!("{FOLD_OPEN}{STYLED_OPEN}<blockquote"))
+        );
+        // The same newsletter forwarded bare stays a newsletter.
+        let forward = format!("<blockquote class=\"gmail_quote\">{news}</blockquote>");
+        let bare = fold_quote(&forward);
+        assert!(bare.styled);
+        assert_eq!(bare.html, forward);
     }
 
     #[test]
     fn keeps_inline_answers_and_bare_forwards() {
         let inline = "<blockquote type=cite>Lunch?</blockquote>Yes<blockquote type=cite>At 1?</blockquote>Sure";
-        assert_eq!(fold_quote(inline), inline);
+        assert_eq!(fold_quote(inline).html, inline);
         let forward = "<style>p{}</style><p>&nbsp;</p><div class=gmail_quote>Forwarded</div>";
-        assert_eq!(fold_quote(forward), forward);
-        assert_eq!(fold_quote("Just text"), "Just text");
+        assert_eq!(fold_quote(forward).html, forward);
+        assert_eq!(fold_quote("Just text").html, "Just text");
     }
 }

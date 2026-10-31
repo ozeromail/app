@@ -104,6 +104,13 @@ fn lets_a_plain_page_load_the_reading_font() {
 }
 
 #[test]
+fn keeps_a_plain_page_clear_of_a_quoted_sheet() {
+    let page = sandboxed("", false);
+    assert!(page.contains("html,body{background:transparent!important}"));
+    assert!(!sandboxed("", true).contains("@scope"));
+}
+
+#[test]
 fn rejects_a_short_key() {
     assert_eq!(
         Core::open(TempDb::new("short-key").0.clone(), vec![1; 16]).unwrap_err(),
