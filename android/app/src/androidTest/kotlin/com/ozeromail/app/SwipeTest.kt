@@ -215,8 +215,10 @@ class SwipeTest : TestMail() {
             val pill = bounds(hasText("Search mail"))
             drag(pill.center, Offset(pill.center.x, pill.center.y - screen.height * 0.4f), ms = 300)
             up()
-            until(120) { has(hasText("All archived") and hasClickAction()) }
-            rule.onNode(hasText("All archived") and hasClickAction()).performClick()
+            // One account: its own folders, not the ones of all accounts.
+            val archive = hasText("Archive") and hasClickAction()
+            until(120) { has(archive) }
+            rule.onNode(archive).performClick()
             until(300) { last("a") != null }
             frames(30)
             shooting = true
