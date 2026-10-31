@@ -2678,22 +2678,22 @@ private fun Afloat(
 @Composable
 private fun Page(at: Int, afloats: Afloats, rows: List<MessageItem>, words: Int, water: Boolean, thumb: () -> Float, top: () -> Float, onGone: () -> Unit) {
     val thumbNow by rememberUpdatedState(thumb)
-    // From the first frame: the page just left takes over from the list's rows in the same frame,
-    // so they never blink out.
-    var near by remember { mutableStateOf(nearPage(at, thumb())) }
+    // Read as it is drawn, so the page just left takes over from the list's rows in the same frame.
+    val near by remember(at) { derivedStateOf { nearPage(at, thumbNow()) } }
     // Rows further down follow later, so the page stays a little after the thumb has gone.
+    var lingering by remember { mutableStateOf(false) }
     LaunchedEffect(at) {
-        snapshotFlow { nearPage(at, thumbNow()) }.collectLatest { now ->
+        snapshotFlow { near }.collectLatest { now ->
             if (now) {
-                near = true
+                lingering = true
             } else {
                 delay(PAGE_LINGER_MS)
-                near = false
+                lingering = false
                 onGone()
             }
         }
     }
-    if (!near) return
+    if (!near && !lingering) return
     Column(Modifier.fillMaxWidth().offset { IntOffset(0, top().roundToInt()) }) {
         if (rows.isEmpty()) {
             // The water stays where it is and only shows; the words go with the page.
