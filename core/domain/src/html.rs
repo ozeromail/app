@@ -4,6 +4,8 @@
 
 use std::borrow::Cow;
 
+use crate::typo::{Lang, Typesetter};
+
 /// A message's HTML ready to show, and the remote images it holds back.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Page {
@@ -117,6 +119,8 @@ pub struct Folded<'a> {
     /// even with a coloured word or a newsletter in the folded quote under it.
     /// Only the markup counts, tags and `<style>` sheets, never the words of the mail.
     pub styled: bool,
+    /// Where the folded quote sits when it sets its own look, its wrapper included.
+    kept: Option<(usize, usize)>,
 }
 
 fn sets_look(html: &str) -> bool {
@@ -137,17 +141,21 @@ pub fn fold_quote(html: &str) -> Folded<'_> {
         return Folded {
             html: Cow::Borrowed(html),
             styled: sets_look(html),
+            kept: None,
         };
     };
     let (before, quote, after) = (&html[..start], &html[start..end], &html[end..]);
-    let (open, close) = if sets_look(quote) {
+    let kept = sets_look(quote);
+    let (open, close) = if kept {
         (STYLED_OPEN, STYLED_CLOSE)
     } else {
         ("", "")
     };
+    let at = start + FOLD_OPEN.len();
     Folded {
         html: Cow::Owned([before, FOLD_OPEN, open, quote, close, FOLD_CLOSE, after].concat()),
         styled: sets_look(before) || sets_look(after),
+        kept: kept.then_some((at, at + open.len() + quote.len() + close.len())),
     }
 }
 
@@ -419,6 +427,231 @@ fn remote_source(source: &str) -> Option<String> {
     (!rest.is_empty()).then(|| format!("https://{rest}"))
 }
 
+/// Elements whose text is shown as written.
+const VERBATIM: [&str; 8] = [
+    "pre", "code", "kbd", "samp", "tt", "style", "title", "textarea",
+];
+/// Tags that start a new line.
+const LINE_TAGS: [&str; 20] = [
+    "br",
+    "p",
+    "div",
+    "li",
+    "ul",
+    "ol",
+    "blockquote",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "tr",
+    "td",
+    "th",
+    "table",
+    "hr",
+    "details",
+    "summary",
+];
+/// Tags a list item's line may hold.
+const INLINE_TAGS: [&str; 12] = [
+    "a", "b", "i", "u", "s", "em", "strong", "span", "font", "small", "mark", "code",
+];
+const HANG_OPEN: &str = "<span class=\"ozero-hang\">";
+
+/// A plain page typeset for reading in the language of its text: quotes, dashes, spaces that
+/// do not break, a quote that opens a line hung in the margin, and lines that number or bullet
+/// a list set as one. A folded quote with its own look stays as it is.
+pub fn typeset(page: &Folded<'_>) -> String {
+    let html = page.html.as_ref();
+    let shown = html
+        .split('<')
+        .flat_map(|part| part.split_once('>').map_or(part, |(_, text)| text).chars());
+    let mut setter = Typesetter::new(Lang::of_chars(shown));
+    match page.kept {
+        Some((start, end)) => {
+            let before = typeset_part(&mut setter, &html[..start]);
+            setter.break_line();
+            [
+                &before,
+                &html[start..end],
+                &typeset_part(&mut setter, &html[end..]),
+            ]
+            .concat()
+        }
+        None => typeset_part(&mut setter, html),
+    }
+}
+
+fn typeset_part(setter: &mut Typesetter, html: &str) -> String {
+    let mut out = String::with_capacity(html.len() + html.len() / 8);
+    let mut rest = html;
+    while !rest.is_empty() {
+        let lt = rest.find('<').unwrap_or(rest.len());
+        let text = &rest[..lt];
+        if text.trim().is_empty() {
+            out.push_str(text);
+        } else {
+            let at_start = setter.at_line_start();
+            let set = setter.set(&decode_quotes(text));
+            let lead = set.len() - set.trim_start().len();
+            match set[lead..].chars().next() {
+                Some(q @ ('«' | '„' | '“' | '‘')) if at_start => {
+                    out.push_str(&set[..lead]);
+                    out.push_str(HANG_OPEN);
+                    out.push(q);
+                    out.push_str("</span>");
+                    out.push_str(&set[lead + q.len_utf8()..]);
+                }
+                _ => out.push_str(&set),
+            }
+        }
+        rest = &rest[lt..];
+        if rest.is_empty() {
+            break;
+        }
+        let Some(tag) = Tag::read(rest) else {
+            out.push('<');
+            rest = &rest[1..];
+            continue;
+        };
+        let name = tag.name.as_str();
+        if LINE_TAGS.contains(&name) {
+            setter.break_line();
+        }
+        let after = &rest[tag.len..];
+        // What `pre`, `code` and the like hold goes as written.
+        let next = if !tag.closing && VERBATIM.contains(&name) {
+            after_end_tag(after, name)
+        } else {
+            after
+        };
+        out.push_str(&rest[..rest.len() - next.len()]);
+        rest = next;
+    }
+    lists(&out)
+}
+
+/// Quotes and spaces written as entities, as characters the typesetter reads.
+fn decode_quotes(text: &str) -> Cow<'_, str> {
+    if !text.contains('&') {
+        return Cow::Borrowed(text);
+    }
+    let mut text = text.to_owned();
+    for (entity, c) in [
+        ("&quot;", "\""),
+        ("&#34;", "\""),
+        ("&#39;", "'"),
+        ("&apos;", "'"),
+        ("&nbsp;", "\u{A0}"),
+        ("&#160;", "\u{A0}"),
+    ] {
+        text = text.replace(entity, c);
+    }
+    Cow::Owned(text)
+}
+
+/// Two or more lines in a row that start with a number or a bullet, each set as a list item
+/// with its text hanging past the mark.
+fn lists(html: &str) -> String {
+    // The lines between `<br>` tags, and each `<br>` before a line.
+    let mut lines = Vec::new();
+    let mut breaks = vec![""];
+    let (mut start, mut at) = (0, 0);
+    while let Some(lt) = html[at..].find('<') {
+        at += lt;
+        match Tag::read(&html[at..]) {
+            Some(tag) if tag.name == "br" => {
+                lines.push(&html[start..at]);
+                breaks.push(tag.raw);
+                at += tag.len;
+                start = at;
+            }
+            Some(tag) => at += tag.len,
+            None => at += 1,
+        }
+    }
+    lines.push(&html[start..]);
+    if lines.len() < 3 {
+        return html.to_owned();
+    }
+    // The first line holds whatever came before it, so it is never an item.
+    let mut items: Vec<Option<(&str, &str)>> = lines
+        .iter()
+        .enumerate()
+        .map(|(n, line)| if n == 0 { None } else { item(line) })
+        .collect();
+    for n in 0..items.len() {
+        let alone = items[n].is_some()
+            && !n.checked_sub(1).is_some_and(|p| items[p].is_some())
+            && !items.get(n + 1).is_some_and(Option::is_some);
+        if alone {
+            items[n] = None;
+        }
+    }
+    let mut out = String::with_capacity(html.len() + 64);
+    for (n, line) in lines.iter().enumerate() {
+        // An item is a block of its own: the breaks around it go.
+        let around = items[n].is_some() || n.checked_sub(1).is_some_and(|p| items[p].is_some());
+        if !around {
+            out.push_str(breaks[n]);
+        }
+        match items[n] {
+            Some((mark, text)) => {
+                out.push_str("<div class=\"ozero-li\"><span>");
+                out.push_str(mark);
+                out.push_str("</span><span>");
+                out.push_str(text);
+                out.push_str("</span></div>");
+            }
+            None => out.push_str(line),
+        }
+    }
+    out
+}
+
+/// A line that starts a list item, as its mark and its text: `1.`, `2)`, `-` or `•` and a
+/// space, with only inline tags, each closed, after it.
+fn item(line: &str) -> Option<(&str, &str)> {
+    let line = line.trim_start();
+    let digits = line.bytes().take_while(u8::is_ascii_digit).count();
+    let (mark, after) =
+        if (1..=3).contains(&digits) && matches!(line.as_bytes().get(digits), Some(b'.' | b')')) {
+            (&line[..=digits], &line[digits + 1..])
+        } else {
+            ("\u{2022}", line.strip_prefix(['-', '•'])?)
+        };
+    let text = after.strip_prefix([' ', '\u{A0}'])?.trim_start();
+    if text.is_empty() || !inline_and_closed(text) {
+        return None;
+    }
+    Some((mark, text))
+}
+
+/// Whether `html` holds only inline tags, each closed in it.
+fn inline_and_closed(html: &str) -> bool {
+    let mut open: Vec<String> = Vec::new();
+    let mut at = 0;
+    while let Some(lt) = html[at..].find('<') {
+        at += lt;
+        let Some(tag) = Tag::read(&html[at..]) else {
+            at += 1;
+            continue;
+        };
+        at += tag.len;
+        if !INLINE_TAGS.contains(&tag.name.as_str()) {
+            return false;
+        }
+        if !tag.closing {
+            open.push(tag.name);
+        } else if open.pop().as_deref() != Some(tag.name.as_str()) {
+            return false;
+        }
+    }
+    open.is_empty()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -569,5 +802,40 @@ mod tests {
         let forward = "<style>p{}</style><p>&nbsp;</p><div class=gmail_quote>Forwarded</div>";
         assert_eq!(fold_quote(forward).html, forward);
         assert_eq!(fold_quote("Just text").html, "Just text");
+    }
+
+    #[test]
+    fn typesets_a_plain_page() {
+        let html = concat!(
+            "<div dir=\"auto\">\"Выезд\" - от 30 октября<br/>Прошу:<br/>1. Направить <b>копию</b>",
+            "<br/>2. Направить расчёт<br/><br/>Махмудов Х. Р.<br/><code>\"x\"</code></div>",
+        );
+        assert_eq!(
+            typeset(&fold_quote(html)),
+            concat!(
+                "<div dir=\"auto\"><span class=\"ozero-hang\">«</span>Выезд»\u{A0}— от\u{A0}30\u{A0}октября",
+                "<br/>Прошу:<div class=\"ozero-li\"><span>1.</span><span>Направить <b>копию</b></span></div>",
+                "<div class=\"ozero-li\"><span>2.</span><span>Направить расчёт</span></div>",
+                "<br/>Махмудов Х.\u{A0}Р.<br/><code>\"x\"</code></div>",
+            )
+        );
+    }
+
+    #[test]
+    fn leaves_one_numbered_line_and_the_folded_newsletter() {
+        let one = "Hi<br>2026. Big year<br>Bye";
+        assert_eq!(typeset(&fold_quote(one)), one);
+        let reply = concat!(
+            "<p>\"Ok\"</p><blockquote type=cite><table bgcolor=#fff><tr><td>\"News\"",
+            "<br>1. a<br>2. b<br>3. c</td></tr></table></blockquote>",
+        );
+        let folded = fold_quote(reply);
+        let quote = &reply["<p>\"Ok\"</p>".len()..];
+        assert_eq!(
+            typeset(&folded),
+            format!(
+                "<p>{HANG_OPEN}\u{201C}</span>Ok\u{201D}</p>{FOLD_OPEN}{STYLED_OPEN}{quote}{STYLED_CLOSE}{FOLD_CLOSE}"
+            )
+        );
     }
 }

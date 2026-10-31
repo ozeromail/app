@@ -13,6 +13,7 @@ mod provider;
 pub mod rich;
 mod sort;
 mod store;
+pub mod typo;
 mod unsubscribe;
 
 pub use account::{
