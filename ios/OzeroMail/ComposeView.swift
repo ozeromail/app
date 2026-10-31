@@ -177,7 +177,8 @@ struct ComposeView: View {
                                 } action: { headingInSight = $0 }
                                 .zIndex(1)
                             }
-                            writing
+                            // A new message starts with room to write in, not one line under an empty page.
+                            writing(minHeight: composing.original == nil ? room / 3 : 0)
                         }
                         .padding(.bottom, 20)
                         .frame(maxWidth: .infinity, minHeight: room, alignment: .bottom)
@@ -318,7 +319,7 @@ struct ComposeView: View {
     private var fields: some View {
         VStack(alignment: .leading, spacing: 12) {
             if !folded { heading.zIndex(1) }
-            writing
+            writing()
         }
     }
 
@@ -355,9 +356,9 @@ struct ComposeView: View {
         .padding(.horizontal, 20)
     }
 
-    private var writing: some View {
+    private func writing(minHeight: CGFloat = 0) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            textField
+            textField(minHeight: minHeight)
             let chips = files.filter { !shownFiles.contains($0.id) }
             if !chips.isEmpty || !adding.isEmpty {
                 FileChips(files: chips, adding: adding, onRemove: detach)
@@ -369,7 +370,7 @@ struct ComposeView: View {
             // Its own for this message: a change here stays here. Taken out, a tap brings it back.
             if !signature.isEmpty || !(from?.signsWith.isBlank ?? true) {
                 TextField("account_signature", text: $signature, axis: .vertical)
-                    .font(.text)
+                    .font(.writing)
                     .foregroundStyle(.secondary)
                     .lineLimit(1...6)
                     .focused($focus, equals: .signature)
@@ -388,8 +389,8 @@ struct ComposeView: View {
         .padding(.horizontal, 20)
     }
 
-    /// As tall as the text, with no frame of its own: the page it is on scrolls.
-    private var textField: some View {
+    /// As tall as the text or `minHeight`, with no frame of its own: the page it is on scrolls.
+    private func textField(minHeight: CGFloat) -> some View {
         RichBody(
             text: $text, files: files, images: images, focusRequest: textRequest,
             onCaret: { caret = $0 },
@@ -398,6 +399,7 @@ struct ComposeView: View {
                 linkURL = url ?? "https://"
                 linking = Linking(url: url, apply: apply)
             },
+            minHeight: minHeight,
             imageMenu: imageMenu
         )
     }

@@ -92,6 +92,9 @@ extension Font {
     static let rowBold = Font.body.weight(.bold)
     static let rowPlain = Font.body
 
+    /// Words being written: a message's text (`Rich.font` in UIKit) and its signature.
+    static let writing = Font.body
+
     /// A subject and a preview in a list, short text around the app.
     static let text = Font.subheadline
     static let textStrong = Font.subheadline.weight(.semibold)

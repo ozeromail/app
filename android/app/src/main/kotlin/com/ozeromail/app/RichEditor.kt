@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -58,6 +59,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
@@ -100,6 +102,7 @@ fun RichBody(
     onImage: (Long) -> Unit,
     onLink: (String?, (String?) -> Unit) -> Unit,
     modifier: Modifier = Modifier,
+    minHeight: Dp = 0.dp,
 ) {
     val colors = MaterialTheme.colorScheme
     val look = remember(colors) { RichLook(colors) }
@@ -151,9 +154,11 @@ fun RichBody(
     toolbar.chosen = { focused?.let { fields[it] }?.selection?.collapsed == false }
 
     CompositionLocalProvider(LocalTextToolbar provides toolbar) {
-        Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        // The last text field takes what is left of the least height, so a tap anywhere there writes.
+        val last = blocks.indexOfLast { it is RichBlock.Text }
+        Column(modifier.heightIn(min = minHeight), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             var above = 0L
-            for (block in blocks) {
+            for ((index, block) in blocks.withIndex()) {
                 when (block) {
                     is RichBlock.Text -> {
                         val fieldKey = above
@@ -171,7 +176,7 @@ fun RichBody(
                                 look,
                                 placeholder.takeIf { text.value.isEmpty() },
                                 style,
-                                Modifier.onFocusChanged {
+                                (if (index == last) Modifier.weight(1f) else Modifier).onFocusChanged {
                                     if (it.isFocused) {
                                         focused = fieldKey
                                         span(fieldKey)?.let { at -> onCaret(at.first + value.selection.end) }
