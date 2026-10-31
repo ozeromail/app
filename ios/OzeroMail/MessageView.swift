@@ -1154,7 +1154,7 @@ private struct QuickReply: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 8)
             if let error {
-                Text(error).font(.small).foregroundStyle(.red).padding(.horizontal, 20)
+                Text(error).font(.small).foregroundStyle(Color.ozeroError).padding(.horizontal, 20)
             }
             HStack(spacing: 8) {
                 RoundButton(icon: "xmark", label: "action_close", size: 44, action: close)

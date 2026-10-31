@@ -11,8 +11,11 @@ extension Color {
     /// The late sun of Snooze.
     static let ozeroSnooze = dynamic(light: 0xE0922B, dark: 0xF0B25A)
 
-    /// Errors and what cannot be undone.
-    static let ozeroError = dynamic(light: 0xDF5260, dark: 0xEE6672)
+    /// Errors and what cannot be undone, as text: dark enough to read on white.
+    static let ozeroError = dynamic(light: 0xC94452, dark: 0xEE6672)
+
+    /// The brighter red a Delete swipe fills with.
+    static let ozeroErrorFill = dynamic(light: 0xDF5260, dark: 0xEE6672)
 
     /// Cards over the list, such as an account to sign in to again.
     static let ozeroCard = dynamic(light: 0xF2F5FA, dark: 0x1A202C)
