@@ -38,9 +38,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.relocation.BringIntoViewRequester
@@ -401,14 +403,11 @@ fun MessageScreen(
                                         people,
                                         open = isOpen(m),
                                         unread = unread?.contains(m.id) == true,
-                                        inThread = many,
                                         details = details[m.id] == true,
                                         onToggle = { opened[m.id] = !isOpen(m) }.takeIf { many },
                                         onDetails = { details[m.id] = details[m.id] != true },
                                         onPerson = { sheet = ReaderSheet.Person(it) },
-                                        onReply = { reply(m, all = false) },
-                                        onForward = { onForward(m) },
-                                        onDelete = { deleteAlone(m) },
+                                        onActions = { sheet = ReaderSheet.Letter(m) }.takeIf { many },
                                         invite = meetings[m.id],
                                         onChangeAnswer = { sheet = ReaderSheet.Change(m) },
                                         onAddToCalendar = { invite ->
@@ -494,6 +493,19 @@ fun MessageScreen(
                 }
             }
             when (shown) {
+                is ReaderSheet.Letter -> {
+                    val m = shown.message
+                    if (!m.sent) SheetAction(R.drawable.ic_reply, stringResource(R.string.message_reply), colors.onSurface) { reply(m, all = false) }
+                    SheetAction(R.drawable.ic_reply_all, stringResource(R.string.message_reply_all), colors.onSurface) { reply(m, all = true) }
+                    SheetAction(R.drawable.ic_forward, stringResource(R.string.message_forward), colors.onSurface) {
+                        sheet = null
+                        onForward(m)
+                    }
+                    SheetAction(R.drawable.ic_delete, stringResource(R.string.action_delete_message), colors.error) {
+                        sheet = null
+                        deleteAlone(m)
+                    }
+                }
                 ReaderSheet.Answers -> {
                     SheetAction(R.drawable.ic_reply, stringResource(R.string.message_reply), colors.onSurface) { reply(answer, all = false) }
                     replyAllAndForward()
@@ -645,6 +657,9 @@ private sealed interface ReaderSheet {
     /** Reply, Reply all and Forward, from a long press on Reply. */
     data object Answers : ReaderSheet
 
+    /** What to do with one message of a conversation, from its ⋯ or a long press on it. */
+    data class Letter(val message: MessageItem) : ReaderSheet
+
     data object More : ReaderSheet
 
     /** The folders the message can move to, picked from More. */
@@ -687,7 +702,7 @@ private val closing = shrinkVertically(Motion.calm(Motion.NOTE), shrinkTowards =
 
 /**
  * One message: its line, and under it the message when open. In a conversation [onToggle]
- * opens or closes it, and Reply and Forward under it answer this one.
+ * opens or closes it, and [onActions] offers what to do with this one.
  */
 @Composable
 private fun Letter(
@@ -698,14 +713,12 @@ private fun Letter(
     people: MutableMap<Long, PeopleItem>,
     open: Boolean,
     unread: Boolean,
-    inThread: Boolean,
     details: Boolean,
     onToggle: (() -> Unit)?,
     onDetails: () -> Unit,
     onPerson: (PersonItem) -> Unit,
-    onReply: () -> Unit,
-    onForward: () -> Unit,
-    onDelete: () -> Unit,
+    /** The ⋯ of a message in a conversation: what to do with this one. */
+    onActions: (() -> Unit)?,
     invite: InviteItem?,
     onChangeAnswer: () -> Unit,
     onAddToCalendar: (InviteItem) -> Unit,
@@ -718,9 +731,9 @@ private fun Letter(
     Column(modifier.fillMaxWidth()) {
         HorizontalDivider(Modifier.padding(horizontal = Gap.screen), color = MaterialTheme.colorScheme.outlineVariant)
         if (open) {
-            From(message, people[message.id], unread, fileCount(message, bodies), filesAt, details, onToggle, onDetails, onPerson)
+            From(message, people[message.id], unread, fileCount(message, bodies), filesAt, details, onToggle, onDetails, onPerson, onActions)
         } else {
-            Closed(message, unread, onToggle)
+            Closed(message, unread, onToggle, onActions)
         }
         AnimatedVisibility(open, enter = opening, exit = closing) {
             Column {
@@ -728,36 +741,31 @@ private fun Letter(
                     InviteCard(it, onChange = onChangeAnswer.takeIf { _ -> it.canAnswer }, onAddToCalendar = { onAddToCalendar(it) })
                 }
                 LetterBody(mail, files, filesAt, message, bodies)
-                if (inThread) {
-                    Row(Modifier.padding(start = Gap.screen, end = Gap.screen, bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (!message.sent) Chip(R.drawable.ic_reply, stringResource(R.string.message_reply), onReply)
-                        Chip(R.drawable.ic_forward, stringResource(R.string.message_forward), onForward)
-                        Chip(R.drawable.ic_delete, stringResource(R.string.action_delete), onDelete, MaterialTheme.colorScheme.error)
-                    }
-                }
             }
         }
     }
 }
 
-/** A small rounded button under a message. */
+/** The ⋯ by a message's time, grey and small, so the header stays light. */
 @Composable
-private fun Chip(@DrawableRes icon: Int, label: String, onClick: () -> Unit, tint: Color = MaterialTheme.colorScheme.primary) {
-    val colors = MaterialTheme.colorScheme
-    Row(
+private fun LetterMore(onClick: () -> Unit) {
+    val label = stringResource(R.string.action_more)
+    Box(
         Modifier
-            .heightIn(min = 36.dp)
-            .clip(CircleShape)
-            .background(colors.surfaceVariant)
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+            .offset(x = 8.dp, y = (-6).dp)
+            .size(36.dp)
+            .clip(RoundedCornerShape(Radius.small))
+            .clickable(onClickLabel = label, role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = label },
+        contentAlignment = Alignment.Center,
     ) {
-        Glyph(icon, null, tint, size = 17.dp)
-        Text(label, color = tint, style = Type.Caption, fontWeight = Weight.SemiBold)
+        Glyph(R.drawable.ic_more, null, MaterialTheme.colorScheme.onSurfaceVariant, size = 20.dp)
     }
 }
+
+/** Opens the message on a tap and its actions on a long press. */
+private fun Modifier.letterTaps(onToggle: (() -> Unit)?, onActions: (() -> Unit)?): Modifier =
+    if (onToggle == null && onActions == null) this else combinedClickable(onLongClick = onActions, onClick = { onToggle?.invoke() })
 
 /** The line of closed messages folded away; a tap shows them. */
 @Composable
@@ -1100,11 +1108,12 @@ private fun From(
     onToggle: (() -> Unit)?,
     onDetails: () -> Unit,
     onPerson: (PersonItem) -> Unit,
+    onActions: (() -> Unit)?,
 ) {
     val colors = MaterialTheme.colorScheme
     val context = LocalContext.current
     val author = PersonItem(name = message.sender, first = message.sender, email = message.fromEmail, me = message.sent)
-    Column(Modifier.fillMaxWidth().then(if (onToggle == null) Modifier else Modifier.clickable(onClick = onToggle))) {
+    Column(Modifier.fillMaxWidth().letterTaps(onToggle, onActions)) {
         Row(Modifier.fillMaxWidth().padding(start = Gap.screen, end = Gap.screen, top = 12.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.weight(1f)) {
                 Text(
@@ -1140,6 +1149,7 @@ private fun From(
                     AttachmentMark(files, onClick = { scope.launch { filesAt.bringIntoView() } })
                 }
             }
+            onActions?.let { LetterMore(it) }
         }
         Reveal(people?.takeIf { details }) { Details(message, author, it, onPerson) }
     }
@@ -1194,13 +1204,13 @@ private fun Details(message: MessageItem, author: PersonItem, people: PeopleItem
 
 /** A closed message in a conversation: who, the start of its text, and when; [onToggle] opens it. */
 @Composable
-private fun Closed(message: MessageItem, unread: Boolean, onToggle: (() -> Unit)?) {
+private fun Closed(message: MessageItem, unread: Boolean, onToggle: (() -> Unit)?, onActions: (() -> Unit)?) {
     val colors = MaterialTheme.colorScheme
     val context = LocalContext.current
     Row(
         Modifier
             .fillMaxWidth()
-            .then(if (onToggle == null) Modifier else Modifier.clickable(onClick = onToggle))
+            .letterTaps(onToggle, onActions)
             .padding(horizontal = Gap.screen, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -1209,6 +1219,7 @@ private fun Closed(message: MessageItem, unread: Boolean, onToggle: (() -> Unit)
             Text(message.snippet, color = colors.onSurfaceVariant, style = Type.Caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Text(shortDate(context, message.date), color = colors.onSurfaceVariant, style = Type.Caption, modifier = Modifier.padding(top = 2.dp))
+        onActions?.let { LetterMore(it) }
     }
 }
 
