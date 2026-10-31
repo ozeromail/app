@@ -85,7 +85,7 @@ fun InviteCard(invite: InviteItem, onChange: (() -> Unit)?, onAddToCalendar: () 
                 invite.cancelled -> Badge(stringResource(R.string.invite_cancelled), colors.error)
                 invite.before != null && invite.answer == null -> Badge(stringResource(R.string.invite_moved), colors.tertiary)
             }
-            Text(invite.summary.ifBlank { stringResource(R.string.inbox_no_subject) }, style = Type.Row, fontWeight = Weight.Strong)
+            Text(invite.summary.ifBlank { stringResource(R.string.inbox_no_subject) }, style = Type.Row, fontWeight = Weight.SemiBold)
             invite.before?.let { before ->
                 Text(
                     whenText(context, before.start, before.end, invite.allDay),
