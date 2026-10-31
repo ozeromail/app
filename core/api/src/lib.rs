@@ -2094,11 +2094,10 @@ impl Core {
                     .map(|_| format!("{IMAGE_ADDRESS}{}/{n}", message.0))
             })
             .collect();
+        let shown = html::with_images(&page.html, &sources);
+        let folded = html::fold_quote(&shown);
         Ok(Some(ImagesPage {
-            html: sandboxed(
-                &html::fold_quote(&html::with_images(&page.html, &sources)),
-                html::is_styled(&page.html),
-            ),
+            html: sandboxed(&folded.html, folded.styled),
             images,
         }))
     }
@@ -4115,13 +4114,13 @@ impl From<Body> for MessageBody {
     fn from(body: Body) -> Self {
         let page = body.html.as_deref().map(html::clean);
         let (text, quote) = body.split_quote();
-        let styled = page.as_ref().is_some_and(|p| html::is_styled(&p.html));
+        let folded = page.as_ref().map(|p| html::fold_quote(&p.html));
         Self {
             remote_images: page
                 .as_ref()
                 .map_or(0, |p| u32::try_from(p.images.len()).unwrap_or(u32::MAX)),
-            styled,
-            html: page.map(|p| sandboxed(&html::fold_quote(&p.html), styled)),
+            styled: folded.as_ref().is_some_and(|f| f.styled),
+            html: folded.map(|f| sandboxed(&f.html, f.styled)),
             shows_images: false,
             text: close_blank_lines(text),
             quote: quote.to_owned(),
@@ -4195,7 +4194,10 @@ fn sandboxed(html: &str, styled: bool) -> String {
     const LIGHT: &str = "html{color-scheme:light;background:#fff}";
     // The app's own colours and reading type, kept in step with the Android Theme.kt and Type.kt
     // (Literata at its default optical size; where the app does not serve it, the system serif).
-    // The web view is clear, so the screen shows through.
+    // The web view is clear, so the screen shows through. The mail's own text colours, fonts and
+    // sizes give way to these, so a pasted black line or an Outlook font reads like the rest.
+    // A folded quote that sets its own look, `.ozero-styled`, keeps it on a light card
+    // (`@scope` needs Android WebView 118 and iOS 17.4; the apps start at newer).
     const THEMED: &str = concat!(
         "@font-face{font-family:Literata;font-weight:200 900;src:url(https://",
         font_host!(),
@@ -4203,13 +4205,24 @@ fn sandboxed(html: &str, styled: bool) -> String {
         "html{color-scheme:light dark;background:transparent;color:#142036}",
         "body{padding-inline:20px;font:17.5px/28px Literata,ui-serif,Georgia,serif;",
         "font-optical-sizing:none;text-wrap:pretty}",
-        "p,ul,ol,blockquote,pre,table{margin:0 0 14px}",
-        "h1,h2,h3{font-weight:650;line-height:1.3;margin:22px 0 10px}",
-        "a{color:#1a6fe0;text-decoration-thickness:1px;text-underline-offset:3px}",
-        "blockquote{padding-left:14px;border-left:2px solid #e3e9f2;color:#76829a}",
+        // The mail's own rules stop at a folded quote that sets its own look.
+        // A sheet in the folded quote may paint the page; only a newsletter keeps backgrounds.
+        "html,body{background:transparent!important}",
+        "@scope (body) to (.ozero-styled){",
+        ":not(a,blockquote,summary){color:inherit!important}",
+        ":not(summary,mark){background:none!important}",
+        ":not(h1,h2,h3,pre,code,kbd,samp,tt,summary)",
+        "{font-family:inherit!important;font-size:inherit!important;line-height:inherit!important}",
+        ":where(p,ul,ol,blockquote,pre,table){margin:0 0 14px}",
+        ":where(h1,h2,h3){font-weight:650;line-height:1.3;margin:22px 0 10px}",
+        "a{color:#1a6fe0!important;text-decoration-thickness:1px;text-underline-offset:3px}",
+        "blockquote{padding-left:14px;border-left:2px solid #e3e9f2;color:#76829a!important}",
         "li::marker{color:#76829a}",
-        "@media(prefers-color-scheme:dark){html{color:#e5e9f1}a{color:#6ab2ff}",
-        "blockquote{border-color:#2b3343;color:#8792a7}",
+        "@media(prefers-color-scheme:dark){a{color:#6ab2ff!important}",
+        "blockquote{border-color:#2b3343;color:#8792a7!important}}}",
+        ".ozero-styled{color-scheme:light;background:#fff;color:#142036;font:16px/normal sans-serif;",
+        "text-wrap:wrap;border-radius:12px;padding:10px;overflow-x:auto}",
+        "@media(prefers-color-scheme:dark){html{color:#e5e9f1}",
         "details.ozero-quote>summary{background:#1f2532;color:#8792a7}}",
     );
     const BODY: &str = "</style></head><body dir=\"auto\">";
