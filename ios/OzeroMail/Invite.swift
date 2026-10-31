@@ -2,72 +2,46 @@ import EventKit
 import EventKitUI
 import SwiftUI
 
-/// The meeting a message invites to, over its text: when, where, who, how to join, and what else
-/// is on around it. Once answered it says what, and `onChange` answers again; where the meeting
-/// lands in no calendar, `onAddToCalendar` puts it in the phone's.
+/// The meeting a message invites to, over its text, in three lines: what, when, where with how to
+/// join; then a line of the day around it, and the meeting at the same time if there is one. Once
+/// answered it says what, and `onChange` answers again; where the meeting lands in no calendar,
+/// `onAddToCalendar` puts it in the phone's.
 struct InviteCard: View {
     let invite: InviteItem
     let onChange: (() -> Void)?
     let onAddToCalendar: () -> Void
-    @Environment(\.openURL) private var openURL
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top, spacing: 12) {
-                CalendarLeaf(start: invite.start, zone: invite.allDay ? .allDay : nil)
-                VStack(alignment: .leading, spacing: 2) {
-                    if invite.cancelled {
-                        Badge(text: tr("invite_cancelled"), tint: .ozeroError)
-                    } else if invite.before != nil && invite.answer == nil {
-                        Badge(text: tr("invite_moved"), tint: .ozeroSnooze)
-                    }
-                    Text(verbatim: invite.summary.isBlank ? tr("inbox_no_subject") : invite.summary)
-                        .font(.body.weight(.semibold))
-                    if let before = invite.before {
-                        Text(verbatim: whenText(before.start, before.end, allDay: invite.allDay))
-                            .strikethrough()
-                            .foregroundStyle(.secondary)
-                    }
-                    Text(verbatim: whenText(invite.start, invite.end, allDay: invite.allDay))
-                        .fontWeight(invite.before != nil ? .semibold : .regular)
-                        .foregroundStyle(invite.before != nil ? .primary : .secondary)
-                    if let their = theirTime(invite) {
-                        Text(verbatim: their).foregroundStyle(.secondary)
-                    }
+            VStack(alignment: .leading, spacing: 2) {
+                if invite.cancelled {
+                    Badge(text: tr("invite_cancelled"), tint: .ozeroError)
+                } else if invite.before != nil && invite.answer == nil {
+                    Badge(text: tr("invite_moved"), tint: .ozeroSnooze)
                 }
-                .font(.footnote)
+                Text(verbatim: invite.summary.isBlank ? tr("inbox_no_subject") : invite.summary)
+                    .font(.body.weight(.semibold))
+                if let before = invite.before {
+                    Text(verbatim: whenText(before.start, before.end, allDay: invite.allDay))
+                        .font(.footnote)
+                        .strikethrough()
+                        .foregroundStyle(.secondary)
+                }
+                let repeats = invite.repeats.map(repeatText)
+                Text(verbatim: [whenText(invite.start, invite.end, allDay: invite.allDay), repeats].compactMap { $0 }.joined(separator: " · "))
+                    .font(.subheadline)
+                if let their = theirTime(invite) {
+                    Text(verbatim: their).font(.footnote).foregroundStyle(.secondary)
+                }
+                if let place = placeText(invite) {
+                    Text(place).font(.subheadline).foregroundStyle(.secondary).tint(.ozeroAccent)
+                }
+                if !invite.cancelled && !invite.allDay {
+                    DayLine(invite: invite).padding(.top, 10)
+                }
             }
             .padding(.horizontal, 14)
-            .padding(.top, 14)
-            .padding(.bottom, 12)
-            VStack(alignment: .leading, spacing: 6) {
-                if !invite.location.isBlank {
-                    Meta(icon: "mappin.and.ellipse") { Text(verbatim: invite.location) }
-                }
-                if let link = invite.link, let url = URL(string: link) {
-                    Meta(icon: "video") {
-                        Button("invite_join") { openURL(url) }
-                            .fontWeight(.semibold)
-                            .foregroundStyle(Color.ozeroAccent)
-                    }
-                }
-                let organizer = invite.organizerName ?? invite.organizerEmail
-                if organizer != nil || invite.others > 0 {
-                    Meta(icon: "person.2") {
-                        let parts = [organizer.map { tr("invite_organizer", $0) }, invite.others > 0 ? tr("invite_others", Int(invite.others)) : nil]
-                        Text(verbatim: parts.compactMap { $0 }.joined(separator: " · "))
-                    }
-                }
-                if let repeats = invite.repeats {
-                    Meta(icon: "repeat") { Text(verbatim: repeatText(repeats)) }
-                }
-            }
-            .font(.footnote)
-            .padding(.horizontal, 14)
-            .padding(.bottom, 12)
-            if !invite.cancelled && !invite.allDay {
-                DayStrip(invite: invite)
-            }
+            .padding(.vertical, 14)
             if !invite.cancelled, let answer = invite.answer {
                 Divider()
                 HStack(spacing: 8) {
@@ -87,33 +61,28 @@ struct InviteCard: View {
                 .padding(.vertical, 8)
             }
         }
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.ozeroCard, lineWidth: 1))
-        .clipShape(.rect(cornerRadius: 16))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.ozeroCard, in: .rect(cornerRadius: 16))
         .padding(.horizontal, 16)
         .padding(.top, 4)
         .padding(.bottom, 12)
     }
 }
 
-/// The day of the month under its weekday, as on a calendar's leaf.
-private struct CalendarLeaf: View {
-    let start: Int64
-    let zone: TimeZone?
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Text(verbatim: dateText(start, "EEE", zone: zone).uppercased())
-                .font(.caption2.weight(.semibold))
-                .tracking(0.8)
-            Text(verbatim: dateText(start, "d", zone: zone))
-                .font(.title2.weight(.bold).monospacedDigit())
-        }
-        .foregroundStyle(Color.ozeroAccent)
-        .frame(width: 48)
-        .padding(.top, 6)
-        .padding(.bottom, 7)
-        .background(Color.ozeroAccent.opacity(0.1), in: .rect(cornerRadius: 12))
+/// "Room 4 · Join", the link opening the meeting.
+@MainActor
+private func placeText(_ invite: InviteItem) -> AttributedString? {
+    let url = invite.link.flatMap(URL.init(string:))
+    guard !invite.location.isBlank || url != nil else { return nil }
+    var text = AttributedString(invite.location)
+    if let url {
+        if !invite.location.isBlank { text += AttributedString(" · ") }
+        var join = AttributedString(tr("invite_join"))
+        join.link = url
+        join.font = .subheadline.weight(.semibold)
+        text += join
     }
+    return text
 }
 
 private struct Badge: View {
@@ -126,21 +95,8 @@ private struct Badge: View {
             .foregroundStyle(tint)
             .padding(.horizontal, 8)
             .padding(.vertical, 2)
-            .background(Color.ozeroCard, in: .capsule)
+            .background(Color(.systemBackground), in: .capsule)
             .padding(.bottom, 4)
-    }
-}
-
-/// A line of the card after its icon.
-private struct Meta<Content: View>: View {
-    let icon: String
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Image(systemName: icon).foregroundStyle(.secondary).frame(width: 18)
-            content
-        }
     }
 }
 
@@ -155,88 +111,73 @@ private struct CardButton: View {
                 .foregroundStyle(.primary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(Color.ozeroCard, in: .rect(cornerRadius: 10))
+                .background(Color(.systemBackground), in: .rect(cornerRadius: 10))
         }
         .buttonStyle(.plain)
     }
 }
 
-/// The hours around the meeting the core picks, with the person's other meetings in them as
-/// their invitations tell; one at the same time stands beside it, in red.
-private struct DayStrip: View {
+/// The hours around the meeting the core picks, as one thin line: the meeting in accent, the
+/// person's other meetings in grey as their invitations tell, one at the same time in red and
+/// named under it.
+private struct DayLine: View {
     let invite: InviteItem
 
     private static let hour: Int64 = 3_600
-    private static let hourHeight: CGFloat = 23
-    private static let label: CGFloat = 40
-    /// Where a meeting at the same time starts beside this one, as a part of the width.
-    private static let split: CGFloat = 0.62
+    private static let thickness: CGFloat = 6
 
     var body: some View {
-        let hour = Self.hour
         let from = invite.dayFrom
-        let to = invite.dayTo
-        let hours = Int((to - from) / hour)
-        let clash = invite.day.contains(where: \.clashes)
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(verbatim: dateText(invite.start, "EEEEMMMMd"))
-                    .font(.caption2.weight(.semibold))
-                Spacer()
-                Text("invite_from_mail").font(.caption2).lineLimit(1)
-            }
-            .foregroundStyle(.secondary)
+        let span = CGFloat(max(invite.dayTo - from, Self.hour))
+        let clashes = invite.day.filter(\.clashes)
+        let hours = Int(span) / Int(Self.hour)
+        let step = max(1, (hours + 2) / 3)
+        VStack(alignment: .leading, spacing: 6) {
             GeometryReader { geometry in
-                let lane = geometry.size.width - Self.label
-                ZStack(alignment: .topLeading) {
-                    ForEach(0..<hours, id: \.self) { i in
-                        HStack(spacing: 0) {
-                            Text(verbatim: dateText(from + Int64(i) * hour, "jm"))
-                                .font(.caption2.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                                .frame(width: Self.label, alignment: .leading)
-                            Rectangle().fill(Color.ozeroCard).frame(height: 1)
-                        }
-                        .offset(y: Self.hourHeight * CGFloat(i) - 7)
+                let width = geometry.size.width
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.secondary.opacity(0.2))
+                    ForEach(invite.day.filter { !$0.clashes }, id: \.message) { e in
+                        busy(e.start, e.end, from: from, span: span, width: width, color: Color.secondary.opacity(0.55))
                     }
-                    ForEach(invite.day, id: \.message) { e in
-                        let beside = e.clashes
-                        event(
-                            "\(e.summary) · \(dateText(e.start, "jm"))", start: e.start, end: e.end, from: from, to: to,
-                            x: Self.label + (beside ? lane * Self.split : 0), width: beside ? lane * (1 - Self.split) : lane,
-                            ink: beside ? .ozeroError : .secondary, edge: beside ? .ozeroError : Color.secondary.opacity(0.4), mine: false)
+                    busy(invite.start, invite.end, from: from, span: span, width: width, color: .ozeroFill)
+                    ForEach(clashes, id: \.message) { e in
+                        busy(e.start, e.end, from: from, span: span, width: width, color: Color.ozeroError.opacity(0.85))
                     }
-                    event(
-                        invite.summary, start: invite.start, end: invite.end, from: from, to: to,
-                        x: Self.label, width: clash ? lane * Self.split - 4 : lane, ink: .ozeroAccent, edge: .ozeroAccent, mine: true)
                 }
             }
-            .frame(height: Self.hourHeight * CGFloat(hours))
+            .frame(height: Self.thickness)
+            GeometryReader { geometry in
+                ForEach(Array(stride(from: 0, through: hours, by: step)), id: \.self) { h in
+                    Text(verbatim: hourText(from + Int64(h) * Self.hour))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .offset(x: h == 0 ? 0 : geometry.size.width * CGFloat(Int64(h) * Self.hour) / span - 6)
+                }
+            }
+            .frame(height: 14)
+            if let first = clashes.first {
+                let what = "\(first.summary), \(dateText(first.start, "jm"))"
+                let more = clashes.count > 1 ? tr("invite_others", clashes.count - 1) : nil
+                Text(verbatim: tr("invite_clash", [what, more].compactMap { $0 }.joined(separator: " ")))
+                    .font(.footnote)
+                    .foregroundStyle(Color.ozeroError)
+            }
         }
-        .padding(.horizontal, 14)
-        .padding(.top, 10)
-        .padding(.bottom, 12)
-        .overlay(alignment: .top) { Divider() }
     }
 
-    private func event(
-        _ text: String, start: Int64, end: Int64, from: Int64, to: Int64, x: CGFloat, width: CGFloat, ink: Color, edge: Color, mine: Bool
-    ) -> some View {
-        let top = Self.hourHeight * CGFloat(max(start, from) - from) / CGFloat(Self.hour)
-        let height = Self.hourHeight * CGFloat(min(end, to) - max(start, from)) / CGFloat(Self.hour) - 2
-        return Text(verbatim: text)
-            .font(.caption2.weight(mine ? .semibold : .medium))
-            .foregroundStyle(ink)
-            .lineLimit(1)
-            .padding(.leading, 9)
-            .padding(.trailing, 6)
-            .padding(.top, 1)
-            .frame(width: max(width, 0), height: max(height, 14), alignment: .topLeading)
-            .background(mine ? Color.ozeroAccent.opacity(0.1) : Color.ozeroCard)
-            .overlay(alignment: .leading) { Rectangle().fill(edge).frame(width: 3) }
-            .clipShape(.rect(cornerRadius: 7))
-            .offset(x: x, y: top + 1)
+    private func busy(_ start: Int64, _ end: Int64, from: Int64, span: CGFloat, width: CGFloat, color: Color) -> some View {
+        let left = width * CGFloat(max(start, from) - from) / span
+        let length = width * CGFloat(min(end, invite.dayTo) - max(start, from)) / span
+        return Capsule().fill(color).frame(width: max(length, 0)).offset(x: left)
     }
+}
+
+/// "9", "15": an hour of the day, without minutes or AM and PM.
+private func hourText(_ seconds: Int64) -> String {
+    let hour = Calendar.current.component(.hour, from: moment(seconds))
+    let twelve = DateFormatter.dateFormat(fromTemplate: "j", options: 0, locale: .current)?.contains("a") ?? false
+    return twelve ? "\((hour + 11) % 12 + 1)" : "\(hour)"
 }
 
 /// The bottom row while an invitation waits for an answer: No, Maybe and Yes, under the thumb,
@@ -368,7 +309,7 @@ private func sameDayHere(_ seconds: Int64) -> Date {
 /// What a list shows of an invitation in place of its text: "Wed, 29 Oct, 11:00 · Room 7".
 @MainActor
 func inviteLine(_ mark: InviteMark) -> String {
-    let start = mark.allDay ? dateText(mark.start, daySkeleton(mark.start, long: false), zone: .allDay) : dateText(mark.start, daySkeleton(mark.start, long: false) + "jm")
+    let start = mark.allDay ? dateText(mark.start, daySkeleton(mark.start), zone: .allDay) : dateText(mark.start, daySkeleton(mark.start) + "jm")
     return [mark.cancelled ? tr("invite_cancelled") : nil, start, mark.location.isBlank ? nil : mark.location]
         .compactMap { $0 }
         .joined(separator: " · ")
@@ -418,11 +359,11 @@ extension InviteAnswer {
     }
 }
 
-/// "Wednesday, 29 October, 11:00–12:00"; across days both ends in full. A day-long meeting
+/// "Wed, 29 Oct · 11:00–12:00"; across days both ends in full. A day-long meeting
 /// shows its days in UTC, as the core gives them.
 @MainActor
 private func whenText(_ start: Int64, _ end: Int64, allDay: Bool) -> String {
-    let skeleton = daySkeleton(start, long: true)
+    let skeleton = daySkeleton(start)
     if allDay {
         let last = max(start, end - 86_400)
         let first = dateText(start, skeleton, zone: .allDay)
@@ -431,7 +372,7 @@ private func whenText(_ start: Int64, _ end: Int64, allDay: Bool) -> String {
     let calendar = Calendar.current
     let sameDay = calendar.isDate(moment(start), inSameDayAs: moment(end))
     return sameDay
-        ? "\(dateText(start, skeleton)), \(dateText(start, "jm"))–\(dateText(end, "jm"))"
+        ? "\(dateText(start, skeleton)) · \(dateText(start, "jm"))–\(dateText(end, "jm"))"
         : "\(dateText(start, skeleton + "jm")) – \(dateText(end, skeleton + "jm"))"
 }
 
@@ -461,9 +402,9 @@ private func repeatText(_ repeats: RepeatItem) -> String {
 }
 
 /// The weekday, day and month, and the year when it is not this one.
-private func daySkeleton(_ seconds: Int64, long: Bool) -> String {
+private func daySkeleton(_ seconds: Int64) -> String {
     let thisYear = Calendar.current.isDate(moment(seconds), equalTo: .now, toGranularity: .year)
-    return (thisYear ? "" : "y") + (long ? "EEEEMMMMd" : "EEEMMMd")
+    return (thisYear ? "" : "y") + "EEEMMMd"
 }
 
 /// `seconds` by a localized template, on the phone's clock or in `zone`. Formatters are kept
