@@ -159,7 +159,7 @@ private fun FileChip(name: String, size: String?, onRemove: (() -> Unit)?) {
         Modifier
             .widthIn(max = 240.dp)
             .alpha(if (size == null) 0.5f else 1f)
-            .border(1.dp, colors.outlineVariant, RoundedCornerShape(8.dp))
+            .border(1.dp, colors.outlineVariant, RoundedCornerShape(Radius.chip))
             .padding(start = 8.dp, end = if (onRemove == null) 10.dp else 0.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),

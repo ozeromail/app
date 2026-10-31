@@ -353,7 +353,7 @@ private fun AttachmentRow(files: Files, message: MessageItem, file: AttachmentIt
 private fun FileTile(file: AttachmentItem, loading: Boolean) {
     val colors = MaterialTheme.colorScheme
     Box(
-        Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(colors.primaryContainer),
+        Modifier.size(40.dp).clip(RoundedCornerShape(Radius.small)).background(colors.primaryContainer),
         contentAlignment = Alignment.Center,
     ) {
         if (loading) {
@@ -397,7 +397,7 @@ fun AttachmentChips(names: List<String>) {
                 Modifier
                     .weight(1f, fill = false)
                     .widthIn(max = 168.dp)
-                    .border(1.dp, colors.outlineVariant, RoundedCornerShape(8.dp))
+                    .border(1.dp, colors.outlineVariant, RoundedCornerShape(Radius.chip))
                     .padding(start = 6.dp, end = 9.dp, top = 4.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -418,7 +418,7 @@ fun AttachmentChips(names: List<String>) {
                 color = colors.onSurfaceVariant,
                 style = Type.Caption,
                 modifier = Modifier
-                    .border(1.dp, colors.outlineVariant, RoundedCornerShape(8.dp))
+                    .border(1.dp, colors.outlineVariant, RoundedCornerShape(Radius.chip))
                     .padding(horizontal = 8.dp, vertical = 4.dp),
             )
         }
