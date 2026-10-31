@@ -67,3 +67,42 @@ struct StackedDots: View {
         .frame(width: 24, height: 10, alignment: .leading)
     }
 }
+
+/// The type scale, by role, on the system's text styles so Dynamic Type applies. Mail's own text
+/// is `reading`, in MessageView; everything around it takes one of these.
+extension Font {
+    /// Screen titles: Inbox, a folder.
+    static let screenTitle = Font.largeTitle.bold()
+
+    /// An open message's subject, and the subject being written.
+    static let subjectTitle = Font.title2.bold()
+
+    /// Titles of sheets and notes.
+    static let heading = Font.title3.weight(.semibold)
+
+    /// A line under a heading, as on the first screen.
+    static let lead = Font.title3
+
+    /// A sender in a list, the name on an open message, rows of menus and settings.
+    static let row = Font.body.weight(.medium)
+    static let rowStrong = Font.body.weight(.semibold)
+    static let rowBold = Font.body.weight(.bold)
+    static let rowPlain = Font.body
+
+    /// A subject and a preview in a list, short text around the app.
+    static let text = Font.subheadline
+    static let textStrong = Font.subheadline.weight(.semibold)
+
+    /// Who wrote to whom, hints, captions.
+    static let small = Font.footnote
+    static let smallStrong = Font.footnote.weight(.semibold)
+
+    /// Times, with figures that line up.
+    static let time = Font.footnote.monospacedDigit()
+
+    /// Under the icons of a bar, a file's kind.
+    static let label = Font.caption2.weight(.semibold)
+
+    /// Counts on a thread or a tab.
+    static let badge = Font.caption2.weight(.semibold).monospacedDigit()
+}

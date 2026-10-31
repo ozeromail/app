@@ -16,11 +16,11 @@ struct PersonSheet: View {
         VStack(spacing: 20) {
             VStack(spacing: 4) {
                 Text(verbatim: card.name)
-                    .font(.title2.bold())
+                    .font(.subjectTitle)
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
                 Text(LocalizedStringKey(card.contact == nil ? "person_not_in_contacts" : "person_in_contacts"))
-                    .font(.subheadline)
+                    .font(.text)
                     .foregroundStyle(.secondary)
             }
             HStack(spacing: 10) {
@@ -36,7 +36,7 @@ struct PersonSheet: View {
             }
             VStack(alignment: .leading, spacing: 6) {
                 Text("person_addresses")
-                    .font(.footnote.weight(.semibold))
+                    .font(.smallStrong)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 4)
                 VStack(spacing: 0) {
@@ -94,7 +94,7 @@ private struct PersonAction: View {
         Button(action: action) {
             VStack(spacing: 6) {
                 Image(systemName: icon).font(.title3)
-                Text(label).font(.footnote).lineLimit(1)
+                Text(label).font(.small).lineLimit(1)
             }
             .foregroundStyle(Color.ozeroAccent)
             .frame(maxWidth: .infinity, minHeight: 64)
@@ -116,7 +116,7 @@ struct PersonMailView: View {
     var body: some View {
         List {
             if let error {
-                Text(error).font(.footnote).foregroundStyle(.secondary).listRowSeparator(.hidden)
+                Text(error).font(.small).foregroundStyle(.secondary).listRowSeparator(.hidden)
             }
             if messages?.isEmpty == true {
                 ContentUnavailableView("inbox_empty", systemImage: "tray")

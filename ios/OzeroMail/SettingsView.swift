@@ -88,7 +88,7 @@ private struct AppSettings: View {
                                 let place = isAddress ? account.kind.title : account.email
                                 let quiet = account.notify ? "" : " · " + tr("account_quiet")
                                 Text(verbatim: place + quiet)
-                                    .font(.footnote).foregroundStyle(.secondary).lineLimit(1)
+                                    .font(.small).foregroundStyle(.secondary).lineLimit(1)
                             }
                         } icon: {
                             AccountDot(color: account.tint, size: 12)
@@ -219,7 +219,7 @@ private struct SwipeSettings: View {
             Image(systemName: shown.icon).foregroundStyle(.white).padding(.horizontal, 24)
             VStack(alignment: .leading, spacing: 2) {
                 Text("swipes_sample_from").fontWeight(.medium)
-                Text("swipes_sample_subject").font(.subheadline).foregroundStyle(.secondary)
+                Text("swipes_sample_subject").font(.text).foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
@@ -267,7 +267,7 @@ private struct ReadingSettings: View {
         Form {
             Section {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("reading_sample_from").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+                    Text("reading_sample_from").font(.smallStrong).foregroundStyle(.secondary)
                     Text("reading_sample")
                         .font(.reading(scale: Settings.textScales[Int(size)]))
                         .lineSpacing(6 * Settings.textScales[Int(size)])
@@ -352,7 +352,7 @@ private struct AccountSettings: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(verbatim: account.email).lineLimit(1)
                         Text(verbatim: [account.kind.title, account.server].filter { !$0.isEmpty }.joined(separator: " · "))
-                            .font(.footnote).foregroundStyle(.secondary).lineLimit(1)
+                            .font(.small).foregroundStyle(.secondary).lineLimit(1)
                     }
                 }
             }
@@ -392,7 +392,7 @@ private struct AccountSettings: View {
                 Toggle(isOn: Binding(get: { account.notify }, set: { actions.onNotify(account, $0) })) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("notify_title")
-                        Text("account_notify_hint").font(.footnote).foregroundStyle(.secondary)
+                        Text("account_notify_hint").font(.small).foregroundStyle(.secondary)
                     }
                 }
                 Picker("account_check", selection: Binding(get: { account.newMail }, set: { actions.onNewMail(account, $0) })) {

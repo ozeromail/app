@@ -143,7 +143,7 @@ struct MailboxRows: View {
         } header: {
             PartHeader(title: "inboxes_title", open: open, onToggle: editing ? nil : { toggle { $0.toggled(Groups.inboxes) } }) {
                 Button(editing ? "action_done" : "action_edit") { withAnimation(.smooth) { editing.toggle() } }
-                    .font(.footnote.weight(.semibold))
+                    .font(.smallStrong)
                     .textCase(nil)
             }
         } footer: {
@@ -225,7 +225,7 @@ private struct AccountFolders: View {
                     Image(systemName: all ? "chevron.up" : "ellipsis").frame(width: slot)
                     Text(all ? "folders_pinned_only" : "folders_other")
                     Spacer()
-                    if !all { Text(verbatim: "\(own.count - shown.count)").font(.footnote) }
+                    if !all { Text(verbatim: "\(own.count - shown.count)").font(.small) }
                 }
                 .foregroundStyle(.secondary)
                 .padding(.leading, indent(depth))
@@ -234,7 +234,7 @@ private struct AccountFolders: View {
             .buttonStyle(.plain)
             // Until the first folder is pinned.
             if all && !own.contains(where: \.pinned) {
-                Text("folders_pin_hint").font(.footnote).foregroundStyle(.secondary).padding(.leading, indent(depth + 1))
+                Text("folders_pin_hint").font(.small).foregroundStyle(.secondary).padding(.leading, indent(depth + 1))
             }
         }
     }
@@ -296,7 +296,7 @@ private struct PartHeader<Trailing: View>: View {
         HStack(spacing: 4) {
             Text(title)
             Image(systemName: "chevron.right")
-                .font(.caption2.weight(.semibold))
+                .font(.label)
                 .rotationEffect(.degrees(open ? 90 : 0))
         }
     }
@@ -328,7 +328,7 @@ private struct FoldersArrow: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "chevron.right")
-                .font(.footnote.weight(.semibold))
+                .font(.smallStrong)
                 .foregroundStyle(.secondary)
                 .rotationEffect(.degrees(open ? 90 : 0))
                 .frame(width: 44, height: 44)
@@ -366,7 +366,7 @@ private struct FolderRow<Lead: View>: View {
                     .lineLimit(1)
                 Spacer()
                 if count > 0 {
-                    Text(verbatim: "\(count)").font(.footnote).foregroundStyle(open ? Color.ozeroAccent : .secondary)
+                    Text(verbatim: "\(count)").font(.small).foregroundStyle(open ? Color.ozeroAccent : .secondary)
                 }
             }
             .padding(.leading, indent(depth))

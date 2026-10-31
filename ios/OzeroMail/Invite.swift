@@ -20,21 +20,21 @@ struct InviteCard: View {
                     Badge(text: tr("invite_moved"), tint: .ozeroSnooze)
                 }
                 Text(verbatim: invite.summary.isBlank ? tr("inbox_no_subject") : invite.summary)
-                    .font(.body.weight(.semibold))
+                    .font(.rowStrong)
                 if let before = invite.before {
                     Text(verbatim: whenText(before.start, before.end, allDay: invite.allDay))
-                        .font(.footnote)
+                        .font(.small)
                         .strikethrough()
                         .foregroundStyle(.secondary)
                 }
                 let repeats = invite.repeats.map(repeatText)
                 Text(verbatim: [whenText(invite.start, invite.end, allDay: invite.allDay), repeats].compactMap { $0 }.joined(separator: " · "))
-                    .font(.subheadline)
+                    .font(.text)
                 if let their = theirTime(invite) {
-                    Text(verbatim: their).font(.footnote).foregroundStyle(.secondary)
+                    Text(verbatim: their).font(.small).foregroundStyle(.secondary)
                 }
                 if let place = placeText(invite) {
-                    Text(place).font(.subheadline).foregroundStyle(.secondary).tint(.ozeroAccent)
+                    Text(place).font(.text).foregroundStyle(.secondary).tint(.ozeroAccent)
                 }
                 if !invite.cancelled && !invite.allDay {
                     DayLine(invite: invite).padding(.top, 10)
@@ -46,7 +46,7 @@ struct InviteCard: View {
                 Divider()
                 HStack(spacing: 8) {
                     Label(tr(answer.status), systemImage: answer.icon)
-                        .font(.subheadline.weight(.semibold))
+                        .font(.textStrong)
                         .foregroundStyle(answer.tint)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if invite.canAddToCalendar && answer != .no {
@@ -91,7 +91,7 @@ private struct Badge: View {
 
     var body: some View {
         Text(verbatim: text)
-            .font(.caption2.weight(.semibold))
+            .font(.label)
             .foregroundStyle(tint)
             .padding(.horizontal, 8)
             .padding(.vertical, 2)
@@ -107,7 +107,7 @@ private struct CardButton: View {
     var body: some View {
         Button(action: action) {
             Text(label)
-                .font(.footnote.weight(.semibold))
+                .font(.smallStrong)
                 .foregroundStyle(.primary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
@@ -153,7 +153,7 @@ private struct DayLine: View {
                     let at = CGFloat(Int64(h) * Self.hour)
                     let last = at >= span
                     Text(verbatim: hourText(from + Int64(h) * Self.hour))
-                        .font(.caption2.monospacedDigit())
+                        .font(.badge)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: last ? .infinity : nil, alignment: .trailing)
                         .offset(x: last || h == 0 ? 0 : geometry.size.width * at / span - 6)
@@ -164,7 +164,7 @@ private struct DayLine: View {
                 let what = "\(first.summary), \(dateText(first.start, "jm"))"
                 let more = clashes.count > 1 ? tr("invite_others", clashes.count - 1) : nil
                 Text(verbatim: tr("invite_clash", [what, more].compactMap { $0 }.joined(separator: " ")))
-                    .font(.footnote)
+                    .font(.small)
                     .foregroundStyle(Color.ozeroError)
             }
         }
@@ -197,7 +197,7 @@ struct InviteBar: View {
             answer(.yes)
             Button(action: onMore) {
                 Image(systemName: "ellipsis")
-                    .font(.body.weight(.medium))
+                    .font(.row)
                     .foregroundStyle(.primary)
                     .frame(width: 50, height: 50)
                     .background(Color.ozeroCard, in: .rect(cornerRadius: 14))
@@ -215,7 +215,7 @@ struct InviteBar: View {
         let filled = answer == .yes
         return Button { onAnswer(answer) } label: {
             Text(LocalizedStringKey(answer.label))
-                .font(.subheadline.weight(.semibold))
+                .font(.textStrong)
                 .lineLimit(1)
                 .foregroundStyle(filled ? .white : .primary)
                 .frame(maxWidth: .infinity, minHeight: 50)
@@ -235,8 +235,8 @@ struct ReasonSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(verbatim: tr("invite_reason_title", organizer)).font(.title3.weight(.semibold))
-            Text("invite_reason_text").font(.subheadline).foregroundStyle(.secondary)
+            Text(verbatim: tr("invite_reason_title", organizer)).font(.heading)
+            Text("invite_reason_text").font(.text).foregroundStyle(.secondary)
             TextField("invite_reason_prompt", text: $reason, axis: .vertical)
                 .lineLimit(2...4)
                 .padding(12)
@@ -251,7 +251,7 @@ struct ReasonSheet: View {
                         .background(Color.ozeroFill, in: .rect(cornerRadius: 14))
                 }
             }
-            .font(.body.weight(.semibold))
+            .font(.rowStrong)
             .buttonStyle(.plain)
         }
         .padding(22)

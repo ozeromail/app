@@ -288,7 +288,7 @@ private struct InboxList: View {
                 .selectionDisabled()
             if let owner = model.owner {
                 Text(verbatim: owner)
-                    .font(.footnote)
+                    .font(.small)
                     .foregroundStyle(.secondary)
                     .listRowSeparator(.hidden)
                     .selectionDisabled()
@@ -431,11 +431,11 @@ private struct InboxList: View {
                 if let status {
                     HStack {
                         Text(verbatim: status.text)
-                            .font(.footnote)
+                            .font(.small)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         if status.retry {
-                            Button("status_try_again", action: check).font(.footnote.weight(.semibold))
+                            Button("status_try_again", action: check).font(.smallStrong)
                         }
                     }
                     .padding(.horizontal, 20)
@@ -648,7 +648,7 @@ private struct ComposeButton: View {
             model.write()
         } label: {
             Image(systemName: "square.and.pencil")
-                .font(.title3.weight(.semibold))
+                .font(.heading)
                 .foregroundStyle(.white)
                 .frame(width: 48, height: 48)
                 .background(Color.ozeroFill, in: .rect(cornerRadius: 16))
@@ -702,7 +702,7 @@ private struct ChoiceBar: View {
                 .tint(Color.ozeroFill)
             }
         }
-        .font(.title3)
+        .font(.lead)
         .padding(.horizontal, 4)
     }
 }
@@ -766,8 +766,8 @@ private struct NoticeRow: View {
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(verbatim: title).font(.subheadline.weight(.semibold)).foregroundStyle(tint)
-                Text(verbatim: text).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                Text(verbatim: title).font(.textStrong).foregroundStyle(tint)
+                Text(verbatim: text).font(.text).foregroundStyle(.secondary).lineLimit(2)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 14)
@@ -790,9 +790,9 @@ private struct SwipeTip: View {
 
     var body: some View {
         HStack {
-            Text(verbatim: lift ? swipes.tip + " " + tr("swipes_tip_lift") : swipes.tip).font(.subheadline)
+            Text(verbatim: lift ? swipes.tip + " " + tr("swipes_tip_lift") : swipes.tip).font(.text)
             Spacer()
-            Button("action_got_it", action: onDismiss).font(.subheadline.weight(.semibold))
+            Button("action_got_it", action: onDismiss).font(.textStrong)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -842,27 +842,27 @@ struct MessageRow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(verbatim: message.participants)
-                    .font(.body.weight(unread ? .semibold : .medium))
+                    .font(unread ? .rowStrong : .row)
                     .lineLimit(1)
                 if message.threadCount > 1 {
                     Text(verbatim: "\(message.threadCount)")
-                        .font(.caption2.weight(.semibold).monospacedDigit())
+                        .font(.badge)
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 4)
                 if let account = message.account { AccountTag(account: account) }
                 // Not out yet: once the server has it, its date shows.
                 Text(verbatim: message.sending ? tr("inbox_sending") : shortDate(message.date))
-                    .font(.footnote.monospacedDigit())
+                    .font(.time)
                     .foregroundStyle(unread ? .primary : .secondary)
             }
             message.subjectText
-                .font(.subheadline.weight(unread ? .medium : .regular))
+                .font(unread ? .textStrong : .text)
                 .lineLimit(1)
             let snippet = message.invite.map { inviteLine($0) } ?? message.snippet
             if !snippet.isBlank {
                 Text(verbatim: snippet)
-                    .font(.subheadline)
+                    .font(.text)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
@@ -888,7 +888,7 @@ struct AccountTag: View {
     var body: some View {
         AccountDot(color: account.tint, size: 6)
         Text(verbatim: account.name)
-            .font(.caption2.weight(.medium))
+            .font(.label)
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .frame(maxWidth: 70, alignment: .leading)
@@ -907,7 +907,7 @@ struct AttachmentChips: View {
                 } icon: {
                     Image(systemName: "paperclip")
                 }
-                .font(.footnote)
+                .font(.small)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
@@ -916,7 +916,7 @@ struct AttachmentChips: View {
             }
             if names.count > 2 {
                 Text(verbatim: "+\(names.count - 2)")
-                    .font(.footnote)
+                    .font(.small)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)

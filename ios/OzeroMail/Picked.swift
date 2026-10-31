@@ -138,7 +138,7 @@ private struct FileChip: View {
                     .accessibilityLabel(Text("action_remove"))
             }
         }
-        .font(.footnote)
+        .font(.small)
         .padding(.leading, 8)
         .padding(.trailing, onRemove == nil ? 10 : 0)
         .frame(minHeight: 32)
