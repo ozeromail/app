@@ -109,6 +109,23 @@ class Film(private val rule: ComposeTestRule, val name: String, private val ever
         }
     }
 
+    /** Frames where [label] came back after being off screen for a few frames: what the eye sees as a blink. */
+    fun blinks(label: String, gap: Int = 5): List<String> {
+        val found = mutableListOf<String>()
+        var seen = false
+        var missing = 0
+        frames.forEachIndexed { index, frame ->
+            if (frame.at[label] == null) {
+                if (seen) missing++
+                return@forEachIndexed
+            }
+            if (missing in 1..gap) found += "frame $index: $label came back after $missing frames off screen"
+            seen = true
+            missing = 0
+        }
+        return found
+    }
+
     /**
      * Frames where [label], with no finger on it, at once changed speed by more than [jerk] px
      * per frame: what the eye sees as a jump.

@@ -102,6 +102,7 @@ class ListTest : TestMail() {
             assertTrue("Notifications did not come in", switched)
             // As the finger lets go the rows go on from where they were.
             assertEquals(emptyList<String>(), jumps("notice", jerk = 60f))
+            assertEquals(emptyList<String>(), blinks("a"))
         }
     }
 
@@ -120,6 +121,8 @@ class ListTest : TestMail() {
             frames(10)
             assertTrue("Newsletters did not come in", there)
             assertTrue("People did not come back", back)
+            // The page left goes on from the list's rows in the same frame.
+            assertEquals(emptyList<String>(), blinks("a") + blinks("digest"))
         }
     }
 
