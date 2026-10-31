@@ -59,7 +59,7 @@ enum SwipeAction: String, CaseIterable, Identifiable {
     var tint: Color {
         switch self {
         case .done: .ozeroFill
-        case .delete: .ozeroError
+        case .delete: .ozeroErrorFill
         case .read: .gray
         case .snooze: .ozeroSnooze
         case .flag: .orange

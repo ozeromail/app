@@ -636,7 +636,7 @@ private struct Exchange: View {
                             ?? tr("signin_exchange_certificate_choose")) { picking = true }
                             .disabled(busy)
                         if unreadable {
-                            Text("error_certificate_unreadable").foregroundStyle(.red)
+                            Text("error_certificate_unreadable").foregroundStyle(Color.ozeroError)
                         }
                     }
                     .textInputAutocapitalization(.never)

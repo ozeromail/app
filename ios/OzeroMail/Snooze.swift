@@ -88,7 +88,6 @@ struct SnoozeSheet: View {
                     }
                     .tint(.primary)
                 }
-                Section {} footer: { Text("snooze_note") }
             }
             .navigationTitle("snooze_title")
             .navigationBarTitleDisplayMode(.inline)

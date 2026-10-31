@@ -94,12 +94,6 @@ fun SnoozeSheet(visible: Boolean, onPick: (Long) -> Unit, onClose: () -> Unit) {
             Choice(label, snoozeTime(context, time.seconds())) { onPick(time.seconds()) }
         }
         Choice(R.string.snooze_pick, null) { picking = true }
-        Text(
-            stringResource(R.string.snooze_note),
-            color = colors.onSurfaceVariant,
-            style = Type.Caption,
-            modifier = Modifier.padding(start = Gap.sheet, end = Gap.sheet, top = 8.dp),
-        )
     }
     if (picking) {
         val today = now.toLocalDate()
