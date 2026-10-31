@@ -232,7 +232,8 @@ private struct AccountFolders: View {
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
-            if all {
+            // Until the first folder is pinned.
+            if all && !own.contains(where: \.pinned) {
                 Text("folders_pin_hint").font(.footnote).foregroundStyle(.secondary).padding(.leading, indent(depth + 1))
             }
         }

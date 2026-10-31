@@ -76,10 +76,10 @@ import kotlinx.coroutines.flow.emptyFlow
 @Composable
 fun StillNote(
     title: String,
-    text: String,
+    text: String?,
     drawIn: Boolean,
     grey: Boolean = false,
-    checking: Pair<String, String>? = null,
+    checking: Pair<String, String?>? = null,
     checkedAt: Long? = null,
     refreshing: Boolean = false,
     pulled: () -> Float = { 0f },
@@ -161,15 +161,18 @@ private const val CHECKED_NOW_MS = 60_000L
 
 /** An empty list's title and the line under it, and [more] under them. */
 @Composable
-private fun Words(title: String, text: String, modifier: Modifier, more: @Composable () -> Unit = {}) {
+private fun Words(title: String, text: String?, modifier: Modifier, more: @Composable () -> Unit = {}) {
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(title, style = Type.Heading, textAlign = TextAlign.Center)
-        Text(
-            text,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.widthIn(max = 280.dp).padding(horizontal = 32.dp),
-        )
+        // A second line only when it tells something: a slow wait.
+        text?.let {
+            Text(
+                it,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.widthIn(max = 280.dp).padding(horizontal = 32.dp),
+            )
+        }
         more()
     }
 }

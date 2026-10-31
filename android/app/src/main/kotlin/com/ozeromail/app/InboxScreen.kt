@@ -1331,8 +1331,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                 refreshing = pulled,
                                 listLoaded = listLoaded,
                                 checking = when {
-                                    waiting -> R.string.lake_loading_title to if (slow > 0) R.string.lake_loading_slow else R.string.lake_loading_text
-                                    pulled -> R.string.lake_checking_title to if (slow > 0) R.string.status_slow else R.string.lake_checking_text
+                                    waiting -> R.string.lake_loading_title to R.string.lake_loading_slow.takeIf { slow > 0 }
+                                    pulled -> R.string.lake_checking_title to R.string.status_slow.takeIf { slow > 0 }
                                     else -> null
                                 },
                                 checkedAt = checkedAt.takeIf { mailbox == Mail.INBOX },
@@ -1348,7 +1348,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                     syncing && slow == 2 && !waiting -> Status(R.string.status_background)
                                     // An empty list's words say it themselves.
                                     pulled && messages.isNotEmpty() -> Status(if (slow > 0) R.string.status_slow else R.string.status_checking)
-                                    upToDate -> Status(R.string.status_up_to_date)
+                                    upToDate -> Status(R.string.lake_checked_now)
                                     else -> null
                                 },
                                 onSync = {
@@ -1572,7 +1572,7 @@ private fun InboxList(
     refreshing: Boolean,
     listLoaded: Boolean,
     /** What an empty list waits for, title and text, while it does. */
-    checking: Pair<Int, Int>?,
+    checking: Pair<Int, Int?>?,
     /** When the list was last checked, ms on the clock, said under an empty list's words. */
     checkedAt: Long?,
     /** What the line over the dock says. */
@@ -1641,8 +1641,6 @@ private fun InboxList(
     val chosenNow by rememberUpdatedState(chosen)
     val chooseNow by rememberUpdatedState(onChoose)
     val shownTitle = if (choosing) stringResource(R.string.select_count, picked.size) else title
-    // The hint only stands in for a line that is there anyway: the rows must not move under the finger.
-    val shownOwner = if (choosing && owner != null) stringResource(R.string.select_hint) else owner
     var dockHeight by remember { mutableStateOf(0.dp) }
     // Whether this tab just had mail: then the done note draws itself in as the last message
     // leaves, and not on opening the app or switching to an empty tab.
@@ -1754,7 +1752,7 @@ private fun InboxList(
                         at = at,
                         afloats = afloats,
                         rows = from?.rows ?: others[category].orEmpty(),
-                        words = emptyWords(inbox = true, allEmpty = false, category),
+                        words = emptyTitle(inbox = true, allEmpty = false, category),
                         water = !lake,
                         thumb = thumb,
                         top = { from?.top ?: underTitle() ?: with(density) { (top + 48.dp).toPx() } },
@@ -1804,7 +1802,7 @@ private fun InboxList(
                 state = listState,
                 contentPadding = PaddingValues(top = top, bottom = dockHeight + 16.dp),
             ) {
-                item(key = "title") { Hero(shownTitle, shownOwner, onBack, heroActions) }
+                item(key = "title") { Hero(shownTitle, owner, onBack, heroActions) }
                 items(signedOut, key = { "signed-out-${it.id}" }) { account ->
                     Afloat(thumb, page, depth = { 0 }, modifier = rowMove().then(sink)) { SignedOutRow(account, onClick = { onSignIn(account) }) }
                 }
@@ -1828,13 +1826,12 @@ private fun InboxList(
                         val fade = if (fresh) Modifier.graphicsLayer { alpha = glidedAlpha(thumb() - page) } else Modifier
                         Box(Modifier.animateItem(fadeInSpec = null, placementSpec = null, fadeOutSpec = Motion.calm(Motion.SMALL)).then(fade)) {
                             key(mailbox) {
-                                val (title, text) = emptyWords(tabbed, allEmpty, tab)
                                 StillNote(
-                                    stringResource(title),
-                                    stringResource(text),
+                                    stringResource(emptyTitle(tabbed, allEmpty, tab)),
+                                    null,
                                     drawIn = hadMail && tabbed,
                                     grey = !tabbed,
-                                    checking = checking?.let { (head, line) -> stringResource(head) to stringResource(line) },
+                                    checking = checking?.let { (head, line) -> stringResource(head) to line?.let { stringResource(it) } },
                                     checkedAt = checkedAt,
                                     refreshing = refreshing,
                                     pulled = { pull.fraction },
@@ -2694,7 +2691,7 @@ private fun Afloat(
  * [words] once it is empty, over still [water] where the list has none of its own to share.
  */
 @Composable
-private fun Page(at: Int, afloats: Afloats, rows: List<MessageItem>, words: Pair<Int, Int>, water: Boolean, thumb: () -> Float, top: () -> Float, onGone: () -> Unit) {
+private fun Page(at: Int, afloats: Afloats, rows: List<MessageItem>, words: Int, water: Boolean, thumb: () -> Float, top: () -> Float, onGone: () -> Unit) {
     val thumbNow by rememberUpdatedState(thumb)
     var near by remember { mutableStateOf(false) }
     // Rows further down follow later, so the page stays a little after the thumb has gone.
@@ -2714,8 +2711,8 @@ private fun Page(at: Int, afloats: Afloats, rows: List<MessageItem>, words: Pair
         if (rows.isEmpty()) {
             // The water stays where it is and only shows; the words go with the page.
             StillNote(
-                stringResource(words.first),
-                stringResource(words.second),
+                stringResource(words),
+                null,
                 drawIn = false,
                 water = { if (water) glidedAlpha(thumb() - at) else 0f },
                 wordsModifier = Modifier.glided { thumb() - at },
@@ -2841,11 +2838,8 @@ private data class Status(val text: Int, val retry: Boolean = false, val account
 private class Leaving(val tab: Category, val rows: List<MessageItem>, val top: Float)
 
 /** What an empty list says: an empty folder, the whole inbox or its first tab done, or another tab done. */
-private fun emptyWords(inbox: Boolean, allEmpty: Boolean, tab: Category): Pair<Int, Int> = when {
-    !inbox -> R.string.tab_empty_title to R.string.folder_empty
-    allEmpty || tab == Category.PEOPLE -> R.string.inbox_zero_title to R.string.inbox_zero_text
-    else -> R.string.tab_empty_title to R.string.tab_empty_text
-}
+private fun emptyTitle(inbox: Boolean, allEmpty: Boolean, tab: Category): Int =
+    if (inbox && (allEmpty || tab == Category.PEOPLE)) R.string.inbox_zero_title else R.string.tab_empty_title
 
 /** How long a page stays after the thumb has left it, while its lower rows catch up. */
 private const val PAGE_LINGER_MS = 1200L

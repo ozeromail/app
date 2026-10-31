@@ -372,8 +372,6 @@ private struct AccountSettings: View {
                 }
             } header: {
                 Text("account_seen_as")
-            } footer: {
-                Text("account_sender_hint")
             }
             SignatureSection(saved: account.signature, label: "account_signature", placeholder: signature,
                              hint: "account_signature_hint") { actions.onAccountSignature(account, $0) }
@@ -383,8 +381,6 @@ private struct AccountSettings: View {
                 }
             } header: {
                 Text("account_on_phone")
-            } footer: {
-                Text("account_name_hint")
             }
             Section("account_color") {
                 Swatches(current: Int(account.colorIndex)) { actions.onColor(account, $0) }
@@ -423,12 +419,7 @@ private struct AccountSettings: View {
                         // Google asks for its own sign-in; the rest for the new password.
                         let google = account.kind == .gmail
                         Label {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(LocalizedStringKey(google ? "signin_again_title" : "account_password"))
-                                if !google {
-                                    Text("account_password_hint").font(.footnote).foregroundStyle(.secondary)
-                                }
-                            }
+                            Text(LocalizedStringKey(google ? "signin_again_title" : "account_password"))
                         } icon: {
                             Image(systemName: "key").foregroundStyle(.secondary)
                         }

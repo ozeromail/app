@@ -38,7 +38,8 @@ private val Light = lightColorScheme(
     surface = Color.White,
     onSurface = Color(0xFF142036),
     surfaceVariant = Color(0xFFF2F5FA),
-    onSurfaceVariant = Color(0xFF76829A),
+    // Dark enough for small text on white and on the paper cards (4.8:1 and 4.4:1).
+    onSurfaceVariant = Color(0xFF66728A),
     surfaceTint = Color.Transparent,
     surfaceBright = Color.White,
     surfaceDim = Color(0xFFE3E9F2),
@@ -51,7 +52,8 @@ private val Light = lightColorScheme(
     inverseOnSurface = Color(0xFFF2F5FA),
     outline = Color(0xFFAEB9CB),
     outlineVariant = Color(0xFFE9EEF5),
-    error = Color(0xFFDF5260),
+    // The text tone, readable on white; swipes fill with the brighter [errorFill].
+    error = Color(0xFFC94452),
     onError = Color.White,
     errorContainer = Color(0xFFFCE8EA),
     onErrorContainer = Color(0xFF6B1520),
@@ -103,6 +105,12 @@ internal val Accent = Color(0xFF2F8CFF)
 /** The bright blue of buttons, Done, marks and water, the same in both themes. */
 val ColorScheme.accent: Color
     get() = Accent
+
+/** The brighter red a Delete swipe fills with; [ColorScheme.error] is the text tone. */
+val ColorScheme.errorFill: Color
+    get() = if (error == LightError) Color(0xFFDF5260) else error
+
+private val LightError = Color(0xFFC94452)
 
 /** What sits on [accent]. */
 val ColorScheme.onAccent: Color

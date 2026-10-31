@@ -191,12 +191,9 @@ final class InboxModel {
     /// Accounts whose server refused the login, each with a card to sign in again.
     var signedOut: [AccountItem] { isInbox ? accounts.filter(\.needsSignIn) : [] }
 
-    /// What an empty list says: an empty folder, the whole inbox or its first tab done, or another
-    /// tab done.
-    var emptyWords: (title: LocalizedStringKey, text: LocalizedStringKey) {
-        if !tabbed { return ("tab_empty_title", "folder_empty") }
-        if inboxEmpty || tab == .people { return ("inbox_zero_title", "inbox_zero_text") }
-        return ("tab_empty_title", "tab_empty_text")
+    /// What an empty list says: the whole inbox or its first tab done, or anything else empty.
+    var emptyTitle: LocalizedStringKey {
+        tabbed && (inboxEmpty || tab == .people) ? "inbox_zero_title" : "tab_empty_title"
     }
 
     /// What the button that empties a folder says; only the trash and spam can be emptied.
