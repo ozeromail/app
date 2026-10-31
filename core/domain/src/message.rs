@@ -209,6 +209,23 @@ pub struct Attachment {
     pub size: u64,
 }
 
+/// What a search keeps besides its words: only the messages with all that is asked.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SearchFilter {
+    pub unread: bool,
+    pub flagged: bool,
+    /// With a file attached.
+    pub files: bool,
+    pub account: Option<AccountId>,
+}
+
+impl SearchFilter {
+    /// Asks for nothing: words alone.
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// A file that came with a saved message, to send on in another.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecentFile {

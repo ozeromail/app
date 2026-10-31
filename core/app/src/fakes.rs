@@ -13,8 +13,8 @@ use ozero_domain::{
     FileId, Flags, Folder, FolderId, FolderRole, ListQuery, MailProvider, MailSender,
     MessageBuilder, MessageId, MessageLocation, MessageParser, MessageRow, Moved, NewAccount,
     NewFolder, NewMail, NewMessage, Older, Op, OpId, OutboxId, Outgoing, OutgoingFile,
-    ProviderError, RawMessage, RecentFile, SavedDraft, SavedInvite, ServerDraft, Store, StoreError,
-    Unsent, Unsubscribe,
+    ProviderError, RawMessage, RecentFile, SavedDraft, SavedInvite, SearchFilter, ServerDraft,
+    Store, StoreError, Unsent, Unsubscribe,
 };
 
 /// Fakes answer at once, so one poll finishes the future.
@@ -624,8 +624,20 @@ impl Store for Memory {
         Ok(vec![])
     }
 
-    fn search(&self, _: &str, _: u32) -> Result<Vec<MessageRow>, StoreError> {
+    fn search(&self, _: &str, _: &SearchFilter, _: u32) -> Result<Vec<MessageRow>, StoreError> {
         Ok(vec![])
+    }
+
+    fn recent_searches(&self) -> Result<Vec<String>, StoreError> {
+        Ok(vec![])
+    }
+
+    fn remember_search(&self, _: &str, _: i64) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn forget_searches(&self) -> Result<(), StoreError> {
+        Ok(())
     }
 
     fn save_found(

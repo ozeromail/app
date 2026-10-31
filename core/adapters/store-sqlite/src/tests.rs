@@ -1977,19 +1977,39 @@ fn keeps_what_a_server_search_found_apart_until_the_next_one() {
     let found = vec![(inbox, vec![message(1, 10), message(5, 50)])];
     store.save_found(a, "Quarterly  Report", &found).unwrap();
     let ids = |rows: Vec<MessageRow>| -> Vec<i64> { rows.iter().map(|m| m.date).collect() };
-    assert_eq!(ids(store.search("quarterly report", 10).unwrap()), [50, 10]);
-    assert!(store.search("quarterly", 10).unwrap().is_empty());
+    assert_eq!(
+        ids(store
+            .search("quarterly report", &SearchFilter::default(), 10)
+            .unwrap()),
+        [50, 10]
+    );
+    assert!(
+        store
+            .search("quarterly", &SearchFilter::default(), 10)
+            .unwrap()
+            .is_empty()
+    );
     // Lists, syncs and paging see only the folder's own mail.
     assert_eq!(ids(list(&store, ListScope::Folder(inbox), 10, None)), [50]);
     assert_eq!(store.checkpoint(inbox).unwrap().1, ["5"]);
     assert_eq!(store.oldest(inbox).unwrap(), Some(50));
     // The keep limit is for synced mail; search finds older mail on purpose.
     store.prune(a, 20).unwrap();
-    assert_eq!(ids(store.search("quarterly report", 10).unwrap()), [50, 10]);
+    assert_eq!(
+        ids(store
+            .search("quarterly report", &SearchFilter::default(), 10)
+            .unwrap()),
+        [50, 10]
+    );
 
     // The next search lets it go; loading older mail makes it the folder's own.
     store.save_found(a, "other", &[]).unwrap();
-    assert!(store.search("quarterly report", 10).unwrap().is_empty());
+    assert!(
+        store
+            .search("quarterly report", &SearchFilter::default(), 10)
+            .unwrap()
+            .is_empty()
+    );
     store
         .save_found(a, "report", &[(inbox, vec![message(1, 10)])])
         .unwrap();
@@ -2028,7 +2048,9 @@ fn search_finds_words_in_subject_sender_and_body() {
         )
         .unwrap();
 
-    let found = |text: &str| subjects(&store.search(text, 10).unwrap()).join(", ");
+    let found = |text: &str| {
+        subjects(&store.search(text, &SearchFilter::default(), 10).unwrap()).join(", ")
+    };
     assert_eq!(found("БИЛЕТ поез"), "Ваш билет на поезд, ёлка");
     assert_eq!(found("cafe"), "Ваш билет на поезд, ёлка");
     assert_eq!(found("елка"), "Ваш билет на поезд, ёлка");
@@ -2059,11 +2081,131 @@ fn search_finds_words_in_subject_sender_and_body() {
     // Being archived, it is found once: in the archive.
     store.queue(id(3), Action::Archive, 0).unwrap();
     assert_eq!(found("anna"), "Subject 3, Subject 1");
-    let archived = &store.search("invoice", 10).unwrap()[0];
+    let archived = &store
+        .search("invoice", &SearchFilter::default(), 10)
+        .unwrap()[0];
     assert_eq!(
         (archived.id == id(3), archived.role),
         (false, FolderRole::Archive)
     );
+}
+
+#[test]
+fn search_keeps_what_the_filter_asks_for() {
+    let store = store();
+    let a = account(&store, "a@example.com");
+    let b = account(&store, "b@example.com");
+    let mut read = message(1, 100);
+    read.flags.seen = true;
+    let mut flagged = message(2, 200);
+    flagged.flags.flagged = true;
+    flagged.subject = "Invoice".into();
+    flagged.snippet = "Pay by Friday".into();
+    store
+        .save_messages(inbox(&store, a), &[read, flagged])
+        .unwrap();
+    store
+        .save_messages(inbox(&store, b), &[message(3, 300)])
+        .unwrap();
+    let id = |subject: &str| {
+        store
+            .search("hello", &SearchFilter::default(), 10)
+            .unwrap()
+            .into_iter()
+            .chain(
+                store
+                    .search("invoice", &SearchFilter::default(), 10)
+                    .unwrap(),
+            )
+            .find(|m| m.subject == subject)
+            .map(|m| m.id)
+            .unwrap()
+    };
+    let body = Body {
+        attachments: vec![Attachment {
+            part: 2,
+            name: "bill.pdf".into(),
+            mime: "application/pdf".into(),
+            size: 10,
+        }],
+        ..Body::default()
+    };
+    store.save_body(id("Subject 3"), &body).unwrap();
+
+    let found = |text: &str, filter: SearchFilter| {
+        subjects(&store.search(text, &filter, 10).unwrap()).join(", ")
+    };
+    let unread = SearchFilter {
+        unread: true,
+        ..SearchFilter::default()
+    };
+    assert_eq!(found("", SearchFilter::default()), "");
+    assert_eq!(found("", unread), "Subject 3, Invoice");
+    assert_eq!(found("anna", unread), "Subject 3, Invoice");
+    assert_eq!(found("invoice", unread), "Invoice");
+    let flagged = SearchFilter {
+        flagged: true,
+        ..SearchFilter::default()
+    };
+    assert_eq!(found("", flagged), "Invoice");
+    let files = SearchFilter {
+        files: true,
+        ..SearchFilter::default()
+    };
+    assert_eq!(found("", files), "Subject 3");
+    // No words to look for: what the filter keeps.
+    assert_eq!(found("\"", files), "Subject 3");
+    assert_eq!(found("\"", SearchFilter::default()), "");
+    let of_a = SearchFilter {
+        account: Some(a),
+        ..SearchFilter::default()
+    };
+    assert_eq!(found("", of_a), "Invoice, Subject 1");
+    assert_eq!(
+        found(
+            "anna",
+            SearchFilter {
+                unread: true,
+                ..of_a
+            }
+        ),
+        "Invoice"
+    );
+    assert_eq!(
+        found(
+            "subject",
+            SearchFilter {
+                files: true,
+                ..of_a
+            }
+        ),
+        ""
+    );
+}
+
+#[test]
+fn keeps_recent_searches_latest_first() {
+    let store = store();
+    assert!(store.recent_searches().unwrap().is_empty());
+    store.remember_search("invoice", 1).unwrap();
+    store.remember_search("boarding pass", 2).unwrap();
+    store.remember_search("Invoice", 4).unwrap();
+    store.remember_search("СЧЁТ", 5).unwrap();
+    store.remember_search("счёт", 6).unwrap();
+    assert_eq!(
+        store.recent_searches().unwrap(),
+        ["счёт", "Invoice", "boarding pass"]
+    );
+    for at in 0..10 {
+        store
+            .remember_search(&format!("word {at}"), 10 + at)
+            .unwrap();
+    }
+    let kept = store.recent_searches().unwrap();
+    assert_eq!(kept.len(), 5);
+    assert_eq!(kept[0], "word 9");
+    store.forget_searches().unwrap();
+    assert!(store.recent_searches().unwrap().is_empty());
 }
 
 #[test]

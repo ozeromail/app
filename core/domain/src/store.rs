@@ -6,7 +6,7 @@ use crate::{
     Correspondents, DayEvent, Draft, DraftCopy, DraftFile, DraftId, DraftToPush, FileId, Folder,
     FolderId, ListQuery, MessageId, MessageLocation, MessageRow, Moved, NewAccount, NewFolder,
     NewMail, NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile, RecentFile, SavedDraft,
-    SavedInvite, ServerDraft, Unsent, Unsubscribe,
+    SavedInvite, SearchFilter, ServerDraft, Unsent, Unsubscribe,
 };
 
 /// Local database port. The UI reads only from here; sync writes here.
@@ -96,9 +96,22 @@ pub trait Store: Send + Sync {
     fn inbox_is_empty(&self, account: Option<AccountId>) -> Result<bool, StoreError>;
     /// Messages, newest first, whose subject, sender or body has every word of `text`, each
     /// as a word or the start of one, case and accents aside. Trash, junk and what is being
-    /// archived are left out; empty `text` finds nothing.
+    /// archived are left out. Only those `filter` keeps; empty `text` finds all it keeps, and
+    /// nothing with an empty filter.
     /// Also the messages the last server search of their account found for the same words.
-    fn search(&self, text: &str, limit: u32) -> Result<Vec<MessageRow>, StoreError>;
+    fn search(
+        &self,
+        text: &str,
+        filter: &SearchFilter,
+        limit: u32,
+    ) -> Result<Vec<MessageRow>, StoreError>;
+    /// What the user searched for, the latest few, the latest first.
+    fn recent_searches(&self) -> Result<Vec<String>, StoreError>;
+    /// Keeps `text` as the latest search at `at` (ms), in place of the oldest; the same words
+    /// again, case aside, move up instead of showing twice.
+    fn remember_search(&self, text: &str, at: i64) -> Result<(), StoreError>;
+    /// Forgets all searches.
+    fn forget_searches(&self) -> Result<(), StoreError>;
     /// Saves what a server search of the account's folders found for `text`, in place of what
     /// its last one found. A message not saved yet is kept apart from its folder's list, and
     /// goes with the next search unless a queued action or message needs it.

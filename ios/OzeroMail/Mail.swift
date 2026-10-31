@@ -330,9 +330,30 @@ final class Mail: Sendable {
         }
     }
 
-    /// Messages matching every word of `text`, newest first, with what `searchServer` found for it.
-    func search(_ text: String) async throws -> [MessageItem] {
-        try core.search(text: text, limit: Self.searchSize)
+    /// Messages matching every word of `text`, newest first, with what `searchServer` found for it;
+    /// only those `filter` keeps. With no words, all it keeps.
+    func search(_ text: String, filter: SearchFilterItem = SearchFilterItem()) async throws -> [MessageItem] {
+        try core.search(text: text, filter: filter, limit: Self.searchSize)
+    }
+
+    /// What the user searched for, the latest first.
+    func recentSearches() async throws -> [String] {
+        try core.recentSearches()
+    }
+
+    /// Keeps `text` as the latest search, once a message it found is opened.
+    func rememberSearch(_ text: String) async throws {
+        try core.rememberSearch(text: text)
+    }
+
+    /// Forgets all searches.
+    func forgetSearches() async throws {
+        try core.forgetSearches()
+    }
+
+    /// The people the user has the most mail with lately.
+    func frequentPeople() async throws -> [PersonFound] {
+        try core.frequentPeople()
     }
 
     /// Searches every account's mail on its server for `text`, older mail than the phone keeps
