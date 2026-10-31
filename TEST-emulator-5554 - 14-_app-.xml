@@ -1,0 +1,52 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuite name="com.ozeromail.app.ListTest" tests="18" failures="2" errors="0" skipped="0" time="547.097" timestamp="2026-10-31T17:56:27" hostname="localhost">
+  <properties>
+    <property name="device" value="emulator-5554 - 14" />
+    <property name="flavor" value="" />
+    <property name="project" value=":app" />
+  </properties>
+  <testcase name="tabTapSwitchesTabAndBack" classname="com.ozeromail.app.ListTest" time="63.651">
+    <failure>java.lang.AssertionError: expected:&lt;[]&gt; but was:&lt;[frame 2: a came back after 1 frames off screen, frame 103: digest came back after 1 frames off screen]&gt;
+at org.junit.Assert.fail(Assert.java:89)
+at org.junit.Assert.failNotEquals(Assert.java:835)
+at org.junit.Assert.assertEquals(Assert.java:120)
+at org.junit.Assert.assertEquals(Assert.java:146)
+at com.ozeromail.app.ListTest.tabTapSwitchesTabAndBack$lambda$0(ListTest.kt:125)
+at com.ozeromail.app.ListTest.$r8$lambda$AlO9dgMKhO4VD4APksWf3dlSM0Q(Unknown Source:0)
+at com.ozeromail.app.ListTest$$ExternalSyntheticLambda6.invoke(D8$$SyntheticClass:0)
+at com.ozeromail.app.TestMail.film(TestMail.kt:96)
+at com.ozeromail.app.TestMail.film$default(TestMail.kt:93)
+at com.ozeromail.app.ListTest.tabTapSwitchesTabAndBack(ListTest.kt:112)
+</failure>
+  </testcase>
+  <testcase name="openALetterAndComeBack" classname="com.ozeromail.app.ListTest" time="25.328" />
+  <testcase name="onlyAPullDropsADrop" classname="com.ozeromail.app.ListTest" time="119.086" />
+  <testcase name="tabDragSwitchesTab" classname="com.ozeromail.app.ListTest" time="26.145">
+    <failure>java.lang.AssertionError: expected:&lt;[]&gt; but was:&lt;[frame 18: a came back after 1 frames off screen]&gt;
+at org.junit.Assert.fail(Assert.java:89)
+at org.junit.Assert.failNotEquals(Assert.java:835)
+at org.junit.Assert.assertEquals(Assert.java:120)
+at org.junit.Assert.assertEquals(Assert.java:146)
+at com.ozeromail.app.ListTest.tabDragSwitchesTab$lambda$0(ListTest.kt:105)
+at com.ozeromail.app.ListTest.$r8$lambda$Xfb5A_6rHHFpgeNibo22OYa5OgE(Unknown Source:0)
+at com.ozeromail.app.ListTest$$ExternalSyntheticLambda4.invoke(D8$$SyntheticClass:0)
+at com.ozeromail.app.TestMail.film(TestMail.kt:96)
+at com.ozeromail.app.TestMail.film$default(TestMail.kt:93)
+at com.ozeromail.app.ListTest.tabDragSwitchesTab(ListTest.kt:95)
+</failure>
+  </testcase>
+  <testcase name="holdAndDrawChoosesRows" classname="com.ozeromail.app.ListTest" time="31.632" />
+  <testcase name="pullDropsTheRowsAndTheyComeBack" classname="com.ozeromail.app.ListTest" time="31.519" />
+  <testcase name="neighboursFollowAHeldRow" classname="com.ozeromail.app.SwipeTest" time="20.434" />
+  <testcase name="longSwipeDeletes" classname="com.ozeromail.app.SwipeTest" time="18.1" />
+  <testcase name="dragPastTheEdgeAndBackDoesNothing" classname="com.ozeromail.app.SwipeTest" time="18.377" />
+  <testcase name="longSwipeBackToShortIsDone" classname="com.ozeromail.app.SwipeTest" time="21.492" />
+  <testcase name="dockDraggedUpRaisesTheMailboxes" classname="com.ozeromail.app.SwipeTest" time="18.704" />
+  <testcase name="quickFlickTakesTheRow" classname="com.ozeromail.app.SwipeTest" time="19.248" />
+  <testcase name="doneSwipeTakesTheRowAndRowsBelowCloseUp" classname="com.ozeromail.app.SwipeTest" time="20.228" />
+  <testcase name="shortSwipeSpringsBack" classname="com.ozeromail.app.SwipeTest" time="15.289" />
+  <testcase name="scrollingIsNotASwipe" classname="com.ozeromail.app.SwipeTest" time="15.331" />
+  <testcase name="readSwipeLeavesTheRowInPlace" classname="com.ozeromail.app.SwipeTest" time="14.408" />
+  <testcase name="dockDraggedALittleFallsBack" classname="com.ozeromail.app.SwipeTest" time="20.189" />
+  <testcase name="undoBringsTheRowBack" classname="com.ozeromail.app.SwipeTest" time="17.033" />
+</testsuite>
