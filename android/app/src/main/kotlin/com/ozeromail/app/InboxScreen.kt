@@ -1404,6 +1404,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                         preview = true
                                     }
                                     tab = next
+                                    // In this frame, so the next tab's rows never show where the last one was scrolled to.
+                                    listState.requestScrollToItem(0)
                                 },
                                 onAccounts = { accountsOpen = true },
                                 lift = lift,
@@ -2676,10 +2678,12 @@ private fun Afloat(
 @Composable
 private fun Page(at: Int, afloats: Afloats, rows: List<MessageItem>, words: Int, water: Boolean, thumb: () -> Float, top: () -> Float, onGone: () -> Unit) {
     val thumbNow by rememberUpdatedState(thumb)
-    var near by remember { mutableStateOf(false) }
+    // From the first frame: the page just left takes over from the list's rows in the same frame,
+    // so they never blink out.
+    var near by remember { mutableStateOf(nearPage(at, thumb())) }
     // Rows further down follow later, so the page stays a little after the thumb has gone.
     LaunchedEffect(at) {
-        snapshotFlow { abs(at - thumbNow()) < 0.99f }.collectLatest { now ->
+        snapshotFlow { nearPage(at, thumbNow()) }.collectLatest { now ->
             if (now) {
                 near = true
             } else {
@@ -2822,6 +2826,9 @@ private class Leaving(val tab: Category, val rows: List<MessageItem>, val top: F
 /** What an empty list says: an empty folder, the whole inbox or its first tab done, or another tab done. */
 private fun emptyTitle(inbox: Boolean, allEmpty: Boolean, tab: Category): Int =
     if (inbox && (allEmpty || tab == Category.PEOPLE)) R.string.inbox_zero_title else R.string.tab_empty_title
+
+/** Whether the page of the tab [at] shows with the tabs' [thumb] where it is. */
+private fun nearPage(at: Int, thumb: Float) = abs(at - thumb) < 0.99f
 
 /** How long a page stays after the thumb has left it, while its lower rows catch up. */
 private const val PAGE_LINGER_MS = 1200L
