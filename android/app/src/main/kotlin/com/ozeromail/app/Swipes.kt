@@ -71,11 +71,19 @@ enum class SwipeAction(@StringRes val label: Int, @DrawableRes val icon: Int) {
     FLAG(R.string.swipe_flag, R.drawable.ic_flag),
     MOVE(R.string.swipe_move, R.drawable.ic_folder),
     SPAM(R.string.action_spam, R.drawable.ic_spam),
+
+    /** Not picked: it takes the place of one that does not apply where the message is, see [on]. */
+    INBOX(R.string.action_move_to_inbox, R.drawable.ic_inbox),
     ;
 
     /** Read and Flag change the row and leave it in the list; the rest take it away. */
     val stays: Boolean
         get() = this == READ || this == FLAG
+
+    companion object {
+        /** What the person picks from for a swipe. */
+        val PICKED = entries - INBOX
+    }
 }
 
 /**
@@ -170,7 +178,7 @@ class Settings(context: Context) {
 
     private fun Set<Long>.strings() = map { it.toString() }.toSet()
 
-    private fun action(name: String?) = SwipeAction.entries.find { it.name == name }
+    private fun action(name: String?) = SwipeAction.PICKED.find { it.name == name }
 
     companion object {
         private const val LEFT = "swipe_left"
@@ -210,7 +218,27 @@ fun SwipeAction.appliesTo(message: MessageItem): Boolean = when (this) {
     SwipeAction.SNOOZE -> message.canSnooze
     SwipeAction.MOVE -> message.canMove
     SwipeAction.SPAM -> message.canSpam
+    SwipeAction.INBOX -> message.canMoveToInbox
     SwipeAction.READ, SwipeAction.DELETE, SwipeAction.FLAG -> true
+}
+
+/**
+ * The swipes as they work on [message], so every folder has them: a short one that does not
+ * apply where it lies gives way to Move to Inbox out of the archive, trash, spam or snoozed
+ * folder, on one side only, else to the side's long one, as Delete in Sent. A side with nothing that applies
+ * keeps its short one and stays still.
+ */
+fun Swipes.on(message: MessageItem): Swipes {
+    fun side(short: SwipeAction, long: SwipeAction?, inbox: Boolean): Pair<SwipeAction, SwipeAction?> = when {
+        short.appliesTo(message) -> short to long
+        inbox && SwipeAction.INBOX.appliesTo(message) -> SwipeAction.INBOX to long
+        long != null && long.appliesTo(message) -> long to null
+        else -> short to long
+    }
+    // Move to Inbox on one side only, so the other keeps a choice of the person's own.
+    val (left, leftLong) = side(left, leftLong, inbox = true)
+    val (right, rightLong) = side(right, rightLong, inbox = left != SwipeAction.INBOX)
+    return Swipes(left, right, leftLong, rightLong)
 }
 
 /** What the action says on [message]: Read on a read one is Unread, Flag on a flagged one takes it off. */
@@ -470,6 +498,7 @@ fun SwipeAction.colors(): Pair<Color, Color> = with(MaterialTheme.colorScheme) {
         SwipeAction.FLAG -> Color(0xFFEA7A1E) to Color.White
         SwipeAction.MOVE -> Color(0xFF7A6FF0) to Color.White
         SwipeAction.SPAM -> Color(0xFF7C8799) to Color.White
+        SwipeAction.INBOX -> accent to onAccent
     }
 }
 
@@ -515,10 +544,10 @@ fun SwipeTip(swipes: Swipes, lift: Boolean, onDismiss: () -> Unit) {
 /** The short and the long choice for each side, on its page of the settings; a long one can be off. */
 @Composable
 fun SwipeSettings(swipes: Swipes, onChange: (Swipes) -> Unit) {
-    Side(R.string.swipes_left, SwipeAction.entries, swipes.left) { onChange(swipes.copy(left = it)) }
-    Side(R.string.swipes_left_long, SwipeAction.entries + null, swipes.leftLong) { onChange(swipes.copy(leftLong = it)) }
-    Side(R.string.swipes_right, SwipeAction.entries, swipes.right) { onChange(swipes.copy(right = it)) }
-    Side(R.string.swipes_right_long, SwipeAction.entries + null, swipes.rightLong) { onChange(swipes.copy(rightLong = it)) }
+    Side(R.string.swipes_left, SwipeAction.PICKED, swipes.left) { onChange(swipes.copy(left = it)) }
+    Side(R.string.swipes_left_long, SwipeAction.PICKED + null, swipes.leftLong) { onChange(swipes.copy(leftLong = it)) }
+    Side(R.string.swipes_right, SwipeAction.PICKED, swipes.right) { onChange(swipes.copy(right = it)) }
+    Side(R.string.swipes_right_long, SwipeAction.PICKED + null, swipes.rightLong) { onChange(swipes.copy(rightLong = it)) }
 }
 
 @Composable

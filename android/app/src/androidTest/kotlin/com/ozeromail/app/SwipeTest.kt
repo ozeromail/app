@@ -202,6 +202,35 @@ class SwipeTest : TestMail() {
     }
 
     @Test
+    fun doneSwipeInTheArchiveMovesBackToInbox() {
+        val (a) = letters()
+        film("archive-swipe") {
+            track("a", text(a))
+            frame()
+            // Quick, without pictures, to the archive.
+            shooting = false
+            val row = last("a")!!
+            swipe(row.at(0.85f), row.at(0.3f), ms = 200)
+            until(150) { last("a") == null }
+            val pill = bounds(hasText("Search mail"))
+            drag(pill.center, Offset(pill.center.x, pill.center.y - screen.height * 0.4f), ms = 300)
+            up()
+            until(120) { has(hasText("All archived") and hasClickAction()) }
+            rule.onNode(hasText("All archived") and hasClickAction()).performClick()
+            until(300) { last("a") != null }
+            frames(30)
+            shooting = true
+            val there = last("a")!!
+            swipe(there.at(0.85f), there.at(0.3f), ms = 200)
+            val gone = until(150) { last("a") == null }
+            val told = until(90) { has(hasText("Moved to Inbox")) }
+            frames(10)
+            assertTrue("the Done swipe did nothing in the archive", gone)
+            assertTrue("the Done swipe in the archive did not move it to the inbox", told)
+        }
+    }
+
+    @Test
     fun dockDraggedUpRaisesTheMailboxes() {
         film("dock-up") {
             track("sheet", hasText("Mailboxes"))

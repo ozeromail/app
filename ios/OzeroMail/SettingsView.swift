@@ -239,7 +239,7 @@ private struct SwipeSettings: View {
 
     private func side(_ title: LocalizedStringKey, _ selection: Binding<SwipeAction>) -> some View {
         Picker(title, selection: selection) {
-            ForEach(SwipeAction.allCases) { Label($0.label, systemImage: $0.icon).tag($0) }
+            ForEach(SwipeAction.picked) { Label($0.label, systemImage: $0.icon).tag($0) }
         }
         .pickerStyle(.inline)
     }
@@ -248,7 +248,7 @@ private struct SwipeSettings: View {
     private func long(_ title: LocalizedStringKey, _ selection: Binding<SwipeAction?>) -> some View {
         Picker(title, selection: selection) {
             Label("swipes_off", systemImage: "xmark").tag(SwipeAction?.none)
-            ForEach(SwipeAction.allCases) { Label($0.label, systemImage: $0.icon).tag(Optional($0)) }
+            ForEach(SwipeAction.picked) { Label($0.label, systemImage: $0.icon).tag(Optional($0)) }
         }
         .pickerStyle(.inline)
     }

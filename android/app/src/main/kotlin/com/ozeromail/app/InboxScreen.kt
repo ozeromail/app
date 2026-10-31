@@ -897,7 +897,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         remove(gone, context.getString(R.string.inbox_moved_to, title), null, { mail.moveToFolder(it, folder) }, reset, to = folder)
 
     /** Back into the inbox, out of the archive, trash or spam. */
-    fun moveToInbox(gone: List<MessageItem>) = remove(gone, movedBack, FolderRole.INBOX, mail::moveToInbox)
+    fun moveToInbox(gone: List<MessageItem>, reset: () -> Unit = {}) = remove(gone, movedBack, FolderRole.INBOX, mail::moveToInbox, reset)
 
     /** Marks the rows [read] or unread; they stay in the list either way. */
     fun setRead(rows: List<MessageItem>, read: Boolean, reset: () -> Unit = {}) {
@@ -955,6 +955,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         SwipeAction.FLAG -> setFlag(message, !message.flagged)
         SwipeAction.SPAM -> spam(listOf(message), reset)
         SwipeAction.MOVE -> move(message, reset)
+        SwipeAction.INBOX -> moveToInbox(listOf(message), reset)
     }
 
     /** The chosen messages, as the list shows them; acting on them ends the choosing. */
@@ -1858,7 +1859,7 @@ private fun InboxList(
                     ) {
                         if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.row), color = colors.outlineVariant)
                         SwipeRow(
-                            swipes,
+                            swipes.on(message),
                             enabled = !choosing,
                             applies = { it.appliesTo(message) },
                             label = { it.label(message) },
