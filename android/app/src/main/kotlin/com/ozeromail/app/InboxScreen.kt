@@ -1828,7 +1828,6 @@ private fun InboxList(
                             key(mailbox) {
                                 StillNote(
                                     stringResource(emptyTitle(tabbed, allEmpty, tab)),
-                                    null,
                                     drawIn = hadMail && tabbed,
                                     grey = !tabbed,
                                     checking = checking?.let { (head, line) -> stringResource(head) to line?.let { stringResource(it) } },
@@ -2712,7 +2711,6 @@ private fun Page(at: Int, afloats: Afloats, rows: List<MessageItem>, words: Int,
             // The water stays where it is and only shows; the words go with the page.
             StillNote(
                 stringResource(words),
-                null,
                 drawIn = false,
                 water = { if (water) glidedAlpha(thumb() - at) else 0f },
                 wordsModifier = Modifier.glided { thumb() - at },

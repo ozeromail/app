@@ -76,7 +76,6 @@ import kotlinx.coroutines.flow.emptyFlow
 @Composable
 fun StillNote(
     title: String,
-    text: String?,
     drawIn: Boolean,
     grey: Boolean = false,
     checking: Pair<String, String?>? = null,
@@ -111,7 +110,7 @@ fun StillNote(
         Box(wordsModifier, contentAlignment = Alignment.TopCenter) {
             Words(
                 title,
-                text,
+                null,
                 Modifier.graphicsLayer {
                     val shown = still.words() * known
                     alpha = shown
