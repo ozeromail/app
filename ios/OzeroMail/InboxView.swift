@@ -649,8 +649,6 @@ private struct InboxTabs: View {
         }
         .pickerStyle(.segmented)
         .controlSize(.large)
-        .padding(4)
-        .glassSurface(in: .capsule, fallback: Color.clear)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .simultaneousGesture(
             SpatialTapGesture().onEnded { tap in
@@ -659,6 +657,8 @@ private struct InboxTabs: View {
                 if Category.all[min(max(index, 0), Category.all.count - 1)] == model.tab { model.toTop += 1 }
             }
         )
+        .padding(4)
+        .glassSurface(in: .capsule, fallback: Color.clear)
         .onChange(of: model.tab) { changed = .now }
         .sensoryFeedback(.selection, trigger: model.tab)
     }
