@@ -477,8 +477,6 @@ private struct InboxList: View {
                 }
             }
         }
-            }
-        }
     }
 
     /// The finger lets the list go: past a third of a pull a drop falls, sized by how far it went,
