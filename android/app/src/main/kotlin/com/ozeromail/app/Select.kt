@@ -189,12 +189,15 @@ fun ChoiceMark(chosen: Boolean, shown: Float, modifier: Modifier = Modifier) {
     }
 }
 
+/** The choice bar's filled button: [label] with its count, as Done 3 or Not spam 3. */
+class ChoiceMain(val label: String, val icon: Int, val onClick: () -> Unit)
+
 /**
  * What can be done with the chosen messages, where the search and new message usually are:
- * Read or Unread, Delete (for good in the trash), More, and Done when it applies.
+ * Read or Unread, Delete (for good in the trash), More, and [main] when one applies.
  */
 @Composable
-fun ChoiceBar(done: Int, unread: Boolean, forever: Boolean, onCancel: () -> Unit, onRead: () -> Unit, onDelete: () -> Unit, onMore: () -> Unit, onDone: (() -> Unit)?) {
+fun ChoiceBar(main: ChoiceMain?, unread: Boolean, forever: Boolean, onCancel: () -> Unit, onRead: () -> Unit, onDelete: () -> Unit, onMore: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth().padding(horizontal = Gap.bar), horizontalArrangement = Arrangement.spacedBy(Gap.inBar)) {
         BarAction(R.drawable.ic_close, stringResource(R.string.action_cancel), colors.onSurface, onClick = onCancel)
@@ -211,6 +214,6 @@ fun ChoiceBar(done: Int, unread: Boolean, forever: Boolean, onCancel: () -> Unit
             onClick = onDelete,
         )
         BarAction(R.drawable.ic_more, stringResource(R.string.action_more), colors.onSurface, onClick = onMore)
-        onDone?.let { BarAction(R.drawable.ic_done, stringResource(R.string.action_done_count, done), colors.onAccent, colors.accent, onClick = it) }
+        main?.let { BarAction(it.icon, it.label, colors.onAccent, colors.accent, onClick = it.onClick) }
     }
 }

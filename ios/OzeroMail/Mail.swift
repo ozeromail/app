@@ -468,9 +468,10 @@ final class Mail: Sendable {
         try move(messages) { try core.moveToFolder(messages: $0, folder: folder.id) }
     }
 
-    /// Where `moveToFolder` can take `message`: its account's inbox, archive and own folders, but its own.
-    func moveTargets(of message: MessageItem) async throws -> [FolderItem] {
-        try core.moveTargets(message: message.id)
+    /// Where `moveToFolder` can take `messages` together: their account's inbox, archive and own
+    /// folders, but the ones they are in; none for messages of several accounts.
+    func moveTargets(of messages: [MessageItem]) async throws -> [FolderItem] {
+        try core.moveTargets(messages: messages.map(\.id))
     }
 
     /// Leaves `message`'s list; a request or message asking to leave goes out in the background.

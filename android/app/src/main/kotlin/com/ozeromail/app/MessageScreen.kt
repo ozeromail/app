@@ -554,7 +554,7 @@ fun MessageScreen(
                         SheetAction(R.drawable.ic_folder, stringResource(R.string.action_move_to_folder), colors.onSurface) {
                             scope.launch {
                                 val targets = try {
-                                    mail.moveTargets(message)
+                                    mail.moveTargets(listOf(message))
                                 } catch (e: CoreException) {
                                     sheet = null
                                     snackbar.showSnackbar(context.getString(e.text()))

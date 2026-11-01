@@ -1402,3 +1402,100 @@ fn suggests_people_and_names_them_as_the_contacts_do() {
         None
     );
 }
+
+#[test]
+fn moves_chosen_messages_only_where_all_of_them_can_go() {
+    let db = TempDb::new("move-targets");
+    let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
+    let store = &core.store;
+    let add = |email: &str| {
+        store
+            .add_account(&NewAccount {
+                kind: AccountKind::Imap,
+                email: email.into(),
+                display_name: email.into(),
+                server: None,
+                smtp: None,
+            })
+            .unwrap()
+    };
+    let folder = |remote_id: &str, role| NewFolder {
+        remote_id: remote_id.into(),
+        name: remote_id.into(),
+        role,
+    };
+    let message = |id: &str| ozero_domain::NewMessage {
+        remote_id: id.into(),
+        message_id: None,
+        references: vec![],
+        from: Address {
+            name: None,
+            email: "anna@example.com".into(),
+        },
+        answer_to: vec![],
+        to: vec![],
+        cc: vec![],
+        subject: id.into(),
+        snippet: String::new(),
+        date: 0,
+        flags: Default::default(),
+        category: Category::People,
+        unsubscribe: ozero_domain::Unsubscribe::new(None, None),
+    };
+    // One message in each of the given folders, by their ids.
+    let fill = |folders: &[i64]| -> Vec<i64> {
+        folders
+            .iter()
+            .map(|&id| {
+                let folder = FolderId(id);
+                let changes = Changes {
+                    checkpoint: store.checkpoint(folder).unwrap().0,
+                    new: vec![message("1")],
+                    flags: vec![],
+                    gone: vec![],
+                };
+                store.save_changes(folder, &changes).unwrap();
+                core.mailbox(Mailbox::Folder { id }, 10).unwrap()[0].id
+            })
+            .collect()
+    };
+    let names = |messages: Vec<i64>| -> Vec<String> {
+        core.move_targets(messages)
+            .unwrap()
+            .into_iter()
+            .map(|f| f.name)
+            .collect()
+    };
+
+    let me = add("me@example.com");
+    let saved = store
+        .save_folders(
+            me,
+            &[
+                folder("INBOX", FolderRole::Inbox),
+                folder("Archive", FolderRole::Archive),
+                folder("Work", FolderRole::Custom),
+                folder("Trips", FolderRole::Custom),
+                folder("Junk", FolderRole::Junk),
+            ],
+        )
+        .unwrap();
+    let ids: Vec<i64> = saved.iter().map(|f| f.id.0).collect();
+    let mine = fill(&[ids[0], ids[2], ids[4]]);
+
+    assert_eq!(names(vec![mine[0]]), ["Archive", "Work", "Trips"]);
+    // Neither folder the two are in.
+    assert_eq!(names(vec![mine[0], mine[1]]), ["Archive", "Trips"]);
+    assert_eq!(names(vec![mine[2]]), ["INBOX", "Archive", "Work", "Trips"]);
+    // Only the one in spam says so, for Not spam.
+    let spam = |id| core.mailbox(Mailbox::Folder { id }, 10).unwrap()[0].spam;
+    assert_eq!([ids[0], ids[2], ids[4]].map(spam), [false, false, true]);
+
+    let other = add("other@example.com");
+    let theirs = store
+        .save_folders(other, &[folder("INBOX", FolderRole::Inbox)])
+        .unwrap();
+    let theirs = fill(&[theirs[0].id.0]);
+    assert!(names(vec![mine[0], theirs[0]]).is_empty());
+    assert!(names(vec![]).is_empty());
+}

@@ -193,7 +193,7 @@ struct MessageView: View {
             // As the conversation has it now, flagged here or elsewhere.
             let flagged = (thread.first { $0.id == message.id } ?? message).flagged
             Button(flagged ? "action_unflag" : "action_flag") {
-                Task { await model.flag(message, flagged: !flagged) }
+                Task { await model.flag([message], flagged: !flagged) }
             }
             Button("action_mark_unread") {
                 leave { await model.setRead([message], read: false) }
@@ -207,7 +207,7 @@ struct MessageView: View {
                 Button("action_move_to_folder") {
                     Task {
                         do {
-                            targets = try await moveOrder(mail.moveTargets(of: message))
+                            targets = try await moveOrder(mail.moveTargets(of: [message]))
                         } catch {
                             model.error = error.textKey()
                         }

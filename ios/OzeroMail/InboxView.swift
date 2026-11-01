@@ -58,7 +58,7 @@ struct InboxView: View {
             }
         }
         .moveDialog($model.moving, targets: \.targets) { moving, folder, title in
-            Task { await model.moveToFolder([moving.message], to: folder, title: title) }
+            Task { await model.moveToFolder(moving.messages, to: folder, title: title) }
         }
         .sheet(isPresented: $model.accountsOpen) {
             AccountsSheet(
@@ -451,12 +451,32 @@ private struct InboxList: View {
             .animation(.smooth, value: status?.text)
         }
         .confirmationDialog("action_more", isPresented: $more) {
+            // Read once: `picked` filters the whole list.
+            let rows = picked
+            let back = rows.filter(\.canMoveToInbox)
             Button("action_select_all") { model.chosen.formUnion(model.messages.map(\.id)) }
-            // The sender of the message chosen last.
-            if let last = picked.last {
-                Button(tr("action_all_from", last.sender)) {
-                    model.chosen.formUnion(model.messages.filter { $0.fromEmail == last.fromEmail }.map(\.id))
+            // What the bar has no room for, where it applies to the chosen.
+            if rows.contains(where: \.canArchive), !back.isEmpty {
+                Button(LocalizedStringKey(back.allSatisfy(\.spam) ? "action_not_spam" : "action_move_to_inbox")) {
+                    model.choice { await model.moveToInbox($0.filter(\.canMoveToInbox)) }
                 }
+            }
+            // Folders of one account only.
+            if rows.allSatisfy(\.canMove), Set(rows.map(\.accountId)).count == 1 {
+                Button("action_move_to_folder") { model.choice { await model.move($0) } }
+            }
+            if rows.contains(where: \.canSpam) {
+                Button("action_spam") { model.choice { await model.spam($0.filter(\.canSpam)) } }
+            }
+            let flag = rows.contains { !$0.flagged }
+            Button(LocalizedStringKey(flag ? "action_flag" : "action_unflag")) { model.choice { await model.flag($0, flagged: flag) } }
+            // When they are all from one sender, the rest of that sender's mail.
+            if let first = rows.first, rows.allSatisfy({ $0.fromEmail == first.fromEmail }) {
+                Button(tr("action_all_from", first.sender)) {
+                    model.chosen.formUnion(model.messages.filter { $0.fromEmail == first.fromEmail }.map(\.id))
+                }
+            }
+        }
             }
         }
     }
@@ -664,8 +684,19 @@ private struct ChoiceBar: View {
     let picked: [MessageItem]
     let onMore: () -> Void
 
+    /// The filled button: Done where mail is not filed yet, else back to the inbox, Not spam out of spam.
+    private func main(done: Int, back: [MessageItem]) -> (label: String, act: ([MessageItem]) async -> Void)? {
+        if done > 0 {
+            return (tr("action_done_count", done), { rows in await model.archive(rows.filter(\.canArchive)) })
+        }
+        guard !back.isEmpty else { return nil }
+        let label = back.allSatisfy(\.spam) ? "action_not_spam_count" : "action_inbox_count"
+        return (tr(label, back.count), { rows in await model.moveToInbox(rows.filter(\.canMoveToInbox)) })
+    }
+
     var body: some View {
         let done = picked.filter(\.canArchive).count
+        let back = picked.filter(\.canMoveToInbox)
         let unread = picked.contains { $0.threadUnread > 0 }
         let forever = !picked.contains(where: \.canTrash)
         HStack(spacing: 8) {
@@ -695,12 +726,10 @@ private struct ChoiceBar: View {
                 Image(systemName: "ellipsis.circle")
             }
             .accessibilityLabel(Text("action_more"))
-            if done > 0 {
-                Button(tr("action_done_count", done)) {
-                    model.choice { rows in await model.archive(rows.filter(\.canArchive)) }
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(Color.ozeroFill)
+            if let main = main(done: done, back: back) {
+                Button(main.label) { model.choice(main.act) }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color.ozeroFill)
             }
         }
         .font(.lead)

@@ -46,8 +46,8 @@ import uniffi.ozero_api.MessageItem
 /** Messages waiting for a time to snooze to: [then] runs once one is picked, [reset] if none is. */
 class Snoozing(val messages: List<MessageItem>, val reset: () -> Unit = {}, val then: () -> Unit = {})
 
-/** A swiped [message] waiting for a folder from [targets]; [reset] brings its row back. */
-class Moving(val message: MessageItem, val targets: List<FolderItem>, val reset: () -> Unit)
+/** Swiped or chosen [messages] waiting for a folder from [targets]; [reset] brings their rows back. */
+class Moving(val messages: List<MessageItem>, val targets: List<FolderItem>, val reset: () -> Unit)
 
 /**
  * The times to snooze to, from [now] on: later today and this evening while there is time
