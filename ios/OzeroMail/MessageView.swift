@@ -408,7 +408,7 @@ struct MessageView: View {
         .padding(.horizontal, 12)
         .padding(.top, 10)
         .padding(.bottom, 4)
-        .background(.bar)
+        .dockBackground()
     }
 
     /// Beside the list, where the height is short: the answers and the actions in one row.
@@ -422,7 +422,7 @@ struct MessageView: View {
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, minHeight: paneButton, alignment: .leading)
                     .padding(.horizontal, 16)
-                    .background(Color.ozeroCard, in: .capsule)
+                    .background(Color.ozeroCard.sunk, in: .capsule)
             }
             .buttonStyle(.plain)
             RoundButton(icon: "arrowshape.turn.up.left.2", label: "message_reply_all", size: paneButton) { reply(answer, all: true) }
@@ -438,7 +438,7 @@ struct MessageView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(.bar)
+        .dockBackground()
     }
 
     /// A reply low on the page, to the sender; with `all` the others it went to are copied.
@@ -1167,7 +1167,7 @@ private struct QuickReply: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
         }
-        .background(.bar)
+        .dockBackground()
         .onAppear {
             text = richShown(text: start.text)
             keeper = DraftKeeper(mail: mail, id: start.id)
@@ -1265,7 +1265,7 @@ struct RoundButton: View {
                 .font(.row)
                 .foregroundStyle(tint)
                 .frame(width: size, height: size)
-                .background(background, in: .circle)
+                .background(background.buttonFill, in: .circle)
         }
         .accessibilityLabel(Text(label))
     }
@@ -1287,7 +1287,7 @@ struct BarAction: View {
             }
             .foregroundStyle(tint)
             .frame(maxWidth: .infinity, minHeight: 52)
-            .background(background, in: .rect(cornerRadius: 14))
+            .background(background.buttonFill, in: .rect(cornerRadius: 14))
             .contentShape(.rect)
         }
         .buttonStyle(.plain)

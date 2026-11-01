@@ -248,7 +248,7 @@ struct ReasonSheet: View {
                 }
                 Button { onSend(reason) } label: {
                     Text("compose_send").foregroundStyle(.white).frame(maxWidth: .infinity, minHeight: 46)
-                        .background(Color.ozeroFill, in: .rect(cornerRadius: 14))
+                        .background(Color.ozeroFill.lifted, in: .rect(cornerRadius: 14))
                 }
             }
             .font(.rowStrong)

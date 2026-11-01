@@ -32,6 +32,8 @@ import androidx.compose.animation.core.rememberTransition
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
@@ -139,7 +141,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -1250,9 +1251,12 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     }
 
     val colors = MaterialTheme.colorScheme
-    Box(Modifier.fillMaxSize()) {
+    // A sinking screen fades towards the deeper colour beneath, so it darkens.
+    Box(Modifier.fillMaxSize().background(colors.deep)) {
         rememberTransition(screens, label = "screen").AnimatedContent(transitionSpec = { slide() }) { shown ->
-            Box(Modifier.fillMaxSize().background(colors.background)) {
+            // A screen pushed in casts a shadow on the one beneath.
+            val edge = if (shown.depth > 0 && shown !is Screen.Write) Modifier.sheetEdge(colors) else Modifier
+            Box(Modifier.fillMaxSize().then(edge).background(colors.background)) {
                 when (shown) {
                     is Screen.Write -> ComposeScreen(
                         mail,
@@ -1564,9 +1568,13 @@ private sealed class Screen(val depth: Int) {
     data class Write(val composing: Composing) : Screen(3)
 }
 
+/** How small a screen gets as it sinks under the next one. */
+private const val SUNK = 0.97f
+
 /**
- * A screen pushed in from the right, as on iOS, with the one under it drifting left and
- * dimming; a new message rises from the bottom. Back plays it in reverse.
+ * A screen pushed in from the right like a sheet laid on top, as on iOS: the one under it drifts
+ * left and sinks back, a little smaller and darker; a new message rises from the bottom. Back
+ * plays it in reverse.
  */
 @OptIn(ExperimentalAnimationApi::class)
 private fun AnimatedContentTransitionScope<Screen>.slide(): ContentTransform {
@@ -1581,9 +1589,9 @@ private fun AnimatedContentTransitionScope<Screen>.slide(): ContentTransform {
         moving is Screen.Write ->
             ContentTransform(EnterTransition.None, slideOutVertically(move) { it }, -1f, null)
         forward ->
-            ContentTransform(slideInHorizontally(move) { it }, slideOutHorizontally(move, drift) + fadeOut(fade, 0.6f), 1f, null)
+            ContentTransform(slideInHorizontally(move) { it }, slideOutHorizontally(move, drift) + fadeOut(fade, 0.6f) + scaleOut(fade, SUNK), 1f, null)
         else ->
-            ContentTransform(slideInHorizontally(move, drift) + fadeIn(fade, 0.6f), slideOutHorizontally(move) { it }, -1f, null)
+            ContentTransform(slideInHorizontally(move, drift) + fadeIn(fade, 0.6f) + scaleIn(fade, SUNK), slideOutHorizontally(move) { it }, -1f, null)
     }
 }
 
@@ -2143,8 +2151,7 @@ private fun Dock(
     Column(
         modifier
             .fillMaxWidth()
-            .background(colors.bar)
-            .hairline(colors.outlineVariant, top = true)
+            .dock(colors)
             .navigationBarsPadding()
             .then(raise)
             .padding(top = if (short) 6.dp else Gap.barTop, bottom = if (short) 6.dp else Gap.barBottom),
@@ -2244,6 +2251,7 @@ private fun AccountsButton(accounts: List<AccountItem>, onClick: () -> Unit) {
             .size(48.dp)
             .clip(RoundedCornerShape(Radius.tile))
             .background(colors.surfaceVariant)
+            .sunk(colors)
             .clickable(onClickLabel = label, role = Role.Button, onClick = onClick)
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
@@ -2304,6 +2312,7 @@ private fun Tabs(
         modifier
             .clip(RoundedCornerShape(Radius.medium))
             .background(colors.surfaceVariant)
+            .sunk(colors)
             .whilePressed { pressed = it }
             .padding(3.dp),
     ) {
@@ -2325,8 +2334,8 @@ private fun Tabs(
                     scaleX = 1f - 0.03f * press
                     scaleY = sqrt(width.toPx() / long()) * (1f - 0.06f * press)
                 }
-                .shadow(1.dp, thumb)
-                .background(colors.background, thumb),
+                .lifted(colors, thumb, elevation = 2.dp)
+                .background(colors.raised, thumb),
         )
         Row(
             Modifier
@@ -2508,6 +2517,7 @@ internal fun MessageRow(message: MessageItem, onClick: () -> Unit, choosing: Flo
 @Composable
 private fun MessageLine(message: MessageItem, unread: Boolean, dot: Float, account: AccountMark?, shift: Dp, modifier: Modifier) {
     val colors = MaterialTheme.colorScheme
+    val unreadDot = remember(colors) { colors.window(colors.accent) }
     // The left edge holds only the unread dot; the account's colour sits by its name.
     Row(
         modifier
@@ -2531,7 +2541,7 @@ private fun MessageLine(message: MessageItem, unread: Boolean, dot: Float, accou
                             .drawBehind {
                                 if (dot > 0f) {
                                     val x = if (layoutDirection == LayoutDirection.Ltr) -11.dp.toPx() else size.width + 11.dp.toPx()
-                                    drawCircle(colors.accent.copy(alpha = dot), 3.5.dp.toPx() * (0.4f + 0.6f * dot), Offset(x, size.height / 2))
+                                    windowDot(unreadDot, 3.5.dp.toPx() * (0.4f + 0.6f * dot), Offset(x, size.height / 2), dot)
                                 }
                             },
                     )

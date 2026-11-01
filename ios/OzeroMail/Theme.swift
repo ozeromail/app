@@ -28,10 +28,55 @@ extension Color {
             blue: Double(rgb & 0xFF) / 255)
     }
 
-    private static func dynamic(light: UInt32, dark: UInt32) -> Color {
+    private static func dynamic(light: UInt32, dark: UInt32, alpha: (light: Double, dark: Double) = (1, 1)) -> Color {
         Color(uiColor: UIColor { traits in
-            UIColor(Color(rgb: traits.userInterfaceStyle == .dark ? dark : light))
+            let night = traits.userInterfaceStyle == .dark
+            return UIColor(Color(rgb: night ? dark : light)).withAlphaComponent(night ? alpha.dark : alpha.light)
         })
+    }
+}
+
+// A little depth in the icon's paper, kept faint. What lies on top of the page (the docks, the
+// accent buttons) lifts with a soft shadow and light along its top edge; what holds things (fields,
+// the accounts button) is cut in, with a shadow under its top edge; dots are tiny windows.
+extension Color {
+    /// Lifted off the page: light along its top edge and a soft shadow in its own colour.
+    var lifted: some ShapeStyle {
+        shadow(.inner(color: .white.opacity(0.3), radius: 0.5, y: 1))
+            .shadow(.drop(color: opacity(0.4), radius: 5, y: 2))
+    }
+
+    /// Cut into the page: a shadow under its top edge.
+    var sunk: some ShapeStyle {
+        shadow(.inner(color: .ozeroShade(day: 0.1, night: 0.45), radius: 1.5, y: 1))
+    }
+
+    /// A round mark as a tiny window: darker under its top edge, lighter below.
+    var window: some ShapeStyle {
+        LinearGradient(colors: [mix(with: Color(rgb: 0x142036), by: 0.3), self, mix(with: .white, by: 0.2)], startPoint: .top, endPoint: .bottom)
+    }
+
+    /// A button's fill: the accent lifts off the page, the rest lies flat.
+    var buttonFill: AnyShapeStyle {
+        self == .ozeroFill ? AnyShapeStyle(lifted) : AnyShapeStyle(self)
+    }
+
+    /// The ink of shadows: the paper's navy by day, black at night, as see-through as asked.
+    static func ozeroShade(day: Double, night: Double) -> Color {
+        dynamic(light: 0x142036, dark: 0x000000, alpha: (day, night))
+    }
+}
+
+extension View {
+    /// A dock lying on the list: the system's bar with a soft shadow above its top edge.
+    func dockBackground() -> some View {
+        background(.bar)
+            .overlay(alignment: .top) {
+                LinearGradient(colors: [.clear, .ozeroShade(day: 0.06, night: 0.3)], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 12)
+                    .offset(y: -12)
+                    .allowsHitTesting(false)
+            }
     }
 }
 
@@ -45,13 +90,13 @@ extension AccountItem {
     var tint: Color { Color(rgb: color) }
 }
 
-/// A dot of an account's colour.
+/// A dot of an account's colour, a tiny window.
 struct AccountDot: View {
     let color: Color
     var size: CGFloat = 10
 
     var body: some View {
-        Circle().fill(color).frame(width: size, height: size)
+        Circle().fill(color.window).frame(width: size, height: size)
     }
 }
 
