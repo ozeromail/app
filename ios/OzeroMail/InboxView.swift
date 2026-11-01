@@ -936,7 +936,7 @@ private struct SwipeTip: View {
     }
 }
 
-/// The undo toast: dark, rounded, low on the screen. A move also offers to show the folder.
+/// The undo toast: a dark capsule low on the screen, dark glass on iOS 26. A move also offers to show the folder.
 struct ToastView: View {
     let toast: Toast
     let onUndo: () -> Void
@@ -957,9 +957,9 @@ struct ToastView: View {
                 Button("action_undo", action: onUndo).fontWeight(.semibold).foregroundStyle(Color(rgb: 0x8CC2FF))
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 18)
         .padding(.vertical, 14)
-        .background(Color(rgb: 0x1B2639), in: .rect(cornerRadius: 14))
+        .glassSurface(in: .capsule, tint: Color(rgb: 0x1B2639), fallback: Color(rgb: 0x1B2639))
         .padding(.horizontal, 12)
     }
 }
