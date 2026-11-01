@@ -24,9 +24,9 @@ private struct Page: UIViewRepresentable {
     let message: Int64
     @Binding var height: CGFloat
 
-    /// The page with its text at the size the person picked.
+    /// The page with its text at the size the person picked, and the system's text size.
     private func sized(_ html: String) -> String {
-        let percent = Int((Settings.textScale * 100).rounded())
+        let percent = Int((Settings.readingScale * 100).rounded())
         guard percent != 100 else { return html }
         return html.replacingOccurrences(
             of: "</head>", with: "<style>html{-webkit-text-size-adjust:\(percent)%}</style></head>",

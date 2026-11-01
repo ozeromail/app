@@ -37,6 +37,7 @@
   "action_cancel": "Отмена",
   "message_reply": "Ответить",
   "inbox_sending": "Отправляется",
+  "inbox_row_unread": "Не прочитано",
   "error_bad_recipients": "Проверьте адреса в поле «Кому».",
   "error_bad_copies": "Проверьте адреса в поле «Копия».",
   "error_no_smtp": "У этого аккаунта нет сервера SMTP, поэтому он пока не может отправлять почту.",

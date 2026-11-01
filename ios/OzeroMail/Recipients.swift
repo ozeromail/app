@@ -197,7 +197,7 @@ private struct RecipientChip: View {
                     .font(.label)
                     .foregroundStyle(.secondary)
                     .frame(width: 32, height: 32)
-                    .contentShape(.rect)
+                    .contentShape(Rectangle().inset(by: -6))
             }
             .buttonStyle(.plain)
             .accessibilityLabel(tr("compose_remove_person", name))

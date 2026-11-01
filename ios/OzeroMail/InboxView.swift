@@ -1179,6 +1179,9 @@ struct MessageRow: View {
                 .animation(.easeOut(duration: 0.15), value: unread)
         }
         .padding(.vertical, 6)
+        // VoiceOver reads the row as one, and hears the dot.
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(unread ? Text("inbox_row_unread") : Text(verbatim: ""))
     }
 }
 

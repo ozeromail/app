@@ -749,7 +749,7 @@ private struct LetterMore: View {
                 .font(.smallStrong)
                 .foregroundStyle(.secondary)
                 .frame(width: 32, height: 24)
-                .contentShape(.rect)
+                .contentShape(Rectangle().inset(by: -10))
         }
         .accessibilityLabel(Text("action_more"))
     }
@@ -936,7 +936,7 @@ private struct PlainText: View {
     let quote: String
     @State private var showQuote = false
     // Read once when the letter opens.
-    private let scale = Settings.textScale
+    private let scale = Settings.readingScale
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -954,6 +954,7 @@ private struct PlainText: View {
                         .padding(.horizontal, 10)
                         .padding(.vertical, 1)
                         .background(Color.ozeroCard, in: .rect(cornerRadius: 9))
+                        .contentShape(Rectangle().inset(by: -14))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text("message_quote"))
@@ -1384,5 +1385,5 @@ extension Font {
 
     /// Quoted text under a message, a step quieter.
     static func readingQuote(scale: Double) -> Font { .system(size: 15.5 * scale, design: .serif) }
-    static let readingQuote = readingQuote(scale: 1)
+    static var readingQuote: Font { readingQuote(scale: Settings.readingScale(1)) }
 }
