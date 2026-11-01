@@ -3153,7 +3153,7 @@ fn a_message_keeps_how_to_leave_its_list() {
 #[test]
 fn keeps_the_marks_of_text_written_before_styles() {
     let plain = "5*3 = 15 \\o/ _x_ ~a~ `c` [l](u) # - > !";
-    let conn = Connection::open_in_memory().unwrap();
+    let conn = connect(Connection::open_in_memory).unwrap();
     conn.execute_batch("CREATE TABLE draft (text TEXT); CREATE TABLE outbox (text TEXT);")
         .unwrap();
     conn.execute("INSERT INTO draft VALUES (?1)", [plain])
@@ -3489,4 +3489,23 @@ fn finds_all_mail_with_a_person() {
         )
         .unwrap();
     assert_eq!(dates(&["oleg@home.example"]), [400, 300]);
+}
+
+/// SQLCipher sets itself up after SQLite says it is ready; the stores opened meanwhile were
+/// refused their key. Shows only when this is the process's first open, as alone with `--exact`.
+#[test]
+fn stores_opened_at_once_all_take_their_key() {
+    let go = std::sync::Arc::new(std::sync::Barrier::new(32));
+    let threads: Vec<_> = (0..32)
+        .map(|_| {
+            let go = go.clone();
+            std::thread::spawn(move || {
+                go.wait();
+                SqliteStore::open_in_memory(&KEY).map(|_| ())
+            })
+        })
+        .collect();
+    for t in threads {
+        t.join().unwrap().unwrap();
+    }
 }

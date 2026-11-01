@@ -4,7 +4,7 @@ mod schema;
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Answer, Attachment, Body, Category, Changes,
@@ -33,12 +33,12 @@ impl std::fmt::Debug for SqliteStore {
 impl SqliteStore {
     /// Opens or creates the database at `path` with a 256-bit key from the platform keystore.
     pub fn open(path: &Path, key: &[u8; 32]) -> Result<Self, StoreError> {
-        Self::init(Connection::open(path).map_err(storage)?, key)
+        Self::init(connect(|| Connection::open(path))?, key)
     }
 
     #[cfg(test)]
     fn open_in_memory(key: &[u8; 32]) -> Result<Self, StoreError> {
-        Self::init(Connection::open_in_memory().map_err(storage)?, key)
+        Self::init(connect(Connection::open_in_memory)?, key)
     }
 
     fn init(conn: Connection, key: &[u8; 32]) -> Result<Self, StoreError> {
@@ -84,6 +84,14 @@ impl SqliteStore {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
+}
+
+/// Opens a connection while no other thread does. The first open marks SQLite ready before
+/// SQLCipher has set itself up, and a connection opened in between is refused its key.
+fn connect(open: impl FnOnce() -> rusqlite::Result<Connection>) -> Result<Connection, StoreError> {
+    static OPENING: Mutex<()> = Mutex::new(());
+    let _alone = OPENING.lock().unwrap_or_else(PoisonError::into_inner);
+    open().map_err(storage)
 }
 
 /// Passes the raw key (no slow password derivation) and wipes our copy of the statement.
