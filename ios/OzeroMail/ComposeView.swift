@@ -8,7 +8,7 @@ struct Composing: Identifiable, Equatable {
     var original: MessageItem?
 }
 
-/// A new message, a reply or a forward, on the whole screen. The fields sit low, near the
+/// A new message, a reply or a forward, in a sheet. The fields sit low, near the
 /// keyboard; the message being answered or forwarded stays on top. `onSent` gets the outbox id
 /// for undo.
 ///
@@ -72,6 +72,9 @@ struct ComposeView: View {
     @State private var unfolded = false
     /// Upright: the height of the page, and whether To and Subject are on it in sight.
     @State private var room: CGFloat = 0
+    /// How tall the page and the bar under it are, for the sheet to fit them.
+    @State private var pageHeight: CGFloat = 0
+    @State private var barHeight: CGFloat = 0
     @State private var headingInSight = true
     /// The files the text shows as images, which go without a chip.
     @State private var shownFiles: [Int64] = []
@@ -180,9 +183,10 @@ struct ComposeView: View {
                                 .zIndex(1)
                             }
                             // A new message starts with room to write in, not one line under an empty page.
-                            writing(minHeight: composing.original == nil ? room / 3 : 0)
+                            writing(minHeight: growing ? Self.writingRoom : composing.original == nil ? room / 3 : 0)
                         }
                         .padding(.bottom, 20)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { pageHeight = $0 }
                         .frame(maxWidth: .infinity, minHeight: room, alignment: .bottom)
                     }
                     .defaultScrollAnchor(.bottom)
@@ -224,9 +228,12 @@ struct ComposeView: View {
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { barHeight = $0 }
                 }
             }
         }
+        .presentationDetents(growing ? [fitted] : [.large])
+        .animation(.smooth, value: pageHeight)
         .onChange(of: editing) { _, now in
             if !now { unfolded = false }
         }
@@ -312,6 +319,20 @@ struct ComposeView: View {
 
     /// Upright, To and Subject brought down over the bar.
     private var docked: Bool { !sideways && unfolded }
+
+    /// Upright, a new message is a sheet only as tall as what is written, over the keyboard,
+    /// growing up as the text does; the inbox shows above it, so no empty page waits there.
+    private var growing: Bool { !sideways && composing.original == nil }
+
+    private var fitted: PresentationDetent {
+        .height(max(Self.leastHeight, (pageHeight + barHeight + Self.grabber).rounded()))
+    }
+
+    private static let leastHeight: CGFloat = 220
+    /// The text's room in a new message before anything is written.
+    private static let writingRoom: CGFloat = 96
+    /// Room over the page for the sheet's grabber.
+    private static let grabber: CGFloat = 20
 
     /// To and Subject in one line.
     private var summary: String {

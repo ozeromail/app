@@ -954,7 +954,10 @@ extension Category {
     /// Every tab, in the order the core lists them; shown before the counts arrive.
     static let all: [Category] = [.people, .notifications, .newsletters]
 
-    var label: LocalizedStringKey {
+    var label: LocalizedStringKey { LocalizedStringKey(key) }
+
+    /// The key of the tab's name.
+    var key: String {
         switch self {
         case .people: "tab_people"
         case .notifications: "tab_notifications"
