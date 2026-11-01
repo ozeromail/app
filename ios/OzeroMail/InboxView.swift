@@ -285,10 +285,8 @@ private struct InboxList: View {
     /// Where the list's content top is: above the top while scrolled, below it while pulled.
     @State private var top = ListTop()
     @State private var dragging = false
-    /// Only a pull shows the water's sync; syncs on their own stay quiet over the saved mail.
+    /// Only a pull's or Try again's sync says so; syncs on their own stay quiet over the saved mail.
     @State private var refreshing = false
-    /// After a sync the list stays open until its water has calmed, so the calm is seen.
-    @State private var waterCalm = true
     /// The system holds the list open over its refresh, and from when it takes the pull the top
     /// inset grows by what it holds; the water counts from the inset before the pull.
     @State private var holding = false
@@ -317,9 +315,7 @@ private struct InboxList: View {
     }
 
     private var checking: LakeWords? {
-        if waiting { return LakeWords(title: "lake_loading_title", text: slow > 0 ? "lake_loading_slow" : nil) }
-        if refreshing { return LakeWords(title: "lake_checking_title", text: slow > 0 ? "status_slow" : nil) }
-        return nil
+        waiting ? LakeWords(title: "lake_loading_title", text: slow > 0 ? "lake_loading_slow" : nil) : nil
     }
 
     /// What the line over the dock says, and whether a new check may help.
@@ -335,8 +331,7 @@ private struct InboxList: View {
             return (text, error == "error_server" || error == "error_tls")
         }
         if model.syncing && slow == 2 && !waiting { return (tr("status_background"), false) }
-        // An empty list's words say it themselves.
-        if refreshing && !model.messages.isEmpty { return (tr(slow > 0 ? "status_slow" : "status_checking"), false) }
+        if refreshing { return (tr(slow > 0 ? "status_slow" : "status_checking"), false) }
         if upToDate { return (tr("lake_checked_now"), false) }
         return nil
     }
@@ -377,9 +372,7 @@ private struct InboxList: View {
                 SwipeTip(swipes: model.swipes, lift: !model.sideways, onDismiss: model.closeSwipeTip)
             }
             if lake {
-                LakeNote(title: model.emptyTitle, drawIn: model.hadMail, grey: !model.tabbed,
-                         checking: checking, checkedAt: model.isInbox ? model.checkedAt : nil,
-                         refreshing: refreshing, pull: pull)
+                LakeNote(title: model.emptyTitle, checking: checking, checkedAt: model.isInbox ? model.checkedAt : nil)
                     .id(model.mailbox)
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
@@ -441,20 +434,19 @@ private struct InboxList: View {
         // The system's own pull: its scroll holds the list open and lets it go, so the rows never
         // fight a second spring. Its spinner is hidden (OzeroMailApp); the water shows instead.
         .refreshable { await pulled() }
-        .sensoryFeedback(.impact(weight: .light), trigger: pull.fraction >= 1)
-        // There is one water, and it stays put: a pull moves the title and the rows down to uncover
-        // it, under the bar and over the title. Without a large title it opens under the bar. An
-        // empty list already shows its lake: the pull's drop falls there instead.
+        // One tick, as the system takes the pull.
+        .sensoryFeedback(.impact(weight: .light), trigger: pulls)
+        // The same on every screen, with mail or none: the water stays put, under the bar and over
+        // the title, and a pull moves the title and the list down to uncover it. Without a large
+        // title it opens under the bar.
         .overlay(alignment: .top) {
-            if !lake {
-                PullWater(grey: !model.tabbed, refreshing: refreshing, pull: pull) { waterCalm = $0 }
-                    .frame(height: pull.gap)
-                    .clipped()
-                    .padding(.top, titleTop ?? (model.sideways ? base : base - Lake.largeTitle))
-                    .allowsHitTesting(false)
-                    // Counted from the top of the screen, as the inset is.
-                    .ignoresSafeArea(.container, edges: .top)
-            }
+            PullWater(grey: !model.tabbed, pull: pull)
+                .frame(height: pull.gap)
+                .clipped()
+                .padding(.top, titleTop ?? (model.sideways ? base : base - Lake.largeTitle))
+                .allowsHitTesting(false)
+                // Counted from the top of the screen, as the inset is.
+                .ignoresSafeArea(.container, edges: .top)
         }
         .background { LargeTitleFinder(title: largeTitle) }
         // A check the user waits on says when it is slow; a pull lets go after a while, and the sync
@@ -583,20 +575,15 @@ private struct InboxList: View {
     /// How far from the top and the end of the list the tabs stay put.
     private static let tabsStay: CGFloat = 80
 
-    /// The finger lets the list go: past a third of a pull a drop falls, sized by how far it went.
-    /// A whole pull the system has taken (`pulled`) syncs.
+    /// The finger lets the list go: the pressed water springs back, and a pull the system has taken
+    /// (`pulled`) sends a ring across it.
     private func letGo() {
-        let fraction = pull.fraction
         dragging = false
         pull.fraction = 0
-        guard fraction >= Lake.tug else { return }
-        // A pull the system took for a refresh drops a whole drop, however far it went.
-        pull.lastDrop = holding ? max(fraction, 1) : fraction
-        pull.drops += 1
-        if !lake { waterCalm = false }
+        if holding { pull.rings += 1 }
     }
 
-    /// The system's pull: the list stays open until the check is through and its water has calmed.
+    /// The system's pull: the list stays open until the check is through.
     private func pulled() async {
         holding = true
         pulls += 1
@@ -613,16 +600,13 @@ private struct InboxList: View {
         // one starting under it jolts the rows.
         await until { !dragging }
         check()
-        // An empty list's lake shows the check itself.
-        guard !lake else { return }
         // A check that has gone too long lets the list go while it runs on.
         await until { !refreshing }
-        await until(within: .seconds(3)) { waterCalm }
     }
 
-    /// Waits until `done`, at most `limit`.
-    private func until(within limit: Duration = .seconds(60), _ done: () -> Bool) async {
-        let end = ContinuousClock.now + limit
+    /// Waits until `done`, at most a minute.
+    private func until(_ done: () -> Bool) async {
+        let end = ContinuousClock.now + .seconds(60)
         while !done(), ContinuousClock.now < end, !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(50))
         }

@@ -89,9 +89,6 @@ final class InboxModel {
         didSet { Settings.syncedBoxes = everSynced }
     }
     var loadingOlder = false
-    /// Whether this tab or mailbox had mail since it was picked: then the lake draws itself in as
-    /// the last message leaves, and not on opening the app or on picking an empty tab.
-    var hadMail = false
     /// The key of the error to show, if any.
     var error: String? {
         didSet { failing = [] }
@@ -259,7 +256,6 @@ final class InboxModel {
                 }
                 // Only a real change: the list diffs every row otherwise.
                 if found != messages { messages = found }
-                if !found.isEmpty { hadMail = true }
                 savedEnds = found.count < size
             }
         } catch {
@@ -315,7 +311,6 @@ final class InboxModel {
     func switched() async {
         chosen = []
         pane = nil
-        hadMail = false
         listSize = Self.page
         await loadList()
     }
