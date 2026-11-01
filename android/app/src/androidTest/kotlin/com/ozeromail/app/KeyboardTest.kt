@@ -27,10 +27,12 @@ class KeyboardTest : TestMail() {
         // Risen all the way, so the close button stays where it is tapped.
         var at = -1f
         waitFor { bounds(send).top.let { top -> (top < screen.bottom && top == at).also { at = top } } }
-        // The visible one: a folded heading keeps another of no size.
-        val close = rule.onAllNodes(hasContentDescription("Close")).fetchSemanticsNodes()
+        // The one on screen; another may be there with no size.
+        fun close() = rule.onAllNodes(hasContentDescription("Close")).fetchSemanticsNodes()
             .map { it.boundsInRoot }
-            .first { it.width > 0f && it.top < screen.bottom }
+            .firstOrNull { it.width > 0f && it.top < screen.bottom }
+        waitFor { close() != null }
+        val close = requireNotNull(close())
         film("keyboard-close", every = 3) {
             track("send", send)
             track("typing", typing)
