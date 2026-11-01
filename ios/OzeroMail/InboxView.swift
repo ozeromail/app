@@ -736,22 +736,25 @@ private struct InboxTabs: View {
 /// The height of the inbox's tab bar.
 private let tabBarHeight: CGFloat = 62
 
-/// The inbox's tabs as the system's tab bar, on iOS 26: an icon over each name, the unread count
-/// as a badge. A tap on the open tab goes to the top of its list.
+/// The inbox's tabs as the system's tab bar, on iOS 26: names only, centred, each with its unread
+/// count. A tap on the open tab goes to the top of its list.
 private struct InboxTabBar: UIViewRepresentable {
     let model: InboxModel
 
-    private static let icons: [Category: String] = [
-        .people: "person.2", .notifications: "bell", .newsletters: "newspaper",
-    ]
+    /// Lifts a name with no icon over it to the middle of the bar.
+    private static let centred = UIOffset(horizontal: 0, vertical: -12)
+    private static let font = UIFont.systemFont(ofSize: 15, weight: .medium)
 
     func makeCoordinator() -> Coordinator { Coordinator(model: model) }
 
     func makeUIView(context: Context) -> UITabBar {
         let bar = UITabBar()
         bar.delegate = context.coordinator
-        bar.items = Category.all.enumerated().map { at, category in
-            UITabBarItem(title: tr(category.key), image: UIImage(systemName: Self.icons[category] ?? "tray"), tag: at)
+        bar.items = Category.all.indices.map { at in
+            let item = UITabBarItem(title: nil, image: nil, tag: at)
+            item.titlePositionAdjustment = Self.centred
+            item.setTitleTextAttributes([.font: Self.font], for: .normal)
+            return item
         }
         return bar
     }
@@ -761,8 +764,7 @@ private struct InboxTabBar: UIViewRepresentable {
         for item in bar.items ?? [] {
             let category = Category.all[item.tag]
             let unread = model.tabs.first { $0.category == category }?.unread ?? 0
-            item.badgeValue = unread > 0 ? "\(unread)" : nil
-            item.badgeColor = UIColor(Color.ozeroAccent)
+            item.title = tr(category.key) + (unread > 0 ? " \(unread)" : "")
         }
         let at = Category.all.firstIndex(of: model.tab) ?? 0
         if bar.selectedItem?.tag != at { bar.selectedItem = bar.items?[at] }
