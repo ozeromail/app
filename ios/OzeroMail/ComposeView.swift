@@ -233,6 +233,9 @@ struct ComposeView: View {
             }
         }
         .presentationDetents(growing ? [fitted] : [.large])
+        // A low sheet is clear glass on iOS 26, and the inbox would show through the text being
+        // written: the page is opaque, as in the iPhone's own Mail.
+        .presentationBackground(Color(uiColor: .systemBackground))
         .animation(.smooth, value: pageHeight)
         .onChange(of: editing) { _, now in
             if !now { unfolded = false }
