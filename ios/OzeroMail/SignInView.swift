@@ -702,9 +702,7 @@ private struct Fitting<Content: View>: View {
                 content.frame(minHeight: space.size.height, alignment: .top)
             }
             .scrollDismissesKeyboard(.interactively)
-            .onTapGesture {
-                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-            }
+            .onTapGesture { hideKeyboard() }
         }
     }
 }
