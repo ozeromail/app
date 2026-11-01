@@ -111,7 +111,7 @@ private struct CardButton: View {
                 .foregroundStyle(.primary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(Color(.systemBackground), in: .rect(cornerRadius: 10))
+                .background(Color(.systemBackground), in: .rect(cornerRadius: 12))
         }
         .buttonStyle(.plain)
     }
@@ -240,6 +240,8 @@ struct ReasonSheet: View {
     let organizer: String
     let onSend: (String) -> Void
     @State private var reason = ""
+    /// The sheet's height, from what it holds, so large text never cuts the buttons off.
+    @State private var height: CGFloat = 300
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -260,7 +262,9 @@ struct ReasonSheet: View {
             .controlSize(.large)
         }
         .padding(22)
-        .presentationDetents([.height(300)])
+        .fixedSize(horizontal: false, vertical: true)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+        .presentationDetents([.height(height)])
     }
 }
 

@@ -5,6 +5,7 @@
   "action_undo": "Отменить",
   "signin_title": "Добавить аккаунт",
   "signin_email": "Почта",
+  "signin_email_example": "name@example.com",
   "signin_password": "Пароль",
   "signin_server": "Сервер IMAP",
   "signin_port": "Порт",

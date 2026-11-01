@@ -5,6 +5,7 @@
   "action_undo": "Undo",
   "signin_title": "Add an account",
   "signin_email": "Email",
+  "signin_email_example": "name@example.com",
   "signin_password": "Password",
   "signin_server": "IMAP server",
   "signin_port": "Port",
