@@ -2334,7 +2334,7 @@ private fun Tabs(
                     scaleX = 1f - 0.03f * press
                     scaleY = sqrt(width.toPx() / long()) * (1f - 0.06f * press)
                 }
-                .lifted(colors, thumb, elevation = 2.dp)
+                .lifted(colors, thumb, elevation = 1.dp)
                 .background(colors.raised, thumb),
         )
         Row(

@@ -20,8 +20,9 @@ import androidx.compose.ui.unit.dp
 // A little depth in the icon's paper, kept faint. What lies on top of the page (the docks, the
 // accent buttons, the tabs' thumb, a screen pushed in) lifts with a soft shadow and light along
 // its top edge; what holds things (fields, the tabs' track, the accounts button) is cut in, with
-// a shadow under its top edge; dots are tiny windows. At night shadows hardly show, so lifted
-// things are a shade lighter and a lit edge carries them.
+// a shadow under its top edge; dots are tiny windows. At night shadows hardly show, so the thumb
+// is a shade lighter and a lit edge carries the lifted buttons; the docks stay the page's colour,
+// so the fields cut into them still read lighter than the dock.
 
 val ColorScheme.night: Boolean
     get() = background.luminance() < 0.5f
@@ -34,9 +35,6 @@ private fun ColorScheme.shade(day: Float, night: Float): Color =
 private val ColorScheme.lit: Color
     get() = Color.White.copy(alpha = if (night) 0.07f else 0.35f)
 
-/** The bottom docks: the page by day, a shade lighter at night, since they lie on top. */
-private val ColorScheme.dockFill: Color
-    get() = if (night) surfaceContainerHigh else background
 
 /** Beneath the screens, where one sinks as the next is laid over it. */
 val ColorScheme.deep: Color
@@ -47,9 +45,9 @@ val ColorScheme.raised: Color
     get() = if (night) surfaceContainerHighest else background
 
 /** Lifts a button off the page: a soft shadow tinted by [glow] and light along its top edge. */
-fun Modifier.lifted(colors: ColorScheme, shape: Shape, glow: Color = colors.shade(1f, 1f), elevation: Dp = 4.dp): Modifier {
+fun Modifier.lifted(colors: ColorScheme, shape: Shape, glow: Color = colors.shade(1f, 1f), elevation: Dp = 2.dp): Modifier {
     val lit = colors.lit
-    return shadow(elevation, shape, ambientColor = glow.copy(alpha = 0.5f), spotColor = glow)
+    return shadow(elevation, shape, ambientColor = glow.copy(alpha = 0.3f), spotColor = glow.copy(alpha = 0.7f))
         .drawWithContent {
             drawContent()
             drawLine(lit, Offset(0f, 0.5.dp.toPx()), Offset(size.width, 0.5.dp.toPx()), 1.dp.toPx())
@@ -62,17 +60,17 @@ fun Modifier.liftedIfAccent(colors: ColorScheme, background: Color, shape: Shape
 
 /** Cuts a field into the page: a shadow under its top edge. Goes after the field's clip and background. */
 fun Modifier.sunk(colors: ColorScheme): Modifier = drawWithCache {
-    val deep = 3.dp.toPx()
-    val brush = Brush.verticalGradient(listOf(colors.shade(0.08f, 0.32f), Color.Transparent), endY = deep)
+    val deep = 2.dp.toPx()
+    val brush = Brush.verticalGradient(listOf(colors.shade(0.05f, 0.25f), Color.Transparent), endY = deep)
     onDrawBehind { drawRect(brush, size = Size(size.width, deep)) }
 }
 
 /** A bottom dock lying on the list: its fill, see-through as the bars unless [solid], with a soft shadow above its top edge. */
 fun Modifier.dock(colors: ColorScheme, solid: Boolean = false): Modifier =
-    background(colors.dockFill.copy(alpha = if (solid) 1f else 0.94f))
+    background(if (solid) colors.background else colors.bar)
         .drawWithCache {
-            val fall = 12.dp.toPx()
-            val brush = Brush.verticalGradient(listOf(Color.Transparent, colors.shade(0.06f, 0.3f)), startY = -fall, endY = 0f)
+            val fall = 10.dp.toPx()
+            val brush = Brush.verticalGradient(listOf(Color.Transparent, colors.shade(0.04f, 0.3f)), startY = -fall, endY = 0f)
             onDrawBehind { drawRect(brush, Offset(0f, -fall), Size(size.width, fall)) }
         }
         .hairline(colors.outlineVariant.copy(alpha = 0.6f), top = true)
