@@ -242,7 +242,7 @@ private struct InboxList: View {
     /// Counts the checks asked for, so one let go of does not end a newer one.
     @State private var checks = 0
     /// The rows on screen, and the row at the top of each tab when it was left.
-    @State private var onScreen: Set<Int64> = []
+    @State private var onScreen = RowsOnScreen()
     @State private var places: [Category: Int64] = [:]
     /// The row to bring back to the top once the tab's mail is in.
     @State private var returning: Int64?
@@ -329,7 +329,7 @@ private struct InboxList: View {
                 OpenRow(model: model, message: message)
                 .tag(message.id)
                 .onScrollVisibilityChange(threshold: 0.5) { shown in
-                    if shown { onScreen.insert(message.id) } else { onScreen.remove(message.id) }
+                    if shown { onScreen.ids.insert(message.id) } else { onScreen.ids.remove(message.id) }
                 }
                 // As in the iPhone's own Mail: a full swipe does the long action, a shorter one
                 // shows both to tap. The first is the one at the edge.
@@ -474,15 +474,16 @@ private struct InboxList: View {
         }
         // Each tab keeps its place: the row at its top when it was left comes back to the top.
         .onChange(of: model.tab) { old, _ in
-            model.tabsHidden = false
-            let first = model.messages.first { onScreen.contains($0.id) }?.id
+            if model.tabsHidden { model.tabsHidden = false }
+            let first = model.messages.first { onScreen.ids.contains($0.id) }?.id
             places[old] = first == model.messages.first?.id ? nil : first
             returning = places[model.tab]
         }
-        .onChange(of: model.messages.map(\.id)) { _, ids in
-            guard let row = returning, !ids.isEmpty else { return }
+        // Another tab's mail starts with another message.
+        .onChange(of: model.messages.first?.id) {
+            guard let row = returning, !model.messages.isEmpty else { return }
             returning = nil
-            if ids.contains(row) { proxy.scrollTo(row, anchor: .top) }
+            if model.messages.contains(where: { $0.id == row }) { proxy.scrollTo(row, anchor: .top) }
         }
     }
 
@@ -605,7 +606,7 @@ private struct Dock: View {
                 .animation(.smooth, value: choosing)
             }
         }
-        .padding(.horizontal, floating ? 16 : 12)
+        .padding(.horizontal, hasGlass ? 16 : 12)
         // On its side the height is for the mail.
         .padding(.top, model.sideways ? 6 : 10)
         .padding(.bottom, 4)
@@ -622,11 +623,6 @@ private struct Dock: View {
         )
     }
 
-    /// On iOS 26 the dock floats, away from the screen's rounded edges.
-    private var floating: Bool {
-        if #available(iOS 26, *) { return true }
-        return false
-    }
 }
 
 /// The inbox's tabs as on the iPhone: a capsule whose thumb slides to the open tab and follows a
@@ -682,6 +678,12 @@ private struct InboxTabs: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text("inbox_title"))
     }
+}
+
+/// The rows on screen, kept out of sight of the view: scrolling changes them all the time, and
+/// only a change of tab reads them.
+private final class RowsOnScreen {
+    var ids: Set<Int64> = []
 }
 
 /// A row of the list that opens its message: beside the list on its side, on its own screen
@@ -747,18 +749,9 @@ private struct ComposeButton: View {
     let model: InboxModel
 
     var body: some View {
-        Button {
+        RoundButton(icon: "square.and.pencil", label: "compose_new", size: glassButton, tint: .white, background: .ozeroFill) {
             model.write()
-        } label: {
-            Image(systemName: "square.and.pencil")
-                .font(.heading)
-                .foregroundStyle(.white)
-                .frame(width: glassButton, height: glassButton)
-                .contentShape(.circle)
         }
-        .buttonStyle(.plain)
-        .glassSurface(in: .circle, tint: .ozeroFill, fallback: Color.ozeroFill.lifted)
-        .accessibilityLabel(Text("compose_new"))
     }
 }
 
@@ -828,31 +821,29 @@ private struct ChoiceBar: View {
     /// What the bar has no room for, where it applies to the chosen.
     @ViewBuilder
     private var more: some View {
-        // Read once: `picked` filters the whole list.
-        let rows = picked
-        let back = rows.filter(\.canMoveToInbox)
+        let back = picked.filter(\.canMoveToInbox)
         Button("action_select_all", systemImage: "checkmark.circle") { model.chosen.formUnion(model.messages.map(\.id)) }
         // When they are all from one sender, the rest of that sender's mail.
-        if let first = rows.first, rows.allSatisfy({ $0.fromEmail == first.fromEmail }) {
+        if let first = picked.first, picked.allSatisfy({ $0.fromEmail == first.fromEmail }) {
             Button(tr("action_all_from", first.sender), systemImage: "person") {
                 model.chosen.formUnion(model.messages.filter { $0.fromEmail == first.fromEmail }.map(\.id))
             }
         }
         Divider()
-        if rows.contains(where: \.canArchive), !back.isEmpty {
+        if picked.contains(where: \.canArchive), !back.isEmpty {
             Button(LocalizedStringKey(back.allSatisfy(\.spam) ? "action_not_spam" : "action_move_to_inbox"), systemImage: "tray") {
                 model.choice { await model.moveToInbox($0.filter(\.canMoveToInbox)) }
             }
         }
         // Folders of one account only.
-        if rows.allSatisfy(\.canMove), Set(rows.map(\.accountId)).count == 1 {
+        if picked.allSatisfy(\.canMove), Set(picked.map(\.accountId)).count == 1 {
             Button("action_move_to_folder", systemImage: "folder") { model.choice { await model.move($0) } }
         }
-        let flag = rows.contains { !$0.flagged }
+        let flag = picked.contains { !$0.flagged }
         Button(LocalizedStringKey(flag ? "action_flag" : "action_unflag"), systemImage: flag ? "flag" : "flag.slash") {
             model.choice { await model.flag($0, flagged: flag) }
         }
-        if rows.contains(where: \.canSpam) {
+        if picked.contains(where: \.canSpam) {
             Button("action_spam", systemImage: "xmark.bin", role: .destructive) { model.choice { await model.spam($0.filter(\.canSpam)) } }
         }
     }
