@@ -102,7 +102,7 @@ jobs:
             ./gradlew :app:bundleRelease :app:assembleRelease
       - name: Upload the release
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ozero-mail-${{ github.ref_name }}
           path: |
@@ -127,7 +127,7 @@ jobs:
           fi
       - name: Upload debug APK
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ozero-mail-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
