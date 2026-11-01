@@ -1484,8 +1484,11 @@ fn moves_chosen_messages_only_where_all_of_them_can_go() {
     let mine = fill(&[ids[0], ids[2], ids[4]]);
 
     assert_eq!(names(vec![mine[0]]), ["Archive", "Work", "Trips"]);
-    // Neither folder the two are in.
-    assert_eq!(names(vec![mine[0], mine[1]]), ["Archive", "Trips"]);
+    // Either can go where the other is.
+    assert_eq!(
+        names(vec![mine[0], mine[1]]),
+        ["INBOX", "Archive", "Work", "Trips"]
+    );
     assert_eq!(names(vec![mine[2]]), ["INBOX", "Archive", "Work", "Trips"]);
     // Only the one in spam says so, for Not spam.
     let spam = |id| core.mailbox(Mailbox::Folder { id }, 10).unwrap()[0].spam;
@@ -1498,4 +1501,12 @@ fn moves_chosen_messages_only_where_all_of_them_can_go() {
     let theirs = fill(&[theirs[0].id.0]);
     assert!(names(vec![mine[0], theirs[0]]).is_empty());
     assert!(names(vec![]).is_empty());
+
+    // Only the one not there yet moves.
+    assert_eq!(
+        core.move_to_folder(vec![mine[0], mine[1]], ids[2])
+            .unwrap()
+            .len(),
+        1
+    );
 }
