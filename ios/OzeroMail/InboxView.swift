@@ -77,8 +77,7 @@ struct InboxView: View {
         .sheet(isPresented: $model.accountsOpen) {
             AccountsSheet(
                 accounts: model.accounts, folders: model.folders, mailbox: model.mailbox, drafts: model.drafts.count,
-                unread: model.peopleUnread, groups: $model.groups, allBoxes: $model.allBoxes, actions: accountsActions,
-                holdTip: model.holdTip)
+                unread: model.peopleUnread, groups: $model.groups, allBoxes: $model.allBoxes, actions: accountsActions)
             .task { await model.loadFolders() }
         }
         .fullScreenCover(isPresented: $model.addingAccount) {
@@ -684,7 +683,8 @@ private struct Dock: View {
             VStack(spacing: 10) {
                 if !model.sideways {
                     // Scrolling down, the tabs step aside for the mail, as on the iPhone's own Photos.
-                    if model.tabbed && !choosing && !model.tabsHidden {
+                    // With every tab empty there is nothing to switch to: one lake, no tabs.
+                    if model.tabbed && !choosing && !model.tabsHidden && !model.inboxEmpty {
                         InboxTabs(model: model)
                             .transition(.move(edge: .bottom).combined(with: .opacity).combined(with: .scale(scale: 0.9, anchor: .bottom)))
                     }
@@ -733,6 +733,7 @@ private struct Dock: View {
         .padding(.bottom, 4)
         .dockBackground(floating: true)
         .animation(.smooth(duration: 0.3), value: model.tabsHidden)
+        .animation(.smooth(duration: 0.3), value: model.inboxEmpty)
         // Dragged up, the dock brings up the mailboxes, as the button does. The system's sheet
         // cannot follow a finger, so it rises once the drag is clearly upward.
         .simultaneousGesture(
@@ -883,12 +884,15 @@ struct OpenRow: View {
 private struct Mailboxes: View {
     @Bindable var model: InboxModel
     let actions: AccountsActions
+    @State private var editing = false
 
     var body: some View {
         List {
+            // No bar over the sidebar: Edit stays in the inboxes' header.
             MailboxRows(
                 accounts: model.accounts, folders: model.folders, mailbox: model.mailbox, drafts: model.drafts.count,
-                unread: model.peopleUnread, allBoxes: $model.allBoxes, groups: $model.groups, actions: actions)
+                unread: model.peopleUnread, allBoxes: $model.allBoxes, groups: $model.groups, actions: actions,
+                editing: $editing, editInHeader: true)
         }
         .listStyle(.sidebar)
         .environment(\.defaultMinListRowHeight, 36)

@@ -13,8 +13,9 @@ struct AccountsActions {
     let onSettings: () -> Void
 }
 
-/// The mailboxes, for going places, and at the bottom the settings. Holding an account opens its
-/// settings; `holdTip` says so until it was done.
+/// The mailboxes, for going places, and at the bottom the settings. Edit, in the sheet's bar as in
+/// the iPhone's own Mail, turns the rows into switches to move; an account's settings open from its
+/// ⓘ there, or by holding it.
 struct AccountsSheet: View {
     let accounts: [AccountItem]
     let folders: [FolderItem]
@@ -25,21 +26,26 @@ struct AccountsSheet: View {
     @Binding var groups: Groups
     @Binding var allBoxes: AllBoxes
     let actions: AccountsActions
-    let holdTip: Bool
+    @State private var editing = false
 
     var body: some View {
         NavigationStack {
             List {
                 MailboxRows(
                     accounts: accounts, folders: folders, mailbox: mailbox, drafts: drafts, unread: unread,
-                    allBoxes: $allBoxes, groups: $groups, actions: actions)
-                if holdTip && accounts.count > 1 {
-                    Section { } footer: { Text("account_settings_hint") }
-                }
+                    allBoxes: $allBoxes, groups: $groups, actions: actions, editing: $editing, editInHeader: false)
             }
             .listStyle(.insetGrouped)
             .navigationTitle("folders_title")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                // With one account there is nothing to switch or move.
+                if accounts.count > 1 {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(editing ? "action_done" : "action_edit") { withAnimation(.smooth) { editing.toggle() } }
+                    }
+                }
+            }
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
@@ -60,9 +66,10 @@ struct MailboxRows: View {
     @Binding var allBoxes: AllBoxes
     @Binding var groups: Groups
     let actions: AccountsActions
-
     /// The inboxes and the mailboxes of all accounts show as switches to move.
-    @State private var editing = false
+    @Binding var editing: Bool
+    /// Where there is no bar over the list for it, Edit sits in the inboxes' header.
+    let editInHeader: Bool
 
     var body: some View {
         if drafts > 0 {
@@ -107,6 +114,12 @@ struct MailboxRows: View {
                         HStack {
                             Label { Text(verbatim: account.name) } icon: { AccountDot(color: account.tint) }
                             Spacer()
+                            // Its settings, in sight: holding the row is not something to find on one's own.
+                            Button { actions.onAccount(account) } label: {
+                                Image(systemName: "info.circle").frame(width: 44, height: 44).contentShape(.rect)
+                            }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel(Text("account_settings"))
                             // The unified inbox keeps one account at least; the row still moves.
                             Toggle(account.name, isOn: Binding(get: { account.inAll }, set: { actions.onInAll(account, $0) }))
                                 .labelsHidden()
@@ -142,9 +155,11 @@ struct MailboxRows: View {
             }
         } header: {
             PartHeader(title: "inboxes_title", open: open, onToggle: editing ? nil : { toggle { $0.toggled(Groups.inboxes) } }) {
-                Button(editing ? "action_done" : "action_edit") { withAnimation(.smooth) { editing.toggle() } }
-                    .font(.smallStrong)
-                    .textCase(nil)
+                if editInHeader {
+                    Button(editing ? "action_done" : "action_edit") { withAnimation(.smooth) { editing.toggle() } }
+                        .font(.smallStrong)
+                        .textCase(nil)
+                }
             }
         } footer: {
             if editing { Text("inboxes_edit_hint") }
