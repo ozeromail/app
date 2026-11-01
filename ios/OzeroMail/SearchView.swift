@@ -3,7 +3,8 @@ import SwiftUI
 /// Search over the saved mail, newest first, as the user types; once typing stops, the servers
 /// are asked too and what they find joins the list. The field sits at the bottom, in reach of the
 /// thumb, with filters over it that narrow what the words find, or list all they keep with no
-/// words; Close or back returns to the inbox. Before anything is typed, recent searches and the
+/// words; Close or back returns to the inbox. On iOS 26 the field is the system's, in glass at
+/// the bottom, and closing it returns to the inbox too. Before anything is typed, recent searches and the
 /// people the user has most mail with grow up from the field.
 struct SearchView: View {
     let model: InboxModel
@@ -18,6 +19,10 @@ struct SearchView: View {
     @State private var recent: [String] = []
     @State private var people: [PersonFound] = []
     @FocusState private var focused: Bool
+    /// The system's field is open, on iOS 26.
+    @State private var presented = false
+    /// On screen, not under a result opened from it.
+    @State private var visible = false
 
     private var search: Search { Search(text: query, filter: asked) }
 
@@ -63,35 +68,47 @@ struct SearchView: View {
                         .padding(.horizontal, 12)
                 }
                 SearchFilters(filter: $filter, accounts: model.accounts)
-                HStack(spacing: 8) {
-                    HStack {
-                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                        TextField("search_prompt", text: $query)
-                            .focused($focused)
-                            .submitLabel(.search)
-                            .autocorrectionDisabled()
+                if !hasGlass {
+                    HStack(spacing: 8) {
+                        HStack {
+                            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                            TextField("search_prompt", text: $query)
+                                .focused($focused)
+                                .submitLabel(.search)
+                                .autocorrectionDisabled()
+                        }
+                        .padding(.horizontal, 16)
+                        .frame(height: 48)
+                        .background(Color.ozeroCard.sunk, in: .capsule)
+                        Button {
+                            focused = false
+                            model.path.removeAll { $0 == .search }
+                        } label: {
+                            Image(systemName: "xmark").foregroundStyle(.primary).frame(width: 48, height: 48).contentShape(.circle)
+                        }
+                        .buttonStyle(.plain)
+                        .background(Color.ozeroCard, in: .circle)
+                        .accessibilityLabel(Text("action_close"))
                     }
-                    .padding(.horizontal, 16)
-                    .frame(height: 48)
-                    .glassSurface(in: .capsule, fallback: Color.ozeroCard.sunk)
-                    Button {
-                        focused = false
-                        model.path.removeAll { $0 == .search }
-                    } label: {
-                        Image(systemName: "xmark").foregroundStyle(.primary).frame(width: 48, height: 48).contentShape(.circle)
-                    }
-                    .buttonStyle(.plain)
-                    .glassSurface(in: .circle, fallback: Color.ozeroCard)
-                    .accessibilityLabel(Text("action_close"))
+                    .padding(.horizontal, 12)
                 }
-                .padding(.horizontal, hasGlass ? 16 : 12)
             }
             .padding(.top, 6)
             .padding(.bottom, 10)
             .dockBackground(floating: true)
         }
+        .systemSearch($query, presented: $presented)
         // Not on the way back from a result: the keyboard would cover the results.
-        .onAppear { if search.isEmpty { focused = true } }
+        .onAppear {
+            visible = true
+            guard search.isEmpty else { return }
+            if hasGlass { presented = true } else { focused = true }
+        }
+        .onDisappear { visible = false }
+        // The system field's close button closes search.
+        .onChange(of: presented) { was, now in
+            if was, !now, visible { model.path.removeAll { $0 == .search } }
+        }
         .task {
             if let recent = try? await model.mail.recentSearches() { self.recent = recent }
             if let people = try? await model.mail.frequentPeople() { self.people = people }
@@ -157,6 +174,19 @@ struct SearchView: View {
         }
         .listStyle(.plain)
         .middle(Room.list)
+    }
+}
+
+extension View {
+    /// On iOS 26, the system's search field, at the bottom in glass; before, the screen's own.
+    @ViewBuilder
+    fileprivate func systemSearch(_ text: Binding<String>, presented: Binding<Bool>) -> some View {
+        if #available(iOS 26, *) {
+            searchable(text: text, isPresented: presented, prompt: Text("search_prompt"))
+                .autocorrectionDisabled()
+        } else {
+            self
+        }
     }
 }
 
