@@ -233,11 +233,14 @@ private struct InboxList: View {
     @State private var dragging = false
     /// Only a pull shows the water's sync; syncs on their own stay quiet over the saved mail.
     @State private var refreshing = false
-    /// After a sync the gap stays open until its water has calmed, so the calm is seen; and after a
-    /// tug, until its drop is in.
+    /// After a sync the list stays open until its water has calmed, so the calm is seen.
     @State private var waterCalm = true
-    /// How much of the gap is held open, from 0 to 1.
-    @State private var held: CGFloat = 0
+    /// Pulls the system holds open, waiting for the check to end and its water to calm.
+    @State private var waiters: [CheckedContinuation<Void, Never>] = []
+    /// The system holds the list open over its refresh, and while it does the top inset grows by
+    /// what it holds; the water counts from the inset without it.
+    @State private var holding = false
+    @State private var base: CGFloat = 0
     /// A check the user waits on: how long it has gone (0, slow, given up), and whether it just went through.
     @State private var slow = 0
     @State private var upToDate = false
@@ -290,13 +293,6 @@ private struct InboxList: View {
     var body: some View {
         let lake = model.messages.isEmpty && (!model.syncing || model.listLoaded) && model.error == nil
         List(selection: $model.chosen) {
-            // The gap a pull leaves open while its water calms; the water shows through it.
-            Color.clear
-                .frame(height: held * Lake.pullGap)
-                .listRowInsets(EdgeInsets())
-                .listRowSeparator(.hidden)
-                .listRowBackground(Color.clear)
-                .selectionDisabled()
             if let owner = model.owner {
                 Text(verbatim: owner)
                     .font(.small)
@@ -365,15 +361,19 @@ private struct InboxList: View {
             ListTop(offset: geometry.contentOffset.y + geometry.contentInsets.top, inset: geometry.contentInsets.top)
         } action: { _, now in
             top = now
-            // How far the finger pulls the list, in pulls; a held gap counts from where it is held.
-            let fraction = dragging ? max(0, -now.offset) / Lake.pullGap : 0
-            pull.fraction = fraction
-            pull.gap = max(0, held * Lake.pullGap - now.offset)
+            if !holding { base = now.inset }
+            // How far the list is pulled down, past where it rests, and in pulls while the finger is on it.
+            let gap = max(0, now.inset - base - now.offset)
+            pull.fraction = dragging ? gap / Lake.pullGap : 0
+            pull.gap = gap
         }
         .onScrollPhaseChange { old, new in
             if new == .interacting { dragging = true }
             if old == .interacting && new != .interacting { letGo(lake: lake) }
         }
+        // The system's own pull: its scroll holds the list open and lets it go, so the rows never
+        // fight a second spring. Its spinner is hidden (OzeroMailApp); the water shows instead.
+        .refreshable { await pulled() }
         .sensoryFeedback(.impact(weight: .light), trigger: pull.fraction >= 1)
         // There is one water, under the title, and it stays put: a pull over an empty list's lake
         // gathers a drop over it, and a pull on a list moves the rows down to uncover the same water.
@@ -382,7 +382,7 @@ private struct InboxList: View {
                 PullWater(grey: !model.tabbed, refreshing: refreshing, pull: pull) { waterCalm = $0 }
                     .frame(height: pull.gap)
                     .clipped()
-                    .padding(.top, top.inset)
+                    .padding(.top, base)
                     .allowsHitTesting(false)
             }
         }
@@ -402,12 +402,14 @@ private struct InboxList: View {
             refreshing = false
         }
         .onChange(of: model.syncing) { _, now in if !now { slow = 0 } }
+        .onChange(of: refreshing || !waterCalm) { _, busy in
+            guard !busy else { return }
+            waiters.forEach { $0.resume() }
+            waiters = []
+        }
         .task(id: upToDate) {
             guard upToDate, (try? await Task.sleep(for: Self.upToDateFor)) != nil else { return }
             upToDate = false
-        }
-        .onChange(of: !lake && (refreshing || !waterCalm)) { _, hold in
-            withAnimation(.spring(duration: 0.35, bounce: 0)) { held = hold ? 1 : 0 }
         }
         .environment(\.editMode, .constant(choosing ? .active : .inactive))
         .animation(.smooth, value: model.messages.map(\.id))
@@ -520,11 +522,21 @@ private struct InboxList: View {
         dragging = false
         pull.fraction = 0
         guard fraction >= Lake.tug else { return }
-        pull.lastDrop = fraction
+        // A pull the system took for a refresh drops a whole drop, however far it went.
+        pull.lastDrop = holding ? max(fraction, 1) : fraction
         pull.drops += 1
         if !lake { waterCalm = false }
-        guard fraction >= 1 else { return }
+    }
+
+    /// The system's pull: the list stays open until the check is through and its water has calmed.
+    private func pulled() async {
+        holding = true
+        // A check that has gone too long lets the list go while it runs on.
         check()
+        if refreshing || !waterCalm { await withCheckedContinuation { waiters.append($0) } }
+        // The list closes on the system's own animation; until it has, the inset still holds it.
+        try? await Task.sleep(for: .milliseconds(400))
+        holding = false
     }
 
     /// A check the user asked for, by a pull or by Try again; not while one runs.
@@ -537,7 +549,7 @@ private struct InboxList: View {
             let started = ContinuousClock.now
             // An account's inbox, as the unified one, with the inbox sync.
             let synced = await model.sync(model.tabbed ? Mail.inbox : model.mailbox)
-            // The pulled drop lands before the gap closes, however quick the sync.
+            // The pulled drop lands before the list closes, however quick the sync.
             try? await Task.sleep(until: started + .milliseconds(1100))
             // Not one let go of: nobody waits on it any more, and a newer one may run.
             guard mine == checks, refreshing else { return }
