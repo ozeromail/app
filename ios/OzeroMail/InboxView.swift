@@ -239,6 +239,8 @@ private struct InboxList: View {
     /// inset grows by what it holds; the water counts from the inset before the pull.
     @State private var holding = false
     @State private var base: CGFloat = 0
+    /// Counts the system's pulls, so one closing does not let go of a newer one.
+    @State private var pulls = 0
     /// A check the user waits on: how long it has gone (0, slow, given up), and whether it just went through.
     @State private var slow = 0
     @State private var upToDate = false
@@ -530,12 +532,14 @@ private struct InboxList: View {
     /// The system's pull: the list stays open until the check is through and its water has calmed.
     private func pulled() async {
         holding = true
+        pulls += 1
+        let mine = pulls
         // The list closes on the system's animation once this returns; until it has, the inset
-        // still holds it.
+        // still holds it. A newer pull keeps holding.
         defer {
             Task {
                 try? await Task.sleep(for: .milliseconds(400))
-                holding = false
+                if mine == pulls { holding = false }
             }
         }
         // The system takes the pull as it passes its mark; the check waits for the finger, as
