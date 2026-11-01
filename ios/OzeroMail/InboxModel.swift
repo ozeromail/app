@@ -45,10 +45,18 @@ final class InboxModel {
     var mailbox = Mail.inbox {
         didSet {
             guard mailbox != oldValue else { return }
-            if oldValue == Mail.inbox { inboxRows = messages }
+            if oldValue == Mail.inbox {
+                // On its side nothing is under the mailbox.
+                inboxRows = sideways ? [] : messages
+            } else if mailbox == Mail.inbox {
+                // Until the inbox loads, its rows as they were left, not the mailbox's.
+                if !inboxRows.isEmpty { messages = inboxRows }
+                inboxRows = []
+            }
             guard !sideways else { return }
             if mailbox == Mail.inbox {
-                if let at = path.firstIndex(of: .mailbox) { path.removeSubrange(at...) }
+                // Screens opened over the mailbox, such as settings, stay.
+                path.removeAll { $0 == .mailbox }
             } else if !path.contains(.mailbox) {
                 path = [.mailbox]
             }
@@ -559,10 +567,10 @@ final class InboxModel {
             // From search too: beside the list, as when it is opened there.
             path.removeAll()
             pane = message
-        } else if sideways, path == [.mailbox] {
+        } else if sideways {
             // The mailboxes are beside the list.
-            path.removeAll()
-        } else if !sideways {
+            path.removeAll { $0 == .mailbox }
+        } else {
             if !isInbox && !path.contains(.mailbox) { path.insert(.mailbox, at: 0) }
             if let pane {
                 self.pane = nil
