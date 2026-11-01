@@ -544,6 +544,9 @@ struct ComposeView: View {
         .accessibilityLabel(Text("compose_attach"))
     }
 
+    /// The files still being read go with it, so it waits for them; and for someone to send to.
+    private var canSend: Bool { !busy && from != nil && adding.isEmpty && !to.isBlank }
+
     private var sendButton: some View {
         Button(action: send) {
             Image(systemName: "paperplane.fill")
@@ -553,10 +556,9 @@ struct ComposeView: View {
                 .glassSurface(in: .capsule, tint: .ozeroFill, fallback: Color.ozeroFill.lifted)
         }
         .buttonStyle(.plain)
-        // The files still being read go with it, so it waits for them.
-        // Nobody to send to yet: it waits, as the iPhone's own Mail does.
-        .disabled(busy || from == nil || !adding.isEmpty || to.isBlank)
-        .opacity(to.isBlank ? 0.45 : 1)
+        // Greyed while it waits, as the iPhone's own Mail does.
+        .disabled(!canSend)
+        .opacity(canSend ? 1 : 0.45)
         .accessibilityLabel(Text("compose_send"))
     }
 
