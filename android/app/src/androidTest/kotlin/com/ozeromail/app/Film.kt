@@ -3,17 +3,23 @@ package com.ozeromail.app
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import android.util.Log
+import android.view.PixelCopy
+import android.view.Window
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.lerp
-import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.test.SemanticsMatcher
-import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performTouchInput
 import androidx.test.services.storage.TestStorage
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import org.json.JSONArray
@@ -24,13 +30,14 @@ import org.json.JSONObject
  * on every frame, and a picture of every [every]th. [save] writes the frames as JSON and the
  * pictures as one contact sheet, which the CI job keeps.
  */
-class Film(private val rule: ComposeTestRule, val name: String, private val every: Int = 2) {
+class Film(private val rule: ComposeTestRule, private val window: Window, val name: String, private val every: Int = 2) {
     class Frame(val ms: Long, val finger: Offset?, val at: Map<String, Rect?>, val seen: Int?)
 
     private val tracks = linkedMapOf<String, SemanticsMatcher>()
     val frames = mutableListOf<Frame>()
     private val pictures = mutableListOf<Pair<Int, Bitmap>>()
     private var finger: Offset? = null
+    private val main = Handler(Looper.getMainLooper())
 
     /** Pictures are slow; a stretch that must pass quickly, as before Undo, goes without. */
     var shooting = true
@@ -101,12 +108,35 @@ class Film(private val rule: ComposeTestRule, val name: String, private val ever
         val index = frames.size
         val picture = shooting && index % every == 0
         val looking = look
-        val shot = if (picture || looking != null) rule.onRoot().captureToImage().asAndroidBitmap() else null
+        val shot = if (picture || looking != null) shoot() else null
         frames += Frame(rule.mainClock.currentTime, finger, at, shot?.let { looking?.invoke(it) })
         if (shot != null) {
             if (picture) pictures += index to Bitmap.createScaledBitmap(shot, shot.width / SCALE, shot.height / SCALE, true)
             shot.recycle()
         }
+    }
+
+    /**
+     * The window as drawn now. captureToImage gives a frame only 2 s to draw, and a cold first
+     * frame of a screen on the CI emulator, drawn in software, can take longer.
+     */
+    private fun shoot(): Bitmap {
+        val view = window.decorView
+        val drawn = CountDownLatch(1)
+        val from = SystemClock.elapsedRealtime()
+        view.post {
+            view.viewTreeObserver.registerFrameCommitCallback { drawn.countDown() }
+            view.invalidate()
+        }
+        check(drawn.await(DRAW_MS, TimeUnit.MILLISECONDS)) { "No frame was drawn in $DRAW_MS ms" }
+        val took = SystemClock.elapsedRealtime() - from
+        if (took > SLOW_MS) Log.i("Film", "$name frame ${frames.size} took $took ms to draw")
+        val shot = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+        val copied = CountDownLatch(1)
+        var result = PixelCopy.ERROR_UNKNOWN
+        PixelCopy.request(window, shot, { result = it; copied.countDown() }, main)
+        check(copied.await(DRAW_MS, TimeUnit.MILLISECONDS) && result == PixelCopy.SUCCESS) { "The window was not copied: $result" }
+        return shot
     }
 
     /** Frames where [label] came back after being off screen for a few frames: what the eye sees as a blink. */
@@ -195,6 +225,9 @@ class Film(private val rule: ComposeTestRule, val name: String, private val ever
 
     companion object {
         const val FRAME_MS = 16
+        /** Long enough for any frame of a working screen; a hung one still fails. */
+        private const val DRAW_MS = 30_000L
+        private const val SLOW_MS = 1_000L
         private const val SCALE = 4
         private const val COLUMNS = 8
         private const val LABEL = 28

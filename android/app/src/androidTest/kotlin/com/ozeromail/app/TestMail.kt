@@ -1,6 +1,7 @@
 package com.ozeromail.app
 
 import android.Manifest
+import android.view.Window
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -91,7 +92,9 @@ abstract class TestMail {
 
     /** Films [name], saving it whatever happens, so a failure can be looked at. */
     fun film(name: String, every: Int = 2, scene: Film.() -> Unit) {
-        val film = Film(rule, name, every)
+        lateinit var window: Window
+        scenario.onActivity { window = it.window }
+        val film = Film(rule, window, name, every)
         try {
             film.scene()
         } finally {
