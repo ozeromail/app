@@ -219,6 +219,49 @@ struct ListTop: Equatable {
     var inset: CGFloat = 0
 }
 
+/// Finds the navigation bar's large title on screen, which SwiftUI does not tell.
+@MainActor final class LargeTitle {
+    fileprivate weak var probe: UIView?
+
+    /// The top of the large title's text, from the top of the window; nil while there is none.
+    func top(of title: String) -> CGFloat? {
+        guard let bar = probe.flatMap(Self.bar), let label = Self.label(title, in: bar) else { return nil }
+        return label.convert(label.bounds, to: nil).minY
+    }
+
+    private static func bar(near view: UIView) -> UINavigationBar? {
+        var responder: UIResponder? = view
+        while let next = responder {
+            if let navigation = (next as? UIViewController)?.navigationController { return navigation.navigationBar }
+            responder = next.next
+        }
+        return nil
+    }
+
+    /// Only the large one: the small title of a scrolled list is not it.
+    private static func label(_ title: String, in view: UIView) -> UILabel? {
+        if let label = view as? UILabel, label.text == title, label.font.pointSize >= 28, !label.isHidden, label.alpha > 0 {
+            return label
+        }
+        return view.subviews.lazy.compactMap { label(title, in: $0) }.first
+    }
+}
+
+private struct LargeTitleFinder: UIViewRepresentable {
+    let title: LargeTitle
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        title.probe = view
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+        title.probe = view
+    }
+}
+
 /// What the watch for new mail depends on: the app on screen, and which accounts are signed in.
 private struct WatchKey: Equatable {
     let active: Bool
@@ -250,6 +293,10 @@ private struct InboxList: View {
     /// inset grows by what it holds; the water counts from the inset before the pull.
     @State private var holding = false
     @State private var base: CGFloat = 0
+    /// Where the large title's text rests, on screen: the pull's water opens there as the title
+    /// rides down. Nil without a large title to find.
+    @State private var titleTop: CGFloat?
+    @State private var largeTitle = LargeTitle()
     /// Counts the system's pulls, so one closing does not let go of a newer one.
     @State private var pulls = 0
     /// A check the user waits on: how long it has gone (0, slow, given up), and whether it just went through.
@@ -301,6 +348,8 @@ private struct InboxList: View {
 
     private var choosing: Bool { !picked.isEmpty }
 
+    private var title: String { choosing ? tr("select_count", picked.count) : model.title }
+
     private var lake: Bool {
         model.messages.isEmpty && (!model.syncing || model.listLoaded) && model.error == nil
     }
@@ -330,7 +379,7 @@ private struct InboxList: View {
             if lake {
                 LakeNote(title: model.emptyTitle, drawIn: model.hadMail, grey: !model.tabbed,
                          checking: checking, checkedAt: model.isInbox ? model.checkedAt : nil,
-                         refreshing: refreshing, pull: pull)
+                         refreshing: refreshing)
                     .id(model.mailbox)
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
@@ -375,7 +424,11 @@ private struct InboxList: View {
             ListTop(offset: geometry.contentOffset.y + geometry.contentInsets.top, inset: geometry.contentInsets.top)
         } action: { _, now in
             top = now
-            if !dragging && !holding { base = now.inset }
+            if !dragging && !holding {
+                base = now.inset
+                // Measured, not assumed: the bar and the title differ by device and system.
+                if now.offset <= 0 { titleTop = largeTitle.top(of: title) }
+            }
             // How far the list is pulled down, past where it rests, and in pulls while the finger is on it.
             let gap = max(0, now.inset - base - now.offset)
             pull.fraction = dragging ? gap / Lake.pullGap : 0
@@ -389,20 +442,19 @@ private struct InboxList: View {
         // fight a second spring. Its spinner is hidden (OzeroMailApp); the water shows instead.
         .refreshable { await pulled() }
         .sensoryFeedback(.impact(weight: .light), trigger: pull.fraction >= 1)
-        // There is one water, and it stays put: a pull over an empty list's lake gathers a drop over
-        // it, and a pull on a list moves the rows down to uncover the same water. A large title
-        // rides down with the rows, so the gap opens over it, under the bar.
+        // There is one pull's water, and it stays put: a pull moves the title and the rows down to
+        // uncover it, under the bar and over the title, over an empty list's lake too. Without a
+        // large title it opens under the bar.
         .overlay(alignment: .top) {
-            if !lake {
-                PullWater(grey: !model.tabbed, refreshing: refreshing, pull: pull) { waterCalm = $0 }
-                    .frame(height: pull.gap)
-                    .clipped()
-                    .padding(.top, model.sideways ? base : base - Lake.largeTitle)
-                    .allowsHitTesting(false)
-                    // Counted from the top of the screen, as the inset is.
-                    .ignoresSafeArea(.container, edges: .top)
-            }
+            PullWater(grey: !model.tabbed, refreshing: refreshing, pull: pull) { waterCalm = $0 }
+                .frame(height: pull.gap)
+                .clipped()
+                .padding(.top, titleTop ?? (model.sideways ? base : base - Lake.largeTitle))
+                .allowsHitTesting(false)
+                // Counted from the top of the screen, as the inset is.
+                .ignoresSafeArea(.container, edges: .top)
         }
+        .background { LargeTitleFinder(title: largeTitle) }
         // A check the user waits on says when it is slow; a pull lets go after a while, and the sync
         // goes on behind. Its words then say so, until it ends.
         .task(id: refreshing || waiting) {
@@ -426,7 +478,7 @@ private struct InboxList: View {
         .environment(\.editMode, .constant(choosing ? .active : .inactive))
         .animation(.smooth, value: model.messages.map(\.id))
         .middle(Room.list)
-        .navigationTitle(choosing ? tr("select_count", picked.count) : model.title)
+        .navigationTitle(title)
         // On its side a large title would take a third of the height.
         .navigationBarTitleDisplayMode(model.sideways ? .inline : .automatic)
         .navigationBarBackButtonHidden(choosing)
@@ -539,7 +591,7 @@ private struct InboxList: View {
         // A pull the system took for a refresh drops a whole drop, however far it went.
         pull.lastDrop = holding ? max(fraction, 1) : fraction
         pull.drops += 1
-        if !lake { waterCalm = false }
+        waterCalm = false
     }
 
     /// The system's pull: the list stays open until the check is through and its water has calmed.
@@ -559,8 +611,6 @@ private struct InboxList: View {
         // one starting under it jolts the rows.
         await until { !dragging }
         check()
-        // An empty list's lake shows the check itself.
-        guard !lake else { return }
         // A check that has gone too long lets the list go while it runs on.
         await until { !refreshing }
         await until(within: .seconds(3)) { waterCalm }
