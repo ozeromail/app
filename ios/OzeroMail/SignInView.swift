@@ -328,7 +328,7 @@ private struct Start: View {
                 Button(action: onGoogle) {
                     Text("signin_google").frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.bordered)
+                .systemButton()
                 .tint(.primary)
                 .controlSize(.large)
                 .disabled(busy)
@@ -726,7 +726,7 @@ private struct SubmitButton: View {
             }
             .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
+        .systemButton(prominent: true)
         .controlSize(.large)
         .disabled(!ready)
     }

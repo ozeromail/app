@@ -92,7 +92,7 @@ struct MessageView: View {
                         Text(error).foregroundStyle(.secondary).padding(20)
                     }
                     // The end of the page clears the row over it.
-                    Color.clear.frame(height: pane || replying != nil ? 12 : barHeight)
+                    Color.clear.frame(height: pane || replying != nil || hasGlass ? 12 : barHeight)
                 }
             }
             .onScrollGeometryChange(for: Scrolled.self) { geometry in
@@ -129,21 +129,27 @@ struct MessageView: View {
                 .padding(.horizontal, 8)
             }
         }
-        .overlay(alignment: .bottom) {
-            if !pane && replying == nil && barShown {
-                Group {
-                    if let asking {
-                        InviteBar(onAnswer: { answerInvite(asking, $0) }) { moreItems(answer, asking: asking) }
-                    } else {
-                        bar(answer: answer)
+        // On iOS 26 the row is the system's bar: it stays, and the page fades under its glass.
+        .bottomBar {
+            if hasGlass && !pane && replying == nil {
+                VStack(spacing: 8) {
+                    if let toast = model.toast {
+                        ToastView(toast: toast, onUndo: model.tapUndo, onGo: model.tapGo, onExtra: model.tapExtra)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
+                    actions(answer: answer, asking: asking)
                 }
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if !hasGlass && !pane && replying == nil && barShown {
+                actions(answer: answer, asking: asking)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .overlay(alignment: .bottom) {
             // The list's toast, over the message: Undo for a reply, or where a draft went.
-            if !pane, let toast = model.toast {
+            if !pane, !hasGlass || replying != nil, let toast = model.toast {
                 ToastView(toast: toast, onUndo: model.tapUndo, onGo: model.tapGo, onExtra: model.tapExtra)
                     .padding(.bottom, replying == nil && barShown ? barHeight : 12)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -386,6 +392,16 @@ struct MessageView: View {
             Button("action_spam", role: .destructive) {
                 leave { await model.spam([message]) }
             }
+        }
+    }
+
+    /// The answers to an invitation, or what to do with the message.
+    @ViewBuilder
+    private func actions(answer: MessageItem, asking: MessageItem?) -> some View {
+        if let asking {
+            InviteBar(onAnswer: { answerInvite(asking, $0) }) { moreItems(answer, asking: asking) }
+        } else {
+            bar(answer: answer)
         }
     }
 
