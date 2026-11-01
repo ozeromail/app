@@ -470,8 +470,8 @@ fun ComposeScreen(
             Text(stringResource(it), color = colors.error, modifier = Modifier.padding(horizontal = Gap.screen, vertical = 8.dp))
         }
     }
-    // The files still being read go with it, so it waits for them.
-    val ready = !busy && from != null && adding.isEmpty()
+    // The files still being read go with it, so it waits for them; and for someone to send to.
+    val ready = !busy && from != null && adding.isEmpty() && !to.isBlank()
     val attachTile = @Composable {
         IconTile(R.drawable.ic_attach, stringResource(R.string.compose_attach), { attaching = true }, shape = CircleShape)
     }
@@ -669,7 +669,11 @@ fun ComposeScreen(
                     },
                     lead = { AccountDot(account.tint, size = 12.dp) },
                 ) {
-                    Text(account.email, style = Type.Row, fontWeight = Weight.Regular, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    // The name to pick by, the address it sends from under it.
+                    Column(Modifier.weight(1f)) {
+                        Text(account.name, style = Type.Row, fontWeight = Weight.Regular, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(account.email, style = Type.Caption, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                     if (account.id == from?.id) Glyph(R.drawable.ic_done, null, colors.accent)
                 }
             }
@@ -761,7 +765,8 @@ private fun Sender(from: AccountItem, enabled: Boolean, onClick: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         AccountInitial(from.name, from.tint, 22.dp)
-        Text(from.email, style = Type.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        // The account's short name: a long address would be cut off here.
+        Text(from.name, style = Type.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

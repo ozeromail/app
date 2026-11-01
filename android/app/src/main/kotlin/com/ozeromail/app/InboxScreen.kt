@@ -338,7 +338,6 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var groups by remember { mutableStateOf(settings.groups) }
     var allBoxes by remember { mutableStateOf(settings.allBoxes) }
     var swipeTip by remember { mutableStateOf(!settings.swipeTipSeen) }
-    var holdTip by remember { mutableStateOf(!settings.holdTipSeen) }
     var query by rememberSaveable { mutableStateOf("") }
     var searchFilter by remember { mutableStateOf(SearchFilterItem()) }
     // Messages chosen to act on together, in the order they were chosen.
@@ -1091,8 +1090,6 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         },
         onAccount = { account ->
             accountsOpen = false
-            holdTip = false
-            settings.holdTipSeen = true
             settingsPages = listOf(account.id)
         },
         onSettings = {
@@ -1481,7 +1478,6 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             lift = lift,
             state = mailboxesState,
             actions = accountsActions,
-            holdTip = holdTip,
             onClose = { accountsOpen = false },
         )
         SnoozeSheet(
@@ -2007,7 +2003,8 @@ private fun InboxList(
             Dock(
                 modifier = Modifier.onSizeChanged { dockHeight = with(density) { it.height.toDp() } },
                 tab = tab,
-                tabs = tabs.takeIf { tabbed },
+                // With every tab empty there is nothing to switch to: one lake, no tabs.
+                tabs = tabs.takeIf { tabbed && !allEmpty },
                 glide = glide,
                 thumb = thumb,
                 accounts = scope,
