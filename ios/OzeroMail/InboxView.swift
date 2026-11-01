@@ -24,8 +24,10 @@ struct InboxView: View {
                         .transition(.move(edge: .leading).combined(with: .opacity))
                     Divider()
                 }
-                InboxList(model: model)
-                    .frame(maxWidth: model.pane == nil ? .infinity : Room.listPane)
+                ScrollViewReader { proxy in
+                    InboxList(model: model, proxy: proxy)
+                }
+                .frame(maxWidth: model.pane == nil ? .infinity : Room.listPane)
                 if let pane = model.pane {
                     Divider()
                     MessageView(model: model, message: pane, pane: true)
@@ -79,7 +81,8 @@ struct InboxView: View {
                 model.signedIn()
             }
         }
-        .fullScreenCover(item: $model.composing) { composing in
+        // A tall sheet, as in the iPhone's own Mail: swiped down, the message goes to the drafts.
+        .sheet(item: $model.composing) { composing in
             ComposeView(
                 mail: model.mail, composing: composing,
                 onClose: { model.composing = nil }, onSent: model.sent, onKept: model.kept,
@@ -219,7 +222,8 @@ extension AccountItem: Identifiable {}
 /// The list under its large title, with the dock, the toast and errors along the bottom.
 private struct InboxList: View {
     @Bindable var model: InboxModel
-    @State private var more = false
+    /// Scrolls the list: to the top, and back to where a tab was left.
+    let proxy: ScrollViewProxy
     /// How the list is pulled down, as the water reads it.
     @State private var pull = PullState()
     /// Where the list's content top is: above the top while scrolled, below it while pulled.
@@ -237,6 +241,11 @@ private struct InboxList: View {
     @State private var upToDate = false
     /// Counts the checks asked for, so one let go of does not end a newer one.
     @State private var checks = 0
+    /// The rows on screen, and the row at the top of each tab when it was left.
+    @State private var onScreen: Set<Int64> = []
+    @State private var places: [Category: Int64] = [:]
+    /// The row to bring back to the top once the tab's mail is in.
+    @State private var returning: Int64?
 
     /// The first mail of an empty list is on its way: the water waits, and says what for.
     private var waiting: Bool {
@@ -319,6 +328,9 @@ private struct InboxList: View {
                 let swipes = model.swipes.on(message)
                 OpenRow(model: model, message: message)
                 .tag(message.id)
+                .onScrollVisibilityChange(threshold: 0.5) { shown in
+                    if shown { onScreen.insert(message.id) } else { onScreen.remove(message.id) }
+                }
                 // As in the iPhone's own Mail: a full swipe does the long action, a shorter one
                 // shows both to tap. The first is the one at the edge.
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
@@ -422,7 +434,7 @@ private struct InboxList: View {
                 }
             }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+        .bottomBar {
             VStack(spacing: 8) {
                 // Low on the screen, in reach of the thumb that swiped.
                 if let toast = model.toast {
@@ -444,40 +456,53 @@ private struct InboxList: View {
                 }
                 // On its side search and a new message are beside the title: without tabs the dock has nothing.
                 if !model.sideways || model.tabbed || choosing || (model.emptyLabel != nil && !model.messages.isEmpty) {
-                    Dock(model: model, choosing: choosing, picked: picked, onMore: { more = true })
+                    Dock(model: model, choosing: choosing, picked: picked)
                 }
             }
             .animation(.smooth, value: model.toast)
             .animation(.smooth, value: status?.text)
         }
-        .confirmationDialog("action_more", isPresented: $more) {
-            // Read once: `picked` filters the whole list.
-            let rows = picked
-            let back = rows.filter(\.canMoveToInbox)
-            Button("action_select_all") { model.chosen.formUnion(model.messages.map(\.id)) }
-            // What the bar has no room for, where it applies to the chosen.
-            if rows.contains(where: \.canArchive), !back.isEmpty {
-                Button(LocalizedStringKey(back.allSatisfy(\.spam) ? "action_not_spam" : "action_move_to_inbox")) {
-                    model.choice { await model.moveToInbox($0.filter(\.canMoveToInbox)) }
-                }
-            }
-            // Folders of one account only.
-            if rows.allSatisfy(\.canMove), Set(rows.map(\.accountId)).count == 1 {
-                Button("action_move_to_folder") { model.choice { await model.move($0) } }
-            }
-            if rows.contains(where: \.canSpam) {
-                Button("action_spam") { model.choice { await model.spam($0.filter(\.canSpam)) } }
-            }
-            let flag = rows.contains { !$0.flagged }
-            Button(LocalizedStringKey(flag ? "action_flag" : "action_unflag")) { model.choice { await model.flag($0, flagged: flag) } }
-            // When they are all from one sender, the rest of that sender's mail.
-            if let first = rows.first, rows.allSatisfy({ $0.fromEmail == first.fromEmail }) {
-                Button(tr("action_all_from", first.sender)) {
-                    model.chosen.formUnion(model.messages.filter { $0.fromEmail == first.fromEmail }.map(\.id))
-                }
-            }
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            geometry.contentOffset.y + geometry.contentInsets.top
+        } action: { old, now in
+            hideTabs(old: old, now: now)
+        }
+        // A tap on the open tab goes to the top of its list.
+        .onChange(of: model.toTop) {
+            guard let first = model.messages.first?.id else { return }
+            withAnimation(.smooth) { proxy.scrollTo(first, anchor: .top) }
+        }
+        // Each tab keeps its place: the row at its top when it was left comes back to the top.
+        .onChange(of: model.tab) { old, _ in
+            model.tabsHidden = false
+            let first = model.messages.first { onScreen.contains($0.id) }?.id
+            places[old] = first == model.messages.first?.id ? nil : first
+            returning = places[model.tab]
+        }
+        .onChange(of: model.messages.map(\.id)) { _, ids in
+            guard let row = returning, !ids.isEmpty else { return }
+            returning = nil
+            if ids.contains(row) { proxy.scrollTo(row, anchor: .top) }
         }
     }
+
+    /// Scrolling down the list, the tabs step aside; scrolling up, or at the top, they are back.
+    private func hideTabs(old: CGFloat, now: CGFloat) {
+        guard model.tabbed, !model.sideways else { return }
+        var hidden = model.tabsHidden
+        if now <= Self.tabsStay {
+            hidden = false
+        } else if now > old + 4 {
+            hidden = true
+        } else if now < old - 4 && now > old - 30 {
+            // Not a jump: the end of the list moving up as the tabs leave its room.
+            hidden = false
+        }
+        if hidden != model.tabsHidden { model.tabsHidden = hidden }
+    }
+
+    /// How far down the list the tabs stay put.
+    private static let tabsStay: CGFloat = 80
 
     /// The finger lets the list go: past a third of a pull a drop falls, sized by how far it went,
     /// and a whole pull syncs, unless a sync runs.
@@ -534,50 +559,58 @@ private struct InboxList: View {
 /// Everything the thumb needs, along the bottom: the inbox's tabs (none elsewhere), then the
 /// accounts button, search and a new message; while choosing, what to do with the chosen. On its
 /// side the mailboxes are beside the list, so the rest fits one row, which leaves the short height
-/// to the mail; beside a message that row is only the tabs, where there are tabs.
+/// to the mail; beside a message that row is only the tabs, where there are tabs. On iOS 26 the
+/// dock is glass floating over the list.
 private struct Dock: View {
     @Bindable var model: InboxModel
     let choosing: Bool
     let picked: [MessageItem]
-    let onMore: () -> Void
 
     var body: some View {
-        VStack(spacing: 8) {
-            if !model.sideways {
-                if model.tabbed { tabs }
-                if !choosing { EmptyFolderButton(model: model) }
-            }
-            Group {
-                if choosing {
-                    ChoiceBar(model: model, picked: picked, onMore: onMore)
-                } else if model.sideways {
-                    // Search and a new message are beside the title.
-                    if model.tabbed { tabs } else { EmptyFolderButton(model: model) }
-                } else {
-                    HStack(spacing: 8) {
-                        AccountsButton(accounts: model.scope) { model.accountsOpen = true }
-                        Button {
-                            model.path.append(.search)
-                        } label: {
-                            Label("search_prompt", systemImage: "magnifyingglass")
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
-                                .padding(.horizontal, 16)
-                                .background(Color.ozeroCard.sunk, in: .capsule)
+        GlassGroup {
+            VStack(spacing: 10) {
+                if !model.sideways {
+                    // Scrolling down, the tabs step aside for the mail, as on the iPhone's own Photos.
+                    if model.tabbed && !choosing && !model.tabsHidden {
+                        InboxTabs(model: model)
+                            .transition(.move(edge: .bottom).combined(with: .opacity).combined(with: .scale(scale: 0.9, anchor: .bottom)))
+                    }
+                    if !choosing { EmptyFolderButton(model: model) }
+                }
+                Group {
+                    if choosing {
+                        ChoiceBar(model: model, picked: picked)
+                    } else if model.sideways {
+                        // Search and a new message are beside the title.
+                        if model.tabbed { InboxTabs(model: model) } else { EmptyFolderButton(model: model) }
+                    } else {
+                        HStack(spacing: 10) {
+                            AccountsButton(accounts: model.scope) { model.accountsOpen = true }
+                            Button {
+                                model.path.append(.search)
+                            } label: {
+                                Label("search_prompt", systemImage: "magnifyingglass")
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, minHeight: glassButton, alignment: .leading)
+                                    .padding(.horizontal, 16)
+                                    .contentShape(.capsule)
+                            }
+                            .buttonStyle(.plain)
+                            .glassSurface(in: .capsule, fallback: Color.ozeroCard.sunk)
+                            ComposeButton(model: model)
                         }
-                        .buttonStyle(.plain)
-                        ComposeButton(model: model)
                     }
                 }
+                .frame(height: model.sideways && !choosing ? 40 : 52)
+                .animation(.smooth, value: choosing)
             }
-            .frame(height: model.sideways && !choosing ? 40 : 52)
-            .animation(.smooth, value: choosing)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, floating ? 16 : 12)
         // On its side the height is for the mail.
         .padding(.top, model.sideways ? 6 : 10)
         .padding(.bottom, 4)
-        .dockBackground()
+        .dockBackground(floating: true)
+        .animation(.smooth(duration: 0.3), value: model.tabsHidden)
         // Dragged up, the dock brings up the mailboxes, as the button does. The system's sheet
         // cannot follow a finger, so it rises once the drag is clearly upward.
         .simultaneousGesture(
@@ -589,14 +622,65 @@ private struct Dock: View {
         )
     }
 
-    private var tabs: some View {
-        Picker("inbox_title", selection: $model.tab) {
+    /// On iOS 26 the dock floats, away from the screen's rounded edges.
+    private var floating: Bool {
+        if #available(iOS 26, *) { return true }
+        return false
+    }
+}
+
+/// The inbox's tabs as on the iPhone: a capsule whose thumb slides to the open tab and follows a
+/// finger along it. Each tab keeps its place in the list; a tap on the open one goes to the top.
+private struct InboxTabs: View {
+    @Bindable var model: InboxModel
+    @Namespace private var thumb
+    @State private var width: CGFloat = 0
+
+    var body: some View {
+        HStack(spacing: 0) {
             ForEach(Category.all, id: \.self) { category in
                 let unread = model.tabs.first { $0.category == category }?.unread ?? 0
-                (Text(category.label) + Text(verbatim: unread > 0 ? " \(unread)" : "")).tag(category)
+                let open = model.tab == category
+                Button {
+                    if open { model.toTop += 1 } else { model.tab = category }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(category.label).font(open ? .textStrong : .text).lineLimit(1)
+                        if unread > 0 {
+                            Text(verbatim: "\(unread)").font(.badge).foregroundStyle(.secondary)
+                        }
+                    }
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 4)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background {
+                        if open {
+                            Capsule().fill(Color.ozeroThumb).matchedGeometryEffect(id: "thumb", in: thumb)
+                        }
+                    }
+                    .contentShape(.capsule)
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(open ? .isSelected : [])
             }
         }
-        .pickerStyle(.segmented)
+        .padding(3)
+        .frame(height: model.sideways ? 40 : 44)
+        .glassSurface(in: .capsule, fallback: Color.ozeroCard.sunk)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+        // The thumb follows a finger slid along the tabs.
+        .gesture(
+            DragGesture(minimumDistance: 10).onChanged { drag in
+                guard width > 0, abs(drag.translation.width) > abs(drag.translation.height) else { return }
+                let index = Int(drag.location.x / (width / CGFloat(Category.all.count)))
+                let category = Category.all[min(max(index, 0), Category.all.count - 1)]
+                if category != model.tab { model.tab = category }
+            }
+        )
+        .animation(.spring(duration: 0.4, bounce: 0.2), value: model.tab)
+        .sensoryFeedback(.selection, trigger: model.tab)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text("inbox_title"))
     }
 }
 
@@ -658,7 +742,7 @@ private struct EmptyFolderButton: View {
     }
 }
 
-/// A new message, in the accent, lifted off the page.
+/// A new message, in the accent: lifted off the page, or tinted glass on iOS 26.
 private struct ComposeButton: View {
     let model: InboxModel
 
@@ -669,18 +753,20 @@ private struct ComposeButton: View {
             Image(systemName: "square.and.pencil")
                 .font(.heading)
                 .foregroundStyle(.white)
-                .frame(width: 48, height: 48)
-                .background(Color.ozeroFill.lifted, in: .rect(cornerRadius: 16))
+                .frame(width: glassButton, height: glassButton)
+                .contentShape(.circle)
         }
+        .buttonStyle(.plain)
+        .glassSurface(in: .circle, tint: .ozeroFill, fallback: Color.ozeroFill.lifted)
         .accessibilityLabel(Text("compose_new"))
     }
 }
 
-/// What to do with the chosen messages: they leave the list with one toast for all.
+/// What to do with the chosen messages: they leave the list with one toast for all. The rest of
+/// what applies to them is in the menu of ⋯.
 private struct ChoiceBar: View {
     let model: InboxModel
     let picked: [MessageItem]
-    let onMore: () -> Void
 
     /// The filled button: Done where mail is not filed yet, else back to the inbox, Not spam out of spam.
     private func main(done: Int, back: [MessageItem]) -> (label: String, act: ([MessageItem]) async -> Void)? {
@@ -697,41 +783,78 @@ private struct ChoiceBar: View {
         let back = picked.filter(\.canMoveToInbox)
         let unread = picked.contains { $0.threadUnread > 0 }
         let forever = !picked.contains(where: \.canTrash)
-        HStack(spacing: 8) {
-            Button("action_cancel") { model.chosen = [] }
-            Spacer()
-            Button {
-                model.choice { await model.setRead($0, read: unread) }
-            } label: {
-                Image(systemName: unread ? "envelope.open" : "envelope.badge")
+        HStack(spacing: 10) {
+            Button { model.chosen = [] } label: {
+                Text("action_cancel")
+                    .font(.row)
+                    .padding(.horizontal, 16)
+                    .frame(height: glassButton)
+                    .contentShape(.capsule)
             }
-            .accessibilityLabel(Text(unread ? "action_read" : "action_unread"))
-            Button(role: .destructive) {
-                model.choice { await model.delete($0) }
-            } label: {
-                Image(systemName: "trash")
-            }
-            .accessibilityLabel(Text(forever ? "action_delete_forever" : "action_delete"))
-            if picked.contains(where: \.canSnooze) {
-                Button {
-                    model.choice { model.snoozing = Snoozing(messages: $0.filter(\.canSnooze)) }
-                } label: {
-                    Image(systemName: "clock")
+            .buttonStyle(.plain)
+            .glassSurface(in: .capsule, fallback: Color.clear)
+            Spacer(minLength: 0)
+            HStack(spacing: 0) {
+                GlassIcon(icon: unread ? "envelope.open" : "envelope.badge", label: unread ? "action_read" : "action_unread") {
+                    model.choice { await model.setRead($0, read: unread) }
                 }
-                .accessibilityLabel(Text("action_snooze"))
+                GlassIcon(icon: "trash", label: forever ? "action_delete_forever" : "action_delete") {
+                    model.choice { await model.delete($0) }
+                }
+                if picked.contains(where: \.canSnooze) {
+                    GlassIcon(icon: "clock", label: "action_snooze") {
+                        model.choice { model.snoozing = Snoozing(messages: $0.filter(\.canSnooze)) }
+                    }
+                }
+                Menu { more } label: { GlassIconLabel(icon: "ellipsis") }
+                    .accessibilityLabel(Text("action_more"))
             }
-            Button(action: onMore) {
-                Image(systemName: "ellipsis.circle")
-            }
-            .accessibilityLabel(Text("action_more"))
+            .glassSurface(in: .capsule, fallback: Color.clear)
             if let main = main(done: done, back: back) {
-                Button(main.label) { model.choice(main.act) }
-                    .buttonStyle(.borderedProminent)
-                    .tint(Color.ozeroFill)
+                Button { model.choice(main.act) } label: {
+                    Text(verbatim: main.label)
+                        .font(.rowStrong)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 18)
+                        .frame(height: glassButton)
+                        .contentShape(.capsule)
+                }
+                .buttonStyle(.plain)
+                .glassSurface(in: .capsule, tint: .ozeroFill, fallback: Color.ozeroFill.lifted)
             }
         }
-        .font(.lead)
-        .padding(.horizontal, 4)
+    }
+
+    /// What the bar has no room for, where it applies to the chosen.
+    @ViewBuilder
+    private var more: some View {
+        // Read once: `picked` filters the whole list.
+        let rows = picked
+        let back = rows.filter(\.canMoveToInbox)
+        Button("action_select_all", systemImage: "checkmark.circle") { model.chosen.formUnion(model.messages.map(\.id)) }
+        // When they are all from one sender, the rest of that sender's mail.
+        if let first = rows.first, rows.allSatisfy({ $0.fromEmail == first.fromEmail }) {
+            Button(tr("action_all_from", first.sender), systemImage: "person") {
+                model.chosen.formUnion(model.messages.filter { $0.fromEmail == first.fromEmail }.map(\.id))
+            }
+        }
+        Divider()
+        if rows.contains(where: \.canArchive), !back.isEmpty {
+            Button(LocalizedStringKey(back.allSatisfy(\.spam) ? "action_not_spam" : "action_move_to_inbox"), systemImage: "tray") {
+                model.choice { await model.moveToInbox($0.filter(\.canMoveToInbox)) }
+            }
+        }
+        // Folders of one account only.
+        if rows.allSatisfy(\.canMove), Set(rows.map(\.accountId)).count == 1 {
+            Button("action_move_to_folder", systemImage: "folder") { model.choice { await model.move($0) } }
+        }
+        let flag = rows.contains { !$0.flagged }
+        Button(LocalizedStringKey(flag ? "action_flag" : "action_unflag"), systemImage: flag ? "flag" : "flag.slash") {
+            model.choice { await model.flag($0, flagged: flag) }
+        }
+        if rows.contains(where: \.canSpam) {
+            Button("action_spam", systemImage: "xmark.bin", role: .destructive) { model.choice { await model.spam($0.filter(\.canSpam)) } }
+        }
     }
 }
 
@@ -760,10 +883,11 @@ private struct AccountsButton: View {
                     }
                 }
             }
-            .frame(width: 48, height: 48)
-            .background(Color.ozeroCard.sunk, in: .rect(cornerRadius: 16))
+            .frame(width: glassButton, height: glassButton)
+            .contentShape(.circle)
         }
         .buttonStyle(.plain)
+        .glassSurface(in: .circle, fallback: Color.ozeroCard.sunk)
         .accessibilityLabel(Text("accounts_title"))
     }
 }

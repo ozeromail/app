@@ -20,6 +20,9 @@ extension Color {
     /// Cards over the list, such as an account to sign in to again.
     static let ozeroCard = dynamic(light: 0xF2F5FA, dark: 0x1A202C)
 
+    /// The open tab's thumb, over the tabs' track or glass.
+    static let ozeroThumb = dynamic(light: 0xFFFFFF, dark: 0x3A4352, alpha: (0.95, 0.8))
+
     /// A colour from the core, as 0xRRGGBB.
     init(rgb: UInt32) {
         self.init(
@@ -68,8 +71,18 @@ extension Color {
 }
 
 extension View {
-    /// A dock lying on the list: the system's bar with a soft shadow above its top edge.
-    func dockBackground() -> some View {
+    /// A dock lying on the list: the system's bar with a soft shadow above its top edge. A
+    /// `floating` dock has none on iOS 26: its buttons are glass.
+    @ViewBuilder
+    func dockBackground(floating: Bool = false) -> some View {
+        if #available(iOS 26, *) {
+            if floating { self } else { barFill() }
+        } else {
+            barFill()
+        }
+    }
+
+    private func barFill() -> some View {
         background(.bar)
             .overlay(alignment: .top) {
                 LinearGradient(colors: [.clear, .ozeroShade(day: 0.04, night: 0.3)], startPoint: .top, endPoint: .bottom)

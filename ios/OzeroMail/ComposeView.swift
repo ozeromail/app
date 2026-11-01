@@ -41,6 +41,8 @@ struct ComposeView: View {
     @State private var changed = false
     /// Sent or thrown away: nothing more to keep.
     @State private var finished = false
+    /// Closed by its button: swiped down, the sheet closes the same way.
+    @State private var closed = false
     /// A forward sends the message's files too, from the account it came to.
     @State private var forwarded: MessageItem?
     /// The draft as it opened, to tell a change from the fields being filled in.
@@ -226,6 +228,10 @@ struct ComposeView: View {
         }
         .onChange(of: editing) { _, now in
             if !now { unfolded = false }
+        }
+        // Swiped down, what was written goes to the drafts, as with the close button.
+        .onDisappear {
+            if !closed && !finished { close() }
         }
         // Back to the text, To and Subject go back up the page.
         .onChange(of: textFocused) { _, now in
@@ -537,6 +543,7 @@ struct ComposeView: View {
     }
 
     private func close() {
+        closed = true
         hideKeyboard()
         keep()
         if !finished && hasDraft && !current.isBlank { onKept() } else { onClose() }
