@@ -1,6 +1,7 @@
 package com.ozeromail.app
 
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performClick
@@ -15,18 +16,20 @@ import org.junit.runner.RunWith
 class KeyboardTest : TestMail() {
     @Test
     fun closingANewMessageLetsGoOfTheKeyboardAtOnce() {
+        // A field being typed in, which holds the keyboard; other nodes may hold focus too.
+        val typing = isFocused() and hasSetTextAction()
         rule.onAllNodes(hasContentDescription("Write")).onFirst().performClick()
         // A new message starts in To, with the keyboard up.
-        waitFor { has(isFocused()) }
+        waitFor { has(typing) }
         rule.onAllNodes(hasContentDescription("Close")).onFirst().performClick()
         val send = hasContentDescription("Send")
         // Frame by frame until nothing holds the keyboard: the message must still be sliding away.
         var frames = 0
-        while (has(isFocused()) && frames < 60) {
+        while (has(typing) && frames < 60) {
             rule.mainClock.advanceTimeByFrame()
             frames++
         }
-        assertFalse("the keyboard is still held after $frames frames", has(isFocused()))
+        assertFalse("the keyboard is still held after $frames frames", has(typing))
         assertTrue("the keyboard stayed until the message was gone ($frames frames)", has(send) && bounds(send).top < screen.bottom)
         waitFor { !has(send) }
     }
