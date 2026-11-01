@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -352,7 +353,7 @@ private fun RichImage(file: DraftFileItem?, bitmap: ImageBitmap?, size: ImageSiz
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(8.dp)
-                    .clip(RoundedCornerShape(Radius.chip))
+                    .clip(CircleShape)
                     .background(colors.inverseSurface.copy(alpha = 0.7f))
                     .padding(horizontal = 6.dp, vertical = 2.dp),
             )

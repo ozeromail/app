@@ -114,7 +114,7 @@ private struct RichImage: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(.black.opacity(0.55), in: .rect(cornerRadius: 8))
+                        .background(.black.opacity(0.55), in: .capsule)
                         .padding(8)
                 }
             }

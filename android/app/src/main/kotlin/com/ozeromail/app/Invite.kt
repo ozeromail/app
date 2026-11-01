@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.MaterialTheme
@@ -158,7 +159,7 @@ private fun CardButton(text: String, onClick: () -> Unit) {
         style = Type.Caption,
         fontWeight = Weight.SemiBold,
         modifier = Modifier
-            .clip(RoundedCornerShape(Radius.small))
+            .clip(CircleShape)
             .background(colors.background)
             .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 8.dp),

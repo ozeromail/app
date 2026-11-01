@@ -953,7 +953,7 @@ private struct PlainText: View {
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 1)
-                        .background(Color.ozeroCard, in: .rect(cornerRadius: 8))
+                        .background(Color.ozeroCard, in: .capsule)
                         .contentShape(Rectangle().inset(by: -14))
                 }
                 .buttonStyle(.plain)
