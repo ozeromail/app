@@ -212,13 +212,6 @@ struct InboxView: View {
     }
 }
 
-/// Where a list's content top is, from the top of its frame: `offset` above it while scrolled,
-/// below zero while pulled; `inset` is the bars over it.
-struct ListTop: Equatable {
-    var offset: CGFloat = 0
-    var inset: CGFloat = 0
-}
-
 /// What the watch for new mail depends on: the app on screen, and which accounts are signed in.
 private struct WatchKey: Equatable {
     let active: Bool
@@ -237,21 +230,8 @@ private struct InboxList: View {
     @Bindable var model: InboxModel
     /// Scrolls the list: to the top, and back to where a tab was left.
     let proxy: ScrollViewProxy
-    /// How the list is pulled down, as the water reads it.
-    @State private var pull = PullState()
-    /// Where the list's content top is: above the top while scrolled, below it while pulled.
-    @State private var top = ListTop()
-    @State private var dragging = false
     /// Only a pull's or Try again's sync says so; syncs on their own stay quiet over the saved mail.
     @State private var refreshing = false
-    /// From when the system takes the pull until the list has closed, the top inset grows by what
-    /// it holds; the pull counts from the inset before.
-    @State private var holding = false
-    @State private var base: CGFloat = 0
-    /// Counts the times the last message left, each sending a wave across the surface.
-    @State private var emptied = 0
-    /// Counts the system's pulls, so one closing does not let go of a newer one.
-    @State private var pulls = 0
     /// A check the user waits on: how long it has gone (0, slow, given up), and whether it just went through.
     @State private var slow = 0
     @State private var upToDate = false
@@ -306,12 +286,6 @@ private struct InboxList: View {
 
     var body: some View {
         List(selection: $model.chosen) {
-            Surface(grey: !model.tabbed, pull: pull, refreshing: refreshing, waves: emptied)
-                .listRowInsets(EdgeInsets())
-                .listRowSeparator(.hidden)
-                .listRowBackground(Color.clear)
-                .selectionDisabled()
-                .accessibilityHidden(true)
             if let owner = model.owner {
                 Text(verbatim: owner)
                     .font(.small)
@@ -333,9 +307,10 @@ private struct InboxList: View {
                 SwipeTip(swipes: model.swipes, lift: !model.sideways, onDismiss: model.closeSwipeTip)
             }
             if lake {
-                LakeNote(title: model.emptyTitle, drawIn: model.hadMail, checking: checking,
+                LakeNote(title: model.emptyTitle, grey: !model.tabbed, checking: checking,
                          checkedAt: model.isInbox ? model.checkedAt : nil)
                     .id(model.mailbox)
+                    .transition(.opacity)
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
                     .selectionDisabled()
@@ -375,27 +350,8 @@ private struct InboxList: View {
         }
         .listStyle(.plain)
         .environment(\.defaultMinListRowHeight, 0)
-        .onScrollGeometryChange(for: ListTop.self) { geometry in
-            ListTop(offset: geometry.contentOffset.y + geometry.contentInsets.top, inset: geometry.contentInsets.top)
-        } action: { _, now in
-            top = now
-            if !dragging && !holding { base = now.inset }
-            // How far the list is pulled down, past where it rests, and in pulls while the finger is on it.
-            let gap = max(0, now.inset - base - now.offset)
-            pull.fraction = dragging ? gap / Lake.pullGap : 0
-            pull.gap = gap
-        }
-        .onScrollPhaseChange { old, new in
-            if new == .interacting { dragging = true }
-            if old == .interacting && new != .interacting { letGo() }
-        }
-        // The system's own pull: its scroll holds the list open and lets it go, so the rows never
-        // fight a second spring. Its spinner is hidden (OzeroMailApp); the water shows instead.
+        // The system's own pull, as in Mail: its spinner shows while the check runs.
         .refreshable { await pulled() }
-        // One tick, as the system takes the pull.
-        .sensoryFeedback(.impact(weight: .light), trigger: pulls)
-        // The last message has left: a wave across the surface, then the empty words.
-        .onChange(of: lake) { _, now in if now && model.hadMail { emptied += 1 } }
         // A check the user waits on says when it is slow, and lets go after a while: the sync goes
         // on behind, and the words then say so, until it ends.
         .task(id: refreshing || waiting) {
@@ -522,36 +478,11 @@ private struct InboxList: View {
     /// How far from the top and the end of the list the tabs stay put.
     private static let tabsStay: CGFloat = 80
 
-    /// The finger lets the list go: the bent surface goes out as a wave.
-    private func letGo() {
-        dragging = false
-        pull.fraction = 0
-    }
-
-    /// The system's pull: the check starts as the finger lets go, and the list closes at once; the
-    /// line over the dock says how the check goes.
+    /// The system's pull: its spinner shows until the check is through, or has gone too long and
+    /// lets the list go while it runs on.
     private func pulled() async {
-        holding = true
-        pulls += 1
-        let mine = pulls
-        // The list closes on the system's animation once this returns; until it has, the inset
-        // still holds it. A newer pull keeps holding.
-        defer {
-            Task {
-                try? await Task.sleep(for: .milliseconds(400))
-                if mine == pulls { holding = false }
-            }
-        }
-        // The system takes the pull as it passes its mark; the check waits for the finger, as
-        // one starting under it jolts the rows.
-        await until { !dragging }
         check()
-    }
-
-    /// Waits until `done`, at most a minute.
-    private func until(_ done: () -> Bool) async {
-        let end = ContinuousClock.now + .seconds(60)
-        while !done(), ContinuousClock.now < end, !Task.isCancelled {
+        while refreshing, !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(50))
         }
     }
@@ -566,7 +497,7 @@ private struct InboxList: View {
             let started = ContinuousClock.now
             // An account's inbox, as the unified one, with the inbox sync.
             let synced = await model.sync(model.tabbed ? Mail.inbox : model.mailbox)
-            // The line over the dock says so for a moment, however quick the sync.
+            // The spinner shows for a moment, however quick the sync.
             try? await Task.sleep(until: started + .milliseconds(1100))
             // Not one let go of: nobody waits on it any more, and a newer one may run.
             guard mine == checks, refreshing else { return }
