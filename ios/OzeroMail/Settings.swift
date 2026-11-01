@@ -276,12 +276,6 @@ enum Settings {
     static let textScales = [0.9, 1, 1.1, 1.2, 1.35]
     static let usualSize = 1
 
-    /// An account was held in the accounts sheet, so the tip about it does not show again.
-    static var holdTipSeen: Bool {
-        get { defaults.bool(forKey: "hold_tip_seen") }
-        set { defaults.set(newValue, forKey: "hold_tip_seen") }
-    }
-
     /// The tip about swipes was read, so it does not show again.
     static var swipeTipSeen: Bool {
         get { defaults.bool(forKey: "swipe_tip_seen") }

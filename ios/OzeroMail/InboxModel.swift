@@ -127,8 +127,6 @@ final class InboxModel {
     /// The account being signed in to again.
     var signingIn: AccountItem?
     var accountsOpen = false
-    /// The accounts sheet says holding an account opens its settings, until that was done.
-    var holdTip = !Settings.holdTipSeen
     /// Accounts removed while the app runs.
     private var removed: Set<Int64> = []
     /// Messages chosen to act on together.
@@ -923,10 +921,6 @@ final class InboxModel {
     /// Opens the settings on `page`, over the inbox.
     func openSettings(_ page: SettingsPage) {
         accountsOpen = false
-        if case .account = page {
-            holdTip = false
-            Settings.holdTipSeen = true
-        }
         // A fresh stack, so opening again from the sidebar does not pile pages up.
         closeSettings()
         path.append(.settings(page))
