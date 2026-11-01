@@ -337,8 +337,8 @@ private struct Start: View {
                     Text("signin_or").font(.small).foregroundStyle(.secondary)
                     VStack { Divider() }
                 }
-                EmailField(text: $email)
-                    .textFieldStyle(.roundedBorder)
+                EmailField(text: $email, labeled: true)
+                    .textFieldStyle(.filled)
                     .onSubmit(onNext)
                 SubmitButton(
                     label: isGoogle(email) ? "signin_google" : "signin_next", busy: busy,
@@ -423,17 +423,37 @@ private struct Kinds: View {
     }
 }
 
-/// The address field.
+/// The address field; `labeled`, its name stays above it and an example address waits inside.
 private struct EmailField: View {
     @Binding var text: String
+    var labeled = false
 
     var body: some View {
-        TextField("signin_email", text: $text)
-            .textContentType(.emailAddress)
-            .keyboardType(.emailAddress)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
+        VStack(alignment: .leading, spacing: 6) {
+            if labeled {
+                Text("signin_email").font(.small).foregroundStyle(.secondary).padding(.leading, 16)
+            }
+            TextField(labeled ? "signin_email_example" : "signin_email", text: $text)
+                .textContentType(.emailAddress)
+                .keyboardType(.emailAddress)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+        }
     }
+}
+
+/// A field filled like the search capsule, the way the sign-in steps take their text.
+private struct FilledFieldStyle: TextFieldStyle {
+    func _body(configuration: TextField<Self._Label>) -> some View {
+        configuration
+            .padding(.horizontal, 16)
+            .frame(minHeight: 50)
+            .background(Color.ozeroCard, in: .rect(cornerRadius: 16))
+    }
+}
+
+private extension TextFieldStyle where Self == FilledFieldStyle {
+    static var filled: FilledFieldStyle { FilledFieldStyle() }
 }
 
 /// A step's title: what was picked when the address is `typed` there, else the address.
@@ -476,7 +496,7 @@ private struct Again: View {
                 if !google {
                     SecureField("signin_password", text: $password)
                         .textContentType(.password)
-                        .textFieldStyle(.roundedBorder)
+                        .textFieldStyle(.filled)
                         .onSubmit(submit)
                 }
                 SubmitButton(label: google ? "signin_again_with_google" : "signin_action", busy: busy, ready: ready, action: submit)
@@ -563,7 +583,7 @@ private struct Credentials: View {
                 SubmitButton(label: "signin_action", busy: busy, ready: ready, action: submit)
             }
         }
-        .textFieldStyle(.roundedBorder)
+        .textFieldStyle(.filled)
         .onSubmit(submit)
     }
 
@@ -646,7 +666,7 @@ private struct Exchange: View {
                 SubmitButton(label: "signin_action", busy: busy, ready: ready, action: submit)
             }
         }
-        .textFieldStyle(.roundedBorder)
+        .textFieldStyle(.filled)
         .onSubmit(submit)
         .animation(.smooth(duration: 0.3), value: shown)
         .onChange(of: manual) { _, manual in

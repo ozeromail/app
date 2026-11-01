@@ -675,6 +675,9 @@ private struct Dock: View {
     @Bindable var model: InboxModel
     let choosing: Bool
     let picked: [MessageItem]
+    /// The bar's height grows with the system's text size, so search never cuts its words.
+    @ScaledMetric(relativeTo: .body) private var height: CGFloat = 52
+    @ScaledMetric(relativeTo: .body) private var sidewaysHeight: CGFloat = 40
 
     var body: some View {
         GlassGroup {
@@ -719,7 +722,7 @@ private struct Dock: View {
                         }
                     }
                 }
-                .frame(height: model.sideways && !choosing ? 40 : 52)
+                .frame(height: model.sideways && !choosing ? sidewaysHeight : height)
                 .animation(.smooth, value: choosing)
                 .animation(.smooth, value: model.toast)
             }
@@ -1246,6 +1249,7 @@ struct MessageRow: View {
 /// A row's account, when there are several: a dot of its colour and its short name, before the time.
 struct AccountTag: View {
     let account: AccountMark
+    @ScaledMetric(relativeTo: .caption2) private var width: CGFloat = 70
 
     var body: some View {
         AccountDot(color: account.tint, size: 6)
@@ -1253,7 +1257,7 @@ struct AccountTag: View {
             .font(.label)
             .foregroundStyle(.secondary)
             .lineLimit(1)
-            .frame(maxWidth: 70, alignment: .leading)
+            .frame(maxWidth: width, alignment: .leading)
     }
 }
 

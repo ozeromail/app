@@ -106,7 +106,7 @@ private struct RichImage: View {
                     Rectangle().fill(Color.ozeroCard).aspectRatio(4 / 3, contentMode: .fit)
                 }
             }
-            .clipShape(.rect(cornerRadius: 10))
+            .clipShape(.rect(cornerRadius: 12))
             .overlay(alignment: .bottomTrailing) {
                 if let file {
                     Text(verbatim: ByteCountFormatter.string(fromByteCount: Int64(clamping: file.size), countStyle: .file))
@@ -114,7 +114,7 @@ private struct RichImage: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(.black.opacity(0.55), in: .rect(cornerRadius: 6))
+                        .background(.black.opacity(0.55), in: .rect(cornerRadius: 8))
                         .padding(8)
                 }
             }

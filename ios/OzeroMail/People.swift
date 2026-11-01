@@ -56,7 +56,7 @@ struct PersonSheet: View {
                         }
                     }
                 }
-                .background(Color.ozeroCard, in: .rect(cornerRadius: 14))
+                .background(Color.ozeroCard, in: .rect(cornerRadius: 16))
             }
             Spacer(minLength: 0)
         }

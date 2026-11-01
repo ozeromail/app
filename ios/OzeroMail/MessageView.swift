@@ -953,7 +953,7 @@ private struct PlainText: View {
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 1)
-                        .background(Color.ozeroCard, in: .rect(cornerRadius: 9))
+                        .background(Color.ozeroCard, in: .rect(cornerRadius: 8))
                         .contentShape(Rectangle().inset(by: -14))
                 }
                 .buttonStyle(.plain)
@@ -988,7 +988,7 @@ private struct HiddenImages: View {
         }
         .padding(.leading, 14)
         .padding([.trailing, .vertical], 8)
-        .background(Color.ozeroCard, in: .rect(cornerRadius: 14))
+        .background(Color.ozeroCard, in: .rect(cornerRadius: 16))
         .padding(.horizontal, 16)
         .padding(.top, 4)
         .padding(.bottom, 8)
@@ -1089,7 +1089,7 @@ private struct Details: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(Color.ozeroCard, in: .rect(cornerRadius: 14))
+        .background(Color.ozeroCard, in: .rect(cornerRadius: 16))
         .padding(.horizontal, 16)
         .padding(.bottom, 10)
     }
@@ -1374,7 +1374,7 @@ struct BarLabel: View {
         }
         .foregroundStyle(tint)
         .frame(maxWidth: .infinity, minHeight: 52)
-        .background(background.buttonFill, in: .rect(cornerRadius: 14))
+        .background(background.buttonFill, in: .rect(cornerRadius: 16))
         .contentShape(.rect)
     }
 }
