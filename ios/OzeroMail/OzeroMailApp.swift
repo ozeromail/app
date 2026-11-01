@@ -4,6 +4,8 @@ import SwiftUI
 struct OzeroMailApp: App {
     init() {
         Crashes.shared.install()
+        // A pull to refresh shows the water, not a spinner.
+        UIRefreshControl.appearance().tintColor = .clear
     }
 
     var body: some Scene {
