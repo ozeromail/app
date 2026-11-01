@@ -750,10 +750,14 @@ private struct InboxTabBar: UIViewRepresentable {
     func makeUIView(context: Context) -> UITabBar {
         let bar = UITabBar()
         bar.delegate = context.coordinator
+        // The open tab in the text's own colour, as the segments had it; the lens marks it.
+        bar.tintColor = .label
         bar.items = Category.all.indices.map { at in
             let item = UITabBarItem(title: nil, image: nil, tag: at)
             item.titlePositionAdjustment = Self.centred
+            // The same size open or not: the system's own makes the open one smaller.
             item.setTitleTextAttributes([.font: Self.font], for: .normal)
+            item.setTitleTextAttributes([.font: Self.font], for: .selected)
             return item
         }
         return bar
