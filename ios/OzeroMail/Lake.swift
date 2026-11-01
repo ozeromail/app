@@ -3,10 +3,10 @@ import SwiftUI
 /// The note of a list with nothing left in it: still water. A horizon and a soft reflection under
 /// it, at rest until something moves it. With `drawIn`, as the last message leaves, a drop lands on
 /// the water and the horizon comes out of its waves. A touch sends a wave out too. `grey` water is
-/// for plain empty folders: it never draws in. While there are `checking` words, the water swells
-/// and they say what it waits for, as through a pull's sync while `refreshing`: water never moves
-/// under words that say nothing is going on. `checkedAt` shows under the words. As the list is
-/// pulled, a drop gathers over the water, growing with the pull, and falls on each of `drops`.
+/// for plain empty folders: it never draws in. While there are `checking` words, they say what it
+/// waits for and the water swells, but for a pull's sync (`refreshing`): its water is over the
+/// title (`PullWater`). Water never moves under words that say nothing is going on. `checkedAt`
+/// shows under the words.
 struct LakeNote: View {
     let title: LocalizedStringKey
     var drawIn = false
@@ -14,7 +14,6 @@ struct LakeNote: View {
     var checking: LakeWords?
     var checkedAt: Date?
     var refreshing = false
-    var pull: PullState
 
     @State private var still: Still
     /// The checking words, kept while they fade out.
@@ -23,21 +22,20 @@ struct LakeNote: View {
     private var waiting: Bool { checking != nil }
 
     init(title: LocalizedStringKey, drawIn: Bool = false, grey: Bool = false,
-         checking: LakeWords? = nil, checkedAt: Date? = nil, refreshing: Bool = false, pull: PullState) {
+         checking: LakeWords? = nil, checkedAt: Date? = nil, refreshing: Bool = false) {
         self.title = title
         self.drawIn = drawIn
         self.grey = grey
         self.checking = checking
         self.checkedAt = checkedAt
         self.refreshing = refreshing
-        self.pull = pull
         // Only as it first shows: the caller's flag turns off right after.
         _still = State(initialValue: Still(falling: drawIn))
     }
 
     var body: some View {
         VStack(spacing: 6) {
-            WaterCanvas(still: still, grey: grey, surface: Lake.horizon, fall: Lake.fall, pulled: pull.fraction)
+            WaterCanvas(still: still, grey: grey, surface: Lake.horizon, fall: Lake.fall, pulled: 0)
                 .frame(height: Lake.height)
                 .contentShape(.rect)
                 .gesture(SpatialTapGesture().onEnded { tap in
@@ -74,9 +72,8 @@ struct LakeNote: View {
         .frame(maxWidth: .infinity)
         .padding(.top, Lake.top)
         .padding(.bottom, 48)
-        .onAppear { still.beat = waiting || refreshing }
-        .onChange(of: waiting || refreshing) { _, now in still.beat = now }
-        .onChange(of: pull.drops) { _, _ in still.release(pull.lastDrop) }
+        .onAppear { still.beat = waiting && !refreshing }
+        .onChange(of: waiting && !refreshing) { _, now in still.beat = now }
         .accessibilityElement(children: .combine)
     }
 
@@ -141,7 +138,7 @@ enum Lake {
     /// How far a full pull opens the list: where the system's pull to refresh takes it.
     static let pullGap: CGFloat = 170
     static let pullFall: CGFloat = 24
-    /// How tall the system's large title is, over the list.
+    /// How tall the system's large title is, over the list, where it cannot be found on screen.
     static let largeTitle: CGFloat = 52
     /// How far a pull must go, in pulls, to drop a drop when let go.
     static let tug: CGFloat = 1.0 / 3
