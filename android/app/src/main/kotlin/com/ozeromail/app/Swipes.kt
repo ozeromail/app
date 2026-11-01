@@ -246,6 +246,7 @@ fun SwipeAction.label(message: MessageItem): Int = when {
     this == SwipeAction.READ && message.threadUnread == 0u -> R.string.action_unread
     this == SwipeAction.FLAG && message.flagged -> R.string.action_unflag
     this == SwipeAction.DELETE && !message.canTrash -> R.string.action_delete_forever
+    this == SwipeAction.INBOX && message.spam -> R.string.action_not_spam
     else -> label
 }
 

@@ -697,12 +697,22 @@ impl Core {
         self.hold_move(messages, Action::Move(FolderId(folder)))
     }
 
-    /// Where `move_to_folder` can take the message: the folders of its account that take
-    /// moves, other than the one it is in.
-    pub fn move_targets(&self, message: i64) -> Result<Vec<FolderItem>, CoreError> {
-        let here = self.store.location(MessageId(message))?;
-        self.account_folders(here.account_id, |f| {
-            f.role.takes_moves() && f.remote_id != here.folder_remote_id
+    /// Where `move_to_folder` can take the messages together: the folders of their account
+    /// that take moves, other than the ones they are in. None for messages of several accounts.
+    pub fn move_targets(&self, messages: Vec<i64>) -> Result<Vec<FolderItem>, CoreError> {
+        let here = messages
+            .into_iter()
+            .map(|id| self.store.location(MessageId(id)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let Some(account) = here
+            .first()
+            .map(|l| l.account_id)
+            .filter(|a| here.iter().all(|l| l.account_id == *a))
+        else {
+            return Ok(Vec::new());
+        };
+        self.account_folders(account, |f| {
+            f.role.takes_moves() && here.iter().all(|l| f.remote_id != l.folder_remote_id)
         })
     }
 
@@ -4535,6 +4545,8 @@ pub struct MessageItem {
     pub can_spam: bool,
     /// It can move to another folder: from the inbox, archive, trash, spam or the user's folders.
     pub can_move: bool,
+    /// It is in the spam folder: back to the inbox is Not spam.
+    pub spam: bool,
     /// `Core::unsubscribe` can leave the list it came from.
     pub can_unsubscribe: bool,
     /// In mixed lists (the unified inbox, search), set when there is more than one account.
@@ -4571,6 +4583,7 @@ impl From<MessageRow> for MessageItem {
             can_snooze: allows(Action::Snooze),
             can_spam: allows(Action::Spam),
             can_move: allows(Action::Move(FolderId(0))),
+            spam: row.role == FolderRole::Junk,
             can_unsubscribe: row.can_unsubscribe,
             account: None,
             attachments: row.attachments,

@@ -606,16 +606,17 @@ final class InboxModel {
         await remove(gone, toast: tr("inbox_spammed"), role: .junk, move: mail.spam)
     }
 
-    /// Flags the message, or takes its flag off; it stays in the list.
-    func flag(_ message: MessageItem, flagged: Bool) async {
+    /// Flags the rows, or takes their flags off; they stay in the list.
+    func flag(_ rows: [MessageItem], flagged: Bool) async {
         do {
-            try await mail.flag([message], flagged: flagged)
+            try await mail.flag(rows, flagged: flagged)
         } catch {
             self.error = error.textKey()
             return
         }
+        let marked = Set(rows.map(\.id))
         messages = messages.map { row in
-            guard row.id == message.id else { return row }
+            guard marked.contains(row.id) else { return row }
             var changed = row
             changed.flagged = flagged
             return changed
@@ -663,17 +664,21 @@ final class InboxModel {
             case .read: await setRead([message], read: message.threadUnread > 0)
             // The sheet asks until when.
             case .snooze: snoozing = Snoozing(messages: [message])
-            case .flag: await flag(message, flagged: !message.flagged)
+            case .flag: await flag([message], flagged: !message.flagged)
             case .spam: await spam([message])
             case .inbox: await moveToInbox([message])
             // The same: a list asks where to.
-            case .move:
-                do {
-                    moving = Moving(message: message, targets: moveOrder(try await mail.moveTargets(of: message)))
-                } catch {
-                    self.error = error.textKey()
-                }
+            case .move: await move([message])
             }
+        }
+    }
+
+    /// A list asks where to take the rows.
+    func move(_ rows: [MessageItem]) async {
+        do {
+            moving = Moving(messages: rows, targets: moveOrder(try await mail.moveTargets(of: rows)))
+        } catch {
+            self.error = error.textKey()
         }
     }
 

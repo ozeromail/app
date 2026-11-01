@@ -7,9 +7,9 @@ struct Snoozing: Identifiable {
     var then: @MainActor () -> Void = {}
 }
 
-/// A swiped message waiting for a folder from `targets`.
+/// Swiped or chosen messages waiting for a folder from `targets`.
 struct Moving {
-    let message: MessageItem
+    let messages: [MessageItem]
     let targets: [(folder: FolderItem, title: String)]
 }
 

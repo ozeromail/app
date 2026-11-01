@@ -47,6 +47,7 @@ enum SwipeAction: String, CaseIterable, Identifiable {
         case .read where message.threadUnread == 0: tr("action_unread")
         case .flag where message.flagged: tr("action_unflag")
         case .delete where !message.canTrash: tr("action_delete_forever")
+        case .inbox where message.spam: tr("action_not_spam")
         default: label
         }
     }

@@ -923,27 +923,28 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         }
     }
 
-    /** Flags the message, or takes its flag off; it stays in the list. */
-    fun setFlag(message: MessageItem, flagged: Boolean) {
+    /** Flags the rows, or takes their flags off; they stay in the list. */
+    fun setFlag(rows: List<MessageItem>, flagged: Boolean) {
         scope.launch {
             try {
-                mail.flag(listOf(message), flagged)
+                mail.flag(rows, flagged)
             } catch (e: CoreException) {
                 fail(e)
                 return@launch
             }
-            messages = messages.map { if (it.id == message.id) it.copy(flagged = flagged) else it }
+            val marked = rows.map { it.id }.toSet()
+            messages = messages.map { if (it.id in marked) it.copy(flagged = flagged) else it }
         }
     }
 
     /** Off the list while the sheet asks where to; back if it closes without a folder. */
-    fun move(message: MessageItem, reset: () -> Unit) {
+    fun move(rows: List<MessageItem>, reset: () -> Unit = {}) {
         scope.launch {
             try {
-                val targets = mail.moveTargets(message)
+                val targets = mail.moveTargets(rows)
                 // One swiped before and still waiting comes back.
                 moving?.reset?.invoke()
-                moving = Moving(message, targets, reset)
+                moving = Moving(rows, targets, reset)
             } catch (e: CoreException) {
                 fail(e)
                 reset()
@@ -958,9 +959,9 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         SwipeAction.READ -> setRead(listOf(message), message.threadUnread > 0u, reset)
         // Off the list while the sheet asks until when; back if it closes without a time.
         SwipeAction.SNOOZE -> { snoozing = Snoozing(listOf(message), reset) }
-        SwipeAction.FLAG -> setFlag(message, !message.flagged)
+        SwipeAction.FLAG -> setFlag(listOf(message), !message.flagged)
         SwipeAction.SPAM -> spam(listOf(message), reset)
-        SwipeAction.MOVE -> move(message, reset)
+        SwipeAction.MOVE -> move(listOf(message), reset)
         SwipeAction.INBOX -> moveToInbox(listOf(message), reset)
     }
 
@@ -1229,7 +1230,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 closeSearch()
                 spam(listOf(message))
             }.takeIf { message.canSpam },
-            onFlag = { flagged -> setFlag(message, flagged) },
+            onFlag = { flagged -> setFlag(listOf(message), flagged) },
             onDone = {
                 moveOn()
                 archive(listOf(message))
@@ -1457,6 +1458,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                 onDelete = { choice { delete(it) } },
                                 onDone = { choice { rows -> archive(rows.filter { it.canArchive }) } },
                                 onSnooze = { choice { rows -> snoozing = Snoozing(rows.filter { it.canSnooze }) } },
+                                onInbox = { choice { rows -> moveToInbox(rows.filter { it.canMoveToInbox }) } },
+                                onSpam = { choice { rows -> spam(rows.filter { it.canSpam }) } },
+                                onMove = { choice { rows -> move(rows) } },
+                                onFlag = { flagged -> choice { setFlag(it, flagged) } },
                                 wide = wide,
                                 showing = reading?.id,
                             )
@@ -1505,7 +1510,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                     // Once: the folders stay on the sheet while it goes down.
                     if (moving == null) return@MoveTargets
                     moving = null
-                    moveToFolder(listOf(shown.message), folder, title, shown.reset)
+                    moveToFolder(shown.messages, folder, title, shown.reset)
                 }
             }
         }
@@ -1664,6 +1669,10 @@ private fun InboxList(
     onDelete: () -> Unit,
     onDone: () -> Unit,
     onSnooze: () -> Unit,
+    onInbox: () -> Unit,
+    onSpam: () -> Unit,
+    onMove: () -> Unit,
+    onFlag: (flagged: Boolean) -> Unit,
     /** Beside the mailboxes: the dock is one row. */
     wide: Boolean = false,
     /** The message open beside the list, which leaves the dock only the tabs where there are tabs. */
@@ -1677,6 +1686,20 @@ private fun InboxList(
     val choosing = picked.isNotEmpty()
     val mode by animateFloatAsState(if (choosing) 1f else 0f, Motion.settle(), label = "choosing")
     var more by remember { mutableStateOf(false) }
+    // The bar's filled button: Done where mail is not filed yet, else back to the inbox.
+    val done = picked.count { it.canArchive }
+    val back = picked.filter { it.canMoveToInbox }
+    // Out of spam, back to the inbox says Not spam.
+    val notSpam = back.isNotEmpty() && back.all { it.spam }
+    val main = when {
+        done > 0 -> ChoiceMain(stringResource(R.string.action_done_count, done), R.drawable.ic_done, onDone)
+        back.isNotEmpty() -> ChoiceMain(
+            stringResource(if (notSpam) R.string.action_not_spam_count else R.string.action_inbox_count, back.size),
+            R.drawable.ic_inbox,
+            onInbox,
+        )
+        else -> null
+    }
     BackHandler(enabled = choosing) { onChoose(emptySet()) }
     // The gestures outlive a composition; they read the list as it is now.
     val rowsNow by rememberUpdatedState(messages)
@@ -1997,14 +2020,13 @@ private fun InboxList(
                 choosing = mode,
                 choiceBar = {
                     ChoiceBar(
-                        done = picked.count { it.canArchive },
+                        main = main,
                         unread = picked.any { it.threadUnread > 0u },
                         forever = picked.isNotEmpty() && picked.none { it.canTrash },
                         onCancel = { onChoose(emptySet()) },
                         onRead = { onRead(picked.any { it.threadUnread > 0u }) },
                         onDelete = onDelete,
                         onMore = { more = true },
-                        onDone = onDone.takeIf { picked.any { it.canArchive } },
                     )
                 },
                 wide = wide,
@@ -2012,21 +2034,28 @@ private fun InboxList(
         }
         // The rarer ways to choose, in a sheet like every menu.
         Sheet(visible = more, onClose = { more = false }) {
-            SheetAction(R.drawable.ic_done, stringResource(R.string.action_select_all), colors.onSurface) {
+            @Composable
+            fun act(icon: Int, label: String, onClick: () -> Unit) = SheetAction(icon, label, colors.onSurface) {
                 more = false
-                onChoose(chosen + messages.map { it.id })
+                onClick()
             }
-            if (picked.any { it.canSnooze }) {
-                SheetAction(R.drawable.ic_snooze, stringResource(R.string.action_snooze), colors.onSurface) {
-                    more = false
-                    onSnooze()
-                }
+            act(R.drawable.ic_done, stringResource(R.string.action_select_all)) { onChoose(chosen + messages.map { it.id }) }
+            // What the bar has no room for, where it applies to the chosen.
+            if (done > 0 && back.isNotEmpty()) {
+                act(R.drawable.ic_inbox, stringResource(if (notSpam) R.string.action_not_spam else R.string.action_move_to_inbox), onInbox)
             }
-            // The sender of the message chosen last.
-            messages.find { it.id == chosen.lastOrNull() }?.let { last ->
-                SheetAction(R.drawable.ic_inbox, stringResource(R.string.action_all_from, last.sender), colors.onSurface) {
-                    more = false
-                    onChoose(chosen + messages.filter { it.fromEmail == last.fromEmail }.map { it.id })
+            if (picked.any { it.canSnooze }) act(R.drawable.ic_snooze, stringResource(R.string.action_snooze), onSnooze)
+            // Folders of one account only.
+            if (picked.all { it.canMove } && picked.distinctBy { it.accountId }.size == 1) {
+                act(R.drawable.ic_folder, stringResource(R.string.action_move_to_folder), onMove)
+            }
+            if (picked.any { it.canSpam }) act(R.drawable.ic_spam, stringResource(R.string.action_spam), onSpam)
+            val flag = picked.any { !it.flagged }
+            act(R.drawable.ic_flag, stringResource(if (flag) R.string.action_flag else R.string.action_unflag)) { onFlag(flag) }
+            // When they are all from one sender, the rest of that sender's mail.
+            picked.distinctBy { it.fromEmail }.singleOrNull()?.let { one ->
+                act(R.drawable.ic_inbox, stringResource(R.string.action_all_from, one.sender)) {
+                    onChoose(chosen + messages.filter { it.fromEmail == one.fromEmail }.map { it.id })
                 }
             }
         }
