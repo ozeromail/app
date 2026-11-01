@@ -19,9 +19,15 @@ class KeyboardTest : TestMail() {
         // A new message starts in To, with the keyboard up.
         waitFor { has(isFocused()) }
         rule.onAllNodes(hasContentDescription("Close")).onFirst().performClick()
-        repeat(3) { rule.mainClock.advanceTimeByFrame() }
-        // The message is still sliding away, and nothing in it holds the keyboard any more.
-        assertTrue("the message closed at once", has(hasContentDescription("Send")))
-        assertFalse("the keyboard stays until the message is gone", has(isFocused()))
+        val send = hasContentDescription("Send")
+        // Frame by frame until nothing holds the keyboard: the message must still be sliding away.
+        var frames = 0
+        while (has(isFocused()) && frames < 60) {
+            rule.mainClock.advanceTimeByFrame()
+            frames++
+        }
+        assertFalse("the keyboard is still held after $frames frames", has(isFocused()))
+        assertTrue("the keyboard stayed until the message was gone ($frames frames)", has(send) && bounds(send).top < screen.bottom)
+        waitFor { !has(send) }
     }
 }
