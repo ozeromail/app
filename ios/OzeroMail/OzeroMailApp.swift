@@ -59,7 +59,7 @@ private struct RootView: View {
         } message: {
             Text("crash_text_ios")
         }
-        .fullScreenCover(item: $composingCrash) { composing in
+        .sheet(item: $composingCrash) { composing in
             if case .inbox(let mail) = start {
                 ComposeView(
                     mail: mail, composing: composing, onClose: { composingCrash = nil },

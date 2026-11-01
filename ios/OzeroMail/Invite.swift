@@ -185,45 +185,59 @@ private func hourText(_ seconds: Int64) -> String {
 }
 
 /// The bottom row while an invitation waits for an answer: No, Maybe and Yes, under the thumb,
-/// Yes filled, and the message's other actions in `onMore`.
-struct InviteBar: View {
+/// Yes filled, and the message's other actions in the menu of ⋯. On iOS 26, glass capsules.
+struct InviteBar<More: View>: View {
     let onAnswer: (InviteAnswer) -> Void
-    let onMore: () -> Void
+    @ViewBuilder let more: () -> More
 
     var body: some View {
-        HStack(spacing: 6) {
-            answer(.no)
-            answer(.maybe)
-            answer(.yes)
-            Button(action: onMore) {
-                Image(systemName: "ellipsis")
-                    .font(.row)
-                    .foregroundStyle(.primary)
-                    .frame(width: 50, height: 50)
-                    .background(Color.ozeroCard, in: .rect(cornerRadius: 14))
+        GlassGroup {
+            HStack(spacing: 6) {
+                answer(.no)
+                answer(.maybe)
+                answer(.yes)
+                Menu(content: more) {
+                    Image(systemName: "ellipsis")
+                        .font(.row)
+                        .foregroundStyle(.primary)
+                        .frame(width: 50, height: 50)
+                        .contentShape(.circle)
+                        .glassSurface(in: .circle, fallback: Color.ozeroCard)
+                }
+                .accessibilityLabel(Text("action_more"))
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(Text("action_more"))
         }
         .padding(.horizontal, 12)
         .padding(.top, 10)
         .padding(.bottom, 4)
-        .background(.bar)
+        .dockBackground(floating: true)
     }
 
+    /// Before iOS 26, without glass.
+    private var legacy: Bool {
+        if #available(iOS 26, *) { return false }
+        return true
+    }
+
+    @ViewBuilder
     private func answer(_ answer: InviteAnswer) -> some View {
         let filled = answer == .yes
-        return Button { onAnswer(answer) } label: {
+        Button { onAnswer(answer) } label: {
             Text(LocalizedStringKey(answer.label))
                 .font(.textStrong)
                 .lineLimit(1)
                 .foregroundStyle(filled ? .white : .primary)
                 .frame(maxWidth: .infinity, minHeight: 50)
-                .background(filled ? Color.ozeroFill : .clear, in: .rect(cornerRadius: 14))
-                .overlay(RoundedRectangle(cornerRadius: 14).stroke(filled ? Color.ozeroFill : Color.ozeroCard, lineWidth: 1))
-                .contentShape(.rect)
+                .contentShape(.capsule)
         }
         .buttonStyle(.plain)
+        .glassSurface(in: .capsule, tint: filled ? .ozeroFill : nil, fallback: filled ? Color.ozeroFill : Color.clear)
+        .overlay {
+            // Before iOS 26 the others are outlined.
+            if legacy && !filled {
+                Capsule().stroke(Color.ozeroCard, lineWidth: 1)
+            }
+        }
     }
 }
 

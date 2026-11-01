@@ -23,7 +23,6 @@ struct MessageView: View {
     @State private var unread: Set<Int64>?
     @State private var known: Set<Int64> = []
     @State private var showAll = false
-    @State private var more = false
     /// The folders the message can move to, picked from More.
     @State private var targets: [(folder: FolderItem, title: String)]?
     /// Whether the person left the list it came from here, and the question before they do.
@@ -134,7 +133,7 @@ struct MessageView: View {
             if !pane && replying == nil && barShown {
                 Group {
                     if let asking {
-                        InviteBar(onAnswer: { answerInvite(asking, $0) }, onMore: { more = true })
+                        InviteBar(onAnswer: { answerInvite(asking, $0) }) { moreItems(answer, asking: asking) }
                     } else {
                         bar(answer: answer)
                     }
@@ -168,61 +167,12 @@ struct MessageView: View {
                 .id(replying.draft.id)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             } else if pane, let asking {
-                InviteBar(onAnswer: { answerInvite(asking, $0) }, onMore: { more = true })
+                InviteBar(onAnswer: { answerInvite(asking, $0) }) { moreItems(answer, asking: asking) }
             } else if pane {
                 row(answer: answer, newest: shown.last ?? message)
             }
         }
         .animation(.smooth, value: replying == nil)
-        .confirmationDialog("action_more", isPresented: $more) {
-            // The answers took the row: the rest of it is here.
-            if asking != nil {
-                Button("message_reply") { reply(answer, all: false) }
-                if pane {
-                    Button("message_reply_all") { reply(answer, all: true) }
-                    Button("message_forward") { forward(shown.last ?? message) }
-                }
-                Button(message.canTrash ? "action_delete" : "action_delete_forever", role: .destructive, action: delete)
-                if message.canSnooze { Button("action_snooze", action: snooze) }
-                if message.canArchive { Button("action_done", action: done) }
-            }
-            if !pane {
-                Button("message_reply_all") { reply(answer, all: true) }
-                Button("message_forward") { forward(shown.last ?? message) }
-            }
-            // As the conversation has it now, flagged here or elsewhere.
-            let flagged = (thread.first { $0.id == message.id } ?? message).flagged
-            Button(flagged ? "action_unflag" : "action_flag") {
-                Task { await model.flag([message], flagged: !flagged) }
-            }
-            Button("action_mark_unread") {
-                leave { await model.setRead([message], read: false) }
-            }
-            if message.canMoveToInbox {
-                Button("action_move_to_inbox") {
-                    leave { await model.moveToInbox([message]) }
-                }
-            }
-            if message.canMove {
-                Button("action_move_to_folder") {
-                    Task {
-                        do {
-                            targets = try await moveOrder(mail.moveTargets(of: [message]))
-                        } catch {
-                            model.error = error.textKey()
-                        }
-                    }
-                }
-            }
-            if message.canUnsubscribe && !left {
-                Button("action_unsubscribe") { leaving = true }
-            }
-            if message.canSpam {
-                Button("action_spam", role: .destructive) {
-                    leave { await model.spam([message]) }
-                }
-            }
-        }
         .moveDialog($targets, targets: { $0 }) { _, folder, title in
             leave { await model.moveToFolder([message], to: folder, title: title) }
         }
@@ -388,19 +338,115 @@ struct MessageView: View {
 
     /// Reply, Delete, Snooze, More and Done in one row; a long press on Reply offers Reply all
     /// and Forward.
+    /// What else to do with the message, in the menu of ⋯.
+    @ViewBuilder
+    private func moreItems(_ answer: MessageItem, asking: MessageItem?) -> some View {
+        let shown = thread.isEmpty ? [message] : thread
+        // The answers took the row: the rest of it is here.
+        if asking != nil {
+            Button("message_reply") { reply(answer, all: false) }
+            if pane {
+                Button("message_reply_all") { reply(answer, all: true) }
+                Button("message_forward") { forward(shown.last ?? message) }
+            }
+            Button(message.canTrash ? "action_delete" : "action_delete_forever", role: .destructive, action: delete)
+            if message.canSnooze { Button("action_snooze", action: snooze) }
+            if message.canArchive { Button("action_done", action: done) }
+        }
+        if !pane {
+            Button("message_reply_all") { reply(answer, all: true) }
+            Button("message_forward") { forward(shown.last ?? message) }
+        }
+        // As the conversation has it now, flagged here or elsewhere.
+        let flagged = (thread.first { $0.id == message.id } ?? message).flagged
+        Button(flagged ? "action_unflag" : "action_flag") {
+            Task { await model.flag([message], flagged: !flagged) }
+        }
+        Button("action_mark_unread") {
+            leave { await model.setRead([message], read: false) }
+        }
+        if message.canMoveToInbox {
+            Button("action_move_to_inbox") {
+                leave { await model.moveToInbox([message]) }
+            }
+        }
+        if message.canMove {
+            Button("action_move_to_folder") {
+                Task {
+                    do {
+                        targets = try await moveOrder(mail.moveTargets(of: [message]))
+                    } catch {
+                        model.error = error.textKey()
+                    }
+                }
+            }
+        }
+        if message.canUnsubscribe && !left {
+            Button("action_unsubscribe") { leaving = true }
+        }
+        if message.canSpam {
+            Button("action_spam", role: .destructive) {
+                leave { await model.spam([message]) }
+            }
+        }
+    }
+
+    @ViewBuilder
     private func bar(answer: MessageItem) -> some View {
+        if #available(iOS 26, *) {
+            glassBar(answer: answer)
+        } else {
+            plainBar(answer: answer)
+        }
+    }
+
+    /// On iOS 26, glass floating over the message: what throws the message away or puts it off on
+    /// the left, the answers and the rest on the right, Done in the accent under the thumb.
+    private func glassBar(answer: MessageItem) -> some View {
+        GlassGroup {
+            HStack(spacing: 10) {
+                HStack(spacing: 0) {
+                    GlassIcon(icon: "trash", label: message.canTrash ? "action_delete" : "action_delete_forever", action: delete)
+                    if message.canSnooze {
+                        GlassIcon(icon: "clock", label: "action_snooze", action: snooze)
+                    }
+                }
+                .glassSurface(in: .capsule, fallback: Color.clear)
+                Spacer(minLength: 0)
+                HStack(spacing: 0) {
+                    GlassIcon(icon: "arrowshape.turn.up.left", label: "message_reply") { reply(answer, all: false) }
+                        .contextMenu { replyMenu(answer) }
+                    Menu { moreItems(answer, asking: nil) } label: { GlassIconLabel(icon: "ellipsis") }
+                        .accessibilityLabel(Text("action_more"))
+                }
+                .glassSurface(in: .capsule, fallback: Color.clear)
+                if message.canArchive {
+                    GlassIcon(icon: "checkmark", label: "action_done", tint: .white, action: done)
+                        .glassSurface(in: .circle, tint: .ozeroFill, fallback: Color.ozeroFill)
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 4)
+    }
+
+    @ViewBuilder
+    private func replyMenu(_ answer: MessageItem) -> some View {
+        Button("message_reply", systemImage: "arrowshape.turn.up.left") { reply(answer, all: false) }
+        Button("message_reply_all", systemImage: "arrowshape.turn.up.left.2") { reply(answer, all: true) }
+        Button("message_forward", systemImage: "arrowshape.turn.up.right") { forward(thread.last ?? message) }
+    }
+
+    private func plainBar(answer: MessageItem) -> some View {
         HStack(spacing: 8) {
             BarAction(icon: "arrowshape.turn.up.left", label: "message_reply") { reply(answer, all: false) }
-                .contextMenu {
-                    Button("message_reply", systemImage: "arrowshape.turn.up.left") { reply(answer, all: false) }
-                    Button("message_reply_all", systemImage: "arrowshape.turn.up.left.2") { reply(answer, all: true) }
-                    Button("message_forward", systemImage: "arrowshape.turn.up.right") { forward(thread.last ?? message) }
-                }
+                .contextMenu { replyMenu(answer) }
             BarAction(icon: "trash", label: message.canTrash ? "action_delete" : "action_delete_forever", action: delete)
             if message.canSnooze {
                 BarAction(icon: "clock", label: "action_snooze", action: snooze)
             }
-            BarAction(icon: "ellipsis", label: "action_more") { more = true }
+            Menu { moreItems(answer, asking: nil) } label: { BarLabel(icon: "ellipsis", label: "action_more") }
             if message.canArchive {
                 BarAction(icon: "checkmark", label: "action_done", tint: .white, background: .ozeroFill, action: done)
             }
@@ -431,7 +477,8 @@ struct MessageView: View {
             if message.canSnooze {
                 RoundButton(icon: "clock", label: "action_snooze", size: paneButton, action: snooze)
             }
-            RoundButton(icon: "ellipsis", label: "action_more", size: paneButton) { more = true }
+            Menu { moreItems(answer, asking: nil) } label: { RoundLabel(icon: "ellipsis", size: paneButton) }
+                .accessibilityLabel(Text("action_more"))
             if message.canArchive {
                 RoundButton(icon: "checkmark", label: "action_done", size: paneButton, tint: .white, background: .ozeroFill, action: done)
             }
@@ -1260,14 +1307,26 @@ struct RoundButton: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.row)
-                .foregroundStyle(tint)
-                .frame(width: size, height: size)
-                .background(background.buttonFill, in: .circle)
-        }
-        .accessibilityLabel(Text(label))
+        Button(action: action) { RoundLabel(icon: icon, size: size, tint: tint, background: background) }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text(label))
+    }
+}
+
+/// What a round button shows, also for a menu's: glass on iOS 26, tinted for the accent.
+struct RoundLabel: View {
+    let icon: String
+    var size: CGFloat = 46
+    var tint: Color = .primary
+    var background: Color = .ozeroCard
+
+    var body: some View {
+        Image(systemName: icon)
+            .font(.row)
+            .foregroundStyle(tint)
+            .frame(width: size, height: size)
+            .contentShape(.circle)
+            .glassSurface(in: .circle, tint: background == .ozeroFill ? .ozeroFill : nil, fallback: background.buttonFill)
     }
 }
 
@@ -1280,17 +1339,27 @@ struct BarAction: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            VStack(spacing: 3) {
-                Image(systemName: icon).font(.system(size: 19, weight: .medium))
-                Text(label).font(.label).lineLimit(1)
-            }
-            .foregroundStyle(tint)
-            .frame(maxWidth: .infinity, minHeight: 52)
-            .background(background.buttonFill, in: .rect(cornerRadius: 14))
-            .contentShape(.rect)
+        Button(action: action) { BarLabel(icon: icon, label: label, tint: tint, background: background) }
+            .buttonStyle(.plain)
+    }
+}
+
+/// What a bar's big button shows, also for a menu's.
+struct BarLabel: View {
+    let icon: String
+    let label: LocalizedStringKey
+    var tint: Color = .primary
+    var background: Color = .clear
+
+    var body: some View {
+        VStack(spacing: 3) {
+            Image(systemName: icon).font(.system(size: 19, weight: .medium))
+            Text(label).font(.label).lineLimit(1)
         }
-        .buttonStyle(.plain)
+        .foregroundStyle(tint)
+        .frame(maxWidth: .infinity, minHeight: 52)
+        .background(background.buttonFill, in: .rect(cornerRadius: 14))
+        .contentShape(.rect)
     }
 }
 

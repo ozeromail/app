@@ -24,6 +24,13 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - name: Use Xcode 26 or newer
+        # Built with an older Xcode, the app runs without iOS 26's Liquid Glass.
+        run: |
+          xcode=$(ls -d /Applications/Xcode_*.app | grep -vi beta | sort -V | tail -1)
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+          xcodebuild -version | grep -Eq '^Xcode (2[6-9]|[3-9][0-9])' || { echo "::error::Xcode 26 or newer is needed"; exit 1; }
       - name: Install Rust iOS targets
         working-directory: core
         run: |
