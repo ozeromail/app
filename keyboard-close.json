@@ -1,0 +1,541 @@
+{
+ "name": "keyboard-close",
+ "frames": [
+  {
+   "ms": 272,
+   "finger": [
+    95,
+    1932
+   ],
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     1782,
+     1048,
+     1908
+    ],
+    "typing": [
+     53,
+     1040,
+     930,
+     1098
+    ]
+   }
+  },
+  {
+   "ms": 288,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     2527,
+     1048,
+     2653
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 304,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     2464,
+     1048,
+     2590
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 320,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     2460,
+     1048,
+     2586
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 336,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     2516,
+     1048,
+     2642
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 352,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     2648,
+     1048,
+     2774
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 368,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     2859,
+     1048,
+     2985
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 384,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     3107,
+     1048,
+     3233
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 400,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     3341,
+     1048,
+     3467
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 416,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     3541,
+     1048,
+     3667
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 432,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     3709,
+     1048,
+     3835
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 448,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     3850,
+     1048,
+     3976
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 464,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     3969,
+     1048,
+     4095
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 480,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     4070,
+     1048,
+     4196
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 496,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     4156,
+     1048,
+     4282
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 512,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     4231,
+     1048,
+     4357
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 528,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     4294,
+     1048,
+     4420
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 544,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     4349,
+     1048,
+     4475
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 560,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     4395,
+     1048,
+     4521
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 576,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     4435,
+     1048,
+     4561
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 592,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     4468,
+     1048,
+     4594
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 608,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     4496,
+     1048,
+     4622
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 624,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     4519,
+     1048,
+     4645
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 640,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     4538,
+     1048,
+     4664
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 656,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     4553,
+     1048,
+     4679
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 672,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     4564,
+     1048,
+     4690
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 688,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     4572,
+     1048,
+     4698
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 704,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     4577,
+     1048,
+     4703
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 720,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     4579,
+     1048,
+     4705
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 736,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": [
+     901,
+     4579,
+     1048,
+     4705
+    ],
+    "typing": null
+   }
+  },
+  {
+   "ms": 752,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": null,
+    "typing": null
+   }
+  },
+  {
+   "ms": 768,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": null,
+    "typing": null
+   }
+  },
+  {
+   "ms": 784,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": null,
+    "typing": null
+   }
+  },
+  {
+   "ms": 800,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": null,
+    "typing": null
+   }
+  },
+  {
+   "ms": 816,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": null,
+    "typing": null
+   }
+  },
+  {
+   "ms": 832,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": null,
+    "typing": null
+   }
+  },
+  {
+   "ms": 848,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": null,
+    "typing": null
+   }
+  },
+  {
+   "ms": 864,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": null,
+    "typing": null
+   }
+  },
+  {
+   "ms": 880,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": null,
+    "typing": null
+   }
+  },
+  {
+   "ms": 896,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": null,
+    "typing": null
+   }
+  },
+  {
+   "ms": 912,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": null,
+    "typing": null
+   }
+  },
+  {
+   "ms": 928,
+   "finger": null,
+   "seen": null,
+   "at": {
+    "send": null,
+    "typing": null
+   }
+  }
+ ]
+}
