@@ -692,13 +692,30 @@ impl Core {
         self.hold_move(messages, Action::Inbox)
     }
 
-    /// As `archive`, into `folder`, another folder of the messages' account.
+    /// As `archive`, into `folder`, another folder of the messages' account. Messages that
+    /// are in it already stay where they are.
     pub fn move_to_folder(&self, messages: Vec<i64>, folder: i64) -> Result<Vec<i64>, CoreError> {
-        self.hold_move(messages, Action::Move(FolderId(folder)))
+        let mut away = Vec::with_capacity(messages.len());
+        let mut target: Option<String> = None;
+        for id in messages {
+            let here = self.store.location(MessageId(id))?;
+            if target.is_none() {
+                target = self
+                    .store
+                    .folders(here.account_id)?
+                    .into_iter()
+                    .find(|f| f.id == FolderId(folder))
+                    .map(|f| f.remote_id);
+            }
+            if target.as_ref() != Some(&here.folder_remote_id) {
+                away.push(id);
+            }
+        }
+        self.hold_move(away, Action::Move(FolderId(folder)))
     }
 
     /// Where `move_to_folder` can take the messages together: the folders of their account
-    /// that take moves, other than the ones they are in. None for messages of several accounts.
+    /// that take moves, but one all of them are in. None for messages of several accounts.
     pub fn move_targets(&self, messages: Vec<i64>) -> Result<Vec<FolderItem>, CoreError> {
         let here = messages
             .into_iter()
@@ -712,7 +729,7 @@ impl Core {
             return Ok(Vec::new());
         };
         self.account_folders(account, |f| {
-            f.role.takes_moves() && here.iter().all(|l| f.remote_id != l.folder_remote_id)
+            f.role.takes_moves() && here.iter().any(|l| f.remote_id != l.folder_remote_id)
         })
     }
 
