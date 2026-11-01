@@ -85,7 +85,11 @@ final class InboxModel {
     var pane: MessageItem?
     /// On its side: the mailboxes beside the list, and the message beside the list.
     var sideways = false {
-        didSet { if sideways != oldValue { turned() } }
+        didSet {
+            guard sideways != oldValue else { return }
+            tabsHidden = false
+            turned()
+        }
     }
     var composing: Composing?
     var addingAccount = false
