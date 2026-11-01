@@ -219,49 +219,6 @@ struct ListTop: Equatable {
     var inset: CGFloat = 0
 }
 
-/// Finds the navigation bar's large title on screen, which SwiftUI does not tell.
-@MainActor final class LargeTitle {
-    fileprivate weak var probe: UIView?
-
-    /// The top of the large title's text, from the top of the window; nil while there is none.
-    func top(of title: String) -> CGFloat? {
-        guard let bar = probe.flatMap(Self.bar), let label = Self.label(title, in: bar) else { return nil }
-        return label.convert(label.bounds, to: nil).minY
-    }
-
-    private static func bar(near view: UIView) -> UINavigationBar? {
-        var responder: UIResponder? = view
-        while let next = responder {
-            if let navigation = (next as? UIViewController)?.navigationController { return navigation.navigationBar }
-            responder = next.next
-        }
-        return nil
-    }
-
-    /// Only the large one: the small title of a scrolled list is not it.
-    private static func label(_ title: String, in view: UIView) -> UILabel? {
-        if let label = view as? UILabel, label.text == title, label.font.pointSize >= 28, !label.isHidden, label.alpha > 0 {
-            return label
-        }
-        return view.subviews.lazy.compactMap { label(title, in: $0) }.first
-    }
-}
-
-private struct LargeTitleFinder: UIViewRepresentable {
-    let title: LargeTitle
-
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView()
-        view.isUserInteractionEnabled = false
-        title.probe = view
-        return view
-    }
-
-    func updateUIView(_ view: UIView, context: Context) {
-        title.probe = view
-    }
-}
-
 /// What the watch for new mail depends on: the app on screen, and which accounts are signed in.
 private struct WatchKey: Equatable {
     let active: Bool
@@ -287,14 +244,12 @@ private struct InboxList: View {
     @State private var dragging = false
     /// Only a pull's or Try again's sync says so; syncs on their own stay quiet over the saved mail.
     @State private var refreshing = false
-    /// The system holds the list open over its refresh, and from when it takes the pull the top
-    /// inset grows by what it holds; the water counts from the inset before the pull.
+    /// From when the system takes the pull until the list has closed, the top inset grows by what
+    /// it holds; the pull counts from the inset before.
     @State private var holding = false
     @State private var base: CGFloat = 0
-    /// Where the large title's text rests, on screen: the pull's water opens there as the title
-    /// rides down. Nil without a large title to find.
-    @State private var titleTop: CGFloat?
-    @State private var largeTitle = LargeTitle()
+    /// Counts the times the last message left, each sending a wave across the surface.
+    @State private var emptied = 0
     /// Counts the system's pulls, so one closing does not let go of a newer one.
     @State private var pulls = 0
     /// A check the user waits on: how long it has gone (0, slow, given up), and whether it just went through.
@@ -351,6 +306,12 @@ private struct InboxList: View {
 
     var body: some View {
         List(selection: $model.chosen) {
+            Surface(grey: !model.tabbed, pull: pull, refreshing: refreshing, waves: emptied)
+                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+                .selectionDisabled()
+                .accessibilityHidden(true)
             if let owner = model.owner {
                 Text(verbatim: owner)
                     .font(.small)
@@ -372,7 +333,8 @@ private struct InboxList: View {
                 SwipeTip(swipes: model.swipes, lift: !model.sideways, onDismiss: model.closeSwipeTip)
             }
             if lake {
-                LakeNote(title: model.emptyTitle, checking: checking, checkedAt: model.isInbox ? model.checkedAt : nil)
+                LakeNote(title: model.emptyTitle, drawIn: model.hadMail, checking: checking,
+                         checkedAt: model.isInbox ? model.checkedAt : nil)
                     .id(model.mailbox)
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
@@ -417,11 +379,7 @@ private struct InboxList: View {
             ListTop(offset: geometry.contentOffset.y + geometry.contentInsets.top, inset: geometry.contentInsets.top)
         } action: { _, now in
             top = now
-            if !dragging && !holding {
-                base = now.inset
-                // Measured, not assumed: the bar and the title differ by device and system.
-                if now.offset <= 0 { titleTop = largeTitle.top(of: title) }
-            }
+            if !dragging && !holding { base = now.inset }
             // How far the list is pulled down, past where it rests, and in pulls while the finger is on it.
             let gap = max(0, now.inset - base - now.offset)
             pull.fraction = dragging ? gap / Lake.pullGap : 0
@@ -436,21 +394,10 @@ private struct InboxList: View {
         .refreshable { await pulled() }
         // One tick, as the system takes the pull.
         .sensoryFeedback(.impact(weight: .light), trigger: pulls)
-        // The same on every screen, with mail or none: the water stays put, under the bar and over
-        // the title, and a pull moves the title and the list down to uncover it. Without a large
-        // title it opens under the bar.
-        .overlay(alignment: .top) {
-            PullWater(grey: !model.tabbed, pull: pull)
-                .frame(height: pull.gap)
-                .clipped()
-                .padding(.top, titleTop ?? (model.sideways ? base : base - Lake.largeTitle))
-                .allowsHitTesting(false)
-                // Counted from the top of the screen, as the inset is.
-                .ignoresSafeArea(.container, edges: .top)
-        }
-        .background { LargeTitleFinder(title: largeTitle) }
-        // A check the user waits on says when it is slow; a pull lets go after a while, and the sync
-        // goes on behind. Its words then say so, until it ends.
+        // The last message has left: a wave across the surface, then the empty words.
+        .onChange(of: lake) { _, now in if now && model.hadMail { emptied += 1 } }
+        // A check the user waits on says when it is slow, and lets go after a while: the sync goes
+        // on behind, and the words then say so, until it ends.
         .task(id: refreshing || waiting) {
             guard refreshing || waiting else { return }
             slow = 0
@@ -575,15 +522,14 @@ private struct InboxList: View {
     /// How far from the top and the end of the list the tabs stay put.
     private static let tabsStay: CGFloat = 80
 
-    /// The finger lets the list go: the pressed water springs back, and a pull the system has taken
-    /// (`pulled`) sends a ring across it.
+    /// The finger lets the list go: the bent surface goes out as a wave.
     private func letGo() {
         dragging = false
         pull.fraction = 0
-        if holding { pull.rings += 1 }
     }
 
-    /// The system's pull: the list stays open until the check is through.
+    /// The system's pull: the check starts as the finger lets go, and the list closes at once; the
+    /// line over the dock says how the check goes.
     private func pulled() async {
         holding = true
         pulls += 1
@@ -600,8 +546,6 @@ private struct InboxList: View {
         // one starting under it jolts the rows.
         await until { !dragging }
         check()
-        // A check that has gone too long lets the list go while it runs on.
-        await until { !refreshing }
     }
 
     /// Waits until `done`, at most a minute.
@@ -622,7 +566,7 @@ private struct InboxList: View {
             let started = ContinuousClock.now
             // An account's inbox, as the unified one, with the inbox sync.
             let synced = await model.sync(model.tabbed ? Mail.inbox : model.mailbox)
-            // The pulled drop lands before the list closes, however quick the sync.
+            // The line over the dock says so for a moment, however quick the sync.
             try? await Task.sleep(until: started + .milliseconds(1100))
             // Not one let go of: nobody waits on it any more, and a newer one may run.
             guard mine == checks, refreshing else { return }
