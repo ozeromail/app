@@ -9,6 +9,9 @@ enum Route: Hashable {
     case settings(SettingsPage)
     /// All mail with someone.
     case person(PersonCard)
+    /// A mailbox other than the inbox, upright: it opens over the inbox as a screen of its own,
+    /// so the system's back button and the swipe from the edge return to the inbox.
+    case mailbox
 }
 
 /// A toast low on the screen: words, and for a while Undo; a move can also show the folder the
@@ -39,7 +42,20 @@ final class InboxModel {
     let onNoAccounts: () -> Void
 
     var messages: [MessageItem] = []
-    var mailbox = Mail.inbox
+    var mailbox = Mail.inbox {
+        didSet {
+            guard mailbox != oldValue else { return }
+            if oldValue == Mail.inbox { inboxRows = messages }
+            guard !sideways else { return }
+            if mailbox == Mail.inbox {
+                if let at = path.firstIndex(of: .mailbox) { path.removeSubrange(at...) }
+            } else if !path.contains(.mailbox) {
+                path = [.mailbox]
+            }
+        }
+    }
+    /// The inbox's rows as it was left for another mailbox, shown under that mailbox's screen.
+    var inboxRows: [MessageItem] = []
     var tab = Category.people
     /// The tabs step aside while the list scrolls down, and come back as it scrolls up.
     var tabsHidden = false
@@ -78,7 +94,14 @@ final class InboxModel {
     var checkedAt: Date?
     var toast: Toast?
 
-    var path: [Route] = []
+    var path: [Route] = [] {
+        didSet {
+            // Back from a mailbox's screen, upright: the inbox again.
+            if !sideways, oldValue.contains(.mailbox), !path.contains(.mailbox), mailbox != Mail.inbox {
+                mailbox = Mail.inbox
+            }
+        }
+    }
     /// Counts the changes to the mail, for screens that read it themselves.
     var revision = 0
     /// On its side the list stays on the left and the message opens beside it, here.
@@ -531,13 +554,20 @@ final class InboxModel {
 
     /// Turning the phone keeps the message open: beside the list, or on its own screen.
     private func turned() {
-        if sideways, case .message(let message)? = path.last, path.allSatisfy({ $0 == .search || $0 == path.last }) {
+        if sideways, case .message(let message)? = path.last,
+           path.allSatisfy({ $0 == .search || $0 == .mailbox || $0 == path.last }) {
             // From search too: beside the list, as when it is opened there.
             path.removeAll()
             pane = message
-        } else if !sideways, let pane {
-            self.pane = nil
-            path.append(.message(pane))
+        } else if sideways, path == [.mailbox] {
+            // The mailboxes are beside the list.
+            path.removeAll()
+        } else if !sideways {
+            if !isInbox && !path.contains(.mailbox) { path.insert(.mailbox, at: 0) }
+            if let pane {
+                self.pane = nil
+                path.append(.message(pane))
+            }
         }
     }
 

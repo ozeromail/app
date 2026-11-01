@@ -24,8 +24,15 @@ struct InboxView: View {
                         .transition(.move(edge: .leading).combined(with: .opacity))
                     Divider()
                 }
-                ScrollViewReader { proxy in
-                    InboxList(model: model, proxy: proxy)
+                Group {
+                    if !model.sideways && model.path.contains(.mailbox) {
+                        // Under a mailbox's screen: the inbox as it was left, seen while swiping back.
+                        LeftInbox(model: model)
+                    } else {
+                        ScrollViewReader { proxy in
+                            InboxList(model: model, proxy: proxy)
+                        }
+                    }
                 }
                 .frame(maxWidth: model.pane == nil ? .infinity : Room.listPane)
                 if let pane = model.pane {
@@ -40,6 +47,10 @@ struct InboxView: View {
                 case .message(let message):
                     MessageView(model: model, message: message)
                         .navigationBarTitleDisplayMode(.inline)
+                case .mailbox:
+                    ScrollViewReader { proxy in
+                        InboxList(model: model, proxy: proxy)
+                    }
                 case .search:
                     SearchView(model: model)
                 case .drafts:
@@ -418,8 +429,10 @@ private struct InboxList: View {
         .navigationTitle(choosing ? tr("select_count", picked.count) : model.title)
         // On its side a large title would take a third of the height.
         .navigationBarTitleDisplayMode(model.sideways ? .inline : .automatic)
+        .navigationBarBackButtonHidden(choosing)
         .toolbar {
-            if !model.isInbox && !choosing {
+            // Upright another mailbox is a screen of its own, with the system's back button.
+            if model.sideways && !model.isInbox && !choosing {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
                         model.mailbox = Mail.inbox
@@ -978,6 +991,20 @@ private struct SwipeTip: View {
         .listRowSeparator(.hidden)
         .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
         .selectionDisabled()
+    }
+}
+
+/// The inbox under a mailbox's screen, as it was left: what the swipe back from the edge uncovers.
+private struct LeftInbox: View {
+    let model: InboxModel
+
+    var body: some View {
+        List(model.inboxRows, id: \.id) { message in
+            MessageRow(message: message)
+        }
+        .listStyle(.plain)
+        .middle(Room.list)
+        .navigationTitle("inbox_title")
     }
 }
 
