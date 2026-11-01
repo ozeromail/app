@@ -166,7 +166,7 @@ struct ComposeView: View {
                                     // A tap puts the keyboard away, so the message gets the room to read.
                                     .onTapGesture {
                                         focus = nil
-                                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                                        hideKeyboard()
                                     }
                             }
                             if !docked {
@@ -537,11 +537,13 @@ struct ComposeView: View {
     }
 
     private func close() {
+        hideKeyboard()
         keep()
         if !finished && hasDraft && !current.isBlank { onKept() } else { onClose() }
     }
 
     private func discard() {
+        hideKeyboard()
         finished = true
         var draft = current
         draft.accountId = from?.id ?? accountId
@@ -667,6 +669,7 @@ struct ComposeView: View {
             do {
                 let id = try await keeper.send(draft)
                 finished = true
+                hideKeyboard()
                 var sent = composing
                 sent.draft = draft
                 onSent(id, sent)

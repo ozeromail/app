@@ -24,3 +24,9 @@ extension EnvironmentValues {
     /// On its side: the phone's height is short, the mailboxes and the message go beside the list.
     var sideways: Bool { verticalSizeClass == .compact }
 }
+
+/// Puts the keyboard away now, so it leaves with the screen that closes rather than after it.
+@MainActor
+func hideKeyboard() {
+    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+}

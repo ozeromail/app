@@ -147,6 +147,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -1019,7 +1020,13 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
 
     // The screens follow the back gesture: the one on top slides away under the finger.
     val screens = remember { SeekableTransitionState<Screen>(screen) }
-    LaunchedEffect(screen) { screens.animateTo(screen) }
+    val focusManager = LocalFocusManager.current
+    LaunchedEffect(screen) {
+        // The keyboard goes as the screen starts to leave, not once it is gone. A new message
+        // and the search keep it: they type at once.
+        if (screen !is Screen.Write && screen != Screen.Search) focusManager.clearFocus(force = true)
+        screens.animateTo(screen)
+    }
     val top by rememberUpdatedState(screen)
     PredictiveBackHandler(enabled = behind != null) { progress ->
         // Read as the gesture starts; a screen that opens meanwhile, say a reply, cancels it.

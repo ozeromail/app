@@ -75,6 +75,7 @@ struct SearchView: View {
                     .frame(height: 48)
                     .background(Color.ozeroCard.sunk, in: .capsule)
                     Button {
+                        focused = false
                         model.path.removeAll { $0 == .search }
                     } label: {
                         Image(systemName: "xmark").foregroundStyle(.primary).frame(width: 48, height: 48).background(Color.ozeroCard, in: .circle)

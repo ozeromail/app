@@ -65,12 +65,14 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.disabled
@@ -105,6 +107,10 @@ fun Sheet(visible: Boolean, onClose: () -> Unit, lift: Lift? = null, content: @C
     var hidden by remember { mutableFloatStateOf(0f) }
     // Raised by a finger, the sheet comes up with it rather than on its own.
     val lifted by remember(lift) { derivedStateOf { lift?.risen != null } }
+    // A sheet being typed in puts the keyboard away as it starts to close, so both go down together.
+    val focusManager = LocalFocusManager.current
+    var typing by remember { mutableStateOf(false) }
+    LaunchedEffect(visible) { if (!visible && typing) focusManager.clearFocus(force = true) }
     Box(Modifier.fillMaxSize()) {
         AnimatedVisibility(
             visible,
@@ -125,7 +131,9 @@ fun Sheet(visible: Boolean, onClose: () -> Unit, lift: Lift? = null, content: @C
             enter = if (lifted) EnterTransition.None else slideInVertically(Motion.calm(Motion.SCREEN)) { it },
             exit = slideOutVertically(Motion.calm(Motion.SCREEN)) { it },
         ) {
-            SheetBody(visible, onClose, lift, { hidden = it }, content)
+            Box(Modifier.onFocusChanged { typing = it.hasFocus }) {
+                SheetBody(visible, onClose, lift, { hidden = it }, content)
+            }
         }
     }
 }
