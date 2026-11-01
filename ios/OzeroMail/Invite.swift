@@ -111,7 +111,7 @@ private struct CardButton: View {
                 .foregroundStyle(.primary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(Color(.systemBackground), in: .rect(cornerRadius: 12))
+                .background(Color(.systemBackground), in: .capsule)
         }
         .buttonStyle(.plain)
     }

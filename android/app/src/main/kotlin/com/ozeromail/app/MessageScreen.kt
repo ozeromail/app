@@ -981,7 +981,7 @@ private fun PlainText(text: String, quote: String, modifier: Modifier) {
                     letterSpacing = 1.sp,
                     modifier = Modifier
                         .padding(top = 10.dp)
-                        .clip(RoundedCornerShape(Radius.chip))
+                        .clip(CircleShape)
                         .background(colors.surfaceVariant)
                         .clickable(role = Role.Button) { showQuote = !showQuote }
                         .semantics { contentDescription = label }
