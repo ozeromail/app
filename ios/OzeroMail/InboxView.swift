@@ -753,7 +753,9 @@ private struct InboxTabBar: UIViewRepresentable {
         bar.items = Category.all.indices.map { at in
             let item = UITabBarItem(title: nil, image: nil, tag: at)
             item.titlePositionAdjustment = Self.centred
+            // Both states, or the open tab falls back to the system's small label.
             item.setTitleTextAttributes([.font: Self.font], for: .normal)
+            item.setTitleTextAttributes([.font: Self.font], for: .selected)
             return item
         }
         return bar
