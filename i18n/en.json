@@ -275,6 +275,7 @@
   "inbox_spammed": "Moved to Spam",
   "inboxes_title": "Inboxes",
   "inboxes_edit_hint": "Switch an inbox off to leave it out of All inboxes.",
+  "all_boxes_edit_hint": "Switch a mailbox off to hide it from this list.",
   "action_edit": "Edit",
   "all_in": "In All inboxes",
   "folder_unread": "Unread",
