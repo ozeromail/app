@@ -336,8 +336,6 @@ struct MessageView: View {
         }
     }
 
-    /// Reply, Delete, Snooze, More and Done in one row; a long press on Reply offers Reply all
-    /// and Forward.
     /// What else to do with the message, in the menu of ⋯.
     @ViewBuilder
     private func moreItems(_ answer: MessageItem, asking: MessageItem?) -> some View {
@@ -391,9 +389,11 @@ struct MessageView: View {
         }
     }
 
+    /// Reply, Delete, Snooze, More and Done in one row; a long press on Reply offers Reply all
+    /// and Forward.
     @ViewBuilder
     private func bar(answer: MessageItem) -> some View {
-        if #available(iOS 26, *) {
+        if hasGlass {
             glassBar(answer: answer)
         } else {
             plainBar(answer: answer)
@@ -421,8 +421,7 @@ struct MessageView: View {
                 }
                 .glassSurface(in: .capsule, fallback: Color.clear)
                 if message.canArchive {
-                    GlassIcon(icon: "checkmark", label: "action_done", tint: .white, action: done)
-                        .glassSurface(in: .circle, tint: .ozeroFill, fallback: Color.ozeroFill)
+                    RoundButton(icon: "checkmark", label: "action_done", size: glassButton, tint: .white, background: .ozeroFill, action: done)
                 }
             }
         }

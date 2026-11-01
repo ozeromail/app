@@ -74,5 +74,11 @@ struct GlassIconLabel: View {
     }
 }
 
+/// Whether the system draws Liquid Glass: from iOS 26.
+let hasGlass: Bool = {
+    if #available(iOS 26, *) { return true }
+    return false
+}()
+
 /// The height of a glass bar's buttons, round ones as wide.
 let glassButton: CGFloat = 48

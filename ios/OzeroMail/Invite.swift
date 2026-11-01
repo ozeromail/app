@@ -213,12 +213,6 @@ struct InviteBar<More: View>: View {
         .dockBackground(floating: true)
     }
 
-    /// Before iOS 26, without glass.
-    private var legacy: Bool {
-        if #available(iOS 26, *) { return false }
-        return true
-    }
-
     @ViewBuilder
     private func answer(_ answer: InviteAnswer) -> some View {
         let filled = answer == .yes
@@ -234,7 +228,7 @@ struct InviteBar<More: View>: View {
         .glassSurface(in: .capsule, tint: filled ? .ozeroFill : nil, fallback: filled ? Color.ozeroFill : Color.clear)
         .overlay {
             // Before iOS 26 the others are outlined.
-            if legacy && !filled {
+            if !hasGlass && !filled {
                 Capsule().stroke(Color.ozeroCard, lineWidth: 1)
             }
         }

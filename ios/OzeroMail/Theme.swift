@@ -75,11 +75,7 @@ extension View {
     /// `floating` dock has none on iOS 26: its buttons are glass.
     @ViewBuilder
     func dockBackground(floating: Bool = false) -> some View {
-        if #available(iOS 26, *) {
-            if floating { self } else { barFill() }
-        } else {
-            barFill()
-        }
+        if floating && hasGlass { self } else { barFill() }
     }
 
     private func barFill() -> some View {
