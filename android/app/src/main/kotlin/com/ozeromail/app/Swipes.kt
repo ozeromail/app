@@ -141,11 +141,6 @@ class Settings(context: Context) {
     val textScale: Float
         get() = TEXT_SCALES[textSize]
 
-    /** An account was held in the accounts sheet, so the tip about it does not show again. */
-    var holdTipSeen: Boolean
-        get() = prefs.getBoolean(HOLD_TIP, false)
-        set(value) = prefs.edit().putBoolean(HOLD_TIP, value).apply()
-
     /** The phone asked for its contacts once, from "To": the line offering them shows no more. */
     var contactsAsked: Boolean
         get() = prefs.getBoolean(CONTACTS_ASKED, false)
@@ -193,7 +188,6 @@ class Settings(context: Context) {
         private const val ALL_ORDER = "all_boxes_order"
         private const val ALL_SHOWN = "all_boxes_shown"
         private const val TEXT_SIZE = "text_size"
-        private const val HOLD_TIP = "hold_tip_seen"
         private const val CONTACTS_ASKED = "contacts_asked"
     }
 }

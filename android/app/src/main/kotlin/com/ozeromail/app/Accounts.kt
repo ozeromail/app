@@ -89,8 +89,9 @@ data class MailboxesState(
 
 /**
  * The mailboxes, for going places: all inboxes, then each account's inbox with its folders
- * under it, then the mailboxes of all accounts together. At the bottom, the settings. Holding an
- * account opens its settings; [holdTip] says so until it was done.
+ * under it, then the mailboxes of all accounts together. At the bottom, the settings. Edit, beside
+ * the title as it changes the whole list, turns the rows into switches to move; an account's
+ * settings open from its info button there, or by holding it.
  */
 @Composable
 fun AccountsSheet(
@@ -98,24 +99,35 @@ fun AccountsSheet(
     lift: Lift,
     state: MailboxesState,
     actions: AccountsActions,
-    holdTip: Boolean,
     onClose: () -> Unit,
 ) {
+    var editing by rememberSaveable { mutableStateOf(false) }
     Sheet(visible, onClose, lift) {
         Column {
-            SheetTitle(stringResource(R.string.folders_title))
-            MailboxList(state, actions)
-            SettingsRow(actions.onSettings)
-            if (holdTip && state.accounts.size > 1) {
-                Text(
-                    stringResource(R.string.account_settings_hint),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = Type.Caption,
-                    modifier = Modifier.padding(start = Gap.sheet, end = Gap.sheet, top = 10.dp),
-                )
+            Row(Modifier.fillMaxWidth().padding(end = Gap.sheet - 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                SheetTitle(stringResource(R.string.folders_title), Modifier.weight(1f).padding(start = Gap.sheet, end = Gap.sheet, bottom = 10.dp))
+                // With one account there is nothing to switch or move.
+                if (state.accounts.size > 1) EditButton(editing, Modifier.padding(bottom = 10.dp)) { editing = !editing }
             }
+            MailboxList(state, actions, editing, onEdit = null)
+            SettingsRow(actions.onSettings)
         }
     }
+}
+
+/** Edit, or Done while editing. */
+@Composable
+private fun EditButton(editing: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Text(
+        stringResource(if (editing) R.string.action_done else R.string.action_edit),
+        color = MaterialTheme.colorScheme.primary,
+        style = Type.Label,
+        fontWeight = Weight.SemiBold,
+        modifier = modifier
+            .clip(RoundedCornerShape(Radius.medium))
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+    )
 }
 
 /** The mailboxes down the side of a wide screen: the sheet's list of them, always there. */
@@ -126,6 +138,7 @@ fun Mailboxes(
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
+    var editing by rememberSaveable { mutableStateOf(false) }
     Column(
         modifier
             .background(colors.bar)
@@ -133,7 +146,8 @@ fun Mailboxes(
             .verticalScroll(rememberScrollState())
             .padding(vertical = 8.dp),
     ) {
-        MailboxList(state, actions)
+        // No title over the side: Edit stays in the inboxes' caption.
+        MailboxList(state, actions, editing, onEdit = { editing = !editing })
         SettingsRow(actions.onSettings)
     }
 }
@@ -151,7 +165,7 @@ private fun SettingsRow(onSettings: () -> Unit) {
  * account, its inbox and folders. An account, when held, opens its settings.
  */
 @Composable
-private fun MailboxList(state: MailboxesState, actions: AccountsActions) {
+private fun MailboxList(state: MailboxesState, actions: AccountsActions, editing: Boolean, onEdit: (() -> Unit)?) {
     val accounts = state.accounts
     val mailbox = state.mailbox
     val inboxes = state.folders.filter { it.role == FolderRole.INBOX }.associateBy { it.accountId }
@@ -176,7 +190,6 @@ private fun MailboxList(state: MailboxesState, actions: AccountsActions) {
     ) { actions.onMailbox(Mail.INBOX) }
     // Edit turns the inboxes into switches for All inboxes with handles to move them, and the
     // mailboxes of all accounts likewise.
-    var editing by rememberSaveable { mutableStateOf(false) }
     val groups = state.groups
     val colors = MaterialTheme.colorScheme
     val open = editing || groups.open(INBOXES)
@@ -184,18 +197,8 @@ private fun MailboxList(state: MailboxesState, actions: AccountsActions) {
         stringResource(R.string.inboxes_title),
         open = open,
         onToggle = { actions.onGroups(groups.toggle(INBOXES)) }.takeIf { !editing },
-    ) {
-        Text(
-            stringResource(if (editing) R.string.action_done else R.string.action_edit),
-            color = colors.primary,
-            style = Type.Label,
-            fontWeight = Weight.SemiBold,
-            modifier = Modifier
-                .clip(RoundedCornerShape(Radius.medium))
-                .clickable(role = Role.Button) { editing = !editing }
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-        )
-    }
+        action = onEdit?.let { edit -> { EditButton(editing, onClick = edit) } },
+    )
     Folding(open) {
         if (editing) {
             Reorderable(accounts, key = { it.id }, onMove = { if (it != accounts) actions.onOrder(it) }) { account, handle ->
@@ -203,6 +206,14 @@ private fun MailboxList(state: MailboxesState, actions: AccountsActions) {
                 val last = account.inAllFixed
                 SheetRow(onClick = { if (!last) actions.onInAll(account, !account.inAll) }, lead = { AccountDot(account.tint) }, fixed = true) {
                     Text(account.name, style = Type.Row, fontWeight = Weight.Regular, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    // Its settings, in sight: holding the row is not something to find on one's own.
+                    Box(
+                        Modifier
+                            .size(END_BUTTON)
+                            .clip(CircleShape)
+                            .clickable(onClickLabel = stringResource(R.string.account_settings), role = Role.Button) { actions.onAccount(account) },
+                        contentAlignment = Alignment.Center,
+                    ) { Glyph(R.drawable.ic_settings, stringResource(R.string.account_settings), colors.onSurfaceVariant, size = ICON) }
                     SmallSwitch(account.inAll, enabled = !last)
                     Handle(handle)
                 }
@@ -273,6 +284,13 @@ private fun AllAccounts(state: MailboxesState, actions: AccountsActions, editing
                     Handle(handle)
                 }
             }
+            // These switches hide a row; the inboxes' leave an account out of All inboxes.
+            Text(
+                stringResource(R.string.all_boxes_edit_hint),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = Type.Caption,
+                modifier = Modifier.padding(start = Gap.sheet, end = Gap.sheet, top = 4.dp, bottom = 8.dp),
+            )
         }
     }
 }
