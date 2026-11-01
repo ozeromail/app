@@ -264,6 +264,14 @@ enum Settings {
     /// How much larger than usual mail's text is.
     static var textScale: Double { textScales[textSize] }
 
+    /// The picked size of mail's text, grown or shrunk with the system's text size as the rest of
+    /// the app is.
+    static var readingScale: Double { readingScale(textScale) }
+
+    static func readingScale(_ picked: Double) -> Double {
+        picked * Double(UIFontMetrics(forTextStyle: .body).scaledValue(for: 100)) / 100
+    }
+
     /// The sizes of mail's text the person can pick from, against the usual one.
     static let textScales = [0.9, 1, 1.1, 1.2, 1.35]
     static let usualSize = 1

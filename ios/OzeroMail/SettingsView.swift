@@ -268,9 +268,10 @@ private struct ReadingSettings: View {
             Section {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("reading_sample_from").font(.smallStrong).foregroundStyle(.secondary)
+                    let scale = Settings.readingScale(Settings.textScales[Int(size)])
                     Text("reading_sample")
-                        .font(.reading(scale: Settings.textScales[Int(size)]))
-                        .lineSpacing(6 * Settings.textScales[Int(size)])
+                        .font(.reading(scale: scale))
+                        .lineSpacing(6 * scale)
                 }
                 .padding(.vertical, 6)
                 HStack(spacing: 12) {

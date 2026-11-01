@@ -138,6 +138,7 @@ private struct AttachmentRow: View {
                 Button("attachment_save_files", systemImage: "folder") { files.save(mail, message, [file]) }
             } label: {
                 Image(systemName: "ellipsis").foregroundStyle(.secondary).frame(width: 40, height: 40)
+                    .contentShape(Rectangle().inset(by: -2))
             }
             .accessibilityLabel(Text("action_more"))
         }

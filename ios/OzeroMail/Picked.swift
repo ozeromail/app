@@ -133,9 +133,13 @@ private struct FileChip: View {
                     .lineLimit(1)
             }
             if let onRemove {
-                Button(action: onRemove) { Image(systemName: "xmark").foregroundStyle(.secondary) }
-                    .frame(width: 32, height: 32)
-                    .accessibilityLabel(Text("action_remove"))
+                Button(action: onRemove) {
+                    Image(systemName: "xmark")
+                        .foregroundStyle(.secondary)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle().inset(by: -6))
+                }
+                .accessibilityLabel(Text("action_remove"))
             }
         }
         .font(.small)

@@ -37,6 +37,7 @@
   "action_cancel": "Cancel",
   "message_reply": "Reply",
   "inbox_sending": "Sending",
+  "inbox_row_unread": "Unread",
   "error_bad_recipients": "Check the addresses in To.",
   "error_bad_copies": "Check the addresses in Cc.",
   "error_no_smtp": "This account has no SMTP server, so it can’t send mail yet.",
