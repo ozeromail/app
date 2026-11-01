@@ -43,12 +43,12 @@ extension Color {
     /// Lifted off the page: light along its top edge and a soft shadow in its own colour.
     var lifted: some ShapeStyle {
         shadow(.inner(color: .white.opacity(0.3), radius: 0.5, y: 1))
-            .shadow(.drop(color: opacity(0.4), radius: 5, y: 2))
+            .shadow(.drop(color: opacity(0.3), radius: 3, y: 1.5))
     }
 
     /// Cut into the page: a shadow under its top edge.
     var sunk: some ShapeStyle {
-        shadow(.inner(color: .ozeroShade(day: 0.1, night: 0.45), radius: 1.5, y: 1))
+        shadow(.inner(color: .ozeroShade(day: 0.06, night: 0.35), radius: 1, y: 1))
     }
 
     /// A round mark as a tiny window: darker under its top edge, lighter below.
@@ -72,9 +72,9 @@ extension View {
     func dockBackground() -> some View {
         background(.bar)
             .overlay(alignment: .top) {
-                LinearGradient(colors: [.clear, .ozeroShade(day: 0.06, night: 0.3)], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 12)
-                    .offset(y: -12)
+                LinearGradient(colors: [.clear, .ozeroShade(day: 0.04, night: 0.3)], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 10)
+                    .offset(y: -10)
                     .allowsHitTesting(false)
             }
     }
