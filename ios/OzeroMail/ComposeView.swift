@@ -229,6 +229,8 @@ struct ComposeView: View {
         .onChange(of: editing) { _, now in
             if !now { unfolded = false }
         }
+        // Not swiped away while it sends.
+        .interactiveDismissDisabled(busy)
         // Swiped down, what was written goes to the drafts, as with the close button.
         .onDisappear {
             if !closed && !finished { close() }

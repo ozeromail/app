@@ -123,6 +123,7 @@ struct InboxView: View {
             if phase == .active { Task { await model.returned() } }
         }
         .onChange(of: model.mailbox) {
+            model.tabsHidden = false
             Task {
                 await model.switched()
                 // An account's inbox has tabs of its own.
@@ -462,10 +463,12 @@ private struct InboxList: View {
             .animation(.smooth, value: model.toast)
             .animation(.smooth, value: status?.text)
         }
-        .onScrollGeometryChange(for: CGFloat.self) { geometry in
-            geometry.contentOffset.y + geometry.contentInsets.top
+        .onScrollGeometryChange(for: TabsScroll.self) { geometry in
+            let offset = geometry.contentOffset.y + geometry.contentInsets.top
+            let end = geometry.contentSize.height + geometry.contentInsets.bottom - geometry.containerSize.height
+            return TabsScroll(offset: offset, nearEnd: geometry.contentOffset.y >= end - Self.tabsStay)
         } action: { old, now in
-            hideTabs(old: old, now: now)
+            hideTabs(old: old.offset, now: now)
         }
         // A tap on the open tab goes to the top of its list.
         .onChange(of: model.toTop) {
@@ -475,8 +478,11 @@ private struct InboxList: View {
         // Each tab keeps its place: the row at its top when it was left comes back to the top.
         .onChange(of: model.tab) { old, _ in
             if model.tabsHidden { model.tabsHidden = false }
-            let first = model.messages.first { onScreen.ids.contains($0.id) }?.id
-            places[old] = first == model.messages.first?.id ? nil : first
+            // Tabs passed quickly never showed their mail: the list is still an earlier tab's.
+            if returning == nil {
+                let first = model.messages.first { onScreen.ids.contains($0.id) }?.id
+                places[old] = first == model.messages.first?.id ? nil : first
+            }
             returning = places[model.tab]
         }
         // Another tab's mail starts with another message.
@@ -487,22 +493,22 @@ private struct InboxList: View {
         }
     }
 
-    /// Scrolling down the list, the tabs step aside; scrolling up, or at the top, they are back.
-    private func hideTabs(old: CGFloat, now: CGFloat) {
-        guard model.tabbed, !model.sideways else { return }
+    /// The tabs step aside while the list scrolls down, and are back as it scrolls up or reaches the
+    /// top. Near the end they stay as they are: the room they leave or take moves the list there.
+    private func hideTabs(old: CGFloat, now: TabsScroll) {
+        guard model.tabbed, !model.sideways, !now.nearEnd else { return }
         var hidden = model.tabsHidden
-        if now <= Self.tabsStay {
+        if now.offset <= Self.tabsStay {
             hidden = false
-        } else if now > old + 4 {
+        } else if now.offset > old + 4 {
             hidden = true
-        } else if now < old - 4 && now > old - 30 {
-            // Not a jump: the end of the list moving up as the tabs leave its room.
+        } else if now.offset < old - 4 {
             hidden = false
         }
         if hidden != model.tabsHidden { model.tabsHidden = hidden }
     }
 
-    /// How far down the list the tabs stay put.
+    /// How far from the top and the end of the list the tabs stay put.
     private static let tabsStay: CGFloat = 80
 
     /// The finger lets the list go: past a third of a pull a drop falls, sized by how far it went,
@@ -680,6 +686,12 @@ private struct InboxTabs: View {
     }
 }
 
+/// How far the list is scrolled, for the tabs, and whether it is near its end.
+private struct TabsScroll: Equatable {
+    var offset: CGFloat = 0
+    var nearEnd = false
+}
+
 /// The rows on screen, kept out of sight of the view: scrolling changes them all the time, and
 /// only a change of tab reads them.
 private final class RowsOnScreen {
@@ -791,7 +803,7 @@ private struct ChoiceBar: View {
                 GlassIcon(icon: unread ? "envelope.open" : "envelope.badge", label: unread ? "action_read" : "action_unread") {
                     model.choice { await model.setRead($0, read: unread) }
                 }
-                GlassIcon(icon: "trash", label: forever ? "action_delete_forever" : "action_delete") {
+                GlassIcon(icon: "trash", label: forever ? "action_delete_forever" : "action_delete", tint: .ozeroError) {
                     model.choice { await model.delete($0) }
                 }
                 if picked.contains(where: \.canSnooze) {
