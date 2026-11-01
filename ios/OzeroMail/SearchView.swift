@@ -56,7 +56,7 @@ struct SearchView: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+        .bottomBar {
             VStack(spacing: 8) {
                 if let error {
                     Text(error).font(.small).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
@@ -73,20 +73,22 @@ struct SearchView: View {
                     }
                     .padding(.horizontal, 16)
                     .frame(height: 48)
-                    .background(Color.ozeroCard.sunk, in: .capsule)
+                    .glassSurface(in: .capsule, fallback: Color.ozeroCard.sunk)
                     Button {
                         focused = false
                         model.path.removeAll { $0 == .search }
                     } label: {
-                        Image(systemName: "xmark").foregroundStyle(.primary).frame(width: 48, height: 48).background(Color.ozeroCard, in: .circle)
+                        Image(systemName: "xmark").foregroundStyle(.primary).frame(width: 48, height: 48).contentShape(.circle)
                     }
+                    .buttonStyle(.plain)
+                    .glassSurface(in: .circle, fallback: Color.ozeroCard)
                     .accessibilityLabel(Text("action_close"))
                 }
-                .padding(.horizontal, 12)
+                .padding(.horizontal, hasGlass ? 16 : 12)
             }
             .padding(.top, 6)
             .padding(.bottom, 10)
-            .background(.bar)
+            .dockBackground(floating: true)
         }
         // Not on the way back from a result: the keyboard would cover the results.
         .onAppear { if search.isEmpty { focused = true } }
