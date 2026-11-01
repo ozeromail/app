@@ -250,17 +250,14 @@ struct ReasonSheet: View {
                 .padding(12)
                 .background(Color.ozeroCard, in: .rect(cornerRadius: 12))
             HStack(spacing: 8) {
-                Button { onSend("") } label: {
-                    Text("invite_reason_skip").frame(maxWidth: .infinity, minHeight: 46)
-                        .background(Color.ozeroCard, in: .rect(cornerRadius: 14))
-                }
-                Button { onSend(reason) } label: {
-                    Text("compose_send").foregroundStyle(.white).frame(maxWidth: .infinity, minHeight: 46)
-                        .background(Color.ozeroFill.lifted, in: .rect(cornerRadius: 14))
-                }
+                Button { onSend("") } label: { Text("invite_reason_skip").frame(maxWidth: .infinity) }
+                    .systemButton()
+                    .tint(.primary)
+                Button { onSend(reason) } label: { Text("compose_send").frame(maxWidth: .infinity) }
+                    .systemButton(prominent: true)
             }
             .font(.rowStrong)
-            .buttonStyle(.plain)
+            .controlSize(.large)
         }
         .padding(22)
         .presentationDetents([.height(300)])

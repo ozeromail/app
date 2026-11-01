@@ -84,7 +84,7 @@ struct PersonSheet: View {
     }
 }
 
-/// One of the person's actions: an icon over its name, in a tile.
+/// One of the person's actions: an icon over its name, in a tile, of glass on iOS 26.
 private struct PersonAction: View {
     let icon: String
     let label: LocalizedStringKey
@@ -98,10 +98,10 @@ private struct PersonAction: View {
             }
             .foregroundStyle(Color.ozeroAccent)
             .frame(maxWidth: .infinity, minHeight: 64)
-            .background(Color.ozeroCard, in: .rect(cornerRadius: 14))
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .glassSurface(in: .rect(cornerRadius: 20), fallback: Color.ozeroCard)
     }
 }
 

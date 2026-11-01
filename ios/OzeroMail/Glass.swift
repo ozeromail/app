@@ -27,6 +27,25 @@ extension View {
     }
 }
 
+extension View {
+    /// The system's glass button style on iOS 26, `prominent` for the one main action in the
+    /// accent; before, the bordered styles. Capsule-shaped, as iOS 26 draws its buttons.
+    @ViewBuilder
+    func systemButton(prominent: Bool = false) -> some View {
+        if #available(iOS 26, *) {
+            if prominent {
+                buttonStyle(.glassProminent).buttonBorderShape(.capsule)
+            } else {
+                buttonStyle(.glass).buttonBorderShape(.capsule)
+            }
+        } else if prominent {
+            buttonStyle(.borderedProminent)
+        } else {
+            buttonStyle(.bordered)
+        }
+    }
+}
+
 /// Glass shapes near each other drawn as one, so they flow together as they move.
 struct GlassGroup<Content: View>: View {
     let spacing: CGFloat

@@ -52,6 +52,7 @@ struct InboxView: View {
                 }
             }
         }
+        .modifier(ShakeToUndo(model: model))
         .sheet(item: $model.snoozing) { snoozing in
             SnoozeSheet { until in
                 model.snoozing = nil
@@ -437,8 +438,9 @@ private struct InboxList: View {
         }
         .bottomBar {
             VStack(spacing: 8) {
-                // Low on the screen, in reach of the thumb that swiped.
-                if let toast = model.toast {
+                // Low on the screen, in reach of the thumb that swiped; upright, the dock shows it
+                // in place of search.
+                if let toast = model.toast, model.sideways || choosing {
                     ToastView(toast: toast, onUndo: model.tapUndo, onGo: model.tapGo, onExtra: model.tapExtra)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
@@ -593,23 +595,32 @@ private struct Dock: View {
                     } else {
                         HStack(spacing: 10) {
                             AccountsButton(accounts: model.scope) { model.accountsOpen = true }
-                            Button {
-                                model.path.append(.search)
-                            } label: {
-                                Label("search_prompt", systemImage: "magnifyingglass")
-                                    .foregroundStyle(.secondary)
-                                    .frame(maxWidth: .infinity, minHeight: glassButton, alignment: .leading)
-                                    .padding(.horizontal, 16)
-                                    .contentShape(.capsule)
+                            // For a moment after a move, Undo takes the place of search, as Apple's
+                            // Mail shows Undo Send in its bar.
+                            if let toast = model.toast {
+                                ToastView(toast: toast, onUndo: model.tapUndo, onGo: model.tapGo, onExtra: model.tapExtra, inBar: true)
+                                    .transition(.blurReplace)
+                            } else {
+                                Button {
+                                    model.path.append(.search)
+                                } label: {
+                                    Label("search_prompt", systemImage: "magnifyingglass")
+                                        .foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, minHeight: glassButton, alignment: .leading)
+                                        .padding(.horizontal, 16)
+                                        .contentShape(.capsule)
+                                }
+                                .buttonStyle(.plain)
+                                .glassSurface(in: .capsule, fallback: Color.ozeroCard.sunk)
+                                .transition(.blurReplace)
                             }
-                            .buttonStyle(.plain)
-                            .glassSurface(in: .capsule, fallback: Color.ozeroCard.sunk)
                             ComposeButton(model: model)
                         }
                     }
                 }
                 .frame(height: model.sideways && !choosing ? 40 : 52)
                 .animation(.smooth, value: choosing)
+                .animation(.smooth, value: model.toast)
             }
         }
         .padding(.horizontal, hasGlass ? 16 : 12)
@@ -936,31 +947,62 @@ private struct SwipeTip: View {
     }
 }
 
-/// The undo toast: a dark capsule low on the screen, dark glass on iOS 26. A move also offers to show the folder.
+/// What was just done, with Undo for a while: a glass capsule low on the screen, or in the dock in
+/// place of search (`inBar`). A move also offers to show the folder.
 struct ToastView: View {
     let toast: Toast
     let onUndo: () -> Void
     let onGo: (Mailbox) -> Void
     var onExtra: () -> Void = {}
+    var inBar = false
 
     var body: some View {
-        HStack(spacing: 16) {
-            Text(verbatim: toast.text).foregroundStyle(.white)
-            Spacer()
+        HStack(spacing: 4) {
+            Text(verbatim: toast.text).lineLimit(1)
+            Spacer(minLength: 8)
             if let go = toast.go {
-                Button("action_show") { onGo(go) }.foregroundStyle(Color(rgb: 0x8CC2FF))
+                button(Text("action_show")) { onGo(go) }
             }
             if let extra = toast.extra {
-                Button(extra, action: onExtra).foregroundStyle(Color(rgb: 0x8CC2FF))
+                button(Text(verbatim: extra), action: onExtra)
             }
             if toast.undo {
-                Button("action_undo", action: onUndo).fontWeight(.semibold).foregroundStyle(Color(rgb: 0x8CC2FF))
+                button(Text("action_undo"), action: onUndo).fontWeight(.semibold)
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
-        .glassSurface(in: .capsule, tint: Color(rgb: 0x1B2639), fallback: Color(rgb: 0x1B2639))
-        .padding(.horizontal, 12)
+        .font(.text)
+        .padding(.leading, 18)
+        .padding(.trailing, 6)
+        .frame(minHeight: glassButton)
+        .glassSurface(in: .capsule, fallback: Color.ozeroCard)
+        .padding(.horizontal, inBar ? 0 : hasGlass ? 16 : 12)
+    }
+
+    private func button(_ label: Text, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            label.padding(.horizontal, 10).frame(minHeight: 40).contentShape(.capsule)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Color.ozeroAccent)
+    }
+}
+
+/// Shaking the phone, or three fingers swiped left, offers to undo what the toast offers to,
+/// as everywhere on the iPhone.
+private struct ShakeToUndo: ViewModifier {
+    let model: InboxModel
+    @Environment(\.undoManager) private var undoManager
+
+    func body(content: Content) -> some View {
+        content.onChange(of: model.toast) { _, toast in
+            guard let undoManager else { return }
+            undoManager.removeAllActions(withTarget: model)
+            guard let toast, toast.undo else { return }
+            undoManager.registerUndo(withTarget: model) { model in
+                MainActor.assumeIsolated { model.tapUndo() }
+            }
+            undoManager.setActionName(toast.text)
+        }
     }
 }
 

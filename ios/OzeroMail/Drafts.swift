@@ -30,7 +30,7 @@ struct DraftsView: View {
         .animation(.smooth, value: model.drafts.map(\.draft.id))
         .middle(Room.list)
         .navigationTitle("folder_drafts")
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+        .bottomBar {
             // The list's toast shows here too, so a draft thrown away can come back.
             VStack {
                 if let toast = model.toast {
