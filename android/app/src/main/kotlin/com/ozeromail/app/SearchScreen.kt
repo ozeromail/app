@@ -16,11 +16,13 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.HorizontalDivider
@@ -38,6 +40,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.semantics.Role
@@ -247,8 +252,8 @@ private fun Start(
             if (people.isNotEmpty()) {
                 Caption(stringResource(R.string.search_people))
                 Row(
-                    Modifier.horizontalScroll(rememberScrollState()).padding(start = Gap.screen, end = Gap.screen, bottom = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    Modifier.horizontalScroll(rememberScrollState()).padding(start = Gap.bar, end = Gap.bar, bottom = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
                 ) {
                     people.forEach { PersonTile(it, onClick = { onPerson(it) }) }
                 }
@@ -290,66 +295,79 @@ private fun Caption(text: String, action: (@Composable () -> Unit)? = null) {
     }
 }
 
-/** A person to tap for all mail with them: the first name over the rest of it. */
+/** A person to tap for all mail with them, as a chip of one line: the first name, then the rest of it. */
 @Composable
 private fun PersonTile(person: PersonFound, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val first = person.name.substringBefore(' ')
     val rest = person.name.substringAfter(' ', "")
-    Column(
+    val text = buildAnnotatedString {
+        append(first)
+        if (rest.isNotEmpty()) withStyle(SpanStyle(color = colors.onSurfaceVariant, fontWeight = Weight.Regular)) { append(" $rest") }
+    }
+    Box(
         Modifier
-            .widthIn(max = 160.dp)
-            .clip(RoundedCornerShape(Radius.medium))
-            .background(colors.surfaceVariant)
+            .chip(colors.surfaceVariant)
             .clickable(onClickLabel = person.name, role = Role.Button, onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 9.dp),
+            .padding(horizontal = ChipPadding),
+        contentAlignment = Alignment.Center,
     ) {
-        Text(first, style = Type.Text, fontWeight = Weight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        // A blank line keeps every tile the same height.
-        Text(rest.ifEmpty { " " }, color = colors.onSurfaceVariant, style = Type.Label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(text, style = Type.Text, fontWeight = Weight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
+
+/** A filter in [Filters]: its key, what it says, whether it is on, its mark and what a tap does. */
+private class Filter(val key: String, val text: String, val on: Boolean, val mark: @Composable (Color) -> Unit, val toggle: () -> Unit)
 
 /**
  * The row of filters over the field: unread, flagged, with attachments and, with several
- * accounts, one for each of them; an account's filter takes the place of another's.
+ * accounts, one for each of them; an account's filter takes the place of another's. The ones
+ * on come first, so what narrows the search is always in sight.
  */
 @Composable
 private fun Filters(filter: SearchFilterItem, accounts: List<AccountItem>, onFilter: (SearchFilterItem) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = Gap.bar, end = Gap.bar, top = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
-    ) {
-        SearchChip(stringResource(R.string.folder_unread), filter.unread, { Glyph(R.drawable.ic_unread, null, it, size = 16.dp) }) {
+    val all = buildList {
+        add(Filter("unread", stringResource(R.string.folder_unread), filter.unread, { Glyph(R.drawable.ic_unread, null, it, size = 16.dp) }) {
             onFilter(filter.copy(unread = !filter.unread))
-        }
-        SearchChip(stringResource(R.string.folder_flagged), filter.flagged, { Glyph(R.drawable.ic_flag, null, it, size = 16.dp) }) {
+        })
+        add(Filter("flagged", stringResource(R.string.folder_flagged), filter.flagged, { Glyph(R.drawable.ic_flag, null, it, size = 16.dp) }) {
             onFilter(filter.copy(flagged = !filter.flagged))
-        }
-        SearchChip(stringResource(R.string.folder_files), filter.files, { Glyph(R.drawable.ic_attach, null, it, size = 16.dp) }) {
+        })
+        add(Filter("files", stringResource(R.string.folder_files), filter.files, { Glyph(R.drawable.ic_attach, null, it, size = 16.dp) }) {
             onFilter(filter.copy(files = !filter.files))
-        }
+        })
         if (accounts.size > 1) accounts.forEach { account ->
             val on = filter.accountId == account.id
-            SearchChip(account.label.ifBlank { account.email }, on, { AccountDot(account.tint, size = 8.dp) }) {
+            add(Filter("account-${account.id}", account.label.ifBlank { account.email }, on, { AccountDot(account.tint, size = 8.dp) }) {
                 onFilter(filter.copy(accountId = account.id.takeUnless { on }))
-            }
+            })
         }
+    }.sortedByDescending { it.on }
+    val row = rememberLazyListState()
+    // A chip turned on moves to the front: bring the front into view with it.
+    LaunchedEffect(filter) {
+        if (row.firstVisibleItemIndex > 0 || row.firstVisibleItemScrollOffset > 0) row.animateScrollToItem(0)
+    }
+    LazyRow(
+        Modifier.fillMaxWidth(),
+        state = row,
+        contentPadding = PaddingValues(start = Gap.bar, end = Gap.bar, top = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
+    ) {
+        items(all, key = { it.key }) { SearchChip(it.text, it.on, it.mark, rowMove(), it.toggle) }
     }
 }
 
+/** A chip of the search screen: a pill of one line, filled with the accent while [on]. */
 @Composable
-private fun SearchChip(text: String, on: Boolean, mark: @Composable (Color) -> Unit, onClick: () -> Unit) {
+private fun SearchChip(text: String, on: Boolean, mark: @Composable (Color) -> Unit, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
-    val tint = if (on) colors.primary else colors.onSurface
+    val tint = if (on) colors.onAccent else colors.onSurface
     Row(
-        Modifier
-            .height(34.dp)
-            .widthIn(max = 200.dp)
-            .clip(CircleShape)
-            .background(if (on) colors.primary.copy(alpha = 0.14f) else colors.surfaceVariant)
+        modifier
+            .chip(if (on) colors.accent else colors.surfaceVariant)
             .toggleable(on, role = Role.Checkbox, onValueChange = { onClick() })
-            .padding(horizontal = 13.dp),
+            .padding(horizontal = ChipPadding),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
@@ -357,3 +375,9 @@ private fun SearchChip(text: String, on: Boolean, mark: @Composable (Color) -> U
         Text(text, color = tint, style = Type.Text, fontWeight = Weight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
+
+/** The pill every chip on the search screen sits in, people and filters alike: one height, one shape. */
+private fun Modifier.chip(fill: Color): Modifier =
+    height(34.dp).widthIn(max = 200.dp).clip(CircleShape).background(fill)
+
+private val ChipPadding = 13.dp
