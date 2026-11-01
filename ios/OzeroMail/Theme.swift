@@ -20,9 +20,6 @@ extension Color {
     /// Cards over the list, such as an account to sign in to again.
     static let ozeroCard = dynamic(light: 0xF2F5FA, dark: 0x1A202C)
 
-    /// The open tab's thumb, over the tabs' track or glass.
-    static let ozeroThumb = dynamic(light: 0xFFFFFF, dark: 0x3A4352, alpha: (0.95, 0.8))
-
     /// A colour from the core, as 0xRRGGBB.
     init(rgb: UInt32) {
         self.init(

@@ -212,7 +212,8 @@ struct ComposeView: View {
                         .padding(.bottom, 6)
                     }
                     errorLine
-                    Divider()
+                    // Glass buttons need no line over them.
+                    if !hasGlass { Divider() }
                     HStack(spacing: 8) {
                         RoundButton(icon: "xmark", label: "action_close", size: 44, action: close)
                         if hasDraft { deleteButton }
@@ -479,7 +480,8 @@ struct ComposeView: View {
                 .padding(.leading, 8)
                 .padding(.trailing, 12)
                 .frame(height: 44)
-                .background(Color.ozeroCard, in: .capsule)
+                .contentShape(.capsule)
+                .glassSurface(in: .capsule, fallback: Color.ozeroCard)
             }
             .disabled(accounts.count < 2)
         }
@@ -505,7 +507,8 @@ struct ComposeView: View {
                 .font(.row)
                 .foregroundStyle(.primary)
                 .frame(width: 44, height: 44)
-                .background(Color.ozeroCard, in: .circle)
+                .contentShape(.circle)
+                .glassSurface(in: .circle, fallback: Color.ozeroCard)
         }
         .accessibilityLabel(Text("compose_attach"))
     }
@@ -515,8 +518,10 @@ struct ComposeView: View {
             Image(systemName: "paperplane.fill")
                 .foregroundStyle(.white)
                 .frame(width: 56, height: 44)
-                .background(Color.ozeroFill.lifted, in: .capsule)
+                .contentShape(.capsule)
+                .glassSurface(in: .capsule, tint: .ozeroFill, fallback: Color.ozeroFill.lifted)
         }
+        .buttonStyle(.plain)
         // The files still being read go with it, so it waits for them.
         .disabled(busy || from == nil || !adding.isEmpty)
         .accessibilityLabel(Text("compose_send"))

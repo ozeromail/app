@@ -631,58 +631,36 @@ private struct Dock: View {
 
 }
 
-/// The inbox's tabs as on the iPhone: a capsule whose thumb slides to the open tab and follows a
-/// finger along it. Each tab keeps its place in the list; a tap on the open one goes to the top.
+/// The inbox's tabs: the system's segmented control, whose glass lens follows a finger along it on
+/// iOS 26, on a glass capsule over the list. Each tab keeps its place in the list; a tap on the open
+/// one goes to the top.
 private struct InboxTabs: View {
     @Bindable var model: InboxModel
-    @Namespace private var thumb
     @State private var width: CGFloat = 0
+    /// When the tab last changed: the tap that changed it is not a tap on the open tab.
+    @State private var changed = Date.distantPast
 
     var body: some View {
-        HStack(spacing: 0) {
+        Picker("inbox_title", selection: $model.tab) {
             ForEach(Category.all, id: \.self) { category in
                 let unread = model.tabs.first { $0.category == category }?.unread ?? 0
-                let open = model.tab == category
-                Button {
-                    if open { model.toTop += 1 } else { model.tab = category }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(category.label).font(open ? .textStrong : .text).lineLimit(1)
-                        if unread > 0 {
-                            Text(verbatim: "\(unread)").font(.badge).foregroundStyle(.secondary)
-                        }
-                    }
-                    .foregroundStyle(.primary)
-                    .padding(.horizontal, 4)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background {
-                        if open {
-                            Capsule().fill(Color.ozeroThumb).matchedGeometryEffect(id: "thumb", in: thumb)
-                        }
-                    }
-                    .contentShape(.capsule)
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(open ? .isSelected : [])
+                (Text(category.label) + Text(verbatim: unread > 0 ? " \(unread)" : "")).tag(category)
             }
         }
-        .padding(3)
-        .frame(height: model.sideways ? 40 : 44)
-        .glassSurface(in: .capsule, fallback: Color.ozeroCard.sunk)
+        .pickerStyle(.segmented)
+        .controlSize(.large)
+        .padding(4)
+        .glassSurface(in: .capsule, fallback: Color.clear)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-        // The thumb follows a finger slid along the tabs.
-        .gesture(
-            DragGesture(minimumDistance: 10).onChanged { drag in
-                guard width > 0, abs(drag.translation.width) > abs(drag.translation.height) else { return }
-                let index = Int(drag.location.x / (width / CGFloat(Category.all.count)))
-                let category = Category.all[min(max(index, 0), Category.all.count - 1)]
-                if category != model.tab { model.tab = category }
+        .simultaneousGesture(
+            SpatialTapGesture().onEnded { tap in
+                guard width > 0, Date.now.timeIntervalSince(changed) > 0.4 else { return }
+                let index = Int(tap.location.x / (width / CGFloat(Category.all.count)))
+                if Category.all[min(max(index, 0), Category.all.count - 1)] == model.tab { model.toTop += 1 }
             }
         )
-        .animation(.spring(duration: 0.4, bounce: 0.2), value: model.tab)
+        .onChange(of: model.tab) { changed = .now }
         .sensoryFeedback(.selection, trigger: model.tab)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(Text("inbox_title"))
     }
 }
 
