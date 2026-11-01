@@ -379,7 +379,7 @@ private struct InboxList: View {
             if lake {
                 LakeNote(title: model.emptyTitle, drawIn: model.hadMail, grey: !model.tabbed,
                          checking: checking, checkedAt: model.isInbox ? model.checkedAt : nil,
-                         refreshing: refreshing)
+                         refreshing: refreshing, pull: pull)
                     .id(model.mailbox)
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
@@ -442,17 +442,19 @@ private struct InboxList: View {
         // fight a second spring. Its spinner is hidden (OzeroMailApp); the water shows instead.
         .refreshable { await pulled() }
         .sensoryFeedback(.impact(weight: .light), trigger: pull.fraction >= 1)
-        // There is one pull's water, and it stays put: a pull moves the title and the rows down to
-        // uncover it, under the bar and over the title, over an empty list's lake too. Without a
-        // large title it opens under the bar.
+        // There is one water, and it stays put: a pull moves the title and the rows down to uncover
+        // it, under the bar and over the title. Without a large title it opens under the bar. An
+        // empty list already shows its lake: the pull's drop falls there instead.
         .overlay(alignment: .top) {
-            PullWater(grey: !model.tabbed, refreshing: refreshing, pull: pull) { waterCalm = $0 }
-                .frame(height: pull.gap)
-                .clipped()
-                .padding(.top, titleTop ?? (model.sideways ? base : base - Lake.largeTitle))
-                .allowsHitTesting(false)
-                // Counted from the top of the screen, as the inset is.
-                .ignoresSafeArea(.container, edges: .top)
+            if !lake {
+                PullWater(grey: !model.tabbed, refreshing: refreshing, pull: pull) { waterCalm = $0 }
+                    .frame(height: pull.gap)
+                    .clipped()
+                    .padding(.top, titleTop ?? (model.sideways ? base : base - Lake.largeTitle))
+                    .allowsHitTesting(false)
+                    // Counted from the top of the screen, as the inset is.
+                    .ignoresSafeArea(.container, edges: .top)
+            }
         }
         .background { LargeTitleFinder(title: largeTitle) }
         // A check the user waits on says when it is slow; a pull lets go after a while, and the sync
@@ -591,7 +593,7 @@ private struct InboxList: View {
         // A pull the system took for a refresh drops a whole drop, however far it went.
         pull.lastDrop = holding ? max(fraction, 1) : fraction
         pull.drops += 1
-        waterCalm = false
+        if !lake { waterCalm = false }
     }
 
     /// The system's pull: the list stays open until the check is through and its water has calmed.
@@ -611,6 +613,8 @@ private struct InboxList: View {
         // one starting under it jolts the rows.
         await until { !dragging }
         check()
+        // An empty list's lake shows the check itself.
+        guard !lake else { return }
         // A check that has gone too long lets the list go while it runs on.
         await until { !refreshing }
         await until(within: .seconds(3)) { waterCalm }
