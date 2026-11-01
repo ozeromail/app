@@ -138,9 +138,11 @@ enum Lake {
     static let horizon: CGFloat = 40
     static let top: CGFloat = 8
     static let fall: CGFloat = 40
-    /// How far a full pull opens the list; the water of a pull is shallower than a lake.
-    static let pullGap: CGFloat = 88
+    /// How far a full pull opens the list: where the system's pull to refresh takes it.
+    static let pullGap: CGFloat = 170
     static let pullFall: CGFloat = 24
+    /// How tall the system's large title is, over the list.
+    static let largeTitle: CGFloat = 52
     /// How far a pull must go, in pulls, to drop a drop when let go.
     static let tug: CGFloat = 1.0 / 3
 
