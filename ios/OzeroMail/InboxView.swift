@@ -848,7 +848,10 @@ private struct EmptyFolderButton: View {
             } label: {
                 Text(label).frame(maxWidth: .infinity)
             }
-            .buttonStyle(.bordered)
+            // A glass capsule like the rest of the dock, in red as it deletes.
+            .systemButton()
+            .controlSize(.large)
+            .tint(.ozeroError)
         }
     }
 }
