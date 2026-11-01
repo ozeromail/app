@@ -545,7 +545,7 @@ private struct Dock: View {
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
                                 .padding(.horizontal, 16)
-                                .background(Color.ozeroCard, in: .capsule)
+                                .background(Color.ozeroCard.sunk, in: .capsule)
                         }
                         .buttonStyle(.plain)
                         ComposeButton(model: model)
@@ -559,7 +559,7 @@ private struct Dock: View {
         // On its side the height is for the mail.
         .padding(.top, model.sideways ? 6 : 10)
         .padding(.bottom, 4)
-        .background(.bar)
+        .dockBackground()
         // Dragged up, the dock brings up the mailboxes, as the button does. The system's sheet
         // cannot follow a finger, so it rises once the drag is clearly upward.
         .simultaneousGesture(
@@ -640,7 +640,7 @@ private struct EmptyFolderButton: View {
     }
 }
 
-/// A new message, in the accent.
+/// A new message, in the accent, lifted off the page.
 private struct ComposeButton: View {
     let model: InboxModel
 
@@ -652,7 +652,7 @@ private struct ComposeButton: View {
                 .font(.heading)
                 .foregroundStyle(.white)
                 .frame(width: 48, height: 48)
-                .background(Color.ozeroFill, in: .rect(cornerRadius: 16))
+                .background(Color.ozeroFill.lifted, in: .rect(cornerRadius: 16))
         }
         .accessibilityLabel(Text("compose_new"))
     }
@@ -734,7 +734,7 @@ private struct AccountsButton: View {
                 }
             }
             .frame(width: 48, height: 48)
-            .background(Color.ozeroCard, in: .rect(cornerRadius: 16))
+            .background(Color.ozeroCard.sunk, in: .rect(cornerRadius: 16))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(Text("accounts_title"))
@@ -873,8 +873,9 @@ struct MessageRow: View {
         }
         .overlay(alignment: .topLeading) {
             Circle()
-                .fill(unread ? Color.ozeroFill : .clear)
+                .fill(Color.ozeroFill.window)
                 .frame(width: 7, height: 7)
+                .opacity(unread ? 1 : 0)
                 .offset(x: -13, y: 7)
                 .animation(.easeOut(duration: 0.15), value: unread)
         }

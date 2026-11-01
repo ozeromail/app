@@ -1015,7 +1015,7 @@ private fun Actions(
     Row(
         Modifier
             .fillMaxWidth()
-            .background(colors.background)
+            .dock(colors, solid = true)
             .navigationBarsPadding()
             .padding(start = Gap.bar, end = Gap.bar, top = Gap.barTop, bottom = Gap.barBottom),
         horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
@@ -1029,7 +1029,7 @@ private fun Actions(
     }
 }
 
-/** One of the big buttons along the bottom of a screen: an icon over its name. */
+/** One of the big buttons along the bottom of a screen: an icon over its name. One in the accent lifts off the page. */
 @Composable
 fun RowScope.BarAction(
     @DrawableRes icon: Int,
@@ -1039,11 +1039,14 @@ fun RowScope.BarAction(
     onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
+    val colors = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(Radius.medium)
     Column(
         Modifier
             .weight(1f)
             .height(if (LocalRoom.current.short) 44.dp else 52.dp)
-            .clip(RoundedCornerShape(Radius.medium))
+            .liftedIfAccent(colors, background, shape)
+            .clip(shape)
             .background(background)
             .combinedClickable(role = Role.Button, onLongClick = onLongClick, onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -1379,8 +1382,7 @@ private fun QuickReply(
     Column(
         Modifier
             .fillMaxWidth()
-            .background(colors.background)
-            .hairline(colors.outlineVariant, top = true)
+            .dock(colors, solid = true)
             .navigationBarsPadding()
             .imePadding()
             .padding(top = 8.dp),
@@ -1522,8 +1524,7 @@ private fun PaneActions(
     Row(
         Modifier
             .fillMaxWidth()
-            .background(colors.bar)
-            .hairline(colors.outlineVariant, top = true)
+            .dock(colors)
             .navigationBarsPadding()
             .padding(horizontal = Gap.bar, vertical = if (LocalRoom.current.short) 6.dp else Gap.barTop),
         verticalAlignment = Alignment.CenterVertically,

@@ -507,7 +507,7 @@ struct ComposeView: View {
             Image(systemName: "paperplane.fill")
                 .foregroundStyle(.white)
                 .frame(width: 56, height: 44)
-                .background(Color.ozeroFill, in: .capsule)
+                .background(Color.ozeroFill.lifted, in: .capsule)
         }
         // The files still being read go with it, so it waits for them.
         .disabled(busy || from == nil || !adding.isEmpty)

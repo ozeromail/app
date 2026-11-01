@@ -596,7 +596,7 @@ fun ComposeScreen(
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .hairline(colors.outlineVariant, top = true)
+                        .dock(colors, solid = true)
                         .padding(start = Gap.bar, end = Gap.bar, top = Gap.barTop, bottom = Gap.barBottom),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(Gap.inBar),

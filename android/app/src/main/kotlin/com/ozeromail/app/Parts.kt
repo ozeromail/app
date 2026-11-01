@@ -53,6 +53,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -74,7 +75,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import uniffi.ozero_api.Mailbox
 import uniffi.ozero_api.undoSeconds
 
-/** A square-ish button holding one icon, as in the bottom bars. */
+/** A square-ish button holding one icon, as in the bottom bars. One in the accent lifts off the page. */
 @Composable
 fun IconTile(
     @DrawableRes icon: Int,
@@ -87,10 +88,12 @@ fun IconTile(
     size: Dp = 48.dp,
     enabled: Boolean = true,
 ) {
+    val colors = MaterialTheme.colorScheme
     Box(
         modifier
             .size(size)
             .alpha(if (enabled) 1f else 0.4f)
+            .liftedIfAccent(colors, background, shape)
             .clip(shape)
             .background(background)
             .clickable(enabled = enabled, onClickLabel = description, role = Role.Button, onClick = onClick),
@@ -113,7 +116,7 @@ fun BackArrow(onBack: () -> Unit, modifier: Modifier = Modifier) {
     )
 }
 
-/** The rounded grey shape of the search field and the quick reply. */
+/** The rounded grey shape of the search field and the quick reply, cut into the page. */
 @Composable
 fun PillBox(
     modifier: Modifier = Modifier,
@@ -127,6 +130,7 @@ fun PillBox(
             .height(height)
             .clip(CircleShape)
             .background(colors.surfaceVariant)
+            .sunk(colors)
             .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -174,10 +178,11 @@ fun Modifier.hairline(color: Color, top: Boolean): Modifier = drawBehind {
     drawLine(color, Offset(0f, y), Offset(size.width, y), 1.dp.toPx())
 }
 
-/** A small round mark in an account's colour. */
+/** A small round mark in an account's colour, a tiny window. */
 @Composable
 fun AccountDot(color: Color, modifier: Modifier = Modifier, size: Dp = 10.dp) {
-    Box(modifier.size(size).background(color, CircleShape))
+    val window = MaterialTheme.colorScheme.window(color)
+    Box(modifier.size(size).drawWithCache { onDrawBehind { windowDot(window, this.size.minDimension / 2) } })
 }
 
 /** Text that fills a circle of a fixed size, so it does not grow with the font scale. */

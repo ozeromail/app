@@ -73,7 +73,7 @@ struct SearchView: View {
                     }
                     .padding(.horizontal, 16)
                     .frame(height: 48)
-                    .background(Color.ozeroCard, in: .capsule)
+                    .background(Color.ozeroCard.sunk, in: .capsule)
                     Button {
                         model.path.removeAll { $0 == .search }
                     } label: {
