@@ -107,7 +107,8 @@ struct SearchView: View {
         .onDisappear { visible = false }
         // The system field's close button closes search.
         .onChange(of: presented) { was, now in
-            if was, !now, visible { model.path.removeAll { $0 == .search } }
+            // Not when the field closes for a result or a person opened over search.
+            if was, !now, visible, model.path.last == .search { model.path.removeAll { $0 == .search } }
         }
         .task {
             if let recent = try? await model.mail.recentSearches() { self.recent = recent }
