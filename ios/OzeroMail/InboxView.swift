@@ -699,6 +699,17 @@ private struct InboxTabs: View {
     @State private var changed = Date.distantPast
 
     var body: some View {
+        if hasGlass && !model.sideways {
+            // The system's tab bar: its glass lens follows the finger and spills over the bar.
+            InboxTabBar(model: model)
+                .frame(height: tabBarHeight)
+                .sensoryFeedback(.selection, trigger: model.tab)
+        } else {
+            segments
+        }
+    }
+
+    private var segments: some View {
         Picker("inbox_title", selection: $model.tab) {
             ForEach(Category.all, id: \.self) { category in
                 let unread = model.tabs.first { $0.category == category }?.unread ?? 0
@@ -719,6 +730,54 @@ private struct InboxTabs: View {
         .glassSurface(in: .capsule, fallback: Color.clear)
         .onChange(of: model.tab) { changed = .now }
         .sensoryFeedback(.selection, trigger: model.tab)
+    }
+}
+
+/// The height of the inbox's tab bar.
+private let tabBarHeight: CGFloat = 62
+
+/// The inbox's tabs as the system's tab bar, on iOS 26: an icon over each name, the unread count
+/// as a badge. A tap on the open tab goes to the top of its list.
+private struct InboxTabBar: UIViewRepresentable {
+    let model: InboxModel
+
+    private static let icons: [Category: String] = [
+        .people: "person.2", .notifications: "bell", .newsletters: "newspaper",
+    ]
+
+    func makeCoordinator() -> Coordinator { Coordinator(model: model) }
+
+    func makeUIView(context: Context) -> UITabBar {
+        let bar = UITabBar()
+        bar.delegate = context.coordinator
+        bar.items = Category.all.enumerated().map { at, category in
+            UITabBarItem(title: tr(category.key), image: UIImage(systemName: Self.icons[category] ?? "tray"), tag: at)
+        }
+        return bar
+    }
+
+    func updateUIView(_ bar: UITabBar, context: Context) {
+        context.coordinator.model = model
+        for item in bar.items ?? [] {
+            let category = Category.all[item.tag]
+            let unread = model.tabs.first { $0.category == category }?.unread ?? 0
+            item.badgeValue = unread > 0 ? "\(unread)" : nil
+            item.badgeColor = UIColor(Color.ozeroAccent)
+        }
+        let at = Category.all.firstIndex(of: model.tab) ?? 0
+        if bar.selectedItem?.tag != at { bar.selectedItem = bar.items?[at] }
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, UITabBarDelegate {
+        var model: InboxModel
+
+        init(model: InboxModel) { self.model = model }
+
+        func tabBar(_ tabBar: UITabBar, didSelect item: UITabBarItem) {
+            let category = Category.all[item.tag]
+            if category == model.tab { model.toTop += 1 } else { model.tab = category }
+        }
     }
 }
 
