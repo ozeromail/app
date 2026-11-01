@@ -493,13 +493,20 @@ struct ComposeView: View {
                         if signature == from.signsWith { signature = account.signsWith }
                         accountId = account.id
                     } label: {
-                        if account.id == from.id { Label(account.email, systemImage: "checkmark") } else { Text(account.email) }
+                        // The name to pick by, the address it sends from under it.
+                        if account.id == from.id {
+                            Label { Text(verbatim: account.name); Text(verbatim: account.email) } icon: { Image(systemName: "checkmark") }
+                        } else {
+                            Text(verbatim: account.name)
+                            Text(verbatim: account.email)
+                        }
                     }
                 }
             } label: {
                 HStack(spacing: 8) {
                     AccountInitial(name: from.name, color: from.tint, size: 22)
-                    Text(verbatim: from.email).font(.text).lineLimit(1).foregroundStyle(.primary)
+                    // The account's short name: a long address would be cut off here.
+                    Text(verbatim: from.name).font(.text).lineLimit(1).foregroundStyle(.primary)
                 }
                 .padding(.leading, 8)
                 .padding(.trailing, 12)
@@ -547,7 +554,9 @@ struct ComposeView: View {
         }
         .buttonStyle(.plain)
         // The files still being read go with it, so it waits for them.
-        .disabled(busy || from == nil || !adding.isEmpty)
+        // Nobody to send to yet: it waits, as the iPhone's own Mail does.
+        .disabled(busy || from == nil || !adding.isEmpty || to.isBlank)
+        .opacity(to.isBlank ? 0.45 : 1)
         .accessibilityLabel(Text("compose_send"))
     }
 

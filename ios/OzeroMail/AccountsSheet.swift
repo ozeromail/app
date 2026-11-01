@@ -189,6 +189,9 @@ struct MailboxRows: View {
             }
         } header: {
             PartHeader(title: "inbox_all_accounts", open: open, onToggle: editing ? nil : { toggle { $0.toggled(Groups.allBoxes) } })
+        } footer: {
+            // These switches hide a row; the inboxes' leave an account out of All inboxes.
+            if editing { Text("all_boxes_edit_hint") }
         }
     }
 
