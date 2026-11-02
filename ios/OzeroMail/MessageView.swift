@@ -492,7 +492,8 @@ struct MessageView: View {
             if message.canSnooze {
                 RoundButton(icon: "clock", label: "action_snooze", size: paneButton, action: snooze)
             }
-            Menu { moreItems(answer, asking: nil) } label: { RoundLabel(icon: "ellipsis", size: paneButton) }
+            Menu { moreItems(answer, asking: nil) } label: { RoundGlyph(icon: "ellipsis", size: paneButton, tint: .primary) }
+                .glassSurface(in: .circle, fallback: Color.ozeroCard.buttonFill)
                 .accessibilityLabel(Text("action_more"))
             if message.canArchive {
                 RoundButton(icon: "checkmark", label: "action_done", size: paneButton, tint: .white, background: .ozeroFill, action: done)
@@ -1322,19 +1323,21 @@ struct RoundButton: View {
     var background: Color = .ozeroCard
     let action: () -> Void
 
+    // The glass is on the button, not inside its label: interactive glass in a label takes the tap
+    // and the button never fires.
     var body: some View {
-        Button(action: action) { RoundLabel(icon: icon, size: size, tint: tint, background: background) }
+        Button(action: action) { RoundGlyph(icon: icon, size: size, tint: tint) }
             .buttonStyle(.plain)
+            .glassSurface(in: .circle, tint: background == .ozeroFill ? .ozeroFill : nil, fallback: background.buttonFill)
             .accessibilityLabel(Text(label))
     }
 }
 
-/// What a round button shows, also for a menu's: glass on iOS 26, tinted for the accent.
-struct RoundLabel: View {
+/// A round button's glyph, centred in its circle; the glass goes on the button or menu around it.
+struct RoundGlyph: View {
     let icon: String
-    var size: CGFloat = 46
-    var tint: Color = .primary
-    var background: Color = .ozeroCard
+    let size: CGFloat
+    let tint: Color
 
     var body: some View {
         Image(systemName: icon)
@@ -1344,7 +1347,6 @@ struct RoundLabel: View {
             .foregroundStyle(tint)
             .frame(width: size, height: size)
             .contentShape(.circle)
-            .glassSurface(in: .circle, tint: background == .ozeroFill ? .ozeroFill : nil, fallback: background.buttonFill)
     }
 }
 
