@@ -326,7 +326,8 @@ fun SheetRow(
         fixed -> 48.dp
         else -> 52.dp
     }
-    val pad = if (fixed) 0.dp else if (short) 6.dp else 10.dp
+    // A fixed row is its minimum at regular sizes; with large text it grows, keeping air around it.
+    val pad = if (short) 6.dp else if (fixed) 8.dp else 10.dp
     Row(
         Modifier
             .fillMaxWidth()
