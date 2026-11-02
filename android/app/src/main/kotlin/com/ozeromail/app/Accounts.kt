@@ -110,8 +110,9 @@ fun AccountsSheet(
     // Every account's folders, on a page of their own inside the sheet; Back returns to the list.
     var folders by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(visible) { if (!visible) folders = false }
-    BackHandler(visible && folders) { folders = false }
     Sheet(visible, onClose, lift) {
+        // Inside the sheet, so it comes after the sheet's own back handler and goes first.
+        BackHandler(folders) { folders = false }
         AnimatedContent(
             folders,
             transitionSpec = {
