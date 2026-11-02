@@ -13,9 +13,11 @@ struct AccountsActions {
     let onSettings: () -> Void
 }
 
-/// The mailboxes, for going places, and at the bottom the settings. Edit, in the sheet's bar as in
-/// the iPhone's own Mail, turns the rows into switches to move; an account's settings open from its
-/// ⓘ there, or by holding it.
+/// The mailboxes, for going places. It grows out of the accounts button and lies on the sheet's
+/// glass, without cards: all inboxes and each account's inbox as rows, the mailboxes of all
+/// accounts as tiles. An account's arrow opens its folders as a page of the sheet. The settings sit
+/// in the sheet's bar at the left, Edit at the right as in the iPhone's own Mail; Edit turns the
+/// rows into switches to move, an account's settings open from its ⓘ there, or by holding it.
 struct AccountsSheet: View {
     let accounts: [AccountItem]
     let folders: [FolderItem]
@@ -27,18 +29,30 @@ struct AccountsSheet: View {
     @Binding var allBoxes: AllBoxes
     let actions: AccountsActions
     @State private var editing = false
+    @State private var path: [Int64] = []
+    @Environment(\.accountsZoom) private var zoom
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             List {
-                MailboxRows(
-                    accounts: accounts, folders: folders, mailbox: mailbox, drafts: drafts, unread: unread,
-                    allBoxes: $allBoxes, groups: $groups, actions: actions, editing: $editing, editInHeader: false)
+                if editing {
+                    MailboxRows(
+                        accounts: accounts, folders: folders, mailbox: mailbox, drafts: drafts, unread: unread,
+                        allBoxes: $allBoxes, groups: $groups, actions: actions, editing: $editing, editInHeader: false,
+                        settings: false)
+                } else {
+                    home
+                }
             }
-            .listStyle(.insetGrouped)
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
             .navigationTitle("folders_title")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(action: actions.onSettings) { Image(systemName: "gear") }
+                        .accessibilityLabel(Text("settings_title"))
+                }
                 // With one account there is nothing to switch or move.
                 if accounts.count > 1 {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -46,10 +60,185 @@ struct AccountsSheet: View {
                     }
                 }
             }
+            .navigationDestination(for: Int64.self) { id in
+                if let account = accounts.first(where: { $0.id == id }) {
+                    AccountPage(account: account, folders: folders, mailbox: mailbox, unread: unread[id] ?? 0, actions: actions)
+                }
+            }
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+        .modifier(ZoomFrom(zoom: zoom))
     }
+
+    @ViewBuilder private var home: some View {
+        Group {
+            if drafts > 0 {
+                FolderRow(icon: "square.and.pencil", title: tr("folder_drafts"), open: false, count: drafts, action: actions.onDrafts)
+            }
+            if let one = accounts.first, accounts.count == 1 {
+                FolderRow(icon: "tray", title: tr("inbox_title"), open: mailbox == Mail.inbox, count: unread[one.id] ?? 0) {
+                    actions.onMailbox(Mail.inbox)
+                }
+                SignInAgain(account: one, actions: actions)
+                AccountFolders(account: one, folders: folders, mailbox: mailbox, actions: actions)
+            } else {
+                let inAll = accounts.filter(\.inAll)
+                FolderRow(title: tr("folder_all_inbox"), open: mailbox == Mail.inbox,
+                          count: inAll.reduce(0) { $0 + (unread[$1.id] ?? 0) }, lead: { StackedDots(accounts: inAll) }) {
+                    actions.onMailbox(Mail.inbox)
+                }
+                ForEach(accounts, id: \.id) { account in
+                    let box = folders.first { $0.accountId == account.id && $0.role == .inbox }.map { Mailbox.folder(id: $0.id) }
+                    HStack(spacing: 4) {
+                        FolderRow(title: account.name, open: box == mailbox, count: unread[account.id] ?? 0,
+                                  lead: { AccountDot(color: account.tint) }) {
+                            if let box { actions.onMailbox(box) }
+                        }
+                        // Its folders, a page of the sheet: the arrow goes somewhere, as everywhere on the iPhone.
+                        Button { path.append(account.id) } label: {
+                            Image(systemName: "chevron.right")
+                                .font(.smallStrong)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 44, height: 44)
+                                .contentShape(.rect)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(Text(verbatim: tr("account_folders_of", account.name)))
+                    }
+                    .contextMenu {
+                        Button { actions.onAccount(account) } label: { Label("account_settings", systemImage: "gear") }
+                    }
+                    SignInAgain(account: account, actions: actions)
+                }
+                let boxes = allBoxes.order.filter { allBoxes.shown.contains($0) && $0.listed(folders) }
+                if !boxes.isEmpty {
+                    Text("inbox_all_accounts")
+                        .font(.smallStrong)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 14)
+                    BoxTiles(boxes: boxes, mailbox: mailbox, onMailbox: actions.onMailbox)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 16, trailing: 16))
+                }
+            }
+        }
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+    }
+}
+
+/// The mailboxes of all accounts together, two to a row as Reminders shows its lists: a quiet
+/// icon over the name, colour only on the open one.
+private struct BoxTiles: View {
+    let boxes: [AllBox]
+    let mailbox: Mailbox
+    let onMailbox: (Mailbox) -> Void
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+            ForEach(boxes) { box in
+                let open = box.mailbox == mailbox
+                Button { onMailbox(box.mailbox) } label: {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Image(systemName: box.icon)
+                            .font(.row)
+                            .foregroundStyle(open ? Color.ozeroAccent : .secondary)
+                            .frame(width: 32, height: 32)
+                            .background(Color(uiColor: .systemBackground), in: .circle)
+                        Text(verbatim: box.shortTitle)
+                            .font(.textStrong)
+                            .foregroundStyle(open ? Color.ozeroAccent : .primary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.primary.opacity(0.06), in: .rect(cornerRadius: 20))
+                    .contentShape(.rect(cornerRadius: 20))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+/// An account's inbox and folders, a page of the sheet its arrow opens.
+private struct AccountPage: View {
+    let account: AccountItem
+    let folders: [FolderItem]
+    let mailbox: Mailbox
+    let unread: Int
+    let actions: AccountsActions
+
+    var body: some View {
+        let box = folders.first { $0.accountId == account.id && $0.role == .inbox }.map { Mailbox.folder(id: $0.id) }
+        List {
+            Group {
+                FolderRow(icon: "tray", title: tr("inbox_title"), open: box == mailbox, count: unread) {
+                    if let box { actions.onMailbox(box) }
+                }
+                SignInAgain(account: account, actions: actions)
+                AccountFolders(account: account, folders: folders, mailbox: mailbox, actions: actions)
+            }
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .navigationTitle(Text(verbatim: account.name))
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { actions.onAccount(account) } label: { Image(systemName: "info.circle") }
+                    .accessibilityLabel(Text("account_settings"))
+            }
+        }
+    }
+}
+
+/// The sheet grows out of the button that opened it, where there is one. Before iOS 26 a sheet
+/// that zooms loses its heights, so it rises as before.
+private struct ZoomFrom: ViewModifier {
+    let zoom: Namespace.ID?
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26, *), let zoom {
+            content.navigationTransition(.zoom(sourceID: accountsZoomID, in: zoom))
+        } else {
+            content
+        }
+    }
+}
+
+/// The accounts button, which the accounts sheet grows out of.
+struct ZoomSource: ViewModifier {
+    let zoom: Namespace.ID?
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26, *), let zoom {
+            content.matchedTransitionSource(id: accountsZoomID, in: zoom)
+        } else {
+            content
+        }
+    }
+}
+
+/// Under an account the server signed out, a way to sign in again.
+private struct SignInAgain: View {
+    let account: AccountItem
+    let actions: AccountsActions
+
+    var body: some View {
+        if account.needsSignIn {
+            SheetAction(icon: "chevron.right", text: "signin_again_title", color: .ozeroError) { actions.onSignIn(account) }
+        }
+    }
+}
+
+/// What the accounts button and the sheet it opens share, so the sheet grows out of the button.
+let accountsZoomID = "accounts"
+
+extension EnvironmentValues {
+    @Entry var accountsZoom: Namespace.ID?
 }
 
 /// The drafts, if any, then all inboxes, which always shows, the inboxes of the accounts, each
@@ -70,6 +259,8 @@ struct MailboxRows: View {
     @Binding var editing: Bool
     /// Where there is no bar over the list for it, Edit sits in the inboxes' header.
     let editInHeader: Bool
+    /// The settings as the last row, where they are not in a bar.
+    var settings = true
 
     var body: some View {
         if drafts > 0 {
@@ -94,8 +285,10 @@ struct MailboxRows: View {
             inboxes
             allAccounts
         }
-        Section {
-            FolderRow(icon: "gear", title: tr("settings_title"), open: false, action: actions.onSettings)
+        if settings {
+            Section {
+                FolderRow(icon: "gear", title: tr("settings_title"), open: false, action: actions.onSettings)
+            }
         }
     }
 
@@ -195,11 +388,8 @@ struct MailboxRows: View {
         }
     }
 
-    /// Under an account the server signed out, a way to sign in again.
-    @ViewBuilder private func signInAgain(_ account: AccountItem) -> some View {
-        if account.needsSignIn {
-            SheetAction(icon: "chevron.right", text: "signin_again_title", color: .ozeroError) { actions.onSignIn(account) }
-        }
+    private func signInAgain(_ account: AccountItem) -> some View {
+        SignInAgain(account: account, actions: actions)
     }
 }
 
