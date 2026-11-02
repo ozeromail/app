@@ -321,13 +321,15 @@ fun SheetRow(
     // On its side the rows are lower, so more of them fit the short height.
     val short = LocalRoom.current.short
     val haptics = LocalHapticFeedback.current
+    // A fixed row is 48 dp at the regular text size and grows with larger text, so its words keep
+    // air around them; its buttons and switches stay within it.
+    val grow = 16.dp * (LocalDensity.current.fontScale - 1f).coerceAtLeast(0f)
     val min = when {
         short -> 40.dp
-        fixed -> 48.dp
+        fixed -> 48.dp + grow
         else -> 52.dp
     }
-    // A fixed row is its minimum at regular sizes; with large text it grows, keeping air around it.
-    val pad = if (short) 6.dp else if (fixed) 8.dp else 10.dp
+    val pad = if (fixed) 0.dp else if (short) 6.dp else 10.dp
     Row(
         Modifier
             .fillMaxWidth()
