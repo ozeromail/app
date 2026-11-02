@@ -15,7 +15,7 @@ struct AccountsActions {
 
 /// The mailboxes, for going places. It grows out of the accounts button and lies on the sheet's
 /// glass, without cards: all inboxes and each account's inbox as rows, the mailboxes of all
-/// accounts as tiles. An account's arrow opens its folders as a page of the sheet. The settings sit
+/// accounts as tiles. Folders, one row, open the folders of every account as a page. The settings sit
 /// in the sheet's bar at the left, Edit at the right as in the iPhone's own Mail; Edit turns the
 /// rows into switches to move, an account's settings open from its ⓘ there, or by holding it.
 struct AccountsSheet: View {
@@ -29,13 +29,13 @@ struct AccountsSheet: View {
     @Binding var allBoxes: AllBoxes
     let actions: AccountsActions
     @State private var editing = false
-    @State private var path: [Int64] = []
+    @State private var showFolders = false
     /// How tall the mailboxes are, so the sheet opens showing all of them, tiles too, with no drag.
     @State private var fit: CGFloat = 0
     @Environment(\.accountsZoom) private var zoom
 
     var body: some View {
-        NavigationStack(path: $path) {
+        NavigationStack {
             List {
                 if editing {
                     MailboxRows(
@@ -53,7 +53,7 @@ struct AccountsSheet: View {
             .onScrollGeometryChange(for: CGFloat.self) { geometry in
                 geometry.contentSize.height + geometry.contentInsets.top + geometry.contentInsets.bottom
             } action: { _, height in
-                if !editing && path.isEmpty { fit = height }
+                if !editing && !showFolders { fit = height }
             }
             .navigationTitle("folders_title")
             .navigationBarTitleDisplayMode(.inline)
@@ -69,10 +69,8 @@ struct AccountsSheet: View {
                     }
                 }
             }
-            .navigationDestination(for: Int64.self) { id in
-                if let account = accounts.first(where: { $0.id == id }) {
-                    AccountPage(account: account, folders: folders, mailbox: mailbox, unread: unread[id] ?? 0, actions: actions)
-                }
+            .navigationDestination(isPresented: $showFolders) {
+                FoldersPage(accounts: accounts, folders: folders, mailbox: mailbox, actions: actions)
             }
         }
         .presentationDetents(fit > 0 ? [.height(fit), .large] : [.medium, .large])
@@ -99,27 +97,26 @@ struct AccountsSheet: View {
                 }
                 ForEach(accounts, id: \.id) { account in
                     let box = folders.first { $0.accountId == account.id && $0.role == .inbox }.map { Mailbox.folder(id: $0.id) }
-                    HStack(spacing: 4) {
-                        FolderRow(title: account.name, open: box == mailbox, count: unread[account.id] ?? 0,
-                                  lead: { AccountDot(color: account.tint) }) {
-                            if let box { actions.onMailbox(box) }
-                        }
-                        // Its folders, a page of the sheet: the arrow goes somewhere, as everywhere on the iPhone.
-                        Button { path.append(account.id) } label: {
-                            Image(systemName: "chevron.right")
-                                .font(.smallStrong)
-                                .foregroundStyle(.secondary)
-                                .frame(width: 44, height: 44)
-                                .contentShape(.rect)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(Text(verbatim: tr("account_folders_of", account.name)))
+                    FolderRow(title: account.name, open: box == mailbox, count: unread[account.id] ?? 0,
+                              lead: { AccountDot(color: account.tint) }) {
+                        if let box { actions.onMailbox(box) }
                     }
                     .contextMenu {
                         Button { actions.onAccount(account) } label: { Label("account_settings", systemImage: "gear") }
                     }
                     SignInAgain(account: account, actions: actions)
                 }
+                // The folders, one row that goes to a page of them: each row here does one thing.
+                Button { showFolders = true } label: {
+                    HStack(spacing: afterSlot) {
+                        FolderIcon(name: "folder").frame(width: slot)
+                        Text("folders_accounts")
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.smallStrong).foregroundStyle(.tertiary)
+                    }
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
                 let boxes = allBoxes.order.filter { allBoxes.shown.contains($0) && $0.listed(folders) }
                 if !boxes.isEmpty {
                     Text("inbox_all_accounts")
@@ -174,36 +171,31 @@ private struct BoxTiles: View {
     }
 }
 
-/// An account's inbox and folders, a page of the sheet its arrow opens.
-private struct AccountPage: View {
-    let account: AccountItem
+/// Each account's folders under its name, a page of the sheet.
+private struct FoldersPage: View {
+    let accounts: [AccountItem]
     let folders: [FolderItem]
     let mailbox: Mailbox
-    let unread: Int
     let actions: AccountsActions
 
     var body: some View {
-        let box = folders.first { $0.accountId == account.id && $0.role == .inbox }.map { Mailbox.folder(id: $0.id) }
         List {
-            Group {
-                FolderRow(icon: "tray", title: tr("inbox_title"), open: box == mailbox, count: unread) {
-                    if let box { actions.onMailbox(box) }
+            ForEach(accounts, id: \.id) { account in
+                Section {
+                    AccountFolders(account: account, folders: folders, mailbox: mailbox, actions: actions)
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                } header: {
+                    Label { Text(verbatim: account.name) } icon: { AccountDot(color: account.tint) }
+                        .font(.smallStrong)
+                        .foregroundStyle(.secondary)
                 }
-                SignInAgain(account: account, actions: actions)
-                AccountFolders(account: account, folders: folders, mailbox: mailbox, actions: actions)
             }
-            .listRowBackground(Color.clear)
-            .listRowSeparator(.hidden)
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
-        .navigationTitle(Text(verbatim: account.name))
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { actions.onAccount(account) } label: { Image(systemName: "info.circle") }
-                    .accessibilityLabel(Text("account_settings"))
-            }
-        }
+        .environment(\.defaultMinListRowHeight, 52)
+        .navigationTitle("folders_accounts")
     }
 }
 
