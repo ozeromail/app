@@ -806,6 +806,7 @@ private struct InboxTabBar: UIViewRepresentable {
     /// Lifts a name with no icon over it to the middle of the bar.
     private static let centred = UIOffset(horizontal: 0, vertical: -12)
     private static let font = UIFont.systemFont(ofSize: 15, weight: .medium)
+    private static let roomFont = UIFont.systemFont(ofSize: 17, weight: .semibold)
 
     func makeCoordinator() -> Coordinator { Coordinator(model: model) }
 
@@ -829,14 +830,16 @@ private struct InboxTabBar: UIViewRepresentable {
         context.coordinator.model = model
         // Before its first layout the bar is as wide as the screen less the dock's margins.
         let width = bar.bounds.width > 0 ? bar.bounds.width : (bar.window?.bounds.width ?? 390) - 32
-        let room = width / CGFloat(max(bar.items?.count ?? 1, 1)) - 16
+        // The bar draws its names larger than the font it is given and widens the open tab, so the
+        // count is measured with room to spare.
+        let room = width / CGFloat(max(bar.items?.count ?? 1, 1)) - 24
         for item in bar.items ?? [] {
             let category = Category.all[item.tag]
             let unread = model.tabs.first { $0.category == category }?.unread ?? 0
             let name = tr(category.key)
             let counted = name + " \(unread)"
             // A count that would run into the next name stays off; the name never shrinks.
-            let fits = (counted as NSString).size(withAttributes: [.font: Self.font]).width <= room
+            let fits = (counted as NSString).size(withAttributes: [.font: Self.roomFont]).width <= room
             item.title = unread > 0 && fits ? counted : name
         }
         let at = Category.all.firstIndex(of: model.tab) ?? 0
