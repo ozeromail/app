@@ -827,10 +827,17 @@ private struct InboxTabBar: UIViewRepresentable {
 
     func updateUIView(_ bar: UITabBar, context: Context) {
         context.coordinator.model = model
+        // Before its first layout the bar is as wide as the screen less the dock's margins.
+        let width = bar.bounds.width > 0 ? bar.bounds.width : (bar.window?.bounds.width ?? 390) - 32
+        let room = width / CGFloat(max(bar.items?.count ?? 1, 1)) - 16
         for item in bar.items ?? [] {
             let category = Category.all[item.tag]
             let unread = model.tabs.first { $0.category == category }?.unread ?? 0
-            item.title = tr(category.key) + (unread > 0 ? " \(unread)" : "")
+            let name = tr(category.key)
+            let counted = name + " \(unread)"
+            // A count that would run into the next name stays off; the name never shrinks.
+            let fits = (counted as NSString).size(withAttributes: [.font: Self.font]).width <= room
+            item.title = unread > 0 && fits ? counted : name
         }
         let at = Category.all.firstIndex(of: model.tab) ?? 0
         if bar.selectedItem?.tag != at { bar.selectedItem = bar.items?[at] }

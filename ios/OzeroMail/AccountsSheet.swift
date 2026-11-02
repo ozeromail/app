@@ -32,6 +32,9 @@ struct AccountsSheet: View {
     @State private var showFolders = false
     /// How tall the mailboxes are, so the sheet opens showing all of them, tiles too, with no drag.
     @State private var fit: CGFloat = 0
+    /// The height the sheet is at: kept when the rows change, so opening Other folders after
+    /// dragging the sheet up leaves it up.
+    @State private var detent: PresentationDetent = .medium
     @Environment(\.accountsZoom) private var zoom
 
     var body: some View {
@@ -53,7 +56,10 @@ struct AccountsSheet: View {
             .onScrollGeometryChange(for: CGFloat.self) { geometry in
                 geometry.contentSize.height + geometry.contentInsets.top + geometry.contentInsets.bottom
             } action: { _, height in
-                if !editing && !showFolders { fit = height }
+                guard !editing && !showFolders, height != fit else { return }
+                let fitted = detent != .large
+                fit = height
+                if fitted { detent = .height(height) }
             }
             .navigationTitle("folders_title")
             .navigationBarTitleDisplayMode(.inline)
@@ -73,7 +79,9 @@ struct AccountsSheet: View {
                 FoldersPage(accounts: accounts, folders: folders, mailbox: mailbox, actions: actions)
             }
         }
-        .presentationDetents(fit > 0 ? [.height(fit), .large] : [.medium, .large])
+        .presentationDetents(fit > 0 ? [.height(fit), .large] : [.medium, .large], selection: $detent)
+        // Thick enough that the inbox's colours behind do not smudge the rows; still the sheet's glass.
+        .presentationBackground(.ultraThickMaterial)
         .presentationDragIndicator(.visible)
         .modifier(ZoomFrom(zoom: zoom))
     }
