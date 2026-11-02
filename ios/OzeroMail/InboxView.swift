@@ -729,6 +729,7 @@ private struct Dock: View {
                 .frame(height: model.sideways && !choosing ? sidewaysHeight : height)
                 .animation(.smooth, value: choosing)
                 .animation(.smooth, value: model.toast)
+                .simultaneousGesture(bringUpMailboxes)
             }
         }
         .padding(.horizontal, hasGlass ? 16 : 12)
@@ -738,15 +739,17 @@ private struct Dock: View {
         .dockBackground(floating: true)
         .animation(.smooth(duration: 0.3), value: model.tabsHidden)
         .animation(.smooth(duration: 0.3), value: model.inboxEmpty)
-        // Dragged up, the dock brings up the mailboxes, as the button does. The system's sheet
-        // cannot follow a finger, so it rises once the drag is clearly upward.
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 12).onChanged { drag in
-                let up = -drag.translation.height
-                guard !model.sideways, !choosing, !model.accountsOpen, up > 32, up > abs(drag.translation.width) else { return }
-                model.accountsOpen = true
-            }
-        )
+    }
+
+    /// Dragged up, the dock's row brings up the mailboxes, as the button does. The system's sheet
+    /// cannot follow a finger, so it rises once the drag is clearly upward. Only the row: on the
+    /// tabs it would take the touch from the segmented control and its lens.
+    private var bringUpMailboxes: some Gesture {
+        DragGesture(minimumDistance: 12).onChanged { drag in
+            let up = -drag.translation.height
+            guard !model.sideways, !choosing, !model.accountsOpen, up > 32, up > abs(drag.translation.width) else { return }
+            model.accountsOpen = true
+        }
     }
 
 }
@@ -770,7 +773,6 @@ private struct InboxTabs: View {
             }
         }
         .pickerStyle(.segmented)
-        .controlSize(.large)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .simultaneousGesture(
             SpatialTapGesture().onEnded { tap in
