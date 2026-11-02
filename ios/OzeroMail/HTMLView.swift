@@ -34,8 +34,10 @@ private struct Page: UIViewRepresentable {
     }
 
     /// The page with its image addresses, `https://images.ozero.invalid/<message>/<n>`, made
-    /// inline data, and the reading font left to the system's serif.
+    /// inline data, and its reading font asked of the app, as Android serves it.
     private func inline(_ html: String) -> String {
+        // In the font's address and in the page's policy that lets it load.
+        let html = html.replacingOccurrences(of: "https://fonts.ozero.invalid", with: "\(FontScheme.name)://fonts")
         guard !images.isEmpty,
               let address = try? Regex("https://images\\.ozero\\.invalid/\(message)/([0-9]+)")
         else { return html }
@@ -55,6 +57,7 @@ private struct Page: UIViewRepresentable {
         config.websiteDataStore = Self.store
         config.defaultWebpagePreferences.allowsContentJavaScript = false
         config.dataDetectorTypes = [.link, .phoneNumber]
+        config.setURLSchemeHandler(FontScheme(), forURLScheme: FontScheme.name)
         let view = WKWebView(frame: .zero, configuration: config)
         view.navigationDelegate = context.coordinator
         // A plain page is clear and takes the screen's colour; a newsletter paints its own.
@@ -83,9 +86,9 @@ private struct Page: UIViewRepresentable {
     /// Blocks every load that is not the page itself or inline data. Compiled once, then read from disk.
     @MainActor private static let rules = Task<WKContentRuleList?, Never> {
         // A new rule needs a new id, or the old compiled list is read back.
-        let id = "ozero-offline-1"
+        let id = "ozero-offline-2"
         let json = #"[{"trigger":{"url-filter":".*"},"action":{"type":"block"}},"#
-            + #"{"trigger":{"url-filter":"^(about|data):"},"action":{"type":"ignore-previous-rules"}}]"#
+            + #"{"trigger":{"url-filter":"^(about|data|ozero-font):"},"action":{"type":"ignore-previous-rules"}}]"#
         let found: WKContentRuleListStore? = WKContentRuleListStore.default()
         guard let lists = found else { return nil }
         let saved = await withCheckedContinuation { done in
@@ -136,4 +139,28 @@ private struct Page: UIViewRepresentable {
             }
         }
     }
+}
+
+/// Hands a page the app's reading font, Literata, from the app itself: nothing leaves the phone.
+private final class FontScheme: NSObject, WKURLSchemeHandler {
+    static let name = "ozero-font"
+
+    func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
+        guard let url = task.request.url, url.lastPathComponent == "literata.ttf",
+              let file = Bundle.main.url(forResource: "Literata", withExtension: "ttf"),
+              let data = try? Data(contentsOf: file),
+              // The page's origin is opaque, so the font is a cross-origin load and needs CORS.
+              let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: [
+                  "Content-Type": "font/ttf", "Access-Control-Allow-Origin": "*",
+              ])
+        else {
+            task.didFailWithError(URLError(.fileDoesNotExist))
+            return
+        }
+        task.didReceive(response)
+        task.didReceive(data)
+        task.didFinish()
+    }
+
+    func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {}
 }

@@ -164,6 +164,7 @@ struct SearchView: View {
                         guard !text.isBlank else { return }
                         Task { try? await model.mail.rememberSearch(text) }
                     })
+                    .listRowBackground(OpenRow.background(model, message))
             }
             if asking {
                 Text("search_server")
@@ -174,6 +175,7 @@ struct SearchView: View {
             }
         }
         .listStyle(.plain)
+        .paperList()
         .middle(Room.list)
     }
 }

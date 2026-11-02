@@ -124,9 +124,11 @@ struct PersonMailView: View {
             }
             ForEach(messages ?? [], id: \.id) { message in
                 OpenRow(model: model, message: message)
+                    .listRowBackground(OpenRow.background(model, message))
             }
         }
         .listStyle(.plain)
+        .paperList()
         .middle(Room.list)
         .navigationTitle(Text(verbatim: person.name))
         .navigationBarTitleDisplayMode(.large)

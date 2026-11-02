@@ -114,7 +114,7 @@ private struct AttachmentRow: View {
             } label: {
                 HStack(spacing: 12) {
                     ZStack {
-                        RoundedRectangle(cornerRadius: 8).fill(Color(uiColor: .systemBackground)).frame(width: 40, height: 40)
+                        RoundedRectangle(cornerRadius: 8).fill(Color.ozeroPage).frame(width: 40, height: 40)
                         if files.isLoading(message, file) {
                             ProgressView()
                         } else if let kind = file.kind {

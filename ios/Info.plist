@@ -7,6 +7,11 @@
 	<array>
 		<string>com.ozeromail.app.refresh</string>
 	</array>
+	<key>UIAppFonts</key>
+	<array>
+		<string>Inter.ttf</string>
+		<string>Literata.ttf</string>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

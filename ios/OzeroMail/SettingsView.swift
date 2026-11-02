@@ -47,7 +47,7 @@ struct SettingsView: View {
         case .swipes:
             SwipeSettings(swipes: $swipes)
         case .signature:
-            Form {
+            PaperForm {
                 SignatureSection(saved: signature, label: "signature_title", placeholder: "", hint: "signature_hint",
                                  onSave: actions.onSignature)
             }
@@ -76,7 +76,7 @@ private struct AppSettings: View {
     @State private var imagesAlways: Bool?
 
     var body: some View {
-        List {
+        PaperForm {
             Section("accounts_title") {
                 ForEach(accounts, id: \.id) { account in
                     NavigationLink(value: Route.settings(.account(account.id))) {
@@ -117,7 +117,6 @@ private struct AppSettings: View {
                     .padding(.top, 12)
             }
         }
-        .listStyle(.insetGrouped)
         .task { imagesAlways = try? await mail.imagesAlways() }
         .navigationTitle("settings_title")
     }
@@ -158,7 +157,7 @@ private struct NotificationSettings: View {
     let actions: SettingsActions
 
     var body: some View {
-        Form {
+        PaperForm {
             Section {
                 ForEach(accounts, id: \.id) { account in
                     Toggle(isOn: Binding(get: { account.notify }, set: { actions.onNotify(account, $0) })) {
@@ -196,7 +195,7 @@ private struct SwipeSettings: View {
     @State private var shown = SwipeAction.done
 
     var body: some View {
-        Form {
+        PaperForm {
             Section { preview.listRowInsets(EdgeInsets()) }
             side("swipes_left", $swipes.left)
             long("swipes_left_long", $swipes.leftLong)
@@ -223,7 +222,7 @@ private struct SwipeSettings: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
-            .background(Color(.secondarySystemGroupedBackground))
+            .background(Color.ozeroCard)
             .offset(x: offset)
         }
         .frame(height: 64)
@@ -264,7 +263,7 @@ private struct ReadingSettings: View {
     @State private var senders: [String] = []
 
     var body: some View {
-        Form {
+        PaperForm {
             Section {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("reading_sample_from").font(.smallStrong).foregroundStyle(.secondary)
@@ -275,9 +274,9 @@ private struct ReadingSettings: View {
                 }
                 .padding(.vertical, 6)
                 HStack(spacing: 12) {
-                    Text(verbatim: "A").font(.system(size: 13, design: .serif)).foregroundStyle(.secondary)
+                    Text(verbatim: "A").font(.custom("Literata", fixedSize: 13)).foregroundStyle(.secondary)
                     Slider(value: $size, in: 0...Double(Settings.textScales.count - 1), step: 1)
-                    Text(verbatim: "A").font(.system(size: 21, design: .serif)).foregroundStyle(.secondary)
+                    Text(verbatim: "A").font(.custom("Literata", fixedSize: 21)).foregroundStyle(.secondary)
                 }
             } header: {
                 Text("reading_size")
@@ -346,7 +345,7 @@ private struct AccountSettings: View {
     @State private var confirming = false
 
     var body: some View {
-        Form {
+        PaperForm {
             Section {
                 HStack(spacing: 14) {
                     AccountInitial(name: account.name, color: account.tint, size: 40)
@@ -368,7 +367,7 @@ private struct AccountSettings: View {
             }
             Section {
                 NameField(saved: account.senderName,
-                          label: "account_sender_name", placeholder: account.email, capitalization: .words) {
+                          label: "account_sender_name", placeholder: tr("account_sender_name"), capitalization: .words) {
                     actions.onSender(account, $0)
                 }
             } header: {
@@ -377,7 +376,7 @@ private struct AccountSettings: View {
             SignatureSection(saved: account.signature, label: "account_signature", placeholder: signature,
                              hint: "account_signature_hint") { actions.onAccountSignature(account, $0) }
             Section {
-                NameField(saved: account.label, label: "account_name", placeholder: account.email, capitalization: .sentences) {
+                NameField(saved: account.label, label: "account_name", placeholder: tr("account_name"), capitalization: .sentences) {
                     actions.onLabel(account, $0)
                 }
             } header: {

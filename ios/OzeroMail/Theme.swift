@@ -20,6 +20,13 @@ extension Color {
     /// Cards over the list, such as an account to sign in to again.
     static let ozeroCard = dynamic(light: 0xF2F5FA, dark: 0x1A202C)
 
+    /// The paper itself: white by day, the lake's deep blue at night, as on Android.
+    static let ozeroPage = dynamic(light: 0xFFFFFF, dark: 0x141923)
+
+    /// Text in the paper's navy ink, and what is said less loudly.
+    static let ozeroInk = dynamic(light: 0x142036, dark: 0xE5E9F1)
+    static let ozeroMuted = dynamic(light: 0x66728A, dark: 0x8792A7)
+
     /// A colour from the core, as 0xRRGGBB.
     init(rgb: UInt32) {
         self.init(
@@ -114,7 +121,7 @@ struct StackedDots: View {
         ZStack(alignment: .leading) {
             ForEach(Array(accounts.prefix(3).enumerated()), id: \.offset) { i, account in
                 AccountDot(color: account.tint)
-                    .overlay(Circle().stroke(Color(uiColor: .systemBackground), lineWidth: 1.5))
+                    .overlay(Circle().stroke(Color.ozeroPage, lineWidth: 1.5))
                     .offset(x: 7 * CGFloat(i))
             }
         }
@@ -122,44 +129,81 @@ struct StackedDots: View {
     }
 }
 
-/// The type scale, by role, on the system's text styles so Dynamic Type applies. Mail's own text
-/// is `reading`, in MessageView; everything around it takes one of these.
+/// The type scale, by role: Inter, on the system's text styles so Dynamic Type applies, as
+/// Android sets its type in Inter. Mail's own text is `reading`, in MessageView, in Literata.
 extension Font {
+    /// Inter at a text style's size, growing with it.
+    static func inter(_ size: CGFloat, _ style: Font.TextStyle, _ weight: Font.Weight = .regular) -> Font {
+        .custom("Inter", size: size, relativeTo: style).weight(weight)
+    }
+
     /// Screen titles: Inbox, a folder.
-    static let screenTitle = Font.largeTitle.bold()
+    static let screenTitle = inter(34, .largeTitle, .bold)
 
     /// An open message's subject, and the subject being written.
-    static let subjectTitle = Font.title2.bold()
+    static let subjectTitle = inter(22, .title2, .bold)
 
     /// Titles of sheets and notes.
-    static let heading = Font.title3.weight(.semibold)
+    static let heading = inter(20, .title3, .semibold)
 
     /// A line under a heading, as on the first screen.
-    static let lead = Font.title3
+    static let lead = inter(20, .title3)
 
     /// A sender in a list, the name on an open message, rows of menus and settings.
-    static let row = Font.body.weight(.medium)
-    static let rowStrong = Font.body.weight(.semibold)
-    static let rowBold = Font.body.weight(.bold)
-    static let rowPlain = Font.body
+    static let row = inter(17, .body, .medium)
+    static let rowStrong = inter(17, .body, .semibold)
+    static let rowBold = inter(17, .body, .bold)
+    static let rowPlain = inter(17, .body)
 
     /// Words being written: a message's text (`Rich.font` in UIKit) and its signature.
-    static let writing = Font.body
+    static let writing = inter(17, .body)
 
     /// A subject and a preview in a list, short text around the app.
-    static let text = Font.subheadline
-    static let textStrong = Font.subheadline.weight(.semibold)
+    static let text = inter(15, .subheadline)
+    static let textStrong = inter(15, .subheadline, .semibold)
 
     /// Who wrote to whom, hints, captions.
-    static let small = Font.footnote
-    static let smallStrong = Font.footnote.weight(.semibold)
+    static let small = inter(13, .footnote)
+    static let smallStrong = inter(13, .footnote, .semibold)
 
     /// Times, with figures that line up.
-    static let time = Font.footnote.monospacedDigit()
+    static let time = inter(13, .footnote).monospacedDigit()
 
     /// Under the icons of a bar, a file's kind.
-    static let label = Font.caption2.weight(.semibold)
+    static let label = inter(11, .caption2, .semibold)
 
     /// Counts on a thread or a tab.
-    static let badge = Font.caption2.weight(.semibold).monospacedDigit()
+    static let badge = inter(11, .caption2, .semibold).monospacedDigit()
+}
+
+extension View {
+    /// The paper's look for a screen and all it holds: Inter on the paper's page. The system's own
+    /// controls (menus, segmented tabs, sheets) keep their system look.
+    func paper() -> some View {
+        font(.rowPlain).background(Color.ozeroPage)
+    }
+
+    /// Text in the paper's navy ink, and its quieter grey for `.secondary`. Only on what is read,
+    /// never over buttons, which keep the accent.
+    func ink() -> some View {
+        foregroundStyle(Color.ozeroInk, Color.ozeroMuted, Color.ozeroMuted.opacity(0.7))
+    }
+
+    /// A list or form on the paper's page instead of the system's grey.
+    func paperList() -> some View {
+        scrollContentBackground(.hidden).background(Color.ozeroPage)
+    }
+}
+
+/// A form on the paper: the page white or the lake's blue, its groups in the paper's card colour,
+/// as Android's settings.
+struct PaperForm<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        Form {
+            Group { content }.listRowBackground(Color.ozeroCard)
+        }
+        .paperList()
+    }
 }

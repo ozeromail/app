@@ -24,9 +24,11 @@ struct DraftsView: View {
                     .swipeActions(edge: .leading, allowsFullSwipe: true) {
                         if right { delete(row.draft) }
                     }
+                    .listRowBackground(Color.ozeroPage)
             }
         }
         .listStyle(.plain)
+        .paperList()
         .animation(.smooth, value: model.drafts.map(\.draft.id))
         .middle(Room.list)
         .navigationTitle("folder_drafts")

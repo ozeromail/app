@@ -235,7 +235,7 @@ struct ComposeView: View {
         .presentationDetents(growing ? [fitted] : [.large])
         // A low sheet is clear glass on iOS 26, and the inbox would show through the text being
         // written: the page is opaque, as in the iPhone's own Mail.
-        .presentationBackground(Color(uiColor: .systemBackground))
+        .presentationBackground(Color.ozeroPage)
         .animation(.smooth, value: pageHeight)
         .onChange(of: editing) { _, now in
             if !now { unfolded = false }
@@ -549,7 +549,8 @@ struct ComposeView: View {
 
     private var sendButton: some View {
         Button(action: send) {
-            Image(systemName: "paperplane.fill")
+            // The arrow of a quick reply, and of Android's Send.
+            Image(systemName: "arrow.up")
                 .foregroundStyle(.white)
                 .frame(width: 56, height: 44)
                 .contentShape(.capsule)
