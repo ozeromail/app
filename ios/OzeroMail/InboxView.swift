@@ -830,7 +830,9 @@ private struct InboxTabBar: UIViewRepresentable {
         context.coordinator.model = model
         // Before its first layout the bar is as wide as the screen less the dock's margins.
         let width = bar.bounds.width > 0 ? bar.bounds.width : (bar.window?.bounds.width ?? 390) - 32
-        let room = width / CGFloat(max(bar.items?.count ?? 1, 1)) - 16
+        // The glass sits about 21 pt in from each side and the tabs overlap a little; a name keeps
+        // 16 pt clear of its neighbours, so the lens never runs one name into the next.
+        let room = (width - 58) / CGFloat(max(bar.items?.count ?? 1, 1)) - 16
         var changed = false
         for item in bar.items ?? [] {
             let category = Category.all[item.tag]
