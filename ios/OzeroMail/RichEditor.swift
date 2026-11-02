@@ -342,13 +342,9 @@ private struct RichTextView: UIViewRepresentable {
 /// How the editor draws the styles.
 private enum Rich {
     /// Inter at the body size, growing with the system's text size, as the rest of the app.
-    static var font: UIFont { inter(17, .body) }
+    static var font: UIFont { .inter(17, .regular, .body) }
     static var base: [NSAttributedString.Key: Any] { [.font: font, .foregroundColor: UIColor(Color.ozeroInk)] }
 
-    private static func inter(_ size: CGFloat, _ style: UIFont.TextStyle) -> UIFont {
-        let inter = UIFont(descriptor: UIFontDescriptor(fontAttributes: [.family: "Inter"]), size: size)
-        return UIFontMetrics(forTextStyle: style).scaledFont(for: inter)
-    }
 
     /// Each style of the Format menu, with its symbol and name.
     static let styles: [(RichStyle, String, String)] = [
@@ -374,7 +370,7 @@ private enum Rich {
             storage.addAttribute(.foregroundColor, value: UIColor(Color.ozeroFill), range: range)
             storage.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: range)
         case .heading:
-            storage.addAttribute(.font, value: inter(20, .title3), range: range)
+            storage.addAttribute(.font, value: UIFont.inter(20, .regular, .title3), range: range)
             add(.traitBold, storage, range)
         case .quote:
             storage.addAttribute(.foregroundColor, value: UIColor(Color.ozeroMuted), range: range)

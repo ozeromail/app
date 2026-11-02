@@ -176,6 +176,14 @@ extension Font {
     static let badge = inter(11, .caption2, .semibold).monospacedDigit()
 }
 
+extension UIFont {
+    /// Inter at `size` and `weight`, growing with the system's text size like `style`, for UIKit.
+    static func inter(_ size: CGFloat, _ weight: UIFont.Weight, _ style: UIFont.TextStyle) -> UIFont {
+        let descriptor = UIFontDescriptor(fontAttributes: [.family: "Inter", .traits: [UIFontDescriptor.TraitKey.weight: weight]])
+        return UIFontMetrics(forTextStyle: style).scaledFont(for: UIFont(descriptor: descriptor, size: size))
+    }
+}
+
 extension View {
     /// The paper's look for a screen and all it holds: Inter on the paper's page. The system's own
     /// controls (menus, segmented tabs, sheets) keep their system look.
