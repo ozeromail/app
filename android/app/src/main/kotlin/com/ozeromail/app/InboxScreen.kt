@@ -131,6 +131,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.VisibilityThreshold
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.graphics.ColorProducer
@@ -2426,14 +2427,13 @@ private fun Tabs(
                     counted = unread
                     if (before != null && before != unread) nudge.animateTo(0f, Motion.nudge(), initialVelocity = 9f)
                 }
-                Row(
+                // The name comes first: the count shows only when both fit, as on iOS.
+                NameAndCount(
                     Modifier
                         .weight(1f)
                         .height(34.dp)
                         .clip(thumb)
                         .selectable(selected = on, role = Role.Tab, onClick = { if (!on) onPick(category, (index - at).toFloat(), 0f) }),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     BasicText(
                         stringResource(category.label()),
@@ -2441,7 +2441,6 @@ private fun Tabs(
                         style = Type.Text.copy(fontWeight = if (on) Weight.SemiBold else Weight.Medium),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
                     )
                     if (unread > 0u) {
                         Text(
@@ -2457,6 +2456,28 @@ private fun Tabs(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * A tab's name, then its count after a small gap, centred together. When the whole name and the
+ * count do not fit, the count steps aside and the name takes the width.
+ */
+@Composable
+private fun NameAndCount(modifier: Modifier, content: @Composable () -> Unit) {
+    Layout(content, modifier) { measurables, constraints ->
+        val loose = constraints.copy(minWidth = 0, minHeight = 0)
+        val name = measurables[0]
+        val count = measurables.getOrNull(1)?.measure(loose)
+        val fits = count != null && name.maxIntrinsicWidth(loose.maxHeight) + count.width <= loose.maxWidth
+        val shownCount = count.takeIf { fits }
+        val namePlaced = name.measure(loose.copy(maxWidth = loose.maxWidth - (shownCount?.width ?: 0)))
+        val width = namePlaced.width + (shownCount?.width ?: 0)
+        layout(constraints.maxWidth, constraints.maxHeight) {
+            val x = (constraints.maxWidth - width) / 2
+            namePlaced.place(x, (constraints.maxHeight - namePlaced.height) / 2)
+            shownCount?.place(x + namePlaced.width, (constraints.maxHeight - shownCount.height) / 2)
         }
     }
 }
