@@ -134,7 +134,7 @@ struct SignInView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(error).foregroundStyle(Color.ozeroError)
                     if let detail {
-                        Text(verbatim: detail).font(.small).foregroundStyle(.secondary)
+                        Text(verbatim: detail).font(.small).foregroundStyle(Color.ozeroMuted)
                     }
                     if let untrusted {
                         Button("signin_trust_certificate") { untrusted.trust(untrusted.fingerprint) }
@@ -311,7 +311,7 @@ private struct Start: View {
             VStack(alignment: .leading, spacing: 12) {
                 if let onCancel {
                     StepBack(label: "action_back", onBack: onCancel, busy: busy)
-                    Text("signin_title").font(.screenTitle)
+                    Text("signin_title").font(.screenTitle).foregroundStyle(Color.ozeroInk)
                 } else {
                     Image("Mark")
                         .resizable()
@@ -320,8 +320,8 @@ private struct Start: View {
                         .padding(.bottom, 6)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("app_name").font(.screenTitle)
-                        Text("signin_welcome").font(.lead).foregroundStyle(.secondary)
+                        Text("app_name").font(.screenTitle).foregroundStyle(Color.ozeroInk)
+                        Text("signin_welcome").font(.lead).foregroundStyle(Color.ozeroMuted)
                     }
                 }
                 Spacer()
@@ -334,7 +334,7 @@ private struct Start: View {
                 .disabled(busy)
                 HStack(spacing: 12) {
                     VStack { Divider() }
-                    Text("signin_or").font(.small).foregroundStyle(.secondary)
+                    Text("signin_or").font(.small).foregroundStyle(Color.ozeroMuted)
                     VStack { Divider() }
                 }
                 EmailField(text: $email, labeled: true)
@@ -349,7 +349,7 @@ private struct Start: View {
                 if onCancel == nil {
                     Text("signin_trust")
                         .font(.small)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.ozeroMuted)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: .infinity)
                 }
@@ -368,7 +368,7 @@ private struct Manual: View {
         Fitting {
             VStack(alignment: .leading, spacing: 12) {
                 StepBack(label: "action_back", onBack: onBack, busy: busy)
-                Text("signin_manual").font(.screenTitle)
+                Text("signin_manual").font(.screenTitle).foregroundStyle(Color.ozeroInk)
                 Spacer()
                 VStack(spacing: 0) {
                     Choice(label: "signin_exchange", enabled: !busy) { onPick(.servers(imap: false)) }
@@ -394,7 +394,7 @@ private struct Choice: View {
             HStack {
                 Text(label).font(.row).foregroundStyle(.primary)
                 Spacer()
-                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Color.ozeroMuted)
             }
             .padding(.horizontal, 16)
             .frame(minHeight: 56)
@@ -431,14 +431,38 @@ private struct EmailField: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if labeled {
-                Text("signin_email").font(.small).foregroundStyle(.secondary).padding(.leading, 16)
+                Text("signin_email").font(.small).foregroundStyle(Color.ozeroMuted).padding(.leading, 16)
             }
-            TextField(labeled ? "signin_email_example" : "signin_email", text: $text)
-                .textContentType(.emailAddress)
-                .keyboardType(.emailAddress)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
+            Titled(label: "signin_email", text: labeled ? "" : text) {
+                // Verbatim: as a localized key the example address would read as a link, in the accent.
+                TextField(text: $text, prompt: Text(verbatim: tr(labeled ? "signin_email_example" : "signin_email"))) {
+                    Text("signin_email")
+                }
+                    .textContentType(.emailAddress)
+                    .keyboardType(.emailAddress)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+            }
         }
+    }
+}
+
+/// A field's name, over it once it holds text, as Android's fields keep theirs: the field alone
+/// says what it is only while it is empty.
+private struct Titled<Field: View>: View {
+    let label: LocalizedStringKey
+    let text: String
+    @ViewBuilder let field: Field
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !text.isEmpty {
+                Text(label).font(.small).foregroundStyle(Color.ozeroMuted).padding(.leading, 16)
+                    .transition(.opacity)
+            }
+            field
+        }
+        .animation(.easeOut(duration: 0.15), value: text.isEmpty)
     }
 }
 
@@ -464,9 +488,9 @@ private struct StepTitle: View {
 
     var body: some View {
         if typed {
-            Text(label).font(.screenTitle)
+            Text(label).font(.screenTitle).foregroundStyle(Color.ozeroInk)
         } else {
-            Text(verbatim: email.trimmingCharacters(in: .whitespacesAndNewlines)).font(.subjectTitle)
+            Text(verbatim: email.trimmingCharacters(in: .whitespacesAndNewlines)).font(.subjectTitle).foregroundStyle(Color.ozeroInk)
         }
     }
 }
@@ -489,9 +513,9 @@ private struct Again: View {
         Fitting {
             VStack(alignment: .leading, spacing: 12) {
                 StepBack(label: "action_back", onBack: onCancel, busy: busy)
-                Text("signin_again_title").font(.screenTitle)
+                Text("signin_again_title").font(.screenTitle).foregroundStyle(Color.ozeroInk)
                 Text(tr(google ? "signin_again_google" : "signin_again_password", account.email))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.ozeroMuted)
                 Spacer()
                 if !google {
                     SecureField("signin_password", text: $password)
@@ -555,11 +579,11 @@ private struct Credentials: View {
                 StepBack(label: "action_back", onBack: onBack, busy: busy)
                 StepTitle(typed: typed, label: provider == nil ? "signin_other" : "signin_gmail", email: email)
                 if let provider {
-                    Text(provider.hint).foregroundStyle(.secondary)
+                    Text(provider.hint).foregroundStyle(Color.ozeroMuted)
                     Button("signin_app_password_make") { onAppPasswords(provider.appPasswords) }
                         .disabled(busy)
                 } else if !servers {
-                    Text("signin_found_text").foregroundStyle(.secondary)
+                    Text("signin_found_text").foregroundStyle(Color.ozeroMuted)
                 }
                 Spacer()
                 if let onKind {
@@ -568,11 +592,13 @@ private struct Credentials: View {
                 if typed {
                     EmailField(text: $email)
                 }
-                SecureField(provider == nil ? "signin_password" : "signin_app_password", text: $password)
-                    .textContentType(.password)
+                Titled(label: provider == nil ? "signin_password" : "signin_app_password", text: password) {
+                    SecureField(provider == nil ? "signin_password" : "signin_app_password", text: $password)
+                        .textContentType(.password)
+                }
                 // Finding the servers can take a while: say what is going on.
                 if provider == nil && !servers && busy {
-                    Text("signin_finding").foregroundStyle(.secondary)
+                    Text("signin_finding").foregroundStyle(Color.ozeroMuted)
                 }
                 if servers {
                     ServerFields(label: "signin_server", host: Binding(get: { host }, set: { server = $0 }), port: $port)
@@ -631,7 +657,7 @@ private struct Exchange: View {
                 StepBack(label: "action_back", onBack: onBack, busy: busy)
                 StepTitle(typed: typed, label: "signin_exchange", email: email)
                 if typed {
-                    Text("signin_exchange_text").foregroundStyle(.secondary)
+                    Text("signin_exchange_text").foregroundStyle(Color.ozeroMuted)
                 }
                 if !shown {
                     Button("signin_exchange_manual") { typing = true }
@@ -644,14 +670,20 @@ private struct Exchange: View {
                 if typed {
                     EmailField(text: $email)
                 }
-                SecureField("signin_password", text: $password)
-                    .textContentType(.password)
+                Titled(label: "signin_password", text: password) {
+                    SecureField("signin_password", text: $password)
+                        .textContentType(.password)
+                }
                 if shown {
                     Group {
-                        TextField("signin_exchange_server", text: $server)
-                            .keyboardType(.URL)
+                        Titled(label: "signin_exchange_server", text: server) {
+                            TextField("signin_exchange_server", text: $server)
+                                .keyboardType(.URL)
+                        }
                         // Not a username for autofill: it would fill or clear it.
-                        TextField("signin_exchange_login", text: $login)
+                        Titled(label: "signin_exchange_login", text: login) {
+                            TextField("signin_exchange_login", text: $login)
+                        }
                         Button(certificate.map { tr("signin_exchange_certificate", $0) }
                             ?? tr("signin_exchange_certificate_choose")) { picking = true }
                             .disabled(busy)
@@ -782,14 +814,19 @@ private struct ServerFields: View {
     @Binding var port: String
 
     var body: some View {
-        HStack(spacing: 12) {
-            TextField(label, text: $host)
-                .keyboardType(.URL)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-            TextField("signin_port", text: $port)
-                .keyboardType(.numberPad)
-                .frame(width: 80)
+        HStack(alignment: .bottom, spacing: 12) {
+            Titled(label: label, text: host) {
+                TextField(label, text: $host)
+                    .keyboardType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+            }
+            // Wide enough for any port, five figures.
+            Titled(label: "signin_port", text: port) {
+                TextField("signin_port", text: $port)
+                    .keyboardType(.numberPad)
+            }
+            .frame(width: 100)
         }
     }
 }
