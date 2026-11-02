@@ -433,7 +433,7 @@ fun MessageScreen(
                         Hiding({ barShown }, Modifier.align(Alignment.BottomCenter).onSizeChanged { barHeight = it.height }) {
                             if (asking != null) {
                                 InviteActions(onAnswer = { answerInvite(asking, it) }, onMore = { sheet = ReaderSheet.More })
-                            } else {
+                            } else BarText {
                                 Actions(
                                     onReply = { reply(answer, all = false) },
                                     onAnswers = { sheet = ReaderSheet.Answers },

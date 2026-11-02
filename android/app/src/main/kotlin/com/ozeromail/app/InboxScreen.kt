@@ -1979,7 +1979,7 @@ private fun InboxList(
                 }
             }
         }
-        Column(Modifier.align(Alignment.BottomCenter)) {
+        Column(Modifier.align(Alignment.BottomCenter)) { BarText {
             // Low on the screen, in reach of the thumb that swiped.
             Toast(snackbar, onGo = onGo, modifier = Modifier.padding(bottom = 8.dp))
             Reveal(status) {
@@ -2028,7 +2028,7 @@ private fun InboxList(
                 },
                 wide = wide,
             )
-        }
+        } }
         // The rarer ways to choose, in a sheet like every menu.
         Sheet(visible = more, onClose = { more = false }) {
             @Composable

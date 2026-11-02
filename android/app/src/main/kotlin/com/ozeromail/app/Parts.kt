@@ -42,6 +42,7 @@ import androidx.compose.material3.SnackbarVisuals
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -67,6 +68,7 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -405,3 +407,16 @@ fun openLink(context: Context, link: Uri) {
         // Nothing opens it.
     }
 }
+
+/**
+ * Like the system's own bars, a bar's words stop growing past the largest regular text size:
+ * its buttons and tabs keep their width, so their labels stay whole.
+ */
+@Composable
+fun BarText(content: @Composable () -> Unit) {
+    val density = LocalDensity.current
+    if (density.fontScale <= BAR_FONT_SCALE) return content()
+    CompositionLocalProvider(LocalDensity provides Density(density.density, BAR_FONT_SCALE)) { content() }
+}
+
+private const val BAR_FONT_SCALE = 1.3f
