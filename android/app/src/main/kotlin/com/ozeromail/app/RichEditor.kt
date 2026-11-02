@@ -177,7 +177,9 @@ fun RichBody(
                                 look,
                                 placeholder.takeIf { text.value.isEmpty() },
                                 style,
-                                (if (index == last) Modifier.weight(1f) else Modifier).onFocusChanged {
+                                // Only with a least height: on a page that scrolls, a weight with
+                                // nothing to share leaves the field no height, and its text unseen.
+                                (if (index == last && minHeight > 0.dp) Modifier.weight(1f) else Modifier).onFocusChanged {
                                     if (it.isFocused) {
                                         focused = fieldKey
                                         span(fieldKey)?.let { at -> onCaret(at.first + value.selection.end) }
