@@ -4,3 +4,5 @@
 
 - Inter: https://github.com/rsms/inter
 - Literata: https://github.com/googlefonts/literata
+
+`ios/OzeroMail/Fonts/` holds the same two files for iOS; change both copies together.

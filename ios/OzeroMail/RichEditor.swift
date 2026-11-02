@@ -341,8 +341,14 @@ private struct RichTextView: UIViewRepresentable {
 
 /// How the editor draws the styles.
 private enum Rich {
-    static var font: UIFont { .preferredFont(forTextStyle: .body) }
-    static var base: [NSAttributedString.Key: Any] { [.font: font, .foregroundColor: UIColor.label] }
+    /// Inter at the body size, growing with the system's text size, as the rest of the app.
+    static var font: UIFont { inter(17, .body) }
+    static var base: [NSAttributedString.Key: Any] { [.font: font, .foregroundColor: UIColor(Color.ozeroInk)] }
+
+    private static func inter(_ size: CGFloat, _ style: UIFont.TextStyle) -> UIFont {
+        let inter = UIFont(descriptor: UIFontDescriptor(fontAttributes: [.family: "Inter"]), size: size)
+        return UIFontMetrics(forTextStyle: style).scaledFont(for: inter)
+    }
 
     /// Each style of the Format menu, with its symbol and name.
     static let styles: [(RichStyle, String, String)] = [
@@ -368,10 +374,10 @@ private enum Rich {
             storage.addAttribute(.foregroundColor, value: UIColor(Color.ozeroFill), range: range)
             storage.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: range)
         case .heading:
-            storage.addAttribute(.font, value: UIFont.preferredFont(forTextStyle: .title3), range: range)
+            storage.addAttribute(.font, value: inter(20, .title3), range: range)
             add(.traitBold, storage, range)
         case .quote:
-            storage.addAttribute(.foregroundColor, value: UIColor.secondaryLabel, range: range)
+            storage.addAttribute(.foregroundColor, value: UIColor(Color.ozeroMuted), range: range)
             add(.traitItalic, storage, range)
         case .item, .escape: break
         }
@@ -382,7 +388,11 @@ private enum Rich {
         storage.enumerateAttribute(.font, in: range) { value, part, _ in
             let font = value as? UIFont ?? Rich.font
             let traits = font.fontDescriptor.symbolicTraits.union(trait)
-            guard let descriptor = font.fontDescriptor.withSymbolicTraits(traits) else { return }
+            guard let descriptor = font.fontDescriptor.withSymbolicTraits(traits) else {
+                // Inter has no italic cut: slanted, as Android draws it.
+                if trait == .traitItalic { storage.addAttribute(.obliqueness, value: 0.2, range: part) }
+                return
+            }
             storage.addAttribute(.font, value: UIFont(descriptor: descriptor, size: font.pointSize), range: part)
         }
     }

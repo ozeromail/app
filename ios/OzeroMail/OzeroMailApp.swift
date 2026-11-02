@@ -6,11 +6,22 @@ struct OzeroMailApp: App {
         Crashes.shared.install()
         // A pull to refresh shows the water, not a spinner.
         UIRefreshControl.appearance().tintColor = .clear
+        // Screen titles in Inter and the paper's ink, as the rest of the app; the bar stays the system's.
+        let bar = UINavigationBar.appearance()
+        let ink = UIColor(Color.ozeroInk)
+        bar.largeTitleTextAttributes = [.font: inter(34, .bold, .largeTitle), .foregroundColor: ink]
+        bar.titleTextAttributes = [.font: inter(17, .semibold, .headline), .foregroundColor: ink]
+    }
+
+    /// Inter at `size` and `weight`, growing with the system's text size like `style`.
+    private func inter(_ size: CGFloat, _ weight: UIFont.Weight, _ style: UIFont.TextStyle) -> UIFont {
+        let descriptor = UIFontDescriptor(fontAttributes: [.family: "Inter", .traits: [UIFontDescriptor.TraitKey.weight: weight]])
+        return UIFontMetrics(forTextStyle: style).scaledFont(for: UIFont(descriptor: descriptor, size: size))
     }
 
     var body: some Scene {
         WindowGroup {
-            RootView().tint(.ozeroAccent)
+            RootView().tint(.ozeroAccent).paper()
         }
         .backgroundTask(.appRefresh(BackgroundCheck.id)) { await BackgroundCheck.run() }
     }

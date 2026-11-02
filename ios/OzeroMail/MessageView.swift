@@ -348,34 +348,34 @@ struct MessageView: View {
         let shown = thread.isEmpty ? [message] : thread
         // The answers took the row: the rest of it is here.
         if asking != nil {
-            Button("message_reply") { reply(answer, all: false) }
+            Button("message_reply", systemImage: "arrowshape.turn.up.left") { reply(answer, all: false) }
             if pane {
-                Button("message_reply_all") { reply(answer, all: true) }
-                Button("message_forward") { forward(shown.last ?? message) }
+                Button("message_reply_all", systemImage: "arrowshape.turn.up.left.2") { reply(answer, all: true) }
+                Button("message_forward", systemImage: "arrowshape.turn.up.right") { forward(shown.last ?? message) }
             }
-            Button(message.canTrash ? "action_delete" : "action_delete_forever", role: .destructive, action: delete)
-            if message.canSnooze { Button("action_snooze", action: snooze) }
-            if message.canArchive { Button("action_done", action: done) }
+            Button(message.canTrash ? "action_delete" : "action_delete_forever", systemImage: "trash", role: .destructive, action: delete)
+            if message.canSnooze { Button("action_snooze", systemImage: "clock", action: snooze) }
+            if message.canArchive { Button("action_done", systemImage: "checkmark", action: done) }
         }
         if !pane {
-            Button("message_reply_all") { reply(answer, all: true) }
-            Button("message_forward") { forward(shown.last ?? message) }
+            Button("message_reply_all", systemImage: "arrowshape.turn.up.left.2") { reply(answer, all: true) }
+            Button("message_forward", systemImage: "arrowshape.turn.up.right") { forward(shown.last ?? message) }
         }
         // As the conversation has it now, flagged here or elsewhere.
         let flagged = (thread.first { $0.id == message.id } ?? message).flagged
-        Button(flagged ? "action_unflag" : "action_flag") {
+        Button(flagged ? "action_unflag" : "action_flag", systemImage: flagged ? "flag.slash" : "flag") {
             Task { await model.flag([message], flagged: !flagged) }
         }
-        Button("action_mark_unread") {
+        Button("action_mark_unread", systemImage: "envelope.badge") {
             leave { await model.setRead([message], read: false) }
         }
         if message.canMoveToInbox {
-            Button("action_move_to_inbox") {
+            Button("action_move_to_inbox", systemImage: "tray") {
                 leave { await model.moveToInbox([message]) }
             }
         }
         if message.canMove {
-            Button("action_move_to_folder") {
+            Button("action_move_to_folder", systemImage: "folder") {
                 Task {
                     do {
                         targets = try await moveOrder(mail.moveTargets(of: [message]))
@@ -386,10 +386,11 @@ struct MessageView: View {
             }
         }
         if message.canUnsubscribe && !left {
-            Button("action_unsubscribe") { leaving = true }
+            Button("action_unsubscribe", systemImage: "bell.slash") { leaving = true }
         }
         if message.canSpam {
-            Button("action_spam", role: .destructive) {
+            // Not destructive: it can be taken back from Spam, as on Android.
+            Button("action_spam", systemImage: "xmark.bin") {
                 leave { await model.spam([message]) }
             }
         }
@@ -939,7 +940,10 @@ private struct PlainText: View {
     // Read once when the letter opens.
     private let scale = Settings.readingScale
 
-    var body: some View {
+    // What is read is in the paper's ink.
+    var body: some View { content.ink() }
+
+    @ViewBuilder private var content: some View {
         VStack(alignment: .leading, spacing: 10) {
             if !text.isEmpty {
                 Text(verbatim: text).font(.reading(scale: scale)).lineSpacing(6 * scale).textSelection(.enabled)
@@ -985,7 +989,7 @@ private struct HiddenImages: View {
                 .font(.smallStrong)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 7)
-                .background(Color(uiColor: .systemBackground), in: .capsule)
+                .background(Color.ozeroPage, in: .capsule)
         }
         .padding(.leading, 14)
         .padding([.trailing, .vertical], 8)
@@ -1015,7 +1019,10 @@ private struct From: View {
     let onPerson: (PersonItem) -> Void
     let actions: LetterActions?
 
-    var body: some View {
+    // What is read is in the paper's ink.
+    var body: some View { content.ink() }
+
+    @ViewBuilder private var content: some View {
         let author = PersonItem(name: message.sender, first: message.sender, email: message.fromEmail, me: message.sent)
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
@@ -1076,7 +1083,10 @@ private struct Details: View {
     let people: PeopleItem
     let onPerson: (PersonItem) -> Void
 
-    var body: some View {
+    // What is read is in the paper's ink.
+    var body: some View { content.ink() }
+
+    @ViewBuilder private var content: some View {
         Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 8) {
             field("message_from", [author])
             field("compose_to", people.to)
@@ -1121,7 +1131,10 @@ private struct Closed: View {
     let onToggle: (() -> Void)?
     let actions: LetterActions?
 
-    var body: some View {
+    // What is read is in the paper's ink.
+    var body: some View { content.ink() }
+
+    @ViewBuilder private var content: some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(verbatim: message.from).font(unread ? .rowBold : .rowStrong).lineLimit(1)
@@ -1146,7 +1159,10 @@ private struct Closed: View {
 private struct Title: View {
     let message: MessageItem
 
-    var body: some View {
+    // What is read is in the paper's ink.
+    var body: some View { content.ink() }
+
+    @ViewBuilder private var content: some View {
         VStack(alignment: .leading, spacing: 10) {
             message.subjectText.font(.subjectTitle).textSelection(.enabled)
             if let account = message.account {
@@ -1384,10 +1400,10 @@ struct BarLabel: View {
 }
 
 extension Font {
-    /// A message's text: a serif made for reading, at `scale` times the size it is read at.
-    static func reading(scale: Double) -> Font { .system(size: 17.5 * scale, design: .serif) }
+    /// A message's text: Literata, made for reading, at `scale` times the size it is read at.
+    static func reading(scale: Double) -> Font { .custom("Literata", fixedSize: 17.5 * scale) }
 
     /// Quoted text under a message, a step quieter.
-    static func readingQuote(scale: Double) -> Font { .system(size: 15.5 * scale, design: .serif) }
+    static func readingQuote(scale: Double) -> Font { .custom("Literata", fixedSize: 15.5 * scale) }
     static var readingQuote: Font { readingQuote(scale: Settings.readingScale(1)) }
 }

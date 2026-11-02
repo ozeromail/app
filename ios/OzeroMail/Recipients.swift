@@ -112,7 +112,7 @@ struct Recipients<Field: Hashable>: View {
             }
             .defaultScrollAnchor(above ? .bottom : .top)
             .frame(height: min(listHeight, Self.maxHeight))
-            .background(Color(.systemBackground), in: .rect(cornerRadius: 16))
+            .background(Color.ozeroPage, in: .rect(cornerRadius: 16))
             .overlay { RoundedRectangle(cornerRadius: 16).stroke(Color(.separator), lineWidth: 0.5) }
             .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
         }

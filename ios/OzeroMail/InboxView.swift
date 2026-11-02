@@ -44,8 +44,9 @@ struct InboxView: View {
                 }
             }
             .animation(.smooth, value: model.pane == nil)
+            .containerBackground(Color.ozeroPage, for: .navigation)
             .navigationDestination(for: Route.self) { route in
-                switch route {
+                Group { switch route {
                 case .message(let message):
                     MessageView(model: model, message: message)
                         .navigationBarTitleDisplayMode(.inline)
@@ -62,9 +63,11 @@ struct InboxView: View {
                 case .settings(let page):
                     SettingsView(page: page, accounts: model.accounts, signature: model.signature, swipes: $model.swipes,
                                  mail: model.mail, actions: settingsActions)
-                }
+                } }
+                .containerBackground(Color.ozeroPage, for: .navigation)
             }
         }
+        .paper()
         .environment(\.accountsZoom, accountsZoom)
         .modifier(ShakeToUndo(model: model))
         .sheet(item: $model.snoozing) { snoozing in
@@ -364,6 +367,7 @@ private struct InboxList: View {
                     .font(.small)
                     .foregroundStyle(.secondary)
                     .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
                     .selectionDisabled()
             }
             ForEach(model.signedOut, id: \.id) { account in
@@ -416,12 +420,14 @@ private struct InboxList: View {
                     // Near the end of the list, the next rows come before the finger gets there.
                     if index >= model.messages.count - InboxModel.ahead { Task { await model.loadMore() } }
                 }
+                .listRowBackground(OpenRow.background(model, message))
             }
             if model.loadingOlder {
                 ProgressView().frame(maxWidth: .infinity).listRowSeparator(.hidden)
             }
         }
         .listStyle(.plain)
+        .paperList()
         .environment(\.defaultMinListRowHeight, 0)
         .onScrollGeometryChange(for: ListTop.self) { geometry in
             ListTop(offset: geometry.contentOffset.y + geometry.contentInsets.top, inset: geometry.contentInsets.top)
@@ -806,10 +812,17 @@ struct OpenRow: View {
                 MessageRow(message: message).contentShape(.rect)
             }
             .buttonStyle(.plain)
-            .listRowBackground(model.pane?.id == message.id ? Color.ozeroCard : nil)
         } else {
             NavigationLink(value: Route.message(message)) { MessageRow(message: message) }
         }
+    }
+
+    /// The row's background, set where the list takes its row: the paper, a light wash of the
+    /// accent when chosen, as on Android, and the card beside its open message.
+    static func background(_ model: InboxModel, _ message: MessageItem) -> Color {
+        if model.chosen.contains(message.id) { return Color.ozeroAccent.opacity(0.1) }
+        if model.sideways && model.pane?.id == message.id { return Color.ozeroCard }
+        return Color.ozeroPage
     }
 }
 
@@ -883,19 +896,33 @@ private struct ChoiceBar: View {
     }
 
     var body: some View {
+        // Cancel says its name where the bar has room; on a narrow phone or with large text it is a cross.
+        ViewThatFits(in: .horizontal) {
+            bar(wordy: true)
+            bar(wordy: false)
+        }
+    }
+
+    @ViewBuilder
+    private func bar(wordy: Bool) -> some View {
         let done = picked.filter(\.canArchive).count
         let back = picked.filter(\.canMoveToInbox)
         let unread = picked.contains { $0.threadUnread > 0 }
         let forever = !picked.contains(where: \.canTrash)
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Button { model.chosen = [] } label: {
-                Text("action_cancel")
-                    .font(.row)
-                    .padding(.horizontal, 16)
-                    .frame(height: glassButton)
-                    .contentShape(.capsule)
+                Group {
+                    if wordy {
+                        Text("action_cancel").font(.row).lineLimit(1).fixedSize().padding(.horizontal, 14)
+                    } else {
+                        Image(systemName: "xmark").font(.row).frame(width: glassButton)
+                    }
+                }
+                .frame(height: glassButton)
+                .contentShape(.capsule)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(Text("action_cancel"))
             .glassSurface(in: .capsule, fallback: Color.clear)
             Spacer(minLength: 0)
             HStack(spacing: 0) {
@@ -919,7 +946,9 @@ private struct ChoiceBar: View {
                     Text(verbatim: main.label)
                         .font(.rowStrong)
                         .foregroundStyle(.white)
-                        .padding(.horizontal, 18)
+                        .lineLimit(1)
+                        .fixedSize()
+                        .padding(.horizontal, 16)
                         .frame(height: glassButton)
                         .contentShape(.capsule)
                 }
@@ -955,7 +984,7 @@ private struct ChoiceBar: View {
             model.choice { await model.flag($0, flagged: flag) }
         }
         if picked.contains(where: \.canSpam) {
-            Button("action_spam", systemImage: "xmark.bin", role: .destructive) { model.choice { await model.spam($0.filter(\.canSpam)) } }
+            Button("action_spam", systemImage: "xmark.bin") { model.choice { await model.spam($0.filter(\.canSpam)) } }
         }
     }
 }
@@ -1066,8 +1095,10 @@ private struct LeftInbox: View {
     var body: some View {
         List(model.inboxRows, id: \.id) { message in
             MessageRow(message: message)
+                .listRowBackground(Color.ozeroPage)
         }
         .listStyle(.plain)
+        .paperList()
         .middle(Room.list)
         .navigationTitle("inbox_title")
     }
@@ -1137,7 +1168,10 @@ private struct ShakeToUndo: ViewModifier {
 struct MessageRow: View {
     let message: MessageItem
 
-    var body: some View {
+    // What is read is in the paper's ink.
+    var body: some View { content.ink() }
+
+    @ViewBuilder private var content: some View {
         let unread = message.threadUnread > 0
         // The text lines up with the title; the unread dot hangs in the margin before it.
         VStack(alignment: .leading, spacing: 4) {
@@ -1145,6 +1179,8 @@ struct MessageRow: View {
                 Text(verbatim: message.participants)
                     .font(unread ? .rowStrong : .row)
                     .lineLimit(1)
+                    // Who wrote comes first: the account's name gives way before it does.
+                    .layoutPriority(1)
                 if message.threadCount > 1 {
                     Text(verbatim: "\(message.threadCount)")
                         .font(.badge)
@@ -1157,8 +1193,9 @@ struct MessageRow: View {
                     .font(.time)
                     .foregroundStyle(unread ? .primary : .secondary)
             }
+            // Unread shows in the sender and the dot; the subject reads the same either way, as on Android.
             message.subjectText
-                .font(unread ? .textStrong : .text)
+                .font(.text)
                 .lineLimit(1)
             let snippet = message.invite.map { inviteLine($0) } ?? message.snippet
             if !snippet.isBlank {

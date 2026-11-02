@@ -95,7 +95,7 @@ private struct Badge: View {
             .foregroundStyle(tint)
             .padding(.horizontal, 8)
             .padding(.vertical, 2)
-            .background(Color(.systemBackground), in: .capsule)
+            .background(Color.ozeroPage, in: .capsule)
             .padding(.bottom, 4)
     }
 }
@@ -111,7 +111,7 @@ private struct CardButton: View {
                 .foregroundStyle(.primary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(Color(.systemBackground), in: .capsule)
+                .background(Color.ozeroPage, in: .capsule)
         }
         .buttonStyle(.plain)
     }
