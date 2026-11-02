@@ -525,7 +525,7 @@ private struct InboxList: View {
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         if status.retry {
-                            Button("status_try_again", action: check).font(.smallStrong)
+                            Button("status_try_again", action: check).font(.smallStrong).fixedSize()
                         }
                     }
                     .padding(.horizontal, 16)
@@ -536,14 +536,15 @@ private struct InboxList: View {
                 }
                 // On its side search and a new message are beside the title: without tabs the dock has nothing.
                 if !model.sideways || model.tabbed || choosing || (model.emptyLabel != nil && !model.messages.isEmpty) {
-                    // Like the system's bars, the dock stops growing at the largest regular size:
-                    // its round buttons keep their size, and search keeps its words whole.
                     Dock(model: model, choosing: choosing, picked: picked)
-                        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                 }
             }
             .animation(.smooth, value: model.toast)
             .animation(.smooth, value: status?.text)
+            // Like the system's bars, the bottom stops growing at the largest regular size: round
+            // buttons keep their size, search keeps its words whole, and the status line leaves
+            // the mail most of the screen.
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         }
         .onScrollGeometryChange(for: TabsScroll.self) { geometry in
             let offset = geometry.contentOffset.y + geometry.contentInsets.top
