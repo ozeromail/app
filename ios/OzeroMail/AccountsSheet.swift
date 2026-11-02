@@ -30,6 +30,8 @@ struct AccountsSheet: View {
     let actions: AccountsActions
     @State private var editing = false
     @State private var path: [Int64] = []
+    /// How tall the mailboxes are, so the sheet opens showing all of them, tiles too, with no drag.
+    @State private var fit: CGFloat = 0
     @Environment(\.accountsZoom) private var zoom
 
     var body: some View {
@@ -46,6 +48,13 @@ struct AccountsSheet: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
+            // Rows a thumb on the move hits, a little taller than the least the system allows.
+            .environment(\.defaultMinListRowHeight, 52)
+            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                geometry.contentSize.height + geometry.contentInsets.top + geometry.contentInsets.bottom
+            } action: { _, height in
+                if !editing && path.isEmpty { fit = height }
+            }
             .navigationTitle("folders_title")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -66,7 +75,7 @@ struct AccountsSheet: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents(fit > 0 ? [.height(fit), .large] : [.medium, .large])
         .presentationDragIndicator(.visible)
         .modifier(ZoomFrom(zoom: zoom))
     }
@@ -133,9 +142,12 @@ private struct BoxTiles: View {
     let boxes: [AllBox]
     let mailbox: Mailbox
     let onMailbox: (Mailbox) -> Void
+    @Environment(\.dynamicTypeSize) private var textSize
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+        // At the largest text sizes a name needs the whole width.
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: textSize.isAccessibilitySize ? 1 : 2)
+        LazyVGrid(columns: columns, spacing: 8) {
             ForEach(boxes) { box in
                 let open = box.mailbox == mailbox
                 Button { onMailbox(box.mailbox) } label: {
