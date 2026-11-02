@@ -1339,6 +1339,8 @@ struct RoundLabel: View {
     var body: some View {
         Image(systemName: icon)
             .font(.row)
+            // The circle keeps its size, so the glyph stops growing before it would leave it.
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             .foregroundStyle(tint)
             .frame(width: size, height: size)
             .contentShape(.circle)
