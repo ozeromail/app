@@ -56,10 +56,11 @@ struct AccountsSheet: View {
             .onScrollGeometryChange(for: CGFloat.self) { geometry in
                 geometry.contentSize.height + geometry.contentInsets.top + geometry.contentInsets.bottom
             } action: { _, height in
-                guard !editing && !showFolders, height != fit else { return }
-                let fitted = detent != .large
+                // A new set of heights makes the system pick among them again, so while the sheet is up
+                // at its full height the set stays as it is.
+                guard !editing && !showFolders, height != fit, detent != .large else { return }
                 fit = height
-                if fitted { detent = .height(height) }
+                detent = .height(height)
             }
             .navigationTitle("folders_title")
             .navigationBarTitleDisplayMode(.inline)
