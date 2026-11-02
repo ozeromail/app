@@ -6,6 +6,8 @@ import UserNotifications
 /// once, then syncs; pull down to sync again. Everything the thumb needs sits along the bottom.
 struct InboxView: View {
     @State private var model: InboxModel
+    /// The accounts sheet grows out of the accounts button.
+    @Namespace private var accountsZoom
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.sideways) private var sideways
 
@@ -63,6 +65,7 @@ struct InboxView: View {
                 }
             }
         }
+        .environment(\.accountsZoom, accountsZoom)
         .modifier(ShakeToUndo(model: model))
         .sheet(item: $model.snoozing) { snoozing in
             SnoozeSheet { until in
@@ -79,6 +82,7 @@ struct InboxView: View {
                 accounts: model.accounts, folders: model.folders, mailbox: model.mailbox, drafts: model.drafts.count,
                 unread: model.peopleUnread, groups: $model.groups, allBoxes: $model.allBoxes, actions: accountsActions)
             .task { await model.loadFolders() }
+            .environment(\.accountsZoom, accountsZoom)
         }
         .fullScreenCover(isPresented: $model.addingAccount) {
             SignInView(mail: model.mail, onCancel: { model.addingAccount = false }) {
@@ -1030,6 +1034,7 @@ private struct ChoiceBar: View {
 private struct AccountsButton: View {
     let accounts: [AccountItem]
     let action: () -> Void
+    @Environment(\.accountsZoom) private var zoom
 
     var body: some View {
         Button(action: action) {
@@ -1056,6 +1061,7 @@ private struct AccountsButton: View {
         }
         .buttonStyle(.plain)
         .glassSurface(in: .circle, fallback: Color.ozeroCard.sunk)
+        .modifier(ZoomSource(zoom: zoom))
         .accessibilityLabel(Text("accounts_title"))
     }
 }

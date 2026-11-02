@@ -206,6 +206,12 @@ enum AllBox: String, CaseIterable, Identifiable {
         return tr(self == .unread ? "folder_unread" : "folder_files")
     }
 
+    /// Its name under the heading of all accounts, where "All" goes without saying.
+    var shortTitle: String {
+        if let role { return role.title("") }
+        return title
+    }
+
     /// Shown in the list: a role's mailbox once some account has such a folder.
     func listed(_ folders: [FolderItem]) -> Bool {
         guard let role else { return true }
