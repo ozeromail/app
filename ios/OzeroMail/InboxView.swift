@@ -518,6 +518,7 @@ private struct InboxList: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
                 if let status {
+                    // On glass, so the rows passing under it never show through its words.
                     HStack {
                         Text(verbatim: status.text)
                             .font(.small)
@@ -527,12 +528,18 @@ private struct InboxList: View {
                             Button("status_try_again", action: check).font(.smallStrong)
                         }
                     }
-                    .padding(.horizontal, 20)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .glassSurface(in: .rect(cornerRadius: 22, style: .continuous), fallback: Color.ozeroCard.sunk)
+                    .padding(.horizontal, 16)
                     .transition(.opacity)
                 }
                 // On its side search and a new message are beside the title: without tabs the dock has nothing.
                 if !model.sideways || model.tabbed || choosing || (model.emptyLabel != nil && !model.messages.isEmpty) {
+                    // Like the system's bars, the dock stops growing at the largest regular size:
+                    // its round buttons keep their size, and search keeps its words whole.
                     Dock(model: model, choosing: choosing, picked: picked)
+                        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                 }
             }
             .animation(.smooth, value: model.toast)
@@ -708,6 +715,7 @@ private struct Dock: View {
                                     model.path.append(.search)
                                 } label: {
                                     Label("search_prompt", systemImage: "magnifyingglass")
+                                        .lineLimit(1)
                                         .foregroundStyle(.secondary)
                                         .frame(maxWidth: .infinity, minHeight: glassButton, alignment: .leading)
                                         .padding(.horizontal, 16)
@@ -750,8 +758,7 @@ private struct Dock: View {
 }
 
 /// The inbox's tabs: the system's segmented control, whose glass lens follows a finger along it on
-/// iOS 26, on a glass capsule over the list. Each tab keeps its place in the list; a tap on the open
-/// one goes to the top.
+/// iOS 26, on a glass capsule over the list. Each tab keeps its place in the list.
 private struct InboxTabs: View {
     @Bindable var model: InboxModel
 
