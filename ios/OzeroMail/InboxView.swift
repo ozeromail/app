@@ -545,11 +545,6 @@ private struct InboxList: View {
         } action: { old, now in
             hideTabs(old: old.offset, now: now)
         }
-        // A tap on the open tab goes to the top of its list.
-        .onChange(of: model.toTop) {
-            guard let first = model.messages.first?.id else { return }
-            withAnimation(.smooth) { proxy.scrollTo(first, anchor: .top) }
-        }
         // Each tab keeps its place: the row at its top when it was left comes back to the top.
         .onChange(of: model.tab) { old, _ in
             if model.tabsHidden { model.tabsHidden = false }
@@ -759,12 +754,10 @@ private struct Dock: View {
 /// one goes to the top.
 private struct InboxTabs: View {
     @Bindable var model: InboxModel
-    @State private var width: CGFloat = 0
-    /// When the tab last changed: the tap that changed it is not a tap on the open tab.
-    @State private var changed = Date.distantPast
 
     /// The system's segmented control: the iPhone's own way to switch views of one list, low and
-    /// even, each segment a third of the width.
+    /// even, each segment a third of the width. The way back to the top is the system's own:
+    /// a tap on the status bar.
     var body: some View {
         Picker("inbox_title", selection: $model.tab) {
             ForEach(Category.all, id: \.self) { category in
@@ -773,17 +766,8 @@ private struct InboxTabs: View {
             }
         }
         .pickerStyle(.segmented)
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-        .simultaneousGesture(
-            SpatialTapGesture().onEnded { tap in
-                guard width > 0, Date.now.timeIntervalSince(changed) > 0.4 else { return }
-                let index = Int(tap.location.x / (width / CGFloat(Category.all.count)))
-                if Category.all[min(max(index, 0), Category.all.count - 1)] == model.tab { model.toTop += 1 }
-            }
-        )
         .padding(4)
         .glassSurface(in: .capsule, fallback: Color.clear)
-        .onChange(of: model.tab) { changed = .now }
         .sensoryFeedback(.selection, trigger: model.tab)
     }
 }

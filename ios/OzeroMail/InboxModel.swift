@@ -67,8 +67,6 @@ final class InboxModel {
     var tab = Category.people
     /// The tabs step aside while the list scrolls down, and come back as it scrolls up.
     var tabsHidden = false
-    /// Counts taps on the open tab, each of which takes its list back to the top.
-    var toTop = 0
     var tabs: [InboxTab] = []
     /// Unread People mail of each account's inbox, by account id.
     var peopleUnread: [Int64: Int] = [:]
