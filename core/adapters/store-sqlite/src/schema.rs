@@ -446,4 +446,17 @@ pub const MIGRATIONS: &[&str] = &[
         at   INTEGER NOT NULL
     );
     ",
+    // 45: the order of pinned folders, when mail last went into a folder, and a change to
+    // one of the person's own folders the server does not have yet: `edit` is 'create',
+    // 'change' or 'delete' (see `FolderEdit`), sent from `edit_at` on, with the folder it
+    // goes inside and its own name; `server_name` is its name before a change.
+    "
+    ALTER TABLE folder ADD COLUMN rank INTEGER;
+    ALTER TABLE folder ADD COLUMN used INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE folder ADD COLUMN edit TEXT;
+    ALTER TABLE folder ADD COLUMN edit_at INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE folder ADD COLUMN edit_parent INTEGER REFERENCES folder(id) ON DELETE SET NULL;
+    ALTER TABLE folder ADD COLUMN edit_leaf TEXT;
+    ALTER TABLE folder ADD COLUMN server_name TEXT;
+    ",
 ];

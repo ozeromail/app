@@ -4,9 +4,9 @@ use std::fmt;
 use crate::{
     Account, AccountId, Action, Body, Category, Changes, Checkpoint, Contact, Correspondent,
     Correspondents, DayEvent, Draft, DraftCopy, DraftFile, DraftId, DraftToPush, FileId, Folder,
-    FolderId, ListQuery, MessageId, MessageLocation, MessageRow, Moved, NewAccount, NewFolder,
-    NewMail, NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile, RecentFile, SavedDraft,
-    SavedInvite, SearchFilter, ServerDraft, Unsent, Unsubscribe,
+    FolderChange, FolderId, ListQuery, MessageId, MessageLocation, MessageRow, Moved, NewAccount,
+    NewFolder, NewMail, NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile, RecentFile,
+    SavedDraft, SavedInvite, SearchFilter, ServerDraft, Unsent, Unsubscribe,
 };
 
 /// Local database port. The UI reads only from here; sync writes here.
@@ -61,6 +61,61 @@ pub trait Store: Send + Sync {
     fn folders(&self, account: AccountId) -> Result<Vec<Folder>, StoreError>;
     /// Pins the folder, so the apps show it with the account's usual folders, or unpins it.
     fn set_folder_pinned(&self, folder: FolderId, pinned: bool) -> Result<(), StoreError>;
+    /// Puts these pinned folders first, in this order.
+    fn set_folder_order(&self, order: &[FolderId]) -> Result<(), StoreError>;
+    /// Makes a folder of the person's own on the device, named `name` (the whole path, as the
+    /// account names its folders), inside `parent`; the server gets it from `folder_changes`.
+    fn create_folder(
+        &self,
+        account: AccountId,
+        name: &str,
+        parent: Option<FolderId>,
+        leaf: &str,
+    ) -> Result<Folder, StoreError>;
+    /// Renames the folder `name` (the whole path), inside `parent` as `leaf`, with the
+    /// folders inside it; the server gets it from `folder_changes`.
+    fn change_folder(
+        &self,
+        folder: FolderId,
+        name: &str,
+        parent: Option<FolderId>,
+        leaf: &str,
+    ) -> Result<(), StoreError>;
+    /// Takes the folder and the ones inside it off the lists; the server deletes them from
+    /// `not_before` on (seconds), until which `keep_folder` brings them back. Folders the
+    /// server does not have yet go at once.
+    fn delete_folder(&self, folder: FolderId, not_before: i64) -> Result<(), StoreError>;
+    /// Brings back a folder `delete_folder` took off, with the ones inside it, while the
+    /// server does not have the delete yet. False if it is too late.
+    fn keep_folder(&self, folder: FolderId) -> Result<bool, StoreError>;
+    /// The account's folder changes due by `now`, in the order to send them: made and
+    /// renamed folders outer ones first, deleted ones inner ones first.
+    fn folder_changes(&self, account: AccountId, now: i64)
+    -> Result<Vec<FolderChange>, StoreError>;
+    /// The server has the change: a folder made or renamed has the id `remote_id` there, and
+    /// so do the ones inside it, under their names; a deleted one is gone with its mail.
+    fn folder_changed(
+        &self,
+        change: &FolderChange,
+        remote_id: Option<&str>,
+    ) -> Result<(), StoreError>;
+    /// The server refused the change for good: a folder made goes, a renamed one has its
+    /// name back, a deleted one shows again.
+    fn folder_refused(&self, change: &FolderChange) -> Result<(), StoreError>;
+    /// Forgets the account's own folders whose ids are not among `remote_ids`, the server's
+    /// list, with their mail: deleted or renamed elsewhere. Ones with a change waiting stay.
+    fn forget_folders(&self, account: AccountId, remote_ids: &[String]) -> Result<(), StoreError>;
+    /// Remembers that mail just went into the folder, for `recent_folders`.
+    fn used_folder(&self, folder: FolderId, at: i64) -> Result<(), StoreError>;
+    /// The account's folders mail went into last, the latest first.
+    fn recent_folders(&self, account: AccountId, limit: u32) -> Result<Vec<FolderId>, StoreError>;
+    /// How much of the account's saved mail from `email` sits in each folder, the most first;
+    /// with none, from any address at the domain `email` is at. True when counted by domain.
+    fn sender_folders(
+        &self,
+        account: AccountId,
+        email: &str,
+    ) -> Result<(Vec<(FolderId, u32)>, bool), StoreError>;
 
     /// Where the folder's last sync stopped, and the `remote_id`s of its saved messages.
     fn checkpoint(&self, folder: FolderId) -> Result<(Checkpoint, Vec<String>), StoreError>;

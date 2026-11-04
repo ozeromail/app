@@ -21,7 +21,7 @@ pub use account::{
     email_domain, guess_imap_host, guess_smtp_host, mail_service, saves_sent_itself,
 };
 pub use encoding::{base64, decode_base64, markup_escape, percent_decode};
-pub use folder::{Folder, FolderId, FolderRole, NewFolder, SNOOZED};
+pub use folder::{Folder, FolderChange, FolderEdit, FolderId, FolderRole, NewFolder, SNOOZED};
 pub use invite::{
     Answer, DayEvent, Frequency, Invite, InviteKind, InviteRow, Repeat, SavedInvite, reply,
 };

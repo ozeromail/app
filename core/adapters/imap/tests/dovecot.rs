@@ -49,8 +49,8 @@ async fn lists_folders_with_roles_and_names() {
     folders.sort_by(|a, b| a.remote_id.cmp(&b.remote_id));
     let got: Vec<_> = folders
         .iter()
-        // Another test makes it.
-        .filter(|f| f.role != FolderRole::Snoozed)
+        // Other tests make them.
+        .filter(|f| f.role != FolderRole::Snoozed && !f.name.starts_with("Made"))
         .map(|f| (f.remote_id.as_str(), f.name.as_str(), f.role))
         .collect();
     assert_eq!(
@@ -423,4 +423,49 @@ async fn waits_in_idle_until_mail_arrives() {
     assert!(!imap.watch(watch, quiet).await.unwrap());
     imap.logout().await.unwrap();
     other.logout().await.unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "needs tools/dovecot-test.sh"]
+async fn makes_renames_and_deletes_folders() {
+    let mut imap = session().await;
+    let names = |folders: Vec<ozero_domain::NewFolder>| {
+        let mut made: Vec<_> = folders
+            .into_iter()
+            .filter(|f| f.name.starts_with("Made"))
+            .map(|f| (f.remote_id, f.name))
+            .collect();
+        made.sort();
+        made
+    };
+    let outer = imap.create_folder(None, "Made Счета").await.unwrap();
+    let inner = imap.create_folder(Some(&outer), "2026").await.unwrap();
+    assert_eq!(
+        names(imap.folders().await.unwrap()),
+        [
+            (outer.clone(), "Made Счета".into()),
+            (inner.clone(), "Made Счета/2026".into()),
+        ]
+    );
+    // A name with the delimiter in it would make another folder.
+    let bad = imap.create_folder(None, "Made a/b").await;
+    assert!(matches!(bad, Err(ProviderError::Rejected(_))));
+
+    let renamed = imap
+        .change_folder(&outer, None, "Made Bills")
+        .await
+        .unwrap();
+    assert_eq!(
+        names(imap.folders().await.unwrap()),
+        [
+            (renamed.clone(), "Made Bills".into()),
+            (format!("{renamed}/2026"), "Made Bills/2026".into()),
+        ]
+    );
+    imap.delete_folder(&format!("{renamed}/2026"))
+        .await
+        .unwrap();
+    imap.delete_folder(&renamed).await.unwrap();
+    assert!(names(imap.folders().await.unwrap()).is_empty());
+    imap.logout().await.unwrap();
 }

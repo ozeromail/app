@@ -182,6 +182,41 @@ pub trait MailProvider: Send {
         name: &str,
     ) -> impl Future<Output = Result<NewFolder, ProviderError>> + Send;
 
+    /// Makes a folder of the person's own named `name` inside the folder `parent`, or at the
+    /// top level without one, and returns its id. Fails with `Rejected` where the app cannot
+    /// change the server's folders.
+    fn create_folder(
+        &mut self,
+        parent: Option<&str>,
+        name: &str,
+    ) -> impl Future<Output = Result<String, ProviderError>> + Send {
+        let _ = (parent, name);
+        async { Err(ProviderError::Rejected("folders stay as they are".into())) }
+    }
+
+    /// Names the folder `folder` `name` and puts it inside `parent`, or at the top level
+    /// without one, with the folders inside it; returns its id after, which IMAP changes.
+    /// Fails with `Rejected` as `create_folder`.
+    fn change_folder(
+        &mut self,
+        folder: &str,
+        parent: Option<&str>,
+        name: &str,
+    ) -> impl Future<Output = Result<String, ProviderError>> + Send {
+        let _ = (folder, parent, name);
+        async { Err(ProviderError::Rejected("folders stay as they are".into())) }
+    }
+
+    /// Deletes the folder and the mail in it. Fails with `Gone` if it is not there and with
+    /// `Rejected` as `create_folder`.
+    fn delete_folder(
+        &mut self,
+        folder: &str,
+    ) -> impl Future<Output = Result<(), ProviderError>> + Send {
+        let _ = folder;
+        async { Err(ProviderError::Rejected("folders stay as they are".into())) }
+    }
+
     /// Saves a message into a folder, marked read: a sent copy into Sent.
     fn append(
         &mut self,

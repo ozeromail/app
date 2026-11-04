@@ -26,6 +26,11 @@ pub async fn sync_mail(
 ) -> Result<(), SyncError> {
     store.prune(account, since)?;
     let folders = provider.folders().await?;
+    // Deleted or renamed elsewhere. Only from a list with the inbox in it: never a broken one.
+    if folders.iter().any(|f| f.role == FolderRole::Inbox) {
+        let listed: Vec<String> = folders.iter().map(|f| f.remote_id.clone()).collect();
+        store.forget_folders(account, &listed)?;
+    }
     let mut folders = store.save_folders(account, &folders)?;
     let inbox = inbox(&folders)?.clone();
     sync_folder(store, provider, parser, &inbox, limit, since).await?;
