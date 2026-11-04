@@ -606,6 +606,62 @@ async fn makes_the_snoozed_folder_at_the_top() {
 }
 
 #[tokio::test]
+async fn makes_changes_and_deletes_folders_with_fresh_keys() {
+    let (mut eas, state, took, _) = server(|cmd, request, _| {
+        let answer = |tag: &'static str, status: &str, key: &str, extra: Vec<Node>| {
+            let mut fields = vec![
+                t("FolderHierarchy:Status", status),
+                t("FolderHierarchy:SyncKey", key),
+            ];
+            fields.extend(extra);
+            (200, Some(n(tag, fields)))
+        };
+        match cmd {
+            // Nothing new: the same key back.
+            "FolderSync" => answer(
+                "FolderHierarchy:FolderSync",
+                "1",
+                match request.text_at(&["FolderHierarchy:SyncKey"]) {
+                    "0" => "F1",
+                    key => key,
+                },
+                vec![n(
+                    "FolderHierarchy:Changes",
+                    vec![folder("1", "0", "Inbox", "2")],
+                )],
+            ),
+            "FolderCreate" => answer(
+                "FolderHierarchy:FolderCreate",
+                "1",
+                "F2",
+                vec![t("FolderHierarchy:ServerId", "9")],
+            ),
+            "FolderUpdate" => answer("FolderHierarchy:FolderUpdate", "1", "F3", vec![]),
+            "FolderDelete" => answer("FolderHierarchy:FolderDelete", "4", "F3", vec![]),
+            _ => (500, None),
+        }
+    })
+    .await;
+    assert_eq!(eas.create_folder(Some("1"), "Счета").await.unwrap(), "9");
+    assert_eq!(state.get("folders.key").as_deref(), Some("F2"));
+    assert_eq!(eas.change_folder("9", None, "Bills").await.unwrap(), "9");
+    assert_eq!(state.get("folders.key").as_deref(), Some("F3"));
+    let folders = eas.folders().await.unwrap();
+    assert!(
+        folders
+            .iter()
+            .any(|f| f.remote_id == "9" && f.name == "Bills")
+    );
+    assert_eq!(eas.delete_folder("9").await, Err(ProviderError::Gone));
+
+    let took = took.lock().unwrap();
+    let update = &took.iter().find(|(c, _)| c == "FolderUpdate").unwrap().1;
+    assert_eq!(update.text_at(&["FolderHierarchy:SyncKey"]), "F2");
+    assert_eq!(update.text_at(&["FolderHierarchy:ParentId"]), "0");
+    assert_eq!(update.text_at(&["FolderHierarchy:DisplayName"]), "Bills");
+}
+
+#[tokio::test]
 async fn starts_a_folder_over_when_it_keeps_another_span() {
     let (eas, _, took, _) = server(|cmd, request, _| match (cmd, sync_key(request)) {
         ("Sync", "0") => (200, collection("S1", "1", vec![])),

@@ -630,6 +630,109 @@ SuppressReadReceipts=\"true\"><m:ItemChanges>{changes}</m:ItemChanges></m:Update
         self.delete(folder, 0, &ids).await
     }
 
+    async fn create_folder(
+        &mut self,
+        parent: Option<&str>,
+        name: &str,
+    ) -> Result<String, ProviderError> {
+        let answer = self
+            .call(
+                &format!(
+                    "<m:CreateFolder><m:ParentFolderId>{}</m:ParentFolderId><m:Folders><t:Folder>\
+<t:FolderClass>IPF.Note</t:FolderClass><t:DisplayName>{}</t:DisplayName></t:Folder></m:Folders>\
+</m:CreateFolder>",
+                    folder_ref(parent),
+                    escape(name.trim())
+                ),
+                false,
+            )
+            .await?;
+        new_folder_id(first(&answer, "CreateFolder")?)
+    }
+
+    async fn change_folder(
+        &mut self,
+        folder: &str,
+        parent: Option<&str>,
+        name: &str,
+    ) -> Result<String, ProviderError> {
+        let answer = self
+            .call(
+                &format!(
+                    "<m:GetFolder><m:FolderShape><t:BaseShape>IdOnly</t:BaseShape>\
+<t:AdditionalProperties><t:FieldURI FieldURI=\"folder:DisplayName\"/>\
+<t:FieldURI FieldURI=\"folder:ParentFolderId\"/></t:AdditionalProperties></m:FolderShape>\
+<m:FolderIds><t:FolderId Id=\"{}\"/>{}</m:FolderIds></m:GetFolder>",
+                    escape(folder),
+                    folder_ref(None)
+                ),
+                true,
+            )
+            .await?;
+        let mut found = messages(&answer);
+        let (Some(now), Some(root)) = (found.next(), found.next()) else {
+            return Err(protocol("no answer to GetFolder"));
+        };
+        check(now)?;
+        check(root)?;
+        let shown = |m: &Element, what: &str| {
+            m.at(&["Folders"])
+                .and_then(|f| f.children.first())
+                .and_then(|f| f.child(what))
+                .map(|e| (e.attr("Id").unwrap_or_default().to_owned(), e.text.clone()))
+                .unwrap_or_default()
+        };
+        let (_, was) = shown(now, "DisplayName");
+        let (in_now, _) = shown(now, "ParentFolderId");
+        let (root, _) = shown(root, "FolderId");
+        let mut id = folder.to_owned();
+        if in_now != parent.unwrap_or(&root) {
+            let moved = self
+                .call(
+                    &format!(
+                        "<m:MoveFolder><m:ToFolderId>{}</m:ToFolderId>\
+<m:FolderIds><t:FolderId Id=\"{}\"/></m:FolderIds></m:MoveFolder>",
+                        folder_ref(parent),
+                        escape(folder)
+                    ),
+                    false,
+                )
+                .await?;
+            id = new_folder_id(first(&moved, "MoveFolder")?)?;
+        }
+        if was != name.trim() {
+            let renamed = self
+                .call(
+                    &format!(
+                        "<m:UpdateFolder><m:FolderChanges><t:FolderChange><t:FolderId Id=\"{}\"/>\
+<t:Updates><t:SetFolderField><t:FieldURI FieldURI=\"folder:DisplayName\"/><t:Folder>\
+<t:DisplayName>{}</t:DisplayName></t:Folder></t:SetFolderField></t:Updates></t:FolderChange>\
+</m:FolderChanges></m:UpdateFolder>",
+                        escape(&id),
+                        escape(name.trim())
+                    ),
+                    false,
+                )
+                .await?;
+            first(&renamed, "UpdateFolder")?;
+        }
+        Ok(id)
+    }
+
+    async fn delete_folder(&mut self, folder: &str) -> Result<(), ProviderError> {
+        let answer = self
+            .call(
+                &format!(
+                    "<m:DeleteFolder DeleteType=\"HardDelete\"><m:FolderIds>\
+<t:FolderId Id=\"{}\"/></m:FolderIds></m:DeleteFolder>",
+                    escape(folder)
+                ),
+                false,
+            )
+            .await?;
+        first(&answer, "DeleteFolder").map(drop)
+    }
+
     async fn create_snoozed(&mut self, name: &str) -> Result<NewFolder, ProviderError> {
         let answer = self
             .call(
@@ -645,14 +748,8 @@ SuppressReadReceipts=\"true\"><m:ItemChanges>{changes}</m:ItemChanges></m:Update
         // Refused also when it is there already, which the listing tells.
         let refused = match first(&answer, "CreateFolder") {
             Ok(made) => {
-                let id = made
-                    .at(&["Folders"])
-                    .and_then(|f| f.children.first())
-                    .and_then(|f| f.child("FolderId"))
-                    .and_then(|f| f.attr("Id"))
-                    .ok_or_else(|| protocol("no id for the new folder"))?;
                 return Ok(NewFolder {
-                    remote_id: id.to_owned(),
+                    remote_id: new_folder_id(made)?,
                     name: name.to_owned(),
                     role: FolderRole::Snoozed,
                 });
@@ -982,6 +1079,25 @@ fn header<'a>(fields: impl IntoIterator<Item = (&'a str, &'a str)>) -> Vec<u8> {
 
 /// A folder's full path, so folders of one name under different parents tell apart, and
 /// whether it is at the top. `parent_of` gives a folder's name and parent by its id.
+/// A folder for a request: `id`, or the top of the mailbox without one.
+fn folder_ref(id: Option<&str>) -> String {
+    match id {
+        Some(id) => format!("<t:FolderId Id=\"{}\"/>", escape(id)),
+        None => "<t:DistinguishedFolderId Id=\"msgfolderroot\"/>".into(),
+    }
+}
+
+/// The id of the folder an answer to CreateFolder or MoveFolder tells of.
+fn new_folder_id(answer: &Element) -> Result<String, ProviderError> {
+    answer
+        .at(&["Folders"])
+        .and_then(|f| f.children.first())
+        .and_then(|f| f.child("FolderId"))
+        .and_then(|f| f.attr("Id"))
+        .map(str::to_owned)
+        .ok_or_else(|| protocol("no id for the folder"))
+}
+
 fn path<'a>(
     name: &str,
     parent: &'a str,
