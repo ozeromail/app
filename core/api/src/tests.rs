@@ -1048,6 +1048,7 @@ fn folders_sit_inside_the_folder_their_name_continues() {
         name: name.into(),
         role,
         pinned: false,
+        rank: None,
     };
     let tree = |folders: &[Folder]| -> Vec<(Option<i64>, String)> {
         folder_tree(folders)
@@ -1509,4 +1510,129 @@ fn moves_chosen_messages_only_where_all_of_them_can_go() {
             .len(),
         1
     );
+}
+
+#[test]
+fn makes_renames_and_deletes_folders_and_suggests_where_mail_goes() {
+    let db = TempDb::new("folders");
+    let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
+    let store = &core.store;
+    let account = store
+        .add_account(&NewAccount {
+            kind: AccountKind::Imap,
+            email: "me@example.com".into(),
+            display_name: "Me".into(),
+            server: None,
+            smtp: None,
+        })
+        .unwrap();
+    let folder = |remote_id: &str, role| NewFolder {
+        remote_id: remote_id.into(),
+        name: remote_id.into(),
+        role,
+    };
+    let saved = store
+        .save_folders(
+            account,
+            &[
+                folder("INBOX", FolderRole::Inbox),
+                folder("Archive", FolderRole::Archive),
+                folder("Orders", FolderRole::Custom),
+                folder("Work", FolderRole::Custom),
+            ],
+        )
+        .unwrap();
+    let (inbox, orders, work) = (saved[0].id, saved[2].id, saved[3].id);
+    let message = |uid: &str, email: &str| ozero_domain::NewMessage {
+        remote_id: uid.into(),
+        message_id: None,
+        references: vec![],
+        from: Address {
+            name: None,
+            email: email.into(),
+        },
+        answer_to: vec![],
+        to: vec![],
+        cc: vec![],
+        subject: "Hi".into(),
+        snippet: String::new(),
+        date: 10,
+        flags: Default::default(),
+        category: Category::People,
+        unsubscribe: None,
+    };
+    let save = |folder, new| {
+        let changes = Changes {
+            checkpoint: store.checkpoint(folder).unwrap().0,
+            new,
+            flags: vec![],
+            gone: vec![],
+        };
+        store.save_changes(folder, &changes).unwrap();
+    };
+    save(inbox, vec![message("1", "news@ozon.ru")]);
+    save(
+        orders,
+        vec![
+            message("2", "orders@ozon.ru"),
+            message("3", "orders@ozon.ru"),
+        ],
+    );
+    let new = core.mailbox(Mailbox::Folder { id: inbox.0 }, 10).unwrap()[0].id;
+
+    let made = core
+        .create_folder(account.0, Some(work.0), " Ozero ".into())
+        .unwrap();
+    assert_eq!(
+        (made.name.as_str(), made.short_name.as_str()),
+        ("Work/Ozero", "Ozero")
+    );
+    assert_eq!(made.parent, Some(work.0));
+    // Taken there, any case; a slash; inside itself.
+    let refused = |r: Result<_, CoreError>| matches!(r, Err(CoreError::FolderName));
+    assert!(refused(core.create_folder(
+        account.0,
+        Some(work.0),
+        "ozero".into()
+    )));
+    assert!(refused(core.create_folder(account.0, None, "a/b".into())));
+    let inside = core.change_folder(work.0, Some(made.id), "Work".into());
+    assert!(matches!(inside, Err(CoreError::FolderName)));
+
+    // From the same domain only: by the domain.
+    let suggested = core.move_suggestions(vec![new]).unwrap();
+    let got: Vec<_> = suggested
+        .iter()
+        .map(|s| (s.folder.id, s.count, s.sender.as_str()))
+        .collect();
+    assert_eq!(got, [(orders.0, 2, "ozon.ru")]);
+    core.move_to_folder(vec![new], made.id).unwrap();
+    let got: Vec<_> = core
+        .move_suggestions(vec![new])
+        .unwrap()
+        .into_iter()
+        .map(|s| s.folder.id)
+        .collect();
+    // Then where mail went last.
+    assert_eq!(got, [orders.0, made.id]);
+
+    core.change_folder(work.0, None, "Job".into()).unwrap();
+    let names: Vec<_> = core
+        .folders()
+        .unwrap()
+        .into_iter()
+        .map(|f| f.name)
+        .collect();
+    assert!(names.contains(&"Job/Ozero".to_owned()), "{names:?}");
+
+    core.delete_folder(work.0).unwrap();
+    let names: Vec<_> = core
+        .folders()
+        .unwrap()
+        .into_iter()
+        .map(|f| f.name)
+        .collect();
+    assert!(!names.iter().any(|n| n.starts_with("Job")), "{names:?}");
+    assert!(core.keep_folder(work.0).unwrap());
+    assert_eq!(core.folders().unwrap().len(), 5);
 }

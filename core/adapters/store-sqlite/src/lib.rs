@@ -612,9 +612,6 @@ impl Store for SqliteStore {
             .map_err(storage)?
             .ok_or(StoreError::NotFound)?;
         for id in with_inner(&tx, account, folder, &name)? {
-            // The server never had it: nothing to tell it.
-            tx.execute("DELETE FROM folder WHERE id = ?1 AND edit = 'create'", [id])
-                .map_err(storage)?;
             tx.execute(
                 "UPDATE folder SET edit = 'delete', edit_at = ?2 WHERE id = ?1",
                 params![id, not_before],
@@ -639,8 +636,11 @@ impl Store for SqliteStore {
             return Ok(false);
         };
         for id in with_inner(&tx, account, folder, &name)? {
+            // One the server never had is still to make.
             tx.execute(
-                "UPDATE folder SET edit = NULL, edit_at = 0 WHERE id = ?1 AND edit = 'delete'",
+                "UPDATE folder SET edit_at = 0,
+                     edit = CASE WHEN remote_id LIKE ':new:%' THEN 'create' END
+                 WHERE id = ?1 AND edit = 'delete'",
                 [id],
             )
             .map_err(storage)?;
@@ -834,7 +834,7 @@ impl Store for SqliteStore {
         let count = |sql: &str, key: &str| -> Result<Vec<(FolderId, u32)>, StoreError> {
             conn.prepare_cached(&format!(
                 "SELECT f.id, count(*) AS n FROM message m JOIN folder f ON f.id = m.folder_id
-                 WHERE f.account_id = ?1 AND {sql}
+                 WHERE f.account_id = ?1 AND {sql} AND f.role = 'custom'
                    AND m.stand_in = 0 AND (f.edit IS NULL OR f.edit != 'delete')
                  GROUP BY f.id ORDER BY n DESC, f.id"
             ))
@@ -2503,7 +2503,7 @@ impl Store for SqliteStore {
                  FROM op o JOIN message m ON m.id = o.message_id JOIN folder f ON f.id = m.folder_id
                  LEFT JOIN folder t ON t.id = o.target
                  WHERE f.account_id = ?1 AND o.not_before <= ?2 AND m.stand_in = 0
-                   AND (t.edit IS NULL OR t.edit != 'create')
+                   AND (t.remote_id IS NULL OR t.remote_id NOT LIKE ':new:%')
                  ORDER BY o.id",
             )
             .and_then(|mut s| {

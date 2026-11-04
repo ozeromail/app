@@ -91,6 +91,8 @@ pub async fn push_folders(
                 .change_folder(&change.remote_id, parent, &change.name)
                 .await
                 .map(Some),
+            // Never made there: nothing to tell.
+            FolderEdit::Delete if change.remote_id.starts_with(":new:") => Ok(None),
             FolderEdit::Delete => match provider.delete_folder(&change.remote_id).await {
                 // Gone already, with the one it was in.
                 Ok(()) | Err(ProviderError::Gone) => Ok(None),

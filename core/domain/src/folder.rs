@@ -118,6 +118,14 @@ pub struct Folder {
     pub rank: Option<u32>,
 }
 
+impl Folder {
+    /// Whether its server has it: not one made on the device, whose id `Store::create_folder`
+    /// starts with `:new:` until the server gives it one.
+    pub fn on_server(&self) -> bool {
+        !self.remote_id.starts_with(":new:")
+    }
+}
+
 /// What the person did to one of their own folders on the device that its server does not
 /// have yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

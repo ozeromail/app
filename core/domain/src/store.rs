@@ -82,8 +82,7 @@ pub trait Store: Send + Sync {
         leaf: &str,
     ) -> Result<(), StoreError>;
     /// Takes the folder and the ones inside it off the lists; the server deletes them from
-    /// `not_before` on (seconds), until which `keep_folder` brings them back. Folders the
-    /// server does not have yet go at once.
+    /// `not_before` on, until which `keep_folder` brings them back.
     fn delete_folder(&self, folder: FolderId, not_before: i64) -> Result<(), StoreError>;
     /// Brings back a folder `delete_folder` took off, with the ones inside it, while the
     /// server does not have the delete yet. False if it is too late.
@@ -109,7 +108,8 @@ pub trait Store: Send + Sync {
     fn used_folder(&self, folder: FolderId, at: i64) -> Result<(), StoreError>;
     /// The account's folders mail went into last, the latest first.
     fn recent_folders(&self, account: AccountId, limit: u32) -> Result<Vec<FolderId>, StoreError>;
-    /// How much of the account's saved mail from `email` sits in each folder, the most first;
+    /// How much of the account's saved mail from `email` sits in each of its own folders, the
+    /// most first;
     /// with none, from any address at the domain `email` is at. True when counted by domain.
     fn sender_folders(
         &self,

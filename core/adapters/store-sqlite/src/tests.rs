@@ -3639,15 +3639,17 @@ fn a_deleted_folder_waits_its_time_and_can_come_back() {
 }
 
 #[test]
-fn a_folder_the_server_never_had_goes_at_once() {
+fn a_folder_the_server_never_had_comes_back_still_to_make() {
     let store = store();
     let account = account(&store, "a@example.com");
     let made = store
         .create_folder(account, "Notes", None, "Notes")
         .unwrap();
     store.delete_folder(made.id, 100).unwrap();
-    assert!(store.folder_changes(account, 100).unwrap().is_empty());
     assert!(named(&store, account).is_empty());
+    assert!(store.keep_folder(made.id).unwrap());
+    let changes = store.folder_changes(account, 0).unwrap();
+    assert_eq!(changes[0].edit, FolderEdit::Create);
 }
 
 #[test]
