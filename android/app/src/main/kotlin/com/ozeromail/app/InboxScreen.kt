@@ -2387,7 +2387,7 @@ private fun Tabs(
                     Modifier
                         .weight(1f)
                         .height(34.dp)
-                        .clip(thumb)
+                        .clip(CircleShape)
                         .selectable(selected = on, role = Role.Tab, onClick = { if (!on) onPick(category, (index - at).toFloat(), 0f) }),
                 ) {
                     BasicText(
