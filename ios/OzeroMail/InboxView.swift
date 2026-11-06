@@ -239,6 +239,8 @@ private struct InboxList: View {
     /// Only a pull's or Try again's sync says so; syncs on their own stay quiet over the saved mail.
     @State private var refreshing = false
     @State private var dragging = false
+    /// Where a finger is on the list and how far it pulls: an empty list's water follows it.
+    @State private var touch = ListTouch()
     /// A check the user waits on: how long it has gone (0, slow, given up), and whether it just went through.
     @State private var slow = 0
     @State private var upToDate = false
@@ -316,7 +318,7 @@ private struct InboxList: View {
             }
             if lake {
                 LakeNote(title: model.emptyTitle, grey: !model.tabbed, checking: checking,
-                         checkedAt: model.isInbox ? model.checkedAt : nil)
+                         checkedAt: model.isInbox ? model.checkedAt : nil, refreshing: refreshing, touch: touch)
                     .id(model.mailbox)
                     .transition(.opacity)
                     .listRowSeparator(.hidden)
@@ -363,6 +365,7 @@ private struct InboxList: View {
         // The system's own pull, as in Mail: its spinner shows while the check runs.
         .refreshable { await pulled() }
         .onScrollPhaseChange { _, phase in dragging = phase == .interacting }
+        .gesture(TouchTracker(touch: touch))
         // A check the user waits on says when it is slow, and lets go after a while: the sync goes
         // on behind, and the words then say so, until it ends.
         .task(id: refreshing || waiting) {
@@ -454,6 +457,7 @@ private struct InboxList: View {
             let end = geometry.contentSize.height + geometry.contentInsets.bottom - geometry.containerSize.height
             return TabsScroll(offset: offset, nearEnd: geometry.contentOffset.y >= end - Self.tabsStay)
         } action: { old, now in
+            touch.pull = max(0, -now.offset) / Lake.pullGap
             hideTabs(old: old.offset, now: now)
         }
         // Each tab keeps its place: the row at its top when it was left comes back to the top.
