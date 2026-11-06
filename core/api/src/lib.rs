@@ -3011,10 +3011,10 @@ impl Core {
         slot: &mut Option<Remote>,
     ) -> Result<(), CoreError> {
         // Folders first: mail may be on its way into one just made.
-        let changes = self.store.folder_changes(account.id, now())?;
-        if !changes.is_empty() {
+        let at = now();
+        if !self.store.folder_changes(account.id, at)?.is_empty() {
             let remote = self.remote(slot, account, secret).await?;
-            push_folders(&*self.store, remote, changes).await?;
+            push_folders(&*self.store, remote, account.id, at).await?;
         }
         let ops = self.store.due(account.id, now())?;
         if !ops.is_empty() {

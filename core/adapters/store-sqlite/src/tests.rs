@@ -3639,6 +3639,20 @@ fn a_deleted_folder_waits_its_time_and_can_come_back() {
 }
 
 #[test]
+fn a_folder_kept_after_a_delete_still_sends_its_rename() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let ids = own(&store, account, &["Work"]);
+    store.change_folder(ids[0], "Job", None, "Job").unwrap();
+    store.delete_folder(ids[0], 100).unwrap();
+    assert!(store.keep_folder(ids[0]).unwrap());
+    let changes = store.folder_changes(account, 0).unwrap();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].edit, FolderEdit::Change);
+    assert_eq!(changes[0].name, "Job");
+}
+
+#[test]
 fn counts_the_mail_in_a_folder_and_the_ones_inside_it() {
     let store = store();
     let account = account(&store, "a@example.com");

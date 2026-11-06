@@ -1453,6 +1453,11 @@ fn is_change(response: &Response<'_>) -> bool {
 
 /// RFC 5530 codes for a refusal that is not about the credentials.
 fn is_temporary(code: &Code<'_>) -> bool {
+    is_code(code, &[b"UNAVAILABLE", b"LIMIT", b"INUSE", b"SERVERBUG"])
+}
+
+/// Whether `code` is one of `names`, RFC 5530 codes the library keeps as others.
+fn is_code(code: &Code<'_>, names: &[&[u8]]) -> bool {
     let Code::Other(other) = code else {
         return false;
     };
@@ -1461,9 +1466,7 @@ fn is_temporary(code: &Code<'_>) -> bool {
         .split(|b| *b == b' ')
         .next()
         .unwrap_or_default();
-    [&b"UNAVAILABLE"[..], b"LIMIT", b"INUSE", b"SERVERBUG"]
-        .iter()
-        .any(|c| name.eq_ignore_ascii_case(c))
+    names.iter().any(|c| name.eq_ignore_ascii_case(c))
 }
 
 fn parse_flags(flags: &[FlagFetch<'_>]) -> Flags {

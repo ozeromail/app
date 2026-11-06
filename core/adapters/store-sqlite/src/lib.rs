@@ -630,10 +630,11 @@ impl Store for SqliteStore {
             return Ok(false);
         };
         for id in with_inner(&tx, account, folder, &name)? {
-            // One the server never had is still to make.
+            // One the server never had is still to make, and a rename waiting still to send.
             tx.execute(
                 "UPDATE folder SET edit_at = 0,
-                     edit = CASE WHEN remote_id LIKE ':new:%' THEN 'create' END
+                     edit = CASE WHEN remote_id LIKE ':new:%' THEN 'create'
+                         WHEN server_name IS NOT NULL THEN 'change' END
                  WHERE id = ?1 AND edit = 'delete'",
                 [id],
             )
@@ -731,6 +732,9 @@ impl Store for SqliteStore {
         let tx = conn.transaction().map_err(storage)?;
         match change.edit {
             FolderEdit::Create => {
+                // Mail moved into it shows where it was again; its copies go with the folder.
+                tx.execute("DELETE FROM op WHERE target = ?1", [change.folder.0])
+                    .map_err(storage)?;
                 tx.execute("DELETE FROM folder WHERE id = ?1", [change.folder.0])
                     .map_err(storage)?;
             }
@@ -750,15 +754,19 @@ impl Store for SqliteStore {
                     )
                     .optional()
                     .map_err(storage)?;
-                if let Some((account, name, Some(was))) = row {
+                if let Some((account, name, was)) = row {
+                    // Without the name from before, as for one renamed again while it was
+                    // made, the next sync gives it the server's.
                     tx.execute(
-                        "UPDATE folder SET name = ?2, edit = NULL, edit_parent = NULL,
-                             edit_leaf = NULL, server_name = NULL
+                        "UPDATE folder SET name = coalesce(?2, name), edit = NULL,
+                             edit_parent = NULL, edit_leaf = NULL, server_name = NULL
                          WHERE id = ?1",
                         params![change.folder.0, was],
                     )
                     .map_err(storage)?;
-                    rename_inner(&tx, account, "name", &name, &was)?;
+                    if let Some(was) = was {
+                        rename_inner(&tx, account, "name", &name, &was)?;
+                    }
                 }
             }
         }

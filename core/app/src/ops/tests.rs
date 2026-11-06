@@ -1,4 +1,4 @@
-use ozero_domain::{AccountId, Action, Answer, MessageId, MessageLocation, OpId};
+use ozero_domain::{AccountId, Action, Answer, FolderChange, MessageId, MessageLocation, OpId};
 
 use super::*;
 use crate::fakes::{Memory, Server, run};
@@ -244,14 +244,17 @@ fn change(
 
 #[test]
 fn sends_folder_changes_in_order_and_keeps_new_ids() {
-    let store = Memory::default();
     let mut server = Server::default();
     let changes = vec![
         change(1, FolderEdit::Create, ":new:1", Some("Work"), "Ozero"),
         change(2, FolderEdit::Change, "Bills", None, "Receipts"),
         change(3, FolderEdit::Delete, "Old", None, "Old"),
     ];
-    run(push_folders(&store, &mut server, changes)).unwrap();
+    let store = Memory {
+        folder_changes: changes,
+        ..Memory::default()
+    };
+    run(push_folders(&store, &mut server, AccountId(1), 0)).unwrap();
 
     let calls: Vec<_> = server
         .folder_edits
@@ -280,7 +283,6 @@ fn sends_folder_changes_in_order_and_keeps_new_ids() {
 
 #[test]
 fn undoes_a_refused_folder_change_and_stops_offline() {
-    let store = Memory::default();
     let mut server = Server {
         refuse: vec![
             ProviderError::Rejected("exists".into()),
@@ -293,7 +295,11 @@ fn undoes_a_refused_folder_change_and_stops_offline() {
         change(2, FolderEdit::Create, ":new:2", None, "Trips"),
         change(3, FolderEdit::Create, ":new:3", None, "Notes"),
     ];
-    let pushed = run(push_folders(&store, &mut server, changes));
+    let store = Memory {
+        folder_changes: changes,
+        ..Memory::default()
+    };
+    let pushed = run(push_folders(&store, &mut server, AccountId(1), 0));
 
     assert!(pushed.is_err());
     assert_eq!(
