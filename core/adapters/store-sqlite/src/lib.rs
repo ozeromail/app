@@ -621,6 +621,33 @@ impl Store for SqliteStore {
         tx.commit().map_err(storage)
     }
 
+    fn folder_mail(&self, folder: FolderId) -> Result<u32, StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        let Some((account, name)) = tx
+            .query_row(
+                "SELECT account_id, name FROM folder WHERE id = ?1",
+                [folder.0],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+            )
+            .optional()
+            .map_err(storage)?
+        else {
+            return Ok(0);
+        };
+        let mut count = 0;
+        for id in with_inner(&tx, account, folder, &name)? {
+            count += tx
+                .query_row(
+                    "SELECT count(*) FROM message WHERE folder_id = ?1",
+                    [id],
+                    |r| r.get::<_, u32>(0),
+                )
+                .map_err(storage)?;
+        }
+        Ok(count)
+    }
+
     fn keep_folder(&self, folder: FolderId) -> Result<bool, StoreError> {
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(storage)?;

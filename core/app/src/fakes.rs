@@ -658,6 +658,10 @@ impl Store for Memory {
         Ok(false)
     }
 
+    fn folder_mail(&self, _: FolderId) -> Result<u32, StoreError> {
+        Ok(0)
+    }
+
     fn folder_changes(&self, _: AccountId, _: i64) -> Result<Vec<FolderChange>, StoreError> {
         Ok(self.folder_changes.clone())
     }

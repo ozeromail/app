@@ -499,6 +499,12 @@ impl Core {
         Ok(self.store.delete_folder(FolderId(folder), now() + HOLD)?)
     }
 
+    /// How many messages the device has in the folder and the ones inside it, for the
+    /// question before `delete_folder`.
+    pub fn folder_mail(&self, folder: i64) -> Result<u32, CoreError> {
+        Ok(self.store.folder_mail(FolderId(folder))?)
+    }
+
     /// Brings back a folder `delete_folder` took away, while its server has not heard of it.
     /// False when it is too late.
     pub fn keep_folder(&self, folder: i64) -> Result<bool, CoreError> {

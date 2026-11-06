@@ -3639,6 +3639,21 @@ fn a_deleted_folder_waits_its_time_and_can_come_back() {
 }
 
 #[test]
+fn counts_the_mail_in_a_folder_and_the_ones_inside_it() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let ids = own(&store, account, &["Trips", "Trips/2026", "Tripsy"]);
+    store.save_messages(ids[0], &[message(1, 100)]).unwrap();
+    store
+        .save_messages(ids[1], &[message(2, 100), message(3, 100)])
+        .unwrap();
+    store.save_messages(ids[2], &[message(4, 100)]).unwrap();
+    assert_eq!(store.folder_mail(ids[0]).unwrap(), 3);
+    assert_eq!(store.folder_mail(ids[1]).unwrap(), 2);
+    assert_eq!(store.folder_mail(FolderId(999)).unwrap(), 0);
+}
+
+#[test]
 fn a_folder_the_server_never_had_comes_back_still_to_make() {
     let store = store();
     let account = account(&store, "a@example.com");

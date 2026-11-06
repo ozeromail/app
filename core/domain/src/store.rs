@@ -87,6 +87,8 @@ pub trait Store: Send + Sync {
     /// Brings back a folder `delete_folder` took off, with the ones inside it, while the
     /// server does not have the delete yet. False if it is too late.
     fn keep_folder(&self, folder: FolderId) -> Result<bool, StoreError>;
+    /// How many messages the device has in the folder and the ones inside it.
+    fn folder_mail(&self, folder: FolderId) -> Result<u32, StoreError>;
     /// The account's folder changes due by `now`, in the order to send them: made and
     /// renamed folders outer ones first, deleted ones inner ones first.
     fn folder_changes(&self, account: AccountId, now: i64)
