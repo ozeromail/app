@@ -422,6 +422,51 @@ class Mail(private val context: Context) {
      */
     suspend fun moveTargets(messages: List<MessageItem>): List<FolderItem> = io { core.moveTargets(messages.map { it.id }) }
 
+    /**
+     * What the move sheet offers [messages]: [moveTargets], the folders to put first, and
+     * whether a new folder can be made for them.
+     */
+    suspend fun moveChoice(messages: List<MessageItem>): MoveChoice = io {
+        val ids = messages.map { it.id }
+        val account = messages.map { it.accountId }.distinct().singleOrNull()
+        MoveChoice(
+            targets = core.moveTargets(ids),
+            suggestions = core.moveSuggestions(ids),
+            canCreate = account != null && core.accounts().any { it.id == account && it.editsFolders },
+        )
+    }
+
+    /** The folder mail from [messages]' sender went to before, or mail went to lately; null if none. */
+    suspend fun quickMove(messages: List<MessageItem>): FolderItem? = io { core.moveSuggestions(messages.map { it.id }) }.firstOrNull()?.folder
+
+    /** Makes a folder of [account]'s own inside [parent], or at the top; its server gets it in the background. */
+    suspend fun createFolder(account: Long, parent: FolderItem?, name: String): FolderItem {
+        val made = io { core.createFolder(account, parent?.id, name) }
+        push(account)
+        return made
+    }
+
+    /** Names [folder] [name] and puts it inside [parent], or at the top. */
+    suspend fun changeFolder(folder: FolderItem, parent: FolderItem?, name: String) {
+        io { core.changeFolder(folder.id, parent?.id, name) }
+        push(folder.accountId)
+    }
+
+    /** Deletes [folder] with what is inside it; [keepFolder] can bring it back for a few seconds. */
+    suspend fun deleteFolder(folder: FolderItem) {
+        io { core.deleteFolder(folder.id) }
+        push(folder.accountId)
+    }
+
+    /** Brings back a folder [deleteFolder] took; false when the server has it already. */
+    suspend fun keepFolder(folder: FolderItem): Boolean = io { core.keepFolder(folder.id) }
+
+    /** How many messages the phone has in [folder] and the ones inside it. */
+    suspend fun folderMail(folder: FolderItem): Int = io { core.folderMail(folder.id) }.toInt()
+
+    /** Puts the pinned folders in [order]. */
+    suspend fun setFolderOrder(order: List<FolderItem>) = io { core.setFolderOrder(order.map { it.id }) }
+
     /** Leaves [message]'s list; a request or message asking to leave goes out in the background. */
     suspend fun unsubscribe(message: MessageItem): Unsubscribed {
         val done = io { core.unsubscribe(message.id) }
@@ -782,6 +827,7 @@ fun CoreException.text(): Int {
         is CoreException.UntrustedCertificate -> R.string.error_untrusted_certificate
         is CoreException.DeviceBlocked -> R.string.error_device_blocked
         is CoreException.TooLarge -> R.string.compose_files_too_large
+        is CoreException.FolderName -> R.string.error_folder_name
         else -> R.string.error_storage
     }
 }

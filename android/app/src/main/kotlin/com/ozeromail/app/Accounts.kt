@@ -67,6 +67,13 @@ class AccountsActions(
     val onInAll: (AccountItem, Boolean) -> Unit,
     val onOrder: (List<AccountItem>) -> Unit,
     val onPin: (FolderItem, Boolean) -> Unit,
+    /** What holding one of the account's own folders offers. */
+    val onFolderMenu: (FolderItem) -> Unit,
+    /** Opens a folder's card, from Edit. */
+    val onFolder: (FolderItem) -> Unit,
+    val onNewFolder: (AccountItem) -> Unit,
+    /** The pinned folders of one account in their new order. */
+    val onFolderOrder: (List<FolderItem>) -> Unit,
     val onGroups: (Groups) -> Unit,
     val onSignIn: (AccountItem) -> Unit,
     /** Opens an account's settings. */
@@ -106,14 +113,18 @@ fun AccountsSheet(
         Column {
             Row(Modifier.fillMaxWidth().padding(end = Gap.sheet - 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 SheetTitle(stringResource(R.string.folders_title), Modifier.weight(1f).padding(start = Gap.sheet, end = Gap.sheet, bottom = 10.dp))
-                // With one account there is nothing to switch or move.
-                if (state.accounts.size > 1) EditButton(editing, Modifier.padding(bottom = 10.dp)) { editing = !editing }
+                // With one account and no folders to change there is nothing to edit.
+                if (state.editable()) EditButton(editing, Modifier.padding(bottom = 10.dp)) { editing = !editing }
             }
-            MailboxList(state, actions, editing, onEdit = null)
+            MailboxList(state, actions, editing, onEdit = null, carry = null)
             SettingsRow(actions.onSettings)
         }
     }
 }
+
+/** Something to edit: accounts to switch and move, or folders to make, change or order. */
+private fun MailboxesState.editable(): Boolean =
+    accounts.size > 1 || accounts.any { it.editsFolders } || folders.count { it.pinned } > 1
 
 /** Edit, or Done while editing. */
 @Composable
@@ -130,11 +141,15 @@ private fun EditButton(editing: Boolean, modifier: Modifier = Modifier, onClick:
     )
 }
 
-/** The mailboxes down the side of a wide screen: the sheet's list of them, always there. */
+/**
+ * The mailboxes down the side of a wide screen: the sheet's list of them, always there. With
+ * [carry], mail held in the list can be dropped on a folder.
+ */
 @Composable
 fun Mailboxes(
     state: MailboxesState,
     actions: AccountsActions,
+    carry: Carry?,
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -147,7 +162,7 @@ fun Mailboxes(
             .padding(vertical = 8.dp),
     ) {
         // No title over the side: Edit stays in the inboxes' caption.
-        MailboxList(state, actions, editing, onEdit = { editing = !editing })
+        MailboxList(state, actions, editing, onEdit = { editing = !editing }, carry = carry)
         SettingsRow(actions.onSettings)
     }
 }
@@ -165,7 +180,7 @@ private fun SettingsRow(onSettings: () -> Unit) {
  * account, its inbox and folders. An account, when held, opens its settings.
  */
 @Composable
-private fun MailboxList(state: MailboxesState, actions: AccountsActions, editing: Boolean, onEdit: (() -> Unit)?) {
+private fun MailboxList(state: MailboxesState, actions: AccountsActions, editing: Boolean, onEdit: (() -> Unit)?, carry: Carry?) {
     val accounts = state.accounts
     val mailbox = state.mailbox
     val inboxes = state.folders.filter { it.role == FolderRole.INBOX }.associateBy { it.accountId }
@@ -174,11 +189,15 @@ private fun MailboxList(state: MailboxesState, actions: AccountsActions, editing
     }
     val one = accounts.singleOrNull()
     if (one != null) {
-        FolderRow(R.drawable.ic_inbox, stringResource(R.string.inbox_title), mailbox == Mail.INBOX, count = state.unread[one.id] ?: 0) {
-            actions.onMailbox(Mail.INBOX)
+        DropPlace(carry, inboxes[one.id], stringResource(R.string.inbox_title)) {
+            FolderRow(R.drawable.ic_inbox, stringResource(R.string.inbox_title), mailbox == Mail.INBOX, count = state.unread[one.id] ?: 0) {
+                actions.onMailbox(Mail.INBOX)
+            }
         }
         SignInAgain(one, actions)
-        AccountFolders(one, state, actions)
+        // Beside the list there is no title for Edit to go by.
+        if (onEdit != null && state.editable()) Caption(stringResource(R.string.folders_accounts), action = { EditButton(editing, onClick = onEdit) })
+        AccountFolders(one, state, actions, editing = editing, carry = carry)
         return
     }
     val inAll = accounts.filter { it.inAll }
@@ -224,21 +243,30 @@ private fun MailboxList(state: MailboxesState, actions: AccountsActions, editing
                 style = Type.Caption,
                 modifier = Modifier.padding(start = Gap.sheet, end = Gap.sheet, top = 4.dp, bottom = 8.dp),
             )
+            // Then each account's folders, to order, change and add to.
+            accounts.filter { account -> account.editsFolders || state.folders.any { it.accountId == account.id && it.pinned } }.forEach { account ->
+                Caption(account.name)
+                AccountFolders(account, state, actions, editing = true, carry = null)
+            }
         } else {
             accounts.forEach { account ->
-                val box = inboxes[account.id]?.let { Mailbox.Folder(it.id) }
+                val inbox = inboxes[account.id]
+                val box = inbox?.let { Mailbox.Folder(it.id) }
                 val shown = groups.open(account.id)
-                FolderRow(
-                    lead = { AccountDot(account.tint) },
-                    title = account.name,
-                    open = box != null && box == mailbox,
-                    count = state.unread[account.id] ?: 0,
-                    end = { FoldersArrow(account.name, shown) { actions.onGroups(groups.toggle(account.id)) } },
-                    onLongClick = { actions.onAccount(account) },
-                    longClickLabel = stringResource(R.string.account_settings),
-                ) { if (box != null) actions.onMailbox(box) }
+                // Mail held over a closed account opens its folders.
+                DropPlace(carry, inbox, account.name, onSpring = { actions.onGroups(groups.toggle(account.id)) }.takeIf { !shown }) {
+                    FolderRow(
+                        lead = { AccountDot(account.tint) },
+                        title = account.name,
+                        open = box != null && box == mailbox,
+                        count = state.unread[account.id] ?: 0,
+                        end = { FoldersArrow(account.name, shown) { actions.onGroups(groups.toggle(account.id)) } },
+                        onLongClick = { actions.onAccount(account) },
+                        longClickLabel = stringResource(R.string.account_settings),
+                    ) { if (box != null) actions.onMailbox(box) }
+                }
                 SignInAgain(account, actions)
-                Folding(shown) { AccountFolders(account, state, actions, depth = 1) }
+                Folding(shown) { AccountFolders(account, state, actions, depth = 1, carry = carry) }
             }
         }
     }
@@ -297,7 +325,7 @@ private fun AllAccounts(state: MailboxesState, actions: AccountsActions, editing
 
 /** What a row is dragged by to move it. */
 @Composable
-private fun Handle(modifier: Modifier) {
+internal fun Handle(modifier: Modifier) {
     Box(modifier.padding(start = 4.dp).size(END_BUTTON), contentAlignment = Alignment.Center) {
         Glyph(R.drawable.ic_drag, stringResource(R.string.action_move), MaterialTheme.colorScheme.onSurfaceVariant, size = ICON)
     }
@@ -320,37 +348,62 @@ private fun FoldersArrow(account: String, open: Boolean, onToggle: () -> Unit) {
 
 /**
  * An account's folders, [depth] steps in: its system ones in the usual order, then its own. Of
- * those, the pinned ones show, or all while the account has few and none pinned; Other folders
- * shows the rest, each inside the one it is in. Holding one of its own pins or unpins it.
+ * those, the pinned ones show, or all while the account has few and none pinned, or while mail
+ * is carried; Other folders shows the rest, each inside the one it is in, unless the person
+ * closed that one. Holding one of its own offers what can be done with it, pinning first.
+ * While [editing], its own folders instead: the pinned ones to order by their handles, a tap
+ * opening a folder's card, and a way to add one.
  */
 @Composable
-private fun AccountFolders(account: AccountItem, state: MailboxesState, actions: AccountsActions, depth: Int = 0) {
+private fun AccountFolders(
+    account: AccountItem,
+    state: MailboxesState,
+    actions: AccountsActions,
+    depth: Int = 0,
+    editing: Boolean = false,
+    carry: Carry?,
+) {
     val colors = MaterialTheme.colorScheme
     val haptics = LocalHapticFeedback.current
     val mine = state.folders.filter { it.accountId == account.id && it.role != FolderRole.DRAFTS }
+    val own = mine.filter { it.role == FolderRole.CUSTOM }
+    if (editing) {
+        EditFolders(account, own, actions, depth)
+        return
+    }
     mine.filter { it.role != FolderRole.CUSTOM && it.role != FolderRole.INBOX }.sortedBy { it.role.rank() }.forEach { folder ->
         val box = Mailbox.Folder(folder.id)
-        FolderRow(folder.role.icon(), folder.title(), box == state.mailbox, depth = depth) { actions.onMailbox(box) }
+        val title = folder.title()
+        DropPlace(carry, folder, title) {
+            FolderRow(folder.role.icon(), title, box == state.mailbox, depth = depth) { actions.onMailbox(box) }
+        }
     }
-    val own = mine.filter { it.role == FolderRole.CUSTOM }
     if (own.isEmpty()) return
     var all by rememberSaveable(account.id) { mutableStateOf(false) }
     val few = own.none { it.pinned } && own.size <= FEW_FOLDERS
-    val shown = treeOrder(if (all || few) own else own.filter { it.pinned })
-    val ids = shown.map { it.id }.toSet()
-    shown.forEach { folder ->
+    // Carried mail can reach every folder.
+    val every = all || few || carry?.messages != null
+    val groups = state.groups
+    folderTree(if (every) own else own.filter { it.pinned }, groups::showsInside, depth).forEach { row ->
+        val folder = row.folder
         val box = Mailbox.Folder(folder.id)
-        // Inside a folder that shows too, it goes under it by its own name.
-        val nested = folder.parent in ids
         val open = box == state.mailbox
-        FolderRow(
-            lead = { RowIcon(if (folder.pinned && (all || few)) R.drawable.ic_pin else R.drawable.ic_folder, open) },
-            title = folder.shownName(ids),
-            open = open,
-            depth = depth + if (nested) 1 else 0,
-            onLongClick = { actions.onPin(folder, !folder.pinned) },
-            longClickLabel = stringResource(if (folder.pinned) R.string.action_unpin else R.string.action_pin),
-        ) { actions.onMailbox(box) }
+        val inside = groups.showsInside(folder.id)
+        DropPlace(carry, folder, row.title, onSpring = { actions.onGroups(groups.toggleInside(folder.id)) }.takeIf { row.inside && !inside }) {
+            FolderRow(
+                lead = { RowIcon(if (folder.pinned && every) R.drawable.ic_pin else R.drawable.ic_folder, open) },
+                title = row.title,
+                open = open,
+                depth = row.depth,
+                end = if (row.inside) {
+                    { Twisty(row.title, inside) { actions.onGroups(groups.toggleInside(folder.id)) } }
+                } else {
+                    null
+                },
+                onLongClick = { actions.onFolderMenu(folder) },
+                longClickLabel = stringResource(R.string.folder_actions),
+            ) { actions.onMailbox(box) }
+        }
     }
     if (few) return
     SheetRow(
@@ -369,7 +422,7 @@ private fun AccountFolders(account: AccountItem, state: MailboxesState, actions:
             fontWeight = Weight.Regular,
             modifier = Modifier.weight(1f),
         )
-        if (!all) Text((own.size - shown.size).toString(), color = colors.onSurfaceVariant, style = Type.Caption)
+        if (!all) Text(own.count { !it.pinned }.toString(), color = colors.onSurfaceVariant, style = Type.Caption)
     }
     // Until the first folder is pinned.
     if (all && own.none { it.pinned }) {
@@ -382,55 +435,25 @@ private fun AccountFolders(account: AccountItem, state: MailboxesState, actions:
     }
 }
 
-/** A folder a message can move to, named and placed as the list shows it. */
-data class MoveTarget(val folder: FolderItem, val title: String, val indent: Boolean)
-
 /**
- * Where a message can move, from [targets]: the account's inbox and archive, then its own
- * folders in tree order.
+ * An account's own folders while editing: the pinned ones first, moved by their handles, then
+ * the rest as a tree; a tap opens a folder's card. Then a new folder, where the account can
+ * have one.
  */
 @Composable
-fun moveOrder(targets: List<FolderItem>): List<MoveTarget> {
-    val (usual, own) = targets.partition { it.role != FolderRole.CUSTOM }
-    val ids = targets.map { it.id }.toSet()
-    val ownIds = own.map { it.id }.toSet()
-    return usual.sortedBy { it.role.rank() }.map { MoveTarget(it, it.title(), indent = false) } +
-        treeOrder(own).map { MoveTarget(it, it.shownName(ids), indent = it.parent in ownIds) }
-}
-
-/** The folders [moveOrder] lists, to pick one; without any, says so. */
-@Composable
-fun MoveTargets(targets: List<FolderItem>, onPick: (FolderItem, String) -> Unit) {
-    val colors = MaterialTheme.colorScheme
-    Caption(stringResource(R.string.move_title))
-    if (targets.isEmpty()) {
-        Text(
-            stringResource(R.string.move_none),
-            color = colors.onSurfaceVariant,
-            style = Type.Row,
-            modifier = Modifier.padding(horizontal = Gap.sheet, vertical = 12.dp),
-        )
-        return
+private fun EditFolders(account: AccountItem, own: List<FolderItem>, actions: AccountsActions, depth: Int) {
+    val pinned = own.filter { it.pinned }.sortedWith(compareBy({ it.rank ?: UInt.MAX_VALUE }, { it.shortName.lowercase() }))
+    Reorderable(pinned, key = { it.id }, onMove = { if (it != pinned) actions.onFolderOrder(it) }) { folder, handle ->
+        SheetRow(onClick = { actions.onFolder(folder) }, lead = { RowIcon(R.drawable.ic_pin, open = false) }, fixed = true, start = indent(depth)) {
+            Text(folder.shortName, style = Type.Row, fontWeight = Weight.Regular, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            if (pinned.size > 1) Handle(handle)
+        }
     }
-    moveOrder(targets).forEach { (folder, title, indent) ->
-        FolderRow(folder.role.icon(), title, open = false, depth = if (indent) 1 else 0) { onPick(folder, title) }
+    folderTree(own.filter { !it.pinned }, depth = depth).forEach { row ->
+        FolderRow(R.drawable.ic_folder, row.title, open = false, depth = row.depth) { actions.onFolder(row.folder) }
     }
+    if (account.editsFolders) NewFolderRow(stringResource(R.string.folder_new), depth) { actions.onNewFolder(account) }
 }
-
-/**
- * [folders] in tree order: each folder with the ones inside it right under it, by the names
- * they show with.
- */
-private fun treeOrder(folders: List<FolderItem>): List<FolderItem> {
-    val ids = folders.map { it.id }.toSet()
-    val inside = folders.groupBy { folder -> folder.parent?.takeIf { it in ids } }
-    fun under(parent: Long?): List<FolderItem> =
-        inside[parent].orEmpty().sortedBy { it.shownName(ids).lowercase() }.flatMap { listOf(it) + under(it.id) }
-    return under(null)
-}
-
-/** Inside a folder that shows too, among [ids], or at the top, its own name; else the whole path. */
-private fun FolderItem.shownName(ids: Set<Long>): String = if (parent == null || parent in ids) shortName else name
 
 /** An account with no more own folders than this and none pinned shows them all. */
 private const val FEW_FOLDERS = 5
@@ -441,7 +464,7 @@ private const val FEW_FOLDERS = 5
  * the chevron stays, pointing down.
  */
 @Composable
-private fun Caption(text: String, open: Boolean? = null, onToggle: (() -> Unit)? = null, action: (@Composable () -> Unit)? = null) {
+internal fun Caption(text: String, open: Boolean? = null, onToggle: (() -> Unit)? = null, action: (@Composable () -> Unit)? = null) {
     val colors = MaterialTheme.colorScheme
     Row(
         Modifier
@@ -467,14 +490,14 @@ private fun Caption(text: String, open: Boolean? = null, onToggle: (() -> Unit)?
 
 /** After a heading: points down while what it heads shows, to the side while it is hidden. */
 @Composable
-private fun Chevron(open: Boolean, size: Dp) {
+internal fun Chevron(open: Boolean, size: Dp) {
     val turn by animateFloatAsState(if (open) 90f else 0f, Motion.calm(Motion.SMALL), label = "chevron")
     Glyph(R.drawable.ic_next, null, MaterialTheme.colorScheme.onSurfaceVariant, Modifier.graphicsLayer { rotationZ = turn }, size = size)
 }
 
 /** A part of the list under a [Caption], hiding and showing as calmly as an account's folders. */
 @Composable
-private fun Folding(open: Boolean, content: @Composable () -> Unit) {
+internal fun Folding(open: Boolean, content: @Composable () -> Unit) {
     AnimatedVisibility(
         open,
         enter = expandVertically(Motion.calm(Motion.NOTE)) + fadeIn(Motion.calm(Motion.NOTE)),
@@ -522,7 +545,7 @@ enum class AllBox(val mailbox: Mailbox, @StringRes val title: Int) {
 data class AllBoxes(val order: List<AllBox>, val shown: Set<AllBox>)
 
 /** System folders first in the usual order, then the account's own. */
-private fun FolderRole.rank(): Int = when (this) {
+internal fun FolderRole.rank(): Int = when (this) {
     FolderRole.INBOX -> 0
     FolderRole.SNOOZED -> 1
     FolderRole.FLAGGED -> 2
@@ -571,7 +594,7 @@ private fun FolderRow(@DrawableRes icon: Int, title: String, open: Boolean, coun
 
 /** A mailbox's icon: as quiet as the headings, so colour in the list means an account or the open one. */
 @Composable
-private fun RowIcon(@DrawableRes icon: Int, open: Boolean) {
+internal fun RowIcon(@DrawableRes icon: Int, open: Boolean) {
     val colors = MaterialTheme.colorScheme
     Glyph(icon, null, if (open) colors.primary else colors.onSurfaceVariant, size = ICON)
 }
@@ -609,7 +632,7 @@ private fun FolderRow(
 }
 
 /** How far in a row [depth] steps down goes: one slot and its gap a step. */
-private fun indent(depth: Int): Dp = (Gap.slot + Gap.afterSlot) * depth
+internal fun indent(depth: Int): Dp = (Gap.slot + Gap.afterSlot) * depth
 
 /** Up to three account colours overlapping, as wide as the slot. */
 @Composable
@@ -623,7 +646,7 @@ private fun StackedDots(accounts: List<AccountItem>) {
 }
 
 /** Icons in the rows; dots stay at [AccountDot]'s size. */
-private val ICON = 20.dp
+internal val ICON = 20.dp
 
 /** A handle at a row's end. */
 private val END_BUTTON = 40.dp

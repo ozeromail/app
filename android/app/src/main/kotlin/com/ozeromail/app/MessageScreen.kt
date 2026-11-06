@@ -162,6 +162,8 @@ fun MessageScreen(
     onMoveToInbox: (() -> Unit)?,
     /** Into another folder of its account, named as shown; null where mail does not move from. */
     onMove: ((FolderItem, String) -> Unit)?,
+    /** Asks which folder to move it to. */
+    onPickFolder: () -> Unit,
     onSpam: (() -> Unit)?,
     onFlag: (Boolean) -> Unit,
     onDone: (() -> Unit)?,
@@ -176,6 +178,16 @@ fun MessageScreen(
     onGo: (Mailbox) -> Unit = {},
 ) {
     var sheet by remember(message.id) { mutableStateOf<ReaderSheet?>(null) }
+    // The folder it most likely goes to, offered first in More.
+    var quick by remember(message.id) { mutableStateOf<FolderItem?>(null) }
+    LaunchedEffect(message.id, onMove != null) {
+        if (onMove == null) return@LaunchedEffect
+        quick = try {
+            mail.quickMove(listOf(message))
+        } catch (e: CoreException) {
+            null
+        }
+    }
     // Whether the person left the list it came from here, and the question before they do.
     var left by remember(message.id) { mutableStateOf(false) }
     var leaving by remember(message.id) { mutableStateOf(false) }
@@ -550,18 +562,17 @@ fun MessageScreen(
                             move()
                         }
                     }
-                    onMove?.let {
-                        SheetAction(R.drawable.ic_folder, stringResource(R.string.action_move_to_folder), colors.onSurface) {
-                            scope.launch {
-                                val targets = try {
-                                    mail.moveTargets(listOf(message))
-                                } catch (e: CoreException) {
-                                    sheet = null
-                                    snackbar.showSnackbar(context.getString(e.text()))
-                                    return@launch
-                                }
-                                sheet = ReaderSheet.Move(targets)
+                    onMove?.let { move ->
+                        quick?.let { folder ->
+                            val title = folder.title()
+                            SheetAction(R.drawable.ic_folder, stringResource(R.string.move_to_named, title), colors.onSurface) {
+                                sheet = null
+                                move(folder, title)
                             }
+                        }
+                        SheetAction(R.drawable.ic_folder, stringResource(R.string.action_move_to_folder), colors.onSurface) {
+                            sheet = null
+                            onPickFolder()
                         }
                     }
                     if (message.canUnsubscribe && !left) {
@@ -576,10 +587,6 @@ fun MessageScreen(
                             spam()
                         }
                     }
-                }
-                is ReaderSheet.Move -> MoveTargets(shown.targets) { folder, title ->
-                    sheet = null
-                    onMove?.invoke(folder, title)
                 }
                 is ReaderSheet.Change -> AnswerSheet(meetings[shown.message.id]?.answer) { answerInvite(shown.message, it) }
                 is ReaderSheet.Reason -> ReasonSheet(shown.invite.organizerName ?: shown.invite.organizerEmail ?: shown.message.sender) { reason ->
@@ -661,9 +668,6 @@ private sealed interface ReaderSheet {
     data class Letter(val message: MessageItem) : ReaderSheet
 
     data object More : ReaderSheet
-
-    /** The folders the message can move to, picked from More. */
-    data class Move(val targets: List<FolderItem>) : ReaderSheet
 
     /** What to do with someone the message is from or went to. */
     data class Person(val person: PersonItem) : ReaderSheet
