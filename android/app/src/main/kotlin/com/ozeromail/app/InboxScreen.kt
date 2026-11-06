@@ -1701,6 +1701,8 @@ private fun InboxList(
     val glideScope = rememberCoroutineScope()
     val lake = messages.isEmpty() && (!syncing || listLoaded) && error == null
     val pullState = rememberPullToRefreshState()
+    // Where a finger is on the list: an empty list's water follows it.
+    val finger = remember { Finger() }
     // Only a pull's own check shows the spinner: Try again says so on the status line alone.
     var pulling by remember { mutableStateOf(false) }
     LaunchedEffect(refreshing) { if (!refreshing) pulling = false }
@@ -1792,7 +1794,7 @@ private fun InboxList(
                     onSync()
                 }
             },
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().tracks(finger),
             state = pullState,
             indicator = {
                 PullToRefreshDefaults.Indicator(
@@ -1846,6 +1848,10 @@ private fun InboxList(
                                     grey = !tabbed,
                                     checking = checking?.let { (head, line) -> stringResource(head) to line?.let { stringResource(it) } },
                                     checkedAt = checkedAt,
+                                    refreshing = refreshing,
+                                    finger = finger,
+                                    pulled = { pullState.distanceFraction },
+                                    glide = thumb,
                                     wordsModifier = if (allEmpty) Modifier else slide,
                                 )
                             }
@@ -2721,10 +2727,10 @@ private fun Page(at: Int, afloats: Afloats, rows: List<MessageItem>, words: Int,
     if (!near && !lingering) return
     Column(Modifier.fillMaxWidth().offset { IntOffset(0, top().roundToInt()) }) {
         if (rows.isEmpty()) {
-            // The lake stays where it is and only shows; the words go with the page.
+            // The water stays where it is and only shows; the words go with the page.
             StillNote(
                 stringResource(words),
-                mark = { if (mark) glidedAlpha(thumb() - at) else 0f },
+                water = { if (mark) glidedAlpha(thumb() - at) else 0f },
                 wordsModifier = Modifier.glided { thumb() - at },
             )
         } else {
