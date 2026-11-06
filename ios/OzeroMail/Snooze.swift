@@ -7,10 +7,12 @@ struct Snoozing: Identifiable {
     var then: @MainActor () -> Void = {}
 }
 
-/// Swiped or chosen messages waiting for a folder from `targets`.
-struct Moving {
+/// Swiped or chosen messages waiting for a folder from `choice`; `then` runs once one is picked.
+struct Moving: Identifiable {
+    let id = UUID()
     let messages: [MessageItem]
-    let targets: [(folder: FolderItem, title: String)]
+    let choice: MoveChoice
+    var then: @MainActor () -> Void = {}
 }
 
 /// The times to snooze to, from `now` on: later today and this evening while there is time
@@ -93,25 +95,5 @@ struct SnoozeSheet: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .presentationDetents(picking ? [.large] : [.medium, .large])
-    }
-}
-
-extension View {
-    /// Asks which of the folders `item` holds to move to, while there is one; says so when there
-    /// is no other folder. `onPick` gets the item as it was when asked.
-    func moveDialog<Item>(
-        _ item: Binding<Item?>, targets: @escaping (Item) -> [(folder: FolderItem, title: String)],
-        onPick: @escaping (Item, FolderItem, String) -> Void
-    ) -> some View {
-        confirmationDialog(
-            "move_title", isPresented: Binding { item.wrappedValue != nil } set: { if !$0 { item.wrappedValue = nil } },
-            titleVisibility: .visible, presenting: item.wrappedValue
-        ) { asked in
-            ForEach(targets(asked), id: \.folder.id) { target in
-                Button(target.title) { onPick(asked, target.folder, target.title) }
-            }
-        } message: { asked in
-            if targets(asked).isEmpty { Text("move_none") }
-        }
     }
 }

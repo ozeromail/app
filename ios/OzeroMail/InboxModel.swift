@@ -133,6 +133,8 @@ final class InboxModel {
     var snoozing: Snoozing?
     /// A message swiped to another folder, while the folder is picked.
     var moving: Moving?
+    /// A folder's card, or the form for a new folder.
+    var folderSheet: FolderSheet?
     var swipes = Settings.swipes {
         didSet { Settings.swipes = swipes }
     }
@@ -715,12 +717,32 @@ final class InboxModel {
         }
     }
 
-    /// A list asks where to take the rows.
-    func move(_ rows: [MessageItem]) async {
+    /// A sheet asks where to take the rows; `then` runs once a folder is picked.
+    func move(_ rows: [MessageItem], then: @escaping @MainActor () -> Void = {}) async {
         do {
-            moving = Moving(messages: rows, targets: moveOrder(try await mail.moveTargets(of: rows)))
+            moving = Moving(messages: rows, choice: try await mail.moveChoice(of: rows), then: then)
         } catch {
             self.error = error.textKey()
+        }
+    }
+
+    /// Deletes `folder` with what is inside it, out of it if it is open; the toast can bring it
+    /// back until the server hears of it.
+    func deleteFolder(_ folder: FolderItem) async {
+        do {
+            try await mail.deleteFolder(folder)
+        } catch {
+            self.error = error.textKey()
+            return
+        }
+        folderSheet = nil
+        await loadFolders()
+        if case .folder(let id) = mailbox, !folders.contains(where: { $0.id == id }) { mailbox = Mail.inbox }
+        guard await offerUndo(tr("folder_deleted", folder.shortName)) else { return }
+        if (try? await mail.keepFolder(folder)) == true {
+            await loadFolders()
+        } else {
+            note(tr("inbox_undo_late"))
         }
     }
 
