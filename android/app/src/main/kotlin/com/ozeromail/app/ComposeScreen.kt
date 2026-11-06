@@ -6,6 +6,13 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.StringRes
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterExitState
+import androidx.compose.animation.core.animate
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -24,7 +31,9 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,6 +49,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -59,6 +70,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
@@ -110,12 +122,61 @@ fun forwardLabels(context: Context) = ForwardLabels(
 )
 
 /** A message being written, and the one it answers or forwards. */
-data class Composing(val draft: DraftItem, val original: MessageItem? = null)
+data class Composing(val draft: DraftItem, val original: MessageItem? = null) {
+    /** A new message is a sheet over the screen it is written from; a reply fills the screen. */
+    val inSheet get() = original == null
+}
 
 /**
- * A new message, a reply or a forward, on the whole screen. The fields sit low, near the
- * keyboard; the message being answered or forwarded stays on top. [onSent] gets the outbox
- * id for undo.
+ * A new message over the screen it is written from, as on iOS: upright a sheet as tall as what is
+ * written, with that screen dimmed above it; on its side the whole screen. A tap above it and
+ * back close it as its close button does. Put it last in a full-screen box.
+ */
+@Composable
+fun NewMessage(composing: Composing?, onClose: () -> Unit, content: @Composable (Composing) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val sideways = LocalRoom.current.sideways
+    val shown = composing != null
+    // How far the back gesture has come, from 0 to 1: the message lowers and the dim lifts as it does.
+    var back by remember { mutableFloatStateOf(0f) }
+    // Being typed in, it puts the keyboard away as it starts to close, so both go down together.
+    val focusManager = LocalFocusManager.current
+    var typing by remember { mutableStateOf(false) }
+    LaunchedEffect(shown) {
+        if (shown) back = 0f else if (typing) focusManager.clearFocus(force = true)
+    }
+    Box(Modifier.fillMaxSize()) {
+        AnimatedVisibility(shown && !sideways, enter = fadeIn(Motion.calm(Motion.SCRIM)), exit = fadeOut(Motion.calm(Motion.SCRIM))) {
+            Scrim(shown, onClose) { 1f - back }
+        }
+        AnimatedVisibility(
+            shown,
+            enter = slideInVertically(Motion.calm(Motion.SCREEN)) { it },
+            exit = slideOutVertically(Motion.calm(Motion.SCREEN)) { it },
+        ) {
+            BackLowers(shown, onProgress = { back = it }, onDone = onClose) {
+                animate(back, 0f, animationSpec = Motion.settle()) { value, _ -> back = value }
+            }
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { translationY = back * size.height * 0.2f }
+                    .onFocusChanged { typing = it.hasFocus }
+                    // On its side it is the whole screen, and nothing under it takes a tap.
+                    .then(if (sideways) Modifier.background(colors.background).holdTouches() else Modifier),
+            ) {
+                rememberLast(composing)?.let { key(it) { content(it) } }
+                // On its way out it takes no more taps: Send must not go after Close.
+                if (transition.targetState != EnterExitState.Visible) Box(Modifier.matchParentSize().blockTouches())
+            }
+        }
+    }
+}
+
+/**
+ * A new message, a reply or a forward, on the whole screen, or upright a new message in a sheet
+ * (see [NewMessage]). The fields sit low, near the keyboard; the message being answered or
+ * forwarded stays on top. [onSent] gets the outbox id for undo.
  *
  * What is written is kept as a draft on the phone a moment after typing stops, when the app
  * goes to the background and when the screen closes; [onKept] then says it is in the drafts.
@@ -543,7 +604,28 @@ fun ComposeScreen(
                 }
             }
         } else {
-            Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
+            // Upright, a new message is a sheet over the screen it is written from (see NewMessage).
+            val fitted = composing.inSheet
+            Column(
+                if (fitted) {
+                    // As tall as what is written, over the keyboard, growing up as the text does;
+                    // the screen it came from shows above it, so no empty page waits there.
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .widthIn(max = COMPOSE_MAX)
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(top = 12.dp)
+                        .clip(RoundedCornerShape(topStart = Radius.sheet, topEnd = Radius.sheet))
+                        .background(colors.background)
+                        // A tap between its buttons stays on it, not on the dim that closes it.
+                        .holdTouches()
+                        .safeDrawingPadding()
+                        .padding(top = 8.dp)
+                } else {
+                    Modifier.fillMaxSize().safeDrawingPadding().imePadding()
+                },
+            ) {
                 // One page, low by the thumb: the message being answered, To and Subject, the text.
                 // A longer text grows up and scrolls with the rest, with no frame of its own.
                 val page = rememberScrollState()
@@ -554,9 +636,9 @@ fun ComposeScreen(
                     launch { snapshotFlow { page.maxValue }.collect { if (atEnd && it != Int.MAX_VALUE) page.scrollTo(it) } }
                     snapshotFlow { page.isScrollInProgress }.collect { if (!it) atEnd = page.value >= page.maxValue }
                 }
-                BoxWithConstraints(Modifier.weight(1f)) {
-                    val room = maxHeight
-                    Column(Modifier.fillMaxSize().verticalScroll(page)) {
+                // The page, its content low and at least [room] tall.
+                val pageOf = @Composable { room: Dp, modifier: Modifier ->
+                    Column(modifier.verticalScroll(page)) {
                         // As much room under the text as at its sides, so it never touches the bar.
                         Column(
                             Modifier.fillMaxWidth().heightIn(min = room).padding(bottom = Gap.screen),
@@ -568,10 +650,16 @@ fun ComposeScreen(
                                     heading(Modifier.onGloballyPositioned { headingInSight = it.boundsInWindow().height >= it.size.height * 0.6f })
                                 }
                                 // A new message starts with room to write in, not one line under an empty page.
-                                writing(if (original == null) room / 3 else 0.dp)
+                                writing(if (fitted) WRITING_ROOM else 0.dp)
                             }
                         }
                     }
+                }
+                if (fitted) {
+                    // Only as tall as what is written, up to the room there is.
+                    pageOf(0.dp, Modifier.weight(1f, fill = false).fillMaxWidth())
+                } else {
+                    BoxWithConstraints(Modifier.weight(1f)) { pageOf(maxHeight, Modifier.fillMaxSize()) }
                 }
                 if (docked) {
                     heading(Modifier.fillMaxWidth().hairline(colors.outlineVariant, top = true).padding(horizontal = Gap.screen, vertical = 8.dp))
@@ -680,6 +768,9 @@ fun ComposeScreen(
         }
     }
 }
+
+/** The text's room in a new message before anything is written. */
+private val WRITING_ROOM = 96.dp
 
 /** The message being answered, scrolling in the room it gets or [whole]; [onClick] gives it more. */
 @Composable

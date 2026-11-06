@@ -967,7 +967,9 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     val again = accounts.find { it.id == signingIn }
     // The list and the message side by side on a wide screen. Turning the screen keeps the
     // message open: beside the list, or on its own screen.
-    val screen = screenOf(composing, open, wide, addingAccount, again, searching, draftsOpen, settingsPages)
+    // A new message rises over the screen it is written from (NewMessage); a reply fills the screen.
+    val newMessage = composing?.takeIf { it.inSheet }
+    val screen = screenOf(composing?.takeUnless { it.inSheet }, open, wide, addingAccount, again, searching, draftsOpen, settingsPages)
     // Where back leads: the same screens with the top one gone.
     val behind: Screen? = when (screen) {
         Screen.Inbox -> null
@@ -1015,13 +1017,14 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     val screens = remember { SeekableTransitionState<Screen>(screen) }
     val focusManager = LocalFocusManager.current
     LaunchedEffect(screen) {
-        // The keyboard goes as the screen starts to leave, not once it is gone. A new message
+        // The keyboard goes as the screen starts to leave, not once it is gone. A reply
         // and the search keep it: they type at once.
         if (screen !is Screen.Write && screen != Screen.Search) focusManager.clearFocus(force = true)
         screens.animateTo(screen)
     }
     val top by rememberUpdatedState(screen)
-    PredictiveBackHandler(enabled = behind != null) { progress ->
+    // Under a new message, back is the message's.
+    PredictiveBackHandler(enabled = behind != null && newMessage == null) { progress ->
         // Read as the gesture starts; a screen that opens meanwhile, say a reply, cancels it.
         val from = top
         val target = behind
@@ -1153,7 +1156,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     )
 
     // Back from another mailbox leads to the inbox.
-    BackHandler(enabled = screen == Screen.Inbox && mailbox != Mail.INBOX && !accountsOpen) { mailbox = Mail.INBOX }
+    BackHandler(enabled = screen == Screen.Inbox && mailbox != Mail.INBOX && !accountsOpen && newMessage == null) { mailbox = Mail.INBOX }
 
     fun closePane() {
         open = null
@@ -1161,8 +1164,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         scope.launch { load() }
     }
     // Before that, back closes the message beside the list.
-    BackHandler(enabled = screen == Screen.Inbox && open != null && !accountsOpen, onBack = ::closePane)
-    BackHandler(enabled = screen == Screen.Search && personFromSearch, onBack = ::back)
+    BackHandler(enabled = screen == Screen.Inbox && open != null && !accountsOpen && newMessage == null, onBack = ::closePane)
+    BackHandler(enabled = screen == Screen.Search && personFromSearch && newMessage == null, onBack = ::back)
 
     /** A message on its own screen, or beside the list in a [pane]; done with it, it closes. */
     @Composable
@@ -1248,6 +1251,16 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         )
     }
 
+    val composer = @Composable { shown: Composing ->
+        ComposeScreen(
+            mail,
+            shown,
+            onCancel = { composing = null },
+            onSent = ::sent,
+            onKept = ::kept,
+            onDiscard = { discarded(it, shown.original) },
+        )
+    }
     val colors = MaterialTheme.colorScheme
     // A sinking screen fades towards the deeper colour beneath, so it darkens.
     Box(Modifier.fillMaxSize().background(colors.deep)) {
@@ -1256,14 +1269,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             val edge = if (shown.depth > 0 && shown !is Screen.Write) Modifier.sheetEdge(colors) else Modifier
             Box(Modifier.fillMaxSize().then(edge).background(colors.background)) {
                 when (shown) {
-                    is Screen.Write -> ComposeScreen(
-                        mail,
-                        shown.composing,
-                        onCancel = ::back,
-                        onSent = ::sent,
-                        onKept = ::kept,
-                        onDiscard = { discarded(it, shown.composing.original) },
-                    )
+                    is Screen.Write -> composer(shown.composing)
                     Screen.Drafts -> Middle(LIST_MAX, Modifier.fillMaxSize()) { DraftsScreen(mail, swipes, snackbar, onOpen = ::openDraft, onBack = ::back) }
                     is Screen.SettingsPage -> Middle(LIST_MAX, Modifier.fillMaxSize()) {
                         SettingsScreen(
@@ -1461,6 +1467,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 if (transition.targetState != EnterExitState.Visible) Box(Modifier.matchParentSize().blockTouches())
             }
         }
+        NewMessage(newMessage, onClose = { composing = null }, content = composer)
         AccountsSheet(
             visible = accountsOpen,
             lift = lift,
@@ -1569,7 +1576,7 @@ private const val SUNK = 0.97f
 
 /**
  * A screen pushed in from the right like a sheet laid on top, as on iOS: the one under it drifts
- * left and sinks back, a little smaller and darker; a new message rises from the bottom. Back
+ * left and sinks back, a little smaller and darker; a reply rises from the bottom. Back
  * plays it in reverse.
  */
 @OptIn(ExperimentalAnimationApi::class)
