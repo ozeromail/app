@@ -198,7 +198,6 @@
   "attachment_save_files": "Save to Files",
   "attachment_saved_files": "Saved to Files",
   "crash_text_ios": "Send the report to the author? The letter opens first, so you can read it. It holds where the app failed, the app and iOS versions and the phone model. No mail.",
-  "lake_checking_title": "Checking for new mail",
   "lake_loading_title": "Loading your mail",
   "lake_loading_slow": "Still loading. A big mailbox takes a minute the first time.",
   "lake_checked_now": "Checked just now",
