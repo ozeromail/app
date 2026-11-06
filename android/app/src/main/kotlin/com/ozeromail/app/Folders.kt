@@ -139,10 +139,11 @@ fun MovePicker(
             startParent = null,
             action = R.string.folder_create_and_move,
             onBack = { making = null },
-        ) { leaf, parent ->
-            val made = mail.createFolder(account ?: return@FolderForm, parent, leaf)
-            onPick(made, made.shortName)
-        }
+            onDone = { leaf, parent ->
+                val made = mail.createFolder(account ?: return@FolderForm, parent, leaf)
+                onPick(made, made.shortName)
+            },
+        )
         return
     }
     SheetTitle(stringResource(R.string.move_title))
@@ -336,11 +337,12 @@ fun FolderSheets(
                 startParent = sheet.parent?.id,
                 action = R.string.folder_create,
                 onBack = null,
-            ) { name, parent ->
-                mail.createFolder(sheet.account, parent, name)
-                onChanged()
-                onShow(null)
-            }
+                onDone = { name, parent ->
+                    mail.createFolder(sheet.account, parent, name)
+                    onChanged()
+                    onShow(null)
+                },
+            )
         }
     }
 }
@@ -517,7 +519,7 @@ fun FolderForm(
         }
     }
     Button(
-        onClick = ::send,
+        onClick = { send() },
         enabled = ready,
         modifier = Modifier.fillMaxWidth().padding(horizontal = Gap.sheet, vertical = 12.dp).height(48.dp),
     ) { Text(stringResource(action)) }
