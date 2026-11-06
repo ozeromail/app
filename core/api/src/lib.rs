@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ozero_app::drafts::{DraftsFolder, push_drafts};
-use ozero_app::ops::push_ops;
+use ozero_app::ops::{push_folders, push_ops};
 use ozero_app::send::{SentCopy, forwarded_files, push_sends};
 use ozero_app::sync::{
     SyncError, download_attachments, download_body, load_older, prefetch_bodies, search_server,
@@ -21,7 +21,8 @@ use ozero_domain::{
     MailProvider, MailSender, MailService, MessageId, MessageRow, Moved, NewAccount, NewFolder,
     NewMail, Older, OpId, OutboxId, Outgoing, OutgoingFile, People, Person, ProviderError,
     ProviderState, RawMessage, RecentFile, SavedDraft, SearchFilter, Sender, Server, Store,
-    StoreError, close_blank_lines, html, parse_recipients, saves_sent_itself, typo,
+    StoreError, close_blank_lines, folder_separator, html, parse_recipients, saves_sent_itself,
+    typo,
 };
 use ozero_ews::{EasSession, EwsSession, discover};
 use ozero_gmail::{GmailSession, oauth};
@@ -61,6 +62,9 @@ const IDLE_RETRY: Duration = Duration::from_secs(60 * 60);
 const NEWS_AGE: i64 = DAY;
 /// Milliseconds an archived or sent message waits before the server hears of it.
 const HOLD: i64 = 5_000;
+/// How many folders `move_suggestions` offers, and how many recent ones it looks at.
+const SUGGESTIONS: usize = 3;
+const RECENT_FOLDERS: u32 = 5;
 /// The app's Google OAuth client, one per platform; neither has a secret. An account's tokens
 /// stay with the client that signed it in, and accounts never leave the device they were added on.
 #[cfg(not(target_os = "ios"))]
@@ -451,6 +455,110 @@ impl Core {
         Ok(self.store.set_folder_pinned(FolderId(folder), pinned)?)
     }
 
+    /// Puts these pinned folders first, in this order.
+    pub fn set_folder_order(&self, folders: Vec<i64>) -> Result<(), CoreError> {
+        let order: Vec<FolderId> = folders.into_iter().map(FolderId).collect();
+        Ok(self.store.set_folder_order(&order)?)
+    }
+
+    /// Makes a folder of the account's own named `name`, inside its folder `parent` or at the
+    /// top level without one. It shows at once; its server gets it with the next push. Fails
+    /// with `FolderName` for a name that cannot be there.
+    pub fn create_folder(
+        &self,
+        account: i64,
+        parent: Option<i64>,
+        name: String,
+    ) -> Result<FolderItem, CoreError> {
+        let account = self.account(AccountId(account))?;
+        let folders = self.store.folders(account.id)?;
+        let (path, parent, leaf) = place(&account, &folders, None, parent, &name)?;
+        let made = self.store.create_folder(account.id, &path, parent, &leaf)?;
+        let items = self.account_folders(account.id, |f| f.id == made.id)?;
+        items.into_iter().next().ok_or(CoreError::Gone)
+    }
+
+    /// Names the account's folder `folder` `name` and puts it inside `parent`, or at the top
+    /// level without one, with the folders inside it. As `create_folder` otherwise.
+    pub fn change_folder(
+        &self,
+        folder: i64,
+        parent: Option<i64>,
+        name: String,
+    ) -> Result<(), CoreError> {
+        let (account, folders) = self.folder_account(FolderId(folder))?;
+        let (path, parent, leaf) =
+            place(&account, &folders, Some(FolderId(folder)), parent, &name)?;
+        Ok(self
+            .store
+            .change_folder(FolderId(folder), &path, parent, &leaf)?)
+    }
+
+    /// Deletes the folder with the folders and mail inside it. It goes from the lists at once;
+    /// its server hears of it after the undo time, until when `keep_folder` brings it back.
+    pub fn delete_folder(&self, folder: i64) -> Result<(), CoreError> {
+        Ok(self.store.delete_folder(FolderId(folder), now() + HOLD)?)
+    }
+
+    /// How many messages the device has in the folder and the ones inside it, for the
+    /// question before `delete_folder`.
+    pub fn folder_mail(&self, folder: i64) -> Result<u32, CoreError> {
+        Ok(self.store.folder_mail(FolderId(folder))?)
+    }
+
+    /// Brings back a folder `delete_folder` took away, while its server has not heard of it.
+    /// False when it is too late.
+    pub fn keep_folder(&self, folder: i64) -> Result<bool, CoreError> {
+        Ok(self.store.keep_folder(FolderId(folder))?)
+    }
+
+    /// The folders to offer first for moving the messages, at most three: those that hold
+    /// most mail from their sender, then those mail went into last. Only among `move_targets`.
+    pub fn move_suggestions(&self, messages: Vec<i64>) -> Result<Vec<MoveSuggestion>, CoreError> {
+        let Some(first) = messages.first().copied() else {
+            return Ok(vec![]);
+        };
+        let targets = self.move_targets(messages.clone())?;
+        let Some(account) = targets.first().map(|t| AccountId(t.account_id)) else {
+            return Ok(vec![]);
+        };
+        let by_id: HashMap<i64, FolderItem> = targets.into_iter().map(|t| (t.id, t)).collect();
+        let mut suggested: Vec<MoveSuggestion> = vec![];
+        let mut offer = |folder: FolderId, count: u32, sender: &str| {
+            if suggested.len() < SUGGESTIONS
+                && !suggested.iter().any(|s| s.folder.id == folder.0)
+                && let Some(item) = by_id.get(&folder.0)
+            {
+                suggested.push(MoveSuggestion {
+                    folder: item.clone(),
+                    count,
+                    sender: sender.to_owned(),
+                });
+            }
+        };
+        // By sender only when they share one.
+        let sender = self.store.correspondents(MessageId(first))?.from;
+        let shared = messages.iter().skip(1).try_fold(true, |same, id| {
+            let from = self.store.correspondents(MessageId(*id))?.from;
+            Ok::<_, CoreError>(same && from.eq_ignore_ascii_case(&sender))
+        })?;
+        if shared && !sender.is_empty() {
+            let (folders, by_domain) = self.store.sender_folders(account, &sender)?;
+            let from = if by_domain {
+                sender.rsplit_once('@').map_or("", |(_, d)| d)
+            } else {
+                sender.as_str()
+            };
+            for (folder, count) in folders {
+                offer(folder, count, from);
+            }
+        }
+        for folder in self.store.recent_folders(account, RECENT_FOLDERS)? {
+            offer(folder, 0, "");
+        }
+        Ok(suggested)
+    }
+
     /// The newest conversations of a mailbox, newest first, as `unified_inbox` without tabs.
     pub fn mailbox(&self, mailbox: Mailbox, limit: u32) -> Result<Vec<MessageItem>, CoreError> {
         let scope = match mailbox {
@@ -710,6 +818,9 @@ impl Core {
             if target.as_ref() != Some(&here.folder_remote_id) {
                 away.push(id);
             }
+        }
+        if !away.is_empty() {
+            self.store.used_folder(FolderId(folder), now())?;
         }
         self.hold_move(away, Action::Move(FolderId(folder)))
     }
@@ -1653,7 +1764,9 @@ impl Core {
                 vec![]
             } else {
                 let all = self.store.folders(id)?;
-                all.into_iter().filter(|f| mailbox.holds(f)).collect()
+                all.into_iter()
+                    .filter(|f| mailbox.holds(f) && f.on_server())
+                    .collect()
             };
             let mut slot = None;
             // A send that fails, say on a broken SMTP server, must not stop new mail coming in.
@@ -2178,7 +2291,7 @@ impl Core {
     ) -> Result<Vec<(Folder, Option<i64>)>, CoreError> {
         let mut loadable = vec![];
         for folder in self.store.folders(account)? {
-            if !mailbox.holds(&folder) {
+            if !mailbox.holds(&folder) || !folder.on_server() {
                 continue;
             }
             if !self.store.older_done(folder.id)? {
@@ -2219,6 +2332,17 @@ impl Core {
             rows.retain(|r| r.date >= floor);
         }
         self.items(rows)
+    }
+
+    /// The account a folder is of, and the account's folders.
+    fn folder_account(&self, folder: FolderId) -> Result<(Account, Vec<Folder>), CoreError> {
+        for account in self.store.accounts()? {
+            let folders = self.store.folders(account.id)?;
+            if folders.iter().any(|f| f.id == folder) {
+                return Ok((account, folders));
+            }
+        }
+        Err(CoreError::Gone)
     }
 
     /// The account's folders that `keep` takes, placed in its folder tree.
@@ -2886,6 +3010,12 @@ impl Core {
         secret: &str,
         slot: &mut Option<Remote>,
     ) -> Result<(), CoreError> {
+        // Folders first: mail may be on its way into one just made.
+        let at = now();
+        if !self.store.folder_changes(account.id, at)?.is_empty() {
+            let remote = self.remote(slot, account, secret).await?;
+            push_folders(&*self.store, remote, account.id, at).await?;
+        }
         let ops = self.store.due(account.id, now())?;
         if !ops.is_empty() {
             let remote = self.remote(slot, account, secret).await?;
@@ -3396,6 +3526,42 @@ impl MailProvider for Remote {
         }
     }
 
+    async fn create_folder(
+        &mut self,
+        parent: Option<&str>,
+        name: &str,
+    ) -> Result<String, ProviderError> {
+        match self {
+            Self::Imap(p) => p.create_folder(parent, name).await,
+            Self::Gmail(p) => p.create_folder(parent, name).await,
+            Self::Ews(p) => p.create_folder(parent, name).await,
+            Self::Eas(p) => p.create_folder(parent, name).await,
+        }
+    }
+
+    async fn change_folder(
+        &mut self,
+        folder: &str,
+        parent: Option<&str>,
+        name: &str,
+    ) -> Result<String, ProviderError> {
+        match self {
+            Self::Imap(p) => p.change_folder(folder, parent, name).await,
+            Self::Gmail(p) => p.change_folder(folder, parent, name).await,
+            Self::Ews(p) => p.change_folder(folder, parent, name).await,
+            Self::Eas(p) => p.change_folder(folder, parent, name).await,
+        }
+    }
+
+    async fn delete_folder(&mut self, folder: &str) -> Result<(), ProviderError> {
+        match self {
+            Self::Imap(p) => p.delete_folder(folder).await,
+            Self::Gmail(p) => p.delete_folder(folder).await,
+            Self::Ews(p) => p.delete_folder(folder).await,
+            Self::Eas(p) => p.delete_folder(folder).await,
+        }
+    }
+
     async fn create_snoozed(&mut self, name: &str) -> Result<NewFolder, ProviderError> {
         match self {
             Self::Imap(p) => p.create_snoozed(name).await,
@@ -3611,6 +3777,20 @@ pub struct FolderItem {
     pub short_name: String,
     /// The person pinned it among the account's usual folders.
     pub pinned: bool,
+    /// Its place among the pinned folders, as the person ordered them; None for one they did
+    /// not place, which goes after them by name.
+    pub rank: Option<u32>,
+}
+
+/// A folder `move_targets` offers first for messages.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MoveSuggestion {
+    pub folder: FolderItem,
+    /// How much mail from `sender` is there already; 0 for a folder mail went into lately.
+    pub count: u32,
+    /// The messages' sender's address, or the domain it is at when only other mail from
+    /// there is in the folder; empty with `count` 0.
+    pub sender: String,
 }
 
 impl From<Folder> for FolderItem {
@@ -3623,8 +3803,64 @@ impl From<Folder> for FolderItem {
             role: f.role,
             parent: None,
             pinned: f.pinned,
+            rank: f.rank,
         }
     }
+}
+
+/// Where a folder named `name` goes inside `parent`, among the account's `folders`, or at
+/// the top level: its whole path as the account names folders, the folder it is in, and its
+/// own name. `folder` is the one being renamed, if any; it cannot go inside itself.
+fn place(
+    account: &Account,
+    folders: &[Folder],
+    folder: Option<FolderId>,
+    parent: Option<i64>,
+    name: &str,
+) -> Result<(String, Option<FolderId>, String), CoreError> {
+    if !edits_folders(account.kind) {
+        return Err(CoreError::FolderName);
+    }
+    let leaf = name.trim();
+    let tree = folder_tree(folders);
+    let split = folder_separator(folders.iter().map(|f| f.name.as_str()));
+    let parent = parent.map(FolderId);
+    let outer = match parent {
+        Some(id) => Some(
+            folders
+                .iter()
+                .find(|f| f.id == id && f.role == FolderRole::Custom)
+                .ok_or(CoreError::FolderName)?,
+        ),
+        None => None,
+    };
+    // Not inside itself or one inside it.
+    let mut up = parent;
+    while let Some(id) = up {
+        if Some(id) == folder {
+            return Err(CoreError::FolderName);
+        }
+        let at = folders.iter().position(|f| f.id == id);
+        up = at.and_then(|i| tree[i].0);
+    }
+    let taken = folders.iter().zip(&tree).any(|(f, (inside, own))| {
+        Some(f.id) != folder && *inside == parent && own.to_lowercase() == leaf.to_lowercase()
+    });
+    if leaf.is_empty() || leaf.contains(['/', split]) || taken {
+        return Err(CoreError::FolderName);
+    }
+    let path = match outer {
+        Some(outer) => format!("{}{split}{leaf}", outer.name),
+        None if split == '.' => format!("INBOX.{leaf}"),
+        None => leaf.to_owned(),
+    };
+    Ok((path, parent, leaf.to_owned()))
+}
+
+/// Whether the app can make, rename and delete an account's folders: not Gmail's labels
+/// over its API.
+fn edits_folders(kind: AccountKind) -> bool {
+    !matches!(kind, AccountKind::Gmail | AccountKind::Graph)
 }
 
 /// Where each of an account's folders sits: the folder its name continues, past `/` or `.`,
@@ -3632,13 +3868,7 @@ impl From<Folder> for FolderItem {
 /// every folder, counts as at the top.
 fn folder_tree(folders: &[Folder]) -> Vec<(Option<FolderId>, String)> {
     let by_name: HashMap<&str, &Folder> = folders.iter().map(|f| (f.name.as_str(), f)).collect();
-    // Servers that keep folders under INBOX split names with `.`; the rest, and labels, with `/`.
-    // Only one of them, so a name such as "Dr. Who" stays whole.
-    let split = if folders.iter().any(|f| f.name.starts_with("INBOX.")) {
-        '.'
-    } else {
-        '/'
-    };
+    let split = folder_separator(folders.iter().map(|f| f.name.as_str()));
     folders
         .iter()
         .map(|folder| {
@@ -3739,6 +3969,8 @@ pub struct AccountItem {
     /// Whether it is in the unified inbox cannot change: it is the only account, or the last
     /// one in it.
     pub in_all_fixed: bool,
+    /// The app can make, rename and delete its folders.
+    pub edits_folders: bool,
 }
 
 impl AccountItem {
@@ -3747,6 +3979,7 @@ impl AccountItem {
         Self {
             sender_name: sender(&a).name.unwrap_or_default(),
             in_all_fixed,
+            edits_folders: edits_folders(a.kind),
             in_all: a.in_all,
             notify: a.notify,
             server: a
@@ -4668,6 +4901,9 @@ pub enum CoreError {
     DeviceBlocked,
     /// The files added to a message would take more than `file_limit`.
     TooLarge,
+    /// A folder name is empty, has `/` in it, or another folder in the same place has it; or
+    /// the folder cannot go there.
+    FolderName,
     Storage {
         detail: String,
     },
@@ -4704,6 +4940,7 @@ impl fmt::Display for CoreError {
             }
             Self::DeviceBlocked => write!(f, "the server has not let this device in"),
             Self::TooLarge => write!(f, "the files are too large for one message"),
+            Self::FolderName => write!(f, "no folder can have that name there"),
             Self::Storage { detail } => write!(f, "storage error: {detail}"),
         }
     }

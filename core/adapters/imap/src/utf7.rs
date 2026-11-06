@@ -21,6 +21,48 @@ pub fn decode(name: &str) -> Option<String> {
     Some(out)
 }
 
+/// Encodes a mailbox name as modified UTF-7.
+pub fn encode(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut shifted: Vec<u16> = vec![];
+    for c in name.chars() {
+        if (' '..='~').contains(&c) {
+            flush(&mut out, &mut shifted);
+            out.push(c);
+            if c == '&' {
+                out.push('-');
+            }
+        } else {
+            shifted.extend(c.encode_utf16(&mut [0; 2]).iter());
+        }
+    }
+    flush(&mut out, &mut shifted);
+    out
+}
+
+/// Writes `units` as `&`, base64 with `,` for `/` and no padding, and `-`.
+fn flush(out: &mut String, units: &mut Vec<u16>) {
+    if units.is_empty() {
+        return;
+    }
+    const DIGITS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+,";
+    out.push('&');
+    let (mut acc, mut bits) = (0u32, 0u32);
+    for unit in units.drain(..) {
+        acc = (acc << 16) | u32::from(unit);
+        bits += 16;
+        while bits >= 6 {
+            bits -= 6;
+            out.push(char::from(DIGITS[((acc >> bits) & 63) as usize]));
+        }
+        acc &= (1 << bits) - 1;
+    }
+    if bits > 0 {
+        out.push(char::from(DIGITS[((acc << (6 - bits)) & 63) as usize]));
+    }
+    out.push('-');
+}
+
 /// Base64 with `,` for `/` and no padding, read as UTF-16BE.
 fn utf16_units(b64: &str) -> Option<Vec<u16>> {
     let mut units = Vec::with_capacity(b64.len() * 3 / 8);
@@ -48,7 +90,23 @@ fn utf16_units(b64: &str) -> Option<Vec<u16>> {
 
 #[cfg(test)]
 mod tests {
-    use super::decode;
+    use super::{decode, encode};
+
+    #[test]
+    fn encodes_what_it_decodes() {
+        for name in [
+            "INBOX",
+            "Tom & Jerry",
+            "~peter/mail/台北/日本語",
+            "Отчёты",
+            "😀",
+            "Счета 2026",
+        ] {
+            assert_eq!(decode(&encode(name)).as_deref(), Some(name));
+        }
+        assert_eq!(encode("Tom & Jerry"), "Tom &- Jerry");
+        assert_eq!(encode("Отчёты"), "&BB4EQgRHBFEEQgRL-");
+    }
 
     #[test]
     fn decodes_rfc_and_real_names() {

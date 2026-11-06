@@ -250,6 +250,21 @@ impl ImapSession {
         }
     }
 
+    /// The character the server puts between a folder's name and the folders inside it, as
+    /// it lists `folder`; None for a server without folders inside folders.
+    async fn delimiter(&mut self, folder: &str) -> Result<Option<char>, ProviderError> {
+        let list = CommandBody::list("", folder).map_err(|_| protocol("bad LIST"))?;
+        Ok(self
+            .run(list)
+            .await?
+            .data
+            .into_iter()
+            .find_map(|d| match d {
+                Data::List { delimiter, .. } => delimiter.map(|d| d.inner()),
+                _ => None,
+            }))
+    }
+
     /// Runs a command that must succeed.
     async fn run(&mut self, body: CommandBody<'_>) -> Result<Reply, ProviderError> {
         let name = body.name();
@@ -969,28 +984,76 @@ impl MailProvider for ImapSession {
         self.purge(sets).await
     }
 
+    async fn create_folder(
+        &mut self,
+        parent: Option<&str>,
+        name: &str,
+    ) -> Result<String, ProviderError> {
+        let delimiter = self.delimiter(parent.unwrap_or("INBOX")).await?;
+        let own = own_name(name, delimiter)?;
+        // A server that keeps the user's folders under INBOX refuses one at the top.
+        let mut refused = protocol("no folder made");
+        for remote_id in places(parent, &own, delimiter) {
+            let mailbox = mailbox(&remote_id)?;
+            let create =
+                CommandBody::create(mailbox.clone()).map_err(|_| protocol("bad CREATE"))?;
+            match self.run(create).await {
+                Ok(_) => {
+                    // Other apps may list subscribed folders only.
+                    let Ok(subscribe) = CommandBody::subscribe(mailbox);
+                    let _ = self.run(subscribe).await;
+                    return Ok(remote_id);
+                }
+                Err(e @ ProviderError::Protocol(_)) => refused = e,
+                Err(e) => return Err(e),
+            }
+        }
+        Err(refused)
+    }
+
+    async fn change_folder(
+        &mut self,
+        folder: &str,
+        parent: Option<&str>,
+        name: &str,
+    ) -> Result<String, ProviderError> {
+        let delimiter = self.delimiter(folder).await?;
+        let own = own_name(name, delimiter)?;
+        // At the top level where it was: under INBOX on a server that keeps folders there.
+        let inbox = delimiter.map(|d| format!("INBOX{d}"));
+        let under_inbox = inbox.as_deref().is_some_and(|i| folder.starts_with(i));
+        let to = match (parent, delimiter) {
+            (Some(p), Some(d)) => format!("{p}{d}{own}"),
+            (None, Some(d)) if under_inbox => format!("INBOX{d}{own}"),
+            _ => own,
+        };
+        if to == folder {
+            return Ok(to);
+        }
+        let rename = CommandBody::rename(mailbox(folder)?, mailbox(&to)?)
+            .map_err(|_| protocol("bad RENAME"))?;
+        self.run(rename).await?;
+        let Ok(subscribe) = CommandBody::subscribe(mailbox(&to)?);
+        let _ = self.run(subscribe).await;
+        let Ok(unsubscribe) = CommandBody::unsubscribe(mailbox(folder)?);
+        let _ = self.run(unsubscribe).await;
+        Ok(to)
+    }
+
+    async fn delete_folder(&mut self, folder: &str) -> Result<(), ProviderError> {
+        let delete = CommandBody::delete(mailbox(folder)?).map_err(|_| protocol("bad DELETE"))?;
+        self.run(delete).await?;
+        let Ok(unsubscribe) = CommandBody::unsubscribe(mailbox(folder)?);
+        let _ = self.run(unsubscribe).await;
+        Ok(())
+    }
+
     async fn create_snoozed(&mut self, name: &str) -> Result<NewFolder, ProviderError> {
-        let list = CommandBody::list("", "INBOX").map_err(|_| protocol("bad LIST"))?;
-        let delimiter = self
-            .run(list)
-            .await?
-            .data
-            .into_iter()
-            .find_map(|d| match d {
-                Data::List { delimiter, .. } => delimiter.map(|d| d.inner()),
-                _ => None,
-            });
+        let delimiter = self.delimiter("INBOX").await?;
         // A server that keeps the user's folders under INBOX refuses one at the top.
         let mut refused = protocol("no snoozed folder");
-        for remote_id in [
-            Some(name.to_owned()),
-            delimiter.map(|d| format!("INBOX{d}{name}")),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            let mailbox =
-                Mailbox::try_from(remote_id.as_str()).map_err(|_| protocol("bad folder name"))?;
+        for remote_id in places(None, name, delimiter) {
+            let mailbox = mailbox(&remote_id)?;
             let create =
                 CommandBody::create(mailbox.clone()).map_err(|_| protocol("bad CREATE"))?;
             // Refused also when it is there already, which the listing tells.
@@ -1265,6 +1328,31 @@ fn message_bytes<'a>(
     data.filter(|_| found == Some(uid))
 }
 
+/// A folder's own name as the server writes it; refused with the delimiter in it, which
+/// would make folders inside folders.
+fn own_name(name: &str, delimiter: Option<char>) -> Result<String, ProviderError> {
+    let name = name.trim();
+    if name.is_empty() || delimiter.is_some_and(|d| name.contains(d)) {
+        return Err(ProviderError::Rejected(format!(
+            "no folder can be named {name:?}"
+        )));
+    }
+    Ok(utf7::encode(name))
+}
+
+/// Where a new folder `own` can go: inside `parent`, or at the top level, else under INBOX.
+fn places(parent: Option<&str>, own: &str, delimiter: Option<char>) -> Vec<String> {
+    match (parent, delimiter) {
+        (Some(p), Some(d)) => vec![format!("{p}{d}{own}")],
+        (_, Some(d)) => vec![own.to_owned(), format!("INBOX{d}{own}")],
+        (_, None) => vec![own.to_owned()],
+    }
+}
+
+fn mailbox(remote_id: &str) -> Result<Mailbox<'_>, ProviderError> {
+    Mailbox::try_from(remote_id).map_err(|_| protocol("bad folder name"))
+}
+
 /// A LIST entry that can hold messages. On Gmail, archiving is moving to All Mail (`\All`),
 /// and Important (`\Important`) is left out, as it only repeats mail from other folders. A
 /// folder without a special use is the snoozed one by its name, at the top or right under
@@ -1365,6 +1453,11 @@ fn is_change(response: &Response<'_>) -> bool {
 
 /// RFC 5530 codes for a refusal that is not about the credentials.
 fn is_temporary(code: &Code<'_>) -> bool {
+    is_code(code, &[b"UNAVAILABLE", b"LIMIT", b"INUSE", b"SERVERBUG"])
+}
+
+/// Whether `code` is one of `names`, RFC 5530 codes the library keeps as others.
+fn is_code(code: &Code<'_>, names: &[&[u8]]) -> bool {
     let Code::Other(other) = code else {
         return false;
     };
@@ -1373,9 +1466,7 @@ fn is_temporary(code: &Code<'_>) -> bool {
         .split(|b| *b == b' ')
         .next()
         .unwrap_or_default();
-    [&b"UNAVAILABLE"[..], b"LIMIT", b"INUSE", b"SERVERBUG"]
-        .iter()
-        .any(|c| name.eq_ignore_ascii_case(c))
+    names.iter().any(|c| name.eq_ignore_ascii_case(c))
 }
 
 fn parse_flags(flags: &[FlagFetch<'_>]) -> Flags {

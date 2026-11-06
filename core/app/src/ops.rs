@@ -1,8 +1,8 @@
 //! Sends queued actions to the server.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
-use ozero_domain::{Action, Answer, MailProvider, Op, ProviderError, Store};
+use ozero_domain::{AccountId, Action, Answer, FolderEdit, MailProvider, Op, ProviderError, Store};
 
 use crate::sync::SyncError;
 
@@ -67,6 +67,51 @@ pub async fn push_ops(
             Ok(()) | Err(ProviderError::Gone) => store.finish(&ops)?,
             // Refused for good: trying again would hold back every action after it.
             Err(ProviderError::Protocol(_) | ProviderError::Rejected(_)) => store.revert(&ops)?,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(())
+}
+
+/// Sends the changes to the person's own folders to their server, in order: a folder is made
+/// before the one inside it and before mail goes into it. Stops at the first network or login
+/// failure; what is left stays for the next run. One the server refuses is undone on the device.
+/// Each one is read again before it goes, with the ids the ones before it gave: a folder made
+/// or renamed gives the ones inside it their places.
+pub async fn push_folders(
+    store: &dyn Store,
+    provider: &mut impl MailProvider,
+    account: AccountId,
+    now: i64,
+) -> Result<(), SyncError> {
+    // Each folder once a run, so one changed again meanwhile waits for the next.
+    let mut sent = HashSet::new();
+    while let Some(change) = store
+        .folder_changes(account, now)?
+        .into_iter()
+        .find(|c| !sent.contains(&c.folder))
+    {
+        sent.insert(change.folder);
+        let parent = change.parent.as_deref();
+        let sent = match change.edit {
+            FolderEdit::Create => provider.create_folder(parent, &change.name).await.map(Some),
+            FolderEdit::Change => provider
+                .change_folder(&change.remote_id, parent, &change.name)
+                .await
+                .map(Some),
+            // Never made there: nothing to tell.
+            FolderEdit::Delete if !ozero_domain::on_server(&change.remote_id) => Ok(None),
+            FolderEdit::Delete => match provider.delete_folder(&change.remote_id).await {
+                // Gone already, with the one it was in.
+                Ok(()) | Err(ProviderError::Gone) => Ok(None),
+                Err(e) => Err(e),
+            },
+        };
+        match sent {
+            Ok(remote_id) => store.folder_changed(&change, remote_id.as_deref())?,
+            Err(ProviderError::Protocol(_) | ProviderError::Rejected(_) | ProviderError::Gone) => {
+                store.folder_refused(&change)?;
+            }
             Err(e) => return Err(e.into()),
         }
     }

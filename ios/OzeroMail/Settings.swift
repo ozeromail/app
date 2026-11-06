@@ -141,6 +141,8 @@ struct Groups: Equatable {
     var expanded: Set<Int64> = []
     /// The parts of the sheet the person closed; they start open.
     var closed: Set<String> = []
+    /// The folders whose inner folders the person hid, in the lists of folders and where mail moves.
+    var shut: Set<Int64> = []
 
     static let inboxes = "inboxes"
     static let allBoxes = "all"
@@ -158,6 +160,14 @@ struct Groups: Equatable {
     func toggled(_ part: String) -> Groups {
         var next = self
         if open(part) { next.closed.insert(part) } else { next.closed.remove(part) }
+        return next
+    }
+
+    func showsInside(_ folder: Int64) -> Bool { !shut.contains(folder) }
+
+    func toggledInside(_ folder: Int64) -> Groups {
+        var next = self
+        if showsInside(folder) { next.shut.insert(folder) } else { next.shut.remove(folder) }
         return next
     }
 }
@@ -296,10 +306,14 @@ enum Settings {
 
     /// The groups of the accounts sheet the person closed or opened.
     static var groups: Groups {
-        get { Groups(expanded: ids("expanded_groups"), closed: Set(defaults.stringArray(forKey: "closed_parts") ?? [])) }
+        get {
+            Groups(expanded: ids("expanded_groups"), closed: Set(defaults.stringArray(forKey: "closed_parts") ?? []),
+                   shut: ids("closed_folders"))
+        }
         set {
             defaults.set(newValue.expanded.map(String.init), forKey: "expanded_groups")
             defaults.set(Array(newValue.closed), forKey: "closed_parts")
+            defaults.set(newValue.shut.map(String.init), forKey: "closed_folders")
         }
     }
 

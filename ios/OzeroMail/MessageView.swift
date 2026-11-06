@@ -23,8 +23,8 @@ struct MessageView: View {
     @State private var unread: Set<Int64>?
     @State private var known: Set<Int64> = []
     @State private var showAll = false
-    /// The folders the message can move to, picked from More.
-    @State private var targets: [(folder: FolderItem, title: String)]?
+    /// The folder it most likely goes to, offered first in More.
+    @State private var quick: FolderItem?
     /// Whether the person left the list it came from here, and the question before they do.
     @State private var left = false
     @State private var leaving = false
@@ -179,8 +179,8 @@ struct MessageView: View {
             }
         }
         .animation(.smooth, value: replying == nil)
-        .moveDialog($targets, targets: { $0 }) { _, folder, title in
-            leave { await model.moveToFolder([message], to: folder, title: title) }
+        .task(id: message.id) {
+            if message.canMove { quick = try? await mail.quickMove(of: [message]) }
         }
         .alert(tr("unsubscribe_title", message.sender), isPresented: $leaving) {
             Button("action_unsubscribe", role: .destructive) { Task { await unsubscribe() } }
@@ -375,14 +375,14 @@ struct MessageView: View {
             }
         }
         if message.canMove {
-            Button("action_move_to_folder", systemImage: "folder") {
-                Task {
-                    do {
-                        targets = try await moveOrder(mail.moveTargets(of: [message]))
-                    } catch {
-                        model.error = error.textKey()
-                    }
+            if let quick {
+                Button(tr("move_to_named", quick.title), systemImage: "folder") {
+                    leave { await model.moveToFolder([message], to: quick, title: quick.title) }
                 }
+            }
+            Button("action_move_to_folder", systemImage: "folder") {
+                let message = message
+                Task { await model.move([message]) { Self.close(message, in: model) } }
             }
         }
         if message.canUnsubscribe && !left {

@@ -9,11 +9,11 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Answer, Attachment, Body, Category, Changes,
     Checkpoint, Contact, Correspondent, Correspondents, DayEvent, Draft, DraftCopy, DraftFile,
-    DraftId, DraftToPush, FileId, Flags, Folder, FolderId, FolderRole, Invite, InviteKind,
-    InviteRow, ListQuery, ListScope, MessageId, MessageLocation, MessageRow, Moved, NewAccount,
-    NewFolder, NewMail, NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile, RecentFile,
-    SavedDraft, SavedInvite, SearchFilter, Sender, Server, ServerDraft, Store, StoreError, Unsent,
-    Unsubscribe, default_label, full_text, typed_addresses,
+    DraftId, DraftToPush, FileId, Flags, Folder, FolderChange, FolderEdit, FolderId, FolderRole,
+    Invite, InviteKind, InviteRow, ListQuery, ListScope, MessageId, MessageLocation, MessageRow,
+    Moved, NewAccount, NewFolder, NewMail, NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile,
+    RecentFile, SavedDraft, SavedInvite, SearchFilter, Sender, Server, ServerDraft, Store,
+    StoreError, Unsent, Unsubscribe, default_label, folder_separator, full_text, typed_addresses,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{
@@ -465,26 +465,28 @@ impl Store for SqliteStore {
             let mut upsert = tx
                 .prepare_cached(
                     "INSERT INTO folder (account_id, remote_id, name, role) VALUES (?1, ?2, ?3, ?4)
-                     ON CONFLICT (account_id, remote_id) DO UPDATE SET name = excluded.name, role = excluded.role
-                     RETURNING id, pinned",
+                     ON CONFLICT (account_id, remote_id) DO UPDATE SET role = excluded.role,
+                         name = CASE WHEN edit IS NULL THEN excluded.name ELSE name END
+                     RETURNING id, pinned, rank, name",
                 )
                 .map_err(storage)?;
             folders
                 .iter()
                 .map(|f| {
-                    let (id, pinned) = upsert
+                    let (id, pinned, rank, name) = upsert
                         .query_row(
                             params![account.0, f.remote_id, f.name, role_str(f.role)],
-                            |r| Ok((r.get(0)?, r.get(1)?)),
+                            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
                         )
                         .map_err(storage)?;
                     Ok(Folder {
                         id: FolderId(id),
                         account_id: account,
                         remote_id: f.remote_id.clone(),
-                        name: f.name.clone(),
+                        name,
                         role: f.role,
                         pinned,
+                        rank,
                     })
                 })
                 .collect::<Result<Vec<_>, StoreError>>()?
@@ -497,7 +499,8 @@ impl Store for SqliteStore {
         let conn = self.conn();
         let mut stmt = conn
             .prepare_cached(
-                "SELECT id, remote_id, name, role, pinned FROM folder WHERE account_id = ?1 ORDER BY id",
+                "SELECT id, remote_id, name, role, pinned, rank FROM folder
+                 WHERE account_id = ?1 AND (edit IS NULL OR edit != 'delete') ORDER BY id",
             )
             .map_err(storage)?;
         let rows = stmt.query_map([account.0], folder_row(account));
@@ -508,11 +511,350 @@ impl Store for SqliteStore {
         let changed = self
             .conn()
             .execute(
-                "UPDATE folder SET pinned = ?2 WHERE id = ?1",
+                "UPDATE folder SET pinned = ?2, rank = CASE WHEN ?2 THEN rank END WHERE id = ?1",
                 params![folder.0, pinned],
             )
             .map_err(storage)?;
         found(changed)
+    }
+
+    fn set_folder_order(&self, order: &[FolderId]) -> Result<(), StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        for (place, folder) in (0_i64..).zip(order) {
+            tx.execute(
+                "UPDATE folder SET rank = ?2 WHERE id = ?1",
+                params![folder.0, place],
+            )
+            .map_err(storage)?;
+        }
+        tx.commit().map_err(storage)
+    }
+
+    fn create_folder(
+        &self,
+        account: AccountId,
+        name: &str,
+        parent: Option<FolderId>,
+        leaf: &str,
+    ) -> Result<Folder, StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        require(&tx, "SELECT 1 FROM account WHERE id = ?1", account.0)?;
+        // No id on the server yet: one of its own, which no server name starts with.
+        let id: i64 = tx
+            .query_row(
+                "INSERT INTO folder (account_id, remote_id, name, role, edit, edit_parent, edit_leaf)
+                 VALUES (?1, ':new:' || (SELECT ifnull(max(id), 0) + 1 FROM folder), ?2, ?3, 'create', ?4, ?5)
+                 RETURNING id",
+                params![account.0, name, role_str(FolderRole::Custom), parent.map(|p| p.0), leaf],
+                |r| r.get(0),
+            )
+            .map_err(storage)?;
+        tx.execute(
+            "UPDATE folder SET remote_id = ':new:' || id WHERE id = ?1",
+            [id],
+        )
+        .map_err(storage)?;
+        tx.commit().map_err(storage)?;
+        Ok(Folder {
+            id: FolderId(id),
+            account_id: account,
+            remote_id: format!(":new:{id}"),
+            name: name.to_owned(),
+            role: FolderRole::Custom,
+            pinned: false,
+            rank: None,
+        })
+    }
+
+    fn change_folder(
+        &self,
+        folder: FolderId,
+        name: &str,
+        parent: Option<FolderId>,
+        leaf: &str,
+    ) -> Result<(), StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        let (account, old) =
+            folder_name(&tx, folder, "role = 'custom'")?.ok_or(StoreError::NotFound)?;
+        // One being made stays one being made, under its new name.
+        tx.execute(
+            "UPDATE folder SET server_name = CASE WHEN edit IS NULL THEN name ELSE server_name END,
+                 edit = CASE WHEN edit IS NULL THEN 'change' ELSE edit END,
+                 name = ?2, edit_parent = ?3, edit_leaf = ?4, edit_at = 0
+             WHERE id = ?1",
+            params![folder.0, name, parent.map(|p| p.0), leaf],
+        )
+        .map_err(storage)?;
+        rename_inner(&tx, account, "name", &old, name)?;
+        tx.commit().map_err(storage)
+    }
+
+    fn delete_folder(&self, folder: FolderId, not_before: i64) -> Result<(), StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        let (account, name) =
+            folder_name(&tx, folder, "role = 'custom'")?.ok_or(StoreError::NotFound)?;
+        for id in with_inner(&tx, account, folder, &name)? {
+            tx.execute(
+                "UPDATE folder SET edit = 'delete', edit_at = ?2 WHERE id = ?1",
+                params![id, not_before],
+            )
+            .map_err(storage)?;
+        }
+        tx.commit().map_err(storage)
+    }
+
+    fn folder_mail(&self, folder: FolderId) -> Result<u32, StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        let Some((account, name)) = folder_name(&tx, folder, "1")? else {
+            return Ok(0);
+        };
+        let ids = with_inner(&tx, account, folder, &name)?;
+        let marks = vec!["?"; ids.len()].join(",");
+        tx.query_row(
+            &format!("SELECT count(*) FROM message WHERE folder_id IN ({marks})"),
+            rusqlite::params_from_iter(&ids),
+            |r| r.get(0),
+        )
+        .map_err(storage)
+    }
+
+    fn keep_folder(&self, folder: FolderId) -> Result<bool, StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        let Some((account, name)) = folder_name(&tx, folder, "edit = 'delete'")? else {
+            return Ok(false);
+        };
+        for id in with_inner(&tx, account, folder, &name)? {
+            // One the server never had is still to make, and a rename waiting still to send.
+            tx.execute(
+                "UPDATE folder SET edit_at = 0,
+                     edit = CASE WHEN remote_id LIKE ':new:%' THEN 'create'
+                         WHEN server_name IS NOT NULL THEN 'change' END
+                 WHERE id = ?1 AND edit = 'delete'",
+                [id],
+            )
+            .map_err(storage)?;
+        }
+        tx.commit().map_err(storage)?;
+        Ok(true)
+    }
+
+    fn folder_changes(
+        &self,
+        account: AccountId,
+        now: i64,
+    ) -> Result<Vec<FolderChange>, StoreError> {
+        let conn = self.conn();
+        let rows = conn
+            .prepare_cached(
+                "SELECT f.id, f.edit, f.remote_id, p.remote_id, coalesce(f.edit_leaf, f.name)
+                 FROM folder f LEFT JOIN folder p ON p.id = f.edit_parent
+                 WHERE f.account_id = ?1 AND f.edit IS NOT NULL AND f.edit_at <= ?2
+                 ORDER BY f.edit = 'delete',
+                     CASE WHEN f.edit = 'delete' THEN -length(f.name) ELSE length(f.name) END, f.id",
+            )
+            .and_then(|mut s| {
+                s.query_map(params![account.0, now], |r| {
+                    let edit = match r.get::<_, String>(1)?.as_str() {
+                        "create" => FolderEdit::Create,
+                        "change" => FolderEdit::Change,
+                        _ => FolderEdit::Delete,
+                    };
+                    Ok(FolderChange {
+                        folder: FolderId(r.get(0)?),
+                        edit,
+                        remote_id: r.get(2)?,
+                        parent: r.get(3)?,
+                        name: r.get(4)?,
+                    })
+                })?
+                .collect()
+            });
+        rows.map_err(storage)
+    }
+
+    fn folder_changed(
+        &self,
+        change: &FolderChange,
+        remote_id: Option<&str>,
+    ) -> Result<(), StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        if change.edit == FolderEdit::Delete {
+            tx.execute(
+                "DELETE FROM folder WHERE id = ?1 AND edit = 'delete'",
+                [change.folder.0],
+            )
+            .map_err(storage)?;
+            return tx.commit().map_err(storage);
+        }
+        let Some(account) = tx
+            .query_row(
+                "SELECT account_id FROM folder WHERE id = ?1",
+                [change.folder.0],
+                |r| r.get::<_, i64>(0),
+            )
+            .optional()
+            .map_err(storage)?
+        else {
+            return tx.commit().map_err(storage);
+        };
+        let new = remote_id.unwrap_or(&change.remote_id);
+        // One changed again since it was read stays to send, from the new id.
+        tx.execute(
+            "UPDATE folder SET remote_id = ?2, server_name = NULL,
+                 edit = CASE WHEN edit_leaf IS ?3
+                     AND (SELECT p.remote_id FROM folder p WHERE p.id = folder.edit_parent) IS ?4
+                     THEN NULL ELSE 'change' END
+             WHERE id = ?1",
+            params![change.folder.0, new, change.name, change.parent],
+        )
+        .map_err(storage)?;
+        tx.execute(
+            "UPDATE folder SET edit_parent = NULL, edit_leaf = NULL WHERE id = ?1 AND edit IS NULL",
+            [change.folder.0],
+        )
+        .map_err(storage)?;
+        // IMAP names inner folders by the outer one's id: they moved along.
+        if change.edit == FolderEdit::Change && new != change.remote_id {
+            rename_inner(&tx, account, "remote_id", &change.remote_id, new)?;
+        }
+        tx.commit().map_err(storage)
+    }
+
+    fn folder_refused(&self, change: &FolderChange) -> Result<(), StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        match change.edit {
+            FolderEdit::Create => {
+                // Mail moved into it shows where it was again; its copies go with the folder.
+                tx.execute("DELETE FROM op WHERE target = ?1", [change.folder.0])
+                    .map_err(storage)?;
+                tx.execute("DELETE FROM folder WHERE id = ?1", [change.folder.0])
+                    .map_err(storage)?;
+            }
+            FolderEdit::Delete => {
+                tx.execute(
+                    "UPDATE folder SET edit = NULL, edit_at = 0 WHERE id = ?1 AND edit = 'delete'",
+                    [change.folder.0],
+                )
+                .map_err(storage)?;
+            }
+            FolderEdit::Change => {
+                let row: Option<(i64, String, Option<String>)> = tx
+                    .query_row(
+                        "SELECT account_id, name, server_name FROM folder WHERE id = ?1",
+                        [change.folder.0],
+                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                    )
+                    .optional()
+                    .map_err(storage)?;
+                if let Some((account, name, was)) = row {
+                    // Without the name from before, as for one renamed again while it was
+                    // made, the next sync gives it the server's.
+                    tx.execute(
+                        "UPDATE folder SET name = coalesce(?2, name), edit = NULL,
+                             edit_parent = NULL, edit_leaf = NULL, server_name = NULL
+                         WHERE id = ?1",
+                        params![change.folder.0, was],
+                    )
+                    .map_err(storage)?;
+                    if let Some(was) = was {
+                        rename_inner(&tx, account, "name", &name, &was)?;
+                    }
+                }
+            }
+        }
+        tx.commit().map_err(storage)
+    }
+
+    fn forget_folders(&self, account: AccountId, remote_ids: &[String]) -> Result<(), StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction().map_err(storage)?;
+        let kept: HashSet<&str> = remote_ids.iter().map(String::as_str).collect();
+        let own: Vec<(i64, String)> = tx
+            .prepare_cached(
+                "SELECT id, remote_id FROM folder
+                 WHERE account_id = ?1 AND role = 'custom' AND edit IS NULL",
+            )
+            .and_then(|mut s| {
+                s.query_map([account.0], |r| Ok((r.get(0)?, r.get(1)?)))?
+                    .collect()
+            })
+            .map_err(storage)?;
+        for (id, remote_id) in own {
+            if !kept.contains(remote_id.as_str()) {
+                tx.execute("DELETE FROM folder WHERE id = ?1", [id])
+                    .map_err(storage)?;
+            }
+        }
+        tx.commit().map_err(storage)
+    }
+
+    fn used_folder(&self, folder: FolderId, at: i64) -> Result<(), StoreError> {
+        let changed = self
+            .conn()
+            .execute(
+                "UPDATE folder SET used = ?2 WHERE id = ?1",
+                params![folder.0, at],
+            )
+            .map_err(storage)?;
+        found(changed)
+    }
+
+    fn recent_folders(&self, account: AccountId, limit: u32) -> Result<Vec<FolderId>, StoreError> {
+        let conn = self.conn();
+        let rows = conn
+            .prepare_cached(
+                "SELECT id FROM folder
+                 WHERE account_id = ?1 AND used > 0 AND (edit IS NULL OR edit != 'delete')
+                 ORDER BY used DESC, id LIMIT ?2",
+            )
+            .and_then(|mut s| {
+                s.query_map(params![account.0, limit], |r| Ok(FolderId(r.get(0)?)))?
+                    .collect()
+            });
+        rows.map_err(storage)
+    }
+
+    fn sender_folders(
+        &self,
+        account: AccountId,
+        email: &str,
+    ) -> Result<(Vec<(FolderId, u32)>, bool), StoreError> {
+        let email = email.to_lowercase();
+        let Some((_, domain)) = email.rsplit_once('@') else {
+            return Ok((vec![], false));
+        };
+        let conn = self.conn();
+        // By the address, or by what it ends with.
+        let count = |sql: &str, key: &str| -> Result<Vec<(FolderId, u32)>, StoreError> {
+            conn.prepare_cached(&format!(
+                "SELECT f.id, count(*) AS n FROM message m JOIN folder f ON f.id = m.folder_id
+                 WHERE f.account_id = ?1 AND {sql} AND f.role = 'custom'
+                   AND m.stand_in = 0 AND (f.edit IS NULL OR f.edit != 'delete')
+                 GROUP BY f.id ORDER BY n DESC, f.id"
+            ))
+            .and_then(|mut s| {
+                s.query_map(params![account.0, key], |r| {
+                    Ok((FolderId(r.get(0)?), r.get(1)?))
+                })?
+                .collect()
+            })
+            .map_err(storage)
+        };
+        let exact = count("lower(m.from_email) = ?2", &email)?;
+        if !exact.is_empty() {
+            return Ok((exact, false));
+        }
+        let at = format!("@{domain}");
+        let by_domain = count("substr(lower(m.from_email), -length(?2)) = ?2", &at)?;
+        Ok((by_domain, true))
     }
 
     fn checkpoint(&self, folder: FolderId) -> Result<(Checkpoint, Vec<String>), StoreError> {
@@ -1496,6 +1838,8 @@ impl Store for SqliteStore {
                      WHERE f.account_id = ?1 AND m.stand_in = 0
                      UNION ALL
                      SELECT min(not_before) FROM outbox WHERE account_id = ?1 AND failed IS NULL
+                     UNION ALL
+                     SELECT min(edit_at) FROM folder WHERE account_id = ?1 AND edit IS NOT NULL
                  )",
             )
             .and_then(|mut s| s.query_row([account.0], |r| r.get(0)))
@@ -2161,6 +2505,7 @@ impl Store for SqliteStore {
                  FROM op o JOIN message m ON m.id = o.message_id JOIN folder f ON f.id = m.folder_id
                  LEFT JOIN folder t ON t.id = o.target
                  WHERE f.account_id = ?1 AND o.not_before <= ?2 AND m.stand_in = 0
+                   AND (t.remote_id IS NULL OR t.remote_id NOT LIKE ':new:%')
                  ORDER BY o.id",
             )
             .and_then(|mut s| {
@@ -2230,8 +2575,8 @@ impl Store for SqliteStore {
         let conn = self.conn();
         let rows = conn
             .prepare_cached(concat!(
-                "SELECT f.id, f.remote_id, f.name, f.role, f.pinned FROM folder f
-                 WHERE f.account_id = ?1 AND EXISTS (
+                "SELECT f.id, f.remote_id, f.name, f.role, f.pinned, f.rank FROM folder f
+                 WHERE f.account_id = ?1 AND (f.edit IS NULL OR f.edit = 'change') AND EXISTS (
                      SELECT 1 FROM message m WHERE m.folder_id = f.id AND ",
                 unclaimed!("m"),
                 ") ORDER BY f.id"
@@ -2748,8 +3093,88 @@ fn folder_row(account: AccountId) -> impl Fn(&Row<'_>) -> rusqlite::Result<Folde
             name: r.get(2)?,
             role: r.get::<_, Role>(3)?.0,
             pinned: r.get(4)?,
+            rank: r.get(5)?,
         })
     }
+}
+
+/// The account and whole path of the folder, if it is there and matches `filter`, a condition
+/// on its row.
+fn folder_name(
+    tx: &Transaction<'_>,
+    folder: FolderId,
+    filter: &str,
+) -> Result<Option<(i64, String)>, StoreError> {
+    tx.query_row(
+        &format!("SELECT account_id, name FROM folder WHERE id = ?1 AND {filter}"),
+        [folder.0],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+    .optional()
+    .map_err(storage)
+}
+
+/// The account's folders, each with its `column`: its name or its server id.
+fn account_paths(
+    tx: &Transaction<'_>,
+    account: i64,
+    column: &str,
+) -> Result<Vec<(i64, String)>, StoreError> {
+    tx.prepare_cached(&format!(
+        "SELECT id, {column} FROM folder WHERE account_id = ?1"
+    ))
+    .and_then(|mut s| {
+        s.query_map([account], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect()
+    })
+    .map_err(storage)
+}
+
+/// What follows `outer` among `paths` in each path inside it, the separator first: past the
+/// one separator the account's names use.
+fn inside_of<'a>(
+    paths: &'a [(i64, String)],
+    outer: &'a str,
+) -> impl Iterator<Item = (i64, &'a str)> {
+    let split = folder_separator(paths.iter().map(|(_, p)| p.as_str()));
+    paths.iter().filter_map(move |(id, path)| {
+        let rest = path.strip_prefix(outer)?;
+        rest.starts_with(split).then_some((*id, rest))
+    })
+}
+
+/// The folder and the account's folders inside it, by `name`, its whole path.
+fn with_inner(
+    tx: &Transaction<'_>,
+    account: i64,
+    folder: FolderId,
+    name: &str,
+) -> Result<Vec<i64>, StoreError> {
+    let paths = account_paths(tx, account, "name")?;
+    Ok(std::iter::once(folder.0)
+        .chain(inside_of(&paths, name).map(|(id, _)| id))
+        .collect())
+}
+
+/// Gives the account's folders inside the one whose `column`, its name or its server id, is
+/// `old` the `new` one in front instead, as the server renames them.
+fn rename_inner(
+    tx: &Transaction<'_>,
+    account: i64,
+    column: &str,
+    old: &str,
+    new: &str,
+) -> Result<(), StoreError> {
+    let paths = account_paths(tx, account, column)?;
+    let mut update = tx
+        .prepare_cached(&format!("UPDATE folder SET {column} = ?2 WHERE id = ?1"))
+        .map_err(storage)?;
+    for (id, rest) in inside_of(&paths, old) {
+        update
+            .execute(params![id, format!("{new}{rest}")])
+            .map_err(storage)?;
+    }
+    Ok(())
 }
 
 fn folder_role(tx: &Transaction<'_>, message: MessageId) -> Result<FolderRole, StoreError> {

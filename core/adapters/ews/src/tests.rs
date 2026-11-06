@@ -376,6 +376,77 @@ async fn makes_the_snoozed_folder_at_the_top() {
 }
 
 #[tokio::test]
+async fn makes_moves_renames_and_deletes_folders() {
+    let folder = |id: &str, extra: &str| {
+        format!("<m:Folders><t:Folder><t:FolderId Id=\"{id}\"/>{extra}</t:Folder></m:Folders>")
+    };
+    let (mut ews, seen) = session(move |body| match op(body) {
+        "CreateFolder" => response("CreateFolder", &[ok("CreateFolder", &folder("new", ""))]),
+        "GetFolder" => response(
+            "GetFolder",
+            &[
+                ok(
+                    "GetFolder",
+                    &folder(
+                        "bills",
+                        "<t:ParentFolderId Id=\"root\"/><t:DisplayName>Bills</t:DisplayName>",
+                    ),
+                ),
+                ok("GetFolder", &folder("root", "")),
+            ],
+        ),
+        "MoveFolder" => response("MoveFolder", &[ok("MoveFolder", &folder("bills2", ""))]),
+        "UpdateFolder" => response("UpdateFolder", &[ok("UpdateFolder", "")]),
+        "DeleteFolder" => response("DeleteFolder", &[not_found("DeleteFolder")]),
+        other => panic!("{other}"),
+    })
+    .await;
+    assert_eq!(
+        ews.create_folder(Some("work"), "Счета").await.unwrap(),
+        "new"
+    );
+    // Same place, same name: nothing to send.
+    assert_eq!(
+        ews.change_folder("bills", None, "Bills").await.unwrap(),
+        "bills"
+    );
+    assert_eq!(
+        ews.change_folder("bills", Some("work"), "Receipts")
+            .await
+            .unwrap(),
+        "bills2"
+    );
+    assert_eq!(ews.delete_folder("bills2").await, Err(ProviderError::Gone));
+
+    let seen = seen.lock().unwrap();
+    let ops: Vec<_> = seen.iter().map(|s| op(&s.body).to_owned()).collect();
+    assert_eq!(
+        ops,
+        [
+            "CreateFolder",
+            "GetFolder",
+            "GetFolder",
+            "MoveFolder",
+            "UpdateFolder",
+            "DeleteFolder"
+        ]
+    );
+    assert!(seen[0].body.contains("<t:FolderId Id=\"work\"/>"));
+    assert!(
+        seen[0]
+            .body
+            .contains("<t:DisplayName>Счета</t:DisplayName>")
+    );
+    assert!(seen[4].body.contains("<t:FolderId Id=\"bills2\"/>"));
+    assert!(
+        seen[4]
+            .body
+            .contains("<t:DisplayName>Receipts</t:DisplayName>")
+    );
+    assert!(seen[5].body.contains("HardDelete"));
+}
+
+#[tokio::test]
 async fn brings_new_mail_flags_and_removals() {
     let (mut ews, seen) = session(|body| match op(body) {
         "GetItem" => got(&[full("new", "2026-10-26T07:30:00Z", "Hi &amp; bye")]),

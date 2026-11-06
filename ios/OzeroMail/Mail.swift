@@ -468,10 +468,53 @@ final class Mail: Sendable {
         try move(messages) { try core.moveToFolder(messages: $0, folder: folder.id) }
     }
 
-    /// Where `moveToFolder` can take `messages` together: their account's inbox, archive and own
-    /// folders, but the ones they are in; none for messages of several accounts.
-    func moveTargets(of messages: [MessageItem]) async throws -> [FolderItem] {
-        try core.moveTargets(messages: messages.map(\.id))
+    /// What the move sheet offers `messages`: where they can move together (their account's
+    /// inbox, archive and own folders, but the ones they are in), the folders to put first, and
+    /// whether a new folder can be made for them.
+    func moveChoice(of messages: [MessageItem]) async throws -> MoveChoice {
+        let ids = messages.map(\.id)
+        let accounts = Set(messages.map(\.accountId))
+        let edits = try accounts.count == 1 && core.accounts().contains { accounts.contains($0.id) && $0.editsFolders }
+        return MoveChoice(targets: try core.moveTargets(messages: ids), suggestions: try core.moveSuggestions(messages: ids), canCreate: edits)
+    }
+
+    /// The folder mail from `messages`' sender went to before, or mail went to lately; nil if none.
+    func quickMove(of messages: [MessageItem]) async throws -> FolderItem? {
+        try core.moveSuggestions(messages: messages.map(\.id)).first?.folder
+    }
+
+    /// Makes a folder of `account`'s own inside `parent`, or at the top; its server gets it in the background.
+    func createFolder(account: Int64, parent: FolderItem?, name: String) async throws -> FolderItem {
+        let made = try core.createFolder(account: account, parent: parent?.id, name: name)
+        push(account: account)
+        return made
+    }
+
+    /// Names `folder` `name` and puts it inside `parent`, or at the top.
+    func changeFolder(_ folder: FolderItem, parent: FolderItem?, name: String) async throws {
+        try core.changeFolder(folder: folder.id, parent: parent?.id, name: name)
+        push(account: folder.accountId)
+    }
+
+    /// Deletes `folder` with what is inside it; `keepFolder` can bring it back for a few seconds.
+    func deleteFolder(_ folder: FolderItem) async throws {
+        try core.deleteFolder(folder: folder.id)
+        push(account: folder.accountId)
+    }
+
+    /// Brings back a folder `deleteFolder` took; false when the server has it already.
+    func keepFolder(_ folder: FolderItem) async throws -> Bool {
+        try core.keepFolder(folder: folder.id)
+    }
+
+    /// How many messages the phone has in `folder` and the ones inside it.
+    func folderMail(_ folder: FolderItem) async throws -> Int {
+        Int(try core.folderMail(folder: folder.id))
+    }
+
+    /// Puts the pinned folders in `order`.
+    func setFolderOrder(_ order: [FolderItem]) async throws {
+        try core.setFolderOrder(folders: order.map(\.id))
     }
 
     /// Leaves `message`'s list; a request or message asking to leave goes out in the background.
@@ -905,6 +948,7 @@ extension Error {
         case .UntrustedCertificate?: return "error_untrusted_certificate"
         case .DeviceBlocked?: return "error_device_blocked"
         case .TooLarge?: return "compose_files_too_large"
+        case .FolderName?: return "error_folder_name"
         default: return "error_storage"
         }
     }

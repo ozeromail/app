@@ -3509,3 +3509,233 @@ fn stores_opened_at_once_all_take_their_key() {
         t.join().unwrap().unwrap();
     }
 }
+
+/// The account's folders by name, with the ids the server knows them by.
+fn named(store: &SqliteStore, account: AccountId) -> Vec<(String, String)> {
+    let mut all: Vec<_> = store
+        .folders(account)
+        .unwrap()
+        .into_iter()
+        .map(|f| (f.name, f.remote_id))
+        .collect();
+    all.sort();
+    all
+}
+
+fn own(store: &SqliteStore, account: AccountId, names: &[&str]) -> Vec<FolderId> {
+    let folders: Vec<_> = names
+        .iter()
+        .map(|n| NewFolder {
+            remote_id: (*n).into(),
+            name: (*n).into(),
+            role: FolderRole::Custom,
+        })
+        .collect();
+    store
+        .save_folders(account, &folders)
+        .unwrap()
+        .into_iter()
+        .map(|f| f.id)
+        .collect()
+}
+
+#[test]
+fn a_folder_made_on_the_device_takes_its_server_id() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    inbox(&store, account);
+    let work = own(&store, account, &["Work"])[0];
+    let made = store
+        .create_folder(account, "Work/Ozero", Some(work), "Ozero")
+        .unwrap();
+    assert!(made.remote_id.starts_with(":new:"));
+
+    let changes = store.folder_changes(account, 0).unwrap();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].edit, FolderEdit::Create);
+    assert_eq!(changes[0].parent.as_deref(), Some("Work"));
+    assert_eq!(changes[0].name, "Ozero");
+    store
+        .folder_changed(&changes[0], Some("Work/Ozero"))
+        .unwrap();
+
+    assert!(store.folder_changes(account, 0).unwrap().is_empty());
+    assert!(named(&store, account).contains(&("Work/Ozero".into(), "Work/Ozero".into())));
+}
+
+#[test]
+fn a_renamed_folder_takes_the_ones_inside_it_along() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    inbox(&store, account);
+    let ids = own(&store, account, &["Work", "Work/Projects", "Workshop"]);
+    store.change_folder(ids[0], "Job", None, "Job").unwrap();
+    // A sync meanwhile keeps the new name.
+    own(&store, account, &["Work"]);
+    assert_eq!(
+        named(&store, account)[..3],
+        [
+            ("Inbox".into(), "INBOX".into()),
+            ("Job".into(), "Work".into()),
+            ("Job/Projects".into(), "Work/Projects".into()),
+        ]
+    );
+
+    let changes = store.folder_changes(account, 0).unwrap();
+    assert_eq!(changes[0].remote_id, "Work");
+    store.folder_changed(&changes[0], Some("Job")).unwrap();
+    assert_eq!(
+        named(&store, account),
+        [
+            ("Inbox".into(), "INBOX".into()),
+            ("Job".into(), "Job".into()),
+            ("Job/Projects".into(), "Job/Projects".into()),
+            ("Workshop".into(), "Workshop".into()),
+        ]
+    );
+    assert!(store.folder_changes(account, 0).unwrap().is_empty());
+}
+
+#[test]
+fn a_refused_rename_puts_the_old_name_back() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let ids = own(&store, account, &["Work", "Work/Projects"]);
+    store.change_folder(ids[0], "Job", None, "Job").unwrap();
+    let changes = store.folder_changes(account, 0).unwrap();
+    store.folder_refused(&changes[0]).unwrap();
+    assert_eq!(
+        named(&store, account),
+        [
+            ("Work".into(), "Work".into()),
+            ("Work/Projects".into(), "Work/Projects".into()),
+        ]
+    );
+}
+
+#[test]
+fn a_deleted_folder_waits_its_time_and_can_come_back() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let ids = own(&store, account, &["Trips", "Trips/2026", "Bills"]);
+    store.delete_folder(ids[0], 100).unwrap();
+    assert_eq!(named(&store, account), [("Bills".into(), "Bills".into())]);
+    assert!(store.folder_changes(account, 99).unwrap().is_empty());
+    assert_eq!(store.next_send(account).unwrap(), Some(100));
+
+    assert!(store.keep_folder(ids[0]).unwrap());
+    assert_eq!(named(&store, account).len(), 3);
+
+    store.delete_folder(ids[0], 100).unwrap();
+    let changes = store.folder_changes(account, 100).unwrap();
+    // The inner one first.
+    let order: Vec<_> = changes.iter().map(|c| c.remote_id.as_str()).collect();
+    assert_eq!(order, ["Trips/2026", "Trips"]);
+    for change in &changes {
+        store.folder_changed(change, None).unwrap();
+    }
+    assert!(!store.keep_folder(ids[0]).unwrap());
+    assert_eq!(named(&store, account), [("Bills".into(), "Bills".into())]);
+}
+
+#[test]
+fn a_folder_kept_after_a_delete_still_sends_its_rename() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let ids = own(&store, account, &["Work"]);
+    store.change_folder(ids[0], "Job", None, "Job").unwrap();
+    store.delete_folder(ids[0], 100).unwrap();
+    assert!(store.keep_folder(ids[0]).unwrap());
+    let changes = store.folder_changes(account, 0).unwrap();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].edit, FolderEdit::Change);
+    assert_eq!(changes[0].name, "Job");
+}
+
+#[test]
+fn counts_the_mail_in_a_folder_and_the_ones_inside_it() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let ids = own(&store, account, &["Trips", "Trips/2026", "Tripsy"]);
+    store.save_messages(ids[0], &[message(1, 100)]).unwrap();
+    store
+        .save_messages(ids[1], &[message(2, 100), message(3, 100)])
+        .unwrap();
+    store.save_messages(ids[2], &[message(4, 100)]).unwrap();
+    assert_eq!(store.folder_mail(ids[0]).unwrap(), 3);
+    assert_eq!(store.folder_mail(ids[1]).unwrap(), 2);
+    assert_eq!(store.folder_mail(FolderId(999)).unwrap(), 0);
+}
+
+#[test]
+fn a_folder_the_server_never_had_comes_back_still_to_make() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let made = store
+        .create_folder(account, "Notes", None, "Notes")
+        .unwrap();
+    store.delete_folder(made.id, 100).unwrap();
+    assert!(named(&store, account).is_empty());
+    assert!(store.keep_folder(made.id).unwrap());
+    let changes = store.folder_changes(account, 0).unwrap();
+    assert_eq!(changes[0].edit, FolderEdit::Create);
+}
+
+#[test]
+fn forgets_own_folders_the_server_no_longer_lists() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    inbox(&store, account);
+    let ids = own(&store, account, &["Old", "Kept", "Renamed"]);
+    store.change_folder(ids[2], "New", None, "New").unwrap();
+    store
+        .forget_folders(account, &["INBOX".into(), "Kept".into()])
+        .unwrap();
+    let names: Vec<_> = named(&store, account).into_iter().map(|(n, _)| n).collect();
+    assert_eq!(names, ["Inbox", "Kept", "New"]);
+}
+
+#[test]
+fn orders_pinned_folders_and_suggests_by_sender() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let ids = own(&store, account, &["A", "B", "C"]);
+    for id in &ids {
+        store.set_folder_pinned(*id, true).unwrap();
+    }
+    store.set_folder_order(&[ids[2], ids[0]]).unwrap();
+    let rank = |id| {
+        store
+            .folders(account)
+            .unwrap()
+            .into_iter()
+            .find(|f| f.id == id)
+            .unwrap()
+            .rank
+    };
+    assert_eq!(
+        (rank(ids[2]), rank(ids[0]), rank(ids[1])),
+        (Some(0), Some(1), None)
+    );
+    store.set_folder_pinned(ids[2], false).unwrap();
+    assert_eq!(rank(ids[2]), None);
+
+    store
+        .save_messages(ids[1], &[message(1, 100), message(2, 200)])
+        .unwrap();
+    let mut other = message(3, 300);
+    other.from.email = "news@example.com".into();
+    store.save_messages(ids[0], &[other]).unwrap();
+    assert_eq!(
+        store.sender_folders(account, "Anna@Example.com").unwrap(),
+        (vec![(ids[1], 2)], false)
+    );
+    assert_eq!(
+        store.sender_folders(account, "boss@example.com").unwrap(),
+        (vec![(ids[1], 2), (ids[0], 1)], true)
+    );
+
+    store.used_folder(ids[0], 10).unwrap();
+    store.used_folder(ids[1], 20).unwrap();
+    assert_eq!(store.recent_folders(account, 5).unwrap(), [ids[1], ids[0]]);
+}

@@ -1,4 +1,4 @@
-use ozero_domain::{AccountId, Action, Answer, MessageId, MessageLocation, OpId};
+use ozero_domain::{AccountId, Action, Answer, FolderChange, MessageId, MessageLocation, OpId};
 
 use super::*;
 use crate::fakes::{Memory, Server, run};
@@ -224,4 +224,89 @@ fn answers_each_invitation_before_it_moves() {
         ]
     );
     assert_eq!(store.finished.lock().unwrap().len(), 3);
+}
+
+fn change(
+    id: i64,
+    edit: FolderEdit,
+    remote_id: &str,
+    parent: Option<&str>,
+    name: &str,
+) -> FolderChange {
+    FolderChange {
+        folder: ozero_domain::FolderId(id),
+        edit,
+        remote_id: remote_id.into(),
+        parent: parent.map(Into::into),
+        name: name.into(),
+    }
+}
+
+#[test]
+fn sends_folder_changes_in_order_and_keeps_new_ids() {
+    let mut server = Server::default();
+    let changes = vec![
+        change(1, FolderEdit::Create, ":new:1", Some("Work"), "Ozero"),
+        change(2, FolderEdit::Change, "Bills", None, "Receipts"),
+        change(3, FolderEdit::Delete, "Old", None, "Old"),
+    ];
+    let store = Memory {
+        folder_changes: changes,
+        ..Memory::default()
+    };
+    run(push_folders(&store, &mut server, AccountId(1), 0)).unwrap();
+
+    let calls: Vec<_> = server
+        .folder_edits
+        .iter()
+        .map(|(what, f, p, n)| (*what, f.as_str(), p.as_deref(), n.as_str()))
+        .collect();
+    assert_eq!(
+        calls,
+        [
+            ("create", "", Some("Work"), "Ozero"),
+            ("change", "Bills", None, "Receipts"),
+            ("delete", "Old", None, ""),
+        ]
+    );
+    let done = store.folders_changed.lock().unwrap().clone();
+    let id = ozero_domain::FolderId;
+    assert_eq!(
+        done,
+        [
+            (id(1), Some("Work/Ozero".into())),
+            (id(2), Some("Receipts".into())),
+            (id(3), None),
+        ]
+    );
+}
+
+#[test]
+fn undoes_a_refused_folder_change_and_stops_offline() {
+    let mut server = Server {
+        refuse: vec![
+            ProviderError::Rejected("exists".into()),
+            ProviderError::Network("down".into()),
+        ],
+        ..Server::default()
+    };
+    let changes = vec![
+        change(1, FolderEdit::Create, ":new:1", None, "Bills"),
+        change(2, FolderEdit::Create, ":new:2", None, "Trips"),
+        change(3, FolderEdit::Create, ":new:3", None, "Notes"),
+    ];
+    let store = Memory {
+        folder_changes: changes,
+        ..Memory::default()
+    };
+    let pushed = run(push_folders(&store, &mut server, AccountId(1), 0));
+
+    assert!(pushed.is_err());
+    assert_eq!(
+        *store.folders_refused.lock().unwrap(),
+        [ozero_domain::FolderId(1)]
+    );
+    // The third waits for the next push.
+    assert_eq!(server.folder_edits.len(), 2);
+    assert!(store.folders_changed.lock().unwrap().is_empty());
 }

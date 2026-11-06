@@ -153,8 +153,12 @@ class Settings(context: Context) {
 
     /** The groups of the accounts sheet the person closed or opened. */
     var groups: Groups
-        get() = Groups(ids(EXPANDED), prefs.getStringSet(CLOSED, null).orEmpty())
-        set(value) = prefs.edit().putStringSet(EXPANDED, value.expanded.strings()).putStringSet(CLOSED, value.closed).apply()
+        get() = Groups(ids(EXPANDED), prefs.getStringSet(CLOSED, null).orEmpty(), ids(SHUT))
+        set(value) = prefs.edit()
+            .putStringSet(EXPANDED, value.expanded.strings())
+            .putStringSet(CLOSED, value.closed)
+            .putStringSet(SHUT, value.shut.strings())
+            .apply()
 
     /** The mailboxes of all accounts below the inboxes in the accounts sheet: their order and which show. */
     var allBoxes: AllBoxes
@@ -184,6 +188,7 @@ class Settings(context: Context) {
         private const val TIP = "swipe_tip_seen"
         private const val EXPANDED = "expanded_groups"
         private const val CLOSED = "closed_parts"
+        private const val SHUT = "closed_folders"
         private const val SYNCED = "synced_boxes"
         private const val ALL_ORDER = "all_boxes_order"
         private const val ALL_SHOWN = "all_boxes_shown"
@@ -196,7 +201,7 @@ class Settings(context: Context) {
  * The accounts whose folders the accounts sheet shows, and the parts of it the person closed.
  * Accounts start closed, so the sheet stays short; parts start open.
  */
-data class Groups(val expanded: Set<Long>, val closed: Set<String> = emptySet()) {
+data class Groups(val expanded: Set<Long>, val closed: Set<String> = emptySet(), val shut: Set<Long> = emptySet()) {
     fun open(account: Long) = account in expanded
 
     fun toggle(account: Long) = copy(expanded = if (open(account)) expanded - account else expanded + account)
@@ -204,6 +209,11 @@ data class Groups(val expanded: Set<Long>, val closed: Set<String> = emptySet())
     fun open(part: String) = part !in closed
 
     fun toggle(part: String) = copy(closed = if (open(part)) closed + part else closed - part)
+
+    /** The folders inside [folder] show under it, in the lists of folders and where mail moves. */
+    fun showsInside(folder: Long) = folder !in shut
+
+    fun toggleInside(folder: Long) = copy(shut = if (showsInside(folder)) shut + folder else shut - folder)
 }
 
 /** Where an action applies: Done and Snooze only where they file mail; Delete in the trash is for good. */

@@ -77,14 +77,24 @@ struct InboxView: View {
                 Task { await model.snooze(snoozing.messages, until: until) }
             }
         }
-        .moveDialog($model.moving, targets: \.targets) { moving, folder, title in
-            Task { await model.moveToFolder(moving.messages, to: folder, title: title) }
+        .sheet(item: $model.moving) { moving in
+            MoveSheet(mail: model.mail, moving: moving, folders: model.folders, groups: $model.groups) { folder, title in
+                model.moving = nil
+                moving.then()
+                Task {
+                    await model.moveToFolder(moving.messages, to: folder, title: title)
+                    // It may be a folder just made for the mail.
+                    await model.loadFolders()
+                }
+            }
         }
+        .folderSheets(model, when: !model.accountsOpen)
         .sheet(isPresented: $model.accountsOpen) {
             AccountsSheet(
                 accounts: model.accounts, folders: model.folders, mailbox: model.mailbox, drafts: model.drafts.count,
                 unread: model.peopleUnread, groups: $model.groups, allBoxes: $model.allBoxes, actions: accountsActions)
             .task { await model.loadFolders() }
+            .folderSheets(model)
             .environment(\.accountsZoom, accountsZoom)
         }
         .fullScreenCover(isPresented: $model.addingAccount) {
@@ -187,6 +197,13 @@ struct InboxView: View {
             onPin: { folder, pinned in
                 model.changeAccount {
                     try await model.mail.setPinned(folder, pinned)
+                    await model.loadFolders()
+                }
+            },
+            onFolderSheet: { model.folderSheet = $0 },
+            onFolderOrder: { order in
+                model.changeAccount {
+                    try await model.mail.setFolderOrder(order)
                     await model.loadFolders()
                 }
             },
@@ -884,6 +901,8 @@ private struct ComposeButton: View {
 private struct ChoiceBar: View {
     let model: InboxModel
     let picked: [MessageItem]
+    /// Where the chosen mail most likely goes, ready by the time More opens.
+    @State private var quick: FolderItem?
 
     /// The filled button: Done where mail is not filed yet, else back to the inbox, Not spam out of spam.
     private func main(done: Int, back: [MessageItem]) -> (label: String, act: ([MessageItem]) async -> Void)? {
@@ -901,6 +920,16 @@ private struct ChoiceBar: View {
             bar(wordy: true)
             bar(wordy: false)
         }
+        .task(id: picked.map(\.id)) {
+            quick = nil
+            guard movable else { return }
+            quick = try? await model.mail.quickMove(of: picked)
+        }
+    }
+
+    /// Folders of one account only.
+    private var movable: Bool {
+        !picked.isEmpty && picked.allSatisfy(\.canMove) && Set(picked.map(\.accountId)).count == 1
     }
 
     @ViewBuilder
@@ -975,8 +1004,12 @@ private struct ChoiceBar: View {
                 model.choice { await model.moveToInbox($0.filter(\.canMoveToInbox)) }
             }
         }
-        // Folders of one account only.
-        if picked.allSatisfy(\.canMove), Set(picked.map(\.accountId)).count == 1 {
+        if movable {
+            if let quick {
+                Button(tr("move_to_named", quick.title), systemImage: "folder") {
+                    model.choice { await model.moveToFolder($0, to: quick, title: quick.title) }
+                }
+            }
             Button("action_move_to_folder", systemImage: "folder") { model.choice { await model.move($0) } }
         }
         let flag = picked.contains { !$0.flagged }

@@ -116,6 +116,7 @@ fn archive() -> Folder {
         name: "Archive".into(),
         role: FolderRole::Archive,
         pinned: false,
+        rank: None,
     }
 }
 
@@ -313,6 +314,7 @@ fn waits_on_the_inbox_from_its_checkpoint() {
         name: remote_id.into(),
         role,
         pinned: false,
+        rank: None,
     };
     let store = Memory {
         folders: vec![
@@ -353,6 +355,7 @@ fn searches_the_server_in_the_folders_local_search_covers() {
         name: remote_id.into(),
         role,
         pinned: false,
+        rank: None,
     };
     let store = Memory {
         folders: vec![

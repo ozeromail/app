@@ -40,14 +40,16 @@ import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.temporal.ChronoUnit
 import java.time.temporal.TemporalAdjusters
-import uniffi.ozero_api.FolderItem
 import uniffi.ozero_api.MessageItem
 
 /** Messages waiting for a time to snooze to: [then] runs once one is picked, [reset] if none is. */
 class Snoozing(val messages: List<MessageItem>, val reset: () -> Unit = {}, val then: () -> Unit = {})
 
-/** Swiped or chosen [messages] waiting for a folder from [targets]; [reset] brings their rows back. */
-class Moving(val messages: List<MessageItem>, val targets: List<FolderItem>, val reset: () -> Unit)
+/**
+ * Swiped or chosen [messages] waiting for a folder from [choice]; [reset] brings their rows back,
+ * [then] runs once a folder is picked.
+ */
+class Moving(val messages: List<MessageItem>, val choice: MoveChoice, val reset: () -> Unit, val then: () -> Unit = {})
 
 /**
  * The times to snooze to, from [now] on: later today and this evening while there is time

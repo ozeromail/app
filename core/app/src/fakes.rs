@@ -10,7 +10,7 @@ use std::time::Duration;
 use ozero_domain::{
     Account, AccountId, Action, Address, Answer, Body, Category, Changes, Checkpoint, Contact,
     Correspondent, Correspondents, DayEvent, Draft, DraftCopy, DraftFile, DraftId, DraftToPush,
-    FileId, Flags, Folder, FolderId, FolderRole, ListQuery, MailProvider, MailSender,
+    FileId, Flags, Folder, FolderChange, FolderId, FolderRole, ListQuery, MailProvider, MailSender,
     MessageBuilder, MessageId, MessageLocation, MessageParser, MessageRow, Moved, NewAccount,
     NewFolder, NewMail, NewMessage, Older, Op, OpId, OutboxId, Outgoing, OutgoingFile,
     ProviderError, RawMessage, RecentFile, SavedDraft, SavedInvite, SearchFilter, ServerDraft,
@@ -48,6 +48,10 @@ pub struct Server {
     /// Each `save_draft`: the folder, message and Message-ID; the nth is kept as "dn",
     /// or fails with the first of `refuse`.
     pub drafts: Vec<(String, Vec<u8>, String)>,
+    /// Each `create_folder`, `change_folder` and `delete_folder` call: what, the folder, the
+    /// one it goes inside and its name. They fail with the first of `refuse` while any remain;
+    /// a folder made or renamed gets the id "parent/name".
+    pub folder_edits: Vec<(&'static str, String, Option<String>, String)>,
 }
 
 /// A message as `Server` returns it.
@@ -225,6 +229,30 @@ impl MailProvider for Server {
         }))
     }
 
+    fn create_folder(
+        &mut self,
+        parent: Option<&str>,
+        name: &str,
+    ) -> impl Future<Output = Result<String, ProviderError>> + Send {
+        ready(self.edit_folder("create", "", parent, name))
+    }
+
+    fn change_folder(
+        &mut self,
+        folder: &str,
+        parent: Option<&str>,
+        name: &str,
+    ) -> impl Future<Output = Result<String, ProviderError>> + Send {
+        ready(self.edit_folder("change", folder, parent, name))
+    }
+
+    fn delete_folder(
+        &mut self,
+        folder: &str,
+    ) -> impl Future<Output = Result<(), ProviderError>> + Send {
+        ready(self.edit_folder("delete", folder, None, "").map(drop))
+    }
+
     fn append(
         &mut self,
         folder: &str,
@@ -293,6 +321,26 @@ impl MessageBuilder for Builder {
 }
 
 impl Server {
+    fn edit_folder(
+        &mut self,
+        what: &'static str,
+        folder: &str,
+        parent: Option<&str>,
+        name: &str,
+    ) -> Result<String, ProviderError> {
+        let edit = (
+            what,
+            folder.to_owned(),
+            parent.map(str::to_owned),
+            name.to_owned(),
+        );
+        self.folder_edits.push(edit);
+        if !self.refuse.is_empty() {
+            return Err(self.refuse.remove(0));
+        }
+        Ok(parent.map_or_else(|| name.to_owned(), |p| format!("{p}/{name}")))
+    }
+
     fn apply(
         &mut self,
         folder: &str,
@@ -395,6 +443,13 @@ pub struct Memory {
     /// What `server_drafts` returns, and each `import_draft`.
     pub server_drafts: Vec<ServerDraft>,
     pub imported: Mutex<Vec<(SavedDraft, Option<String>, DraftCopy)>>,
+    /// What `folder_changes` returns; each `folder_changed` with the id given, and each
+    /// `folder_refused`.
+    pub folder_changes: Vec<FolderChange>,
+    pub folders_changed: Mutex<Vec<(FolderId, Option<String>)>>,
+    pub folders_refused: Mutex<Vec<FolderId>>,
+    /// Each `forget_folders`: the ids the server listed.
+    pub listed: Mutex<Vec<Vec<String>>>,
 }
 
 impl Store for Memory {
@@ -558,6 +613,7 @@ impl Store for Memory {
                 name: f.name.clone(),
                 role: f.role,
                 pinned: false,
+                rank: None,
             })
             .collect())
     }
@@ -568,6 +624,82 @@ impl Store for Memory {
 
     fn set_folder_pinned(&self, _: FolderId, _: bool) -> Result<(), StoreError> {
         Ok(())
+    }
+
+    fn set_folder_order(&self, _: &[FolderId]) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn create_folder(
+        &self,
+        _: AccountId,
+        _: &str,
+        _: Option<FolderId>,
+        _: &str,
+    ) -> Result<Folder, StoreError> {
+        Err(StoreError::NotFound)
+    }
+
+    fn change_folder(
+        &self,
+        _: FolderId,
+        _: &str,
+        _: Option<FolderId>,
+        _: &str,
+    ) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn delete_folder(&self, _: FolderId, _: i64) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn keep_folder(&self, _: FolderId) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    fn folder_mail(&self, _: FolderId) -> Result<u32, StoreError> {
+        Ok(0)
+    }
+
+    fn folder_changes(&self, _: AccountId, _: i64) -> Result<Vec<FolderChange>, StoreError> {
+        Ok(self.folder_changes.clone())
+    }
+
+    fn folder_changed(
+        &self,
+        change: &FolderChange,
+        remote_id: Option<&str>,
+    ) -> Result<(), StoreError> {
+        let done = (change.folder, remote_id.map(str::to_owned));
+        self.folders_changed.lock().unwrap().push(done);
+        Ok(())
+    }
+
+    fn folder_refused(&self, change: &FolderChange) -> Result<(), StoreError> {
+        self.folders_refused.lock().unwrap().push(change.folder);
+        Ok(())
+    }
+
+    fn forget_folders(&self, _: AccountId, remote_ids: &[String]) -> Result<(), StoreError> {
+        self.listed.lock().unwrap().push(remote_ids.to_vec());
+        Ok(())
+    }
+
+    fn used_folder(&self, _: FolderId, _: i64) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn recent_folders(&self, _: AccountId, _: u32) -> Result<Vec<FolderId>, StoreError> {
+        Ok(vec![])
+    }
+
+    fn sender_folders(
+        &self,
+        _: AccountId,
+        _: &str,
+    ) -> Result<(Vec<(FolderId, u32)>, bool), StoreError> {
+        Ok((vec![], false))
     }
 
     fn checkpoint(&self, _: FolderId) -> Result<(Checkpoint, Vec<String>), StoreError> {

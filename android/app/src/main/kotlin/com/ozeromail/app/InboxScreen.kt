@@ -347,6 +347,10 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     var snoozing by remember { mutableStateOf<Snoozing?>(null) }
     // A message swiped to another folder, off the list while the folder is picked.
     var moving by remember { mutableStateOf<Moving?>(null) }
+    // A held folder's actions, its card, or a new folder.
+    var folderSheet by remember { mutableStateOf<FolderSheet?>(null) }
+    // Mail a held finger carries to a folder beside the list.
+    val carry = remember { Carry() }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -937,14 +941,17 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         }
     }
 
-    /** Off the list while the sheet asks where to; back if it closes without a folder. */
-    fun move(rows: List<MessageItem>, reset: () -> Unit = {}) {
+    /**
+     * Off the list while the sheet asks where to; back if it closes without a folder. [then]
+     * runs once one is picked.
+     */
+    fun move(rows: List<MessageItem>, reset: () -> Unit = {}, then: () -> Unit = {}) {
         scope.launch {
             try {
-                val targets = mail.moveTargets(rows)
+                val choice = mail.moveChoice(rows)
                 // One swiped before and still waiting comes back.
                 moving?.reset?.invoke()
-                moving = Moving(rows, targets, reset)
+                moving = Moving(rows, choice, reset, then)
             } catch (e: CoreException) {
                 fail(e)
                 reset()
@@ -1052,6 +1059,21 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
 
     val openFolder = (mailbox as? Mailbox.Folder)?.let { box -> folders.find { it.id == box.id } }
     val mailboxesState = MailboxesState(accounts, folders, mailbox, drafts.size, peopleUnread, allBoxes, groups)
+    // Held mail carried beside the list goes to the folder it is let go on.
+    carry.lookUp = { ids -> ids.mapNotNull { id -> messages.find { it.id == id } } }
+    carry.onStart = { rows ->
+        scope.launch {
+            carry.allowed = try {
+                mail.moveTargets(rows).map { it.id }.toSet()
+            } catch (e: CoreException) {
+                emptySet()
+            }
+        }
+    }
+    carry.onDrop = { rows, folder, title ->
+        chosen = emptySet()
+        moveToFolder(rows, folder, title)
+    }
     // The sheet's and the wide screen's mailboxes do the same; going somewhere closes the sheet.
     val accountsActions = AccountsActions(
         onDrafts = {
@@ -1079,6 +1101,22 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                     mail.setPinned(folder, pinned)
                     loadFolders()
                     note(if (pinned) folderPinned else folderUnpinned)
+                } catch (e: CoreException) {
+                    fail(e)
+                }
+            }
+        },
+        onFolderMenu = { folderSheet = FolderSheet.Menu(it) },
+        onFolder = { folder ->
+            val edits = accounts.find { it.id == folder.accountId }?.editsFolders == true
+            folderSheet = if (edits) FolderSheet.Card(folder) else FolderSheet.Menu(folder)
+        },
+        onNewFolder = { folderSheet = FolderSheet.New(it.id, null) },
+        onFolderOrder = { order ->
+            scope.launch {
+                try {
+                    mail.setFolderOrder(order)
+                    loadFolders()
                 } catch (e: CoreException) {
                     fail(e)
                 }
@@ -1223,6 +1261,12 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 closeSearch()
                 moveToFolder(listOf(message), folder, title)
             }.takeIf { message.canMove },
+            onPickFolder = {
+                move(listOf(message)) {
+                    open = null
+                    closeSearch()
+                }
+            },
             onSpam = {
                 open = null
                 closeSearch()
@@ -1350,6 +1394,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                 Mailboxes(
                                     state = mailboxesState,
                                     actions = accountsActions,
+                                    carry = carry,
                                     modifier = Modifier.width(MAILBOXES).fillMaxHeight(),
                                 )
                                 VerticalDivider(color = colors.outlineVariant)
@@ -1459,6 +1504,9 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                 onInbox = { choice { rows -> moveToInbox(rows.filter { it.canMoveToInbox }) } },
                                 onSpam = { choice { rows -> spam(rows.filter { it.canSpam }) } },
                                 onMove = { choice { rows -> move(rows) } },
+                                quickMove = mail::quickMove,
+                                onMoveTo = { folder, title -> choice { rows -> moveToFolder(rows, folder, title) } },
+                                carry = carry.takeIf { wide && reading == null },
                                 onFlag = { flagged -> choice { setFlag(it, flagged) } },
                                 wide = wide,
                                 showing = reading?.id,
@@ -1474,6 +1522,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 if (transition.targetState != EnterExitState.Visible) Box(Modifier.matchParentSize().blockTouches())
             }
         }
+        CarriedMail(carry)
         AccountsSheet(
             visible = accountsOpen,
             lift = lift,
@@ -1503,14 +1552,36 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             },
         ) {
             rememberLast(moving)?.let { shown ->
-                MoveTargets(shown.targets) { folder, title ->
+                MovePicker(mail, shown.messages, shown.choice, folders, groups, ::keepGroups) { folder, title ->
                     // Once: the folders stay on the sheet while it goes down.
-                    if (moving == null) return@MoveTargets
+                    if (moving == null) return@MovePicker
                     moving = null
+                    shown.then()
                     moveToFolder(shown.messages, folder, title, shown.reset)
+                    // It may be a folder just made for the mail.
+                    scope.launch { loadFolders() }
                 }
             }
         }
+        FolderSheets(
+            mail = mail,
+            shown = folderSheet,
+            accounts = accounts,
+            folders = folders,
+            onShow = { folderSheet = it },
+            onPin = accountsActions.onPin,
+            onChanged = { scope.launch { loadFolders() } },
+            onDeleted = { folder ->
+                scope.launch {
+                    loadFolders()
+                    // Out of a folder that is gone, with the ones inside it.
+                    val open = mailbox as? Mailbox.Folder
+                    if (open != null && folders.none { it.id == open.id }) mailbox = Mail.INBOX
+                    if (!offerUndo(context.getString(R.string.folder_deleted, folder.shortName))) return@launch
+                    if (mail.keepFolder(folder)) loadFolders() else note(undoLate)
+                }
+            },
+        )
     }
     crash?.let { report ->
         fun decided() {
@@ -1669,7 +1740,12 @@ private fun InboxList(
     onInbox: () -> Unit,
     onSpam: () -> Unit,
     onMove: () -> Unit,
+    /** The folder to offer the chosen mail first, if any. */
+    quickMove: suspend (List<MessageItem>) -> FolderItem?,
+    onMoveTo: (FolderItem, String) -> Unit,
     onFlag: (flagged: Boolean) -> Unit,
+    /** Beside the mailboxes, so held mail can be carried to them. */
+    carry: Carry?,
     /** Beside the mailboxes: the dock is one row. */
     wide: Boolean = false,
     /** The message open beside the list, which leaves the dock only the tabs where there are tabs. */
@@ -1683,6 +1759,18 @@ private fun InboxList(
     val choosing = picked.isNotEmpty()
     val mode by animateFloatAsState(if (choosing) 1f else 0f, Motion.settle(), label = "choosing")
     var more by remember { mutableStateOf(false) }
+    val movable = picked.isNotEmpty() && picked.all { it.canMove } && picked.distinctBy { it.accountId }.size == 1
+    // Where the chosen mail most likely goes, ready by the time More opens.
+    var quick by remember { mutableStateOf<FolderItem?>(null) }
+    LaunchedEffect(chosen, movable) {
+        quick = null
+        if (!movable) return@LaunchedEffect
+        quick = try {
+            quickMove(picked)
+        } catch (e: CoreException) {
+            null
+        }
+    }
     // The bar's filled button: Done where mail is not filed yet, else back to the inbox.
     val done = picked.count { it.canArchive }
     val back = picked.filter { it.canMoveToInbox }
@@ -1860,6 +1948,7 @@ private fun InboxList(
                         chosen = { chosenNow.filterTo(LinkedHashSet()) { id -> rowsNow.any { it.id == id } } },
                         onChoose = { chooseNow(it) },
                         onHold = { haptics.performHapticFeedback(HapticFeedbackType.LongPress) },
+                        carry = carry,
                     ),
                 state = listState,
                 contentPadding = PaddingValues(top = top, bottom = dockHeight + 16.dp),
@@ -2044,7 +2133,11 @@ private fun InboxList(
             }
             if (picked.any { it.canSnooze }) act(R.drawable.ic_snooze, stringResource(R.string.action_snooze), onSnooze)
             // Folders of one account only.
-            if (picked.all { it.canMove } && picked.distinctBy { it.accountId }.size == 1) {
+            if (movable) {
+                quick?.let { folder ->
+                    val title = folder.title()
+                    act(R.drawable.ic_folder, stringResource(R.string.move_to_named, title)) { onMoveTo(folder, title) }
+                }
                 act(R.drawable.ic_folder, stringResource(R.string.action_move_to_folder), onMove)
             }
             if (picked.any { it.canSpam }) act(R.drawable.ic_spam, stringResource(R.string.action_spam), onSpam)

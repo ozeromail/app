@@ -15,19 +15,29 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import uniffi.ozero_api.FolderItem
+import uniffi.ozero_api.MessageItem
 
 /** How long a finger rests on a row before it starts choosing. */
 private const val HOLD_MS = 350L
@@ -61,9 +71,11 @@ fun Modifier.chooseRows(
     chosen: () -> Set<Long>,
     onChoose: (Set<Long>) -> Unit,
     onHold: () -> Unit,
-): Modifier = pointerInput(list) {
+    carry: Carry? = null,
+): Modifier = then(if (carry != null) Modifier.onGloballyPositioned { carry.list = it } else Modifier).pointerInput(list, carry) {
     val slop = viewConfiguration.touchSlop
     val edge = EDGE.toPx()
+    val aside = CARRY_ASIDE.toPx()
 
     /**
      * The row under [y], or unless [exact] the nearest one: a stroke may pass the title or
@@ -126,6 +138,8 @@ fun Modifier.chooseRows(
                 }
             }
             val drawn = stroke ?: return@awaitEachGesture
+            // A held finger that goes aside before it passes another row carries the chosen mail.
+            val held = twoFrom == null
             onChoose(drawn.to(drawn.from))
             var y = down.position.y
             // Near the top or bottom edge the list scrolls on by itself, so the stroke goes on.
@@ -143,16 +157,39 @@ fun Modifier.chooseRows(
                     if (by != 0f && list.scrollBy(by) != 0f) rowAt(y, drawn.rows)?.let { onChoose(drawn.to(it)) }
                 }
             }
-            // The stroke owns every finger until they all lift; it ends as the first one does.
-            while (true) {
-                val event = awaitPointerEvent(PointerEventPass.Initial)
-                event.changes.forEach { it.consume() }
-                val pressed = event.changes.filter { it.pressed && it.id in fingers }
-                if (pressed.size < fingers.size) break
-                y = middle(pressed)
-                rowAt(y, drawn.rows)?.let { onChoose(drawn.to(it)) }
+            var stayed = true
+            var carrying = false
+            try {
+                // The stroke owns every finger until they all lift; it ends as the first one does.
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    event.changes.forEach { it.consume() }
+                    val pressed = event.changes.filter { it.pressed && it.id in fingers }
+                    if (pressed.size < fingers.size) break
+                    val at = pressed[0].position
+                    if (carrying) {
+                        carry?.move(at)
+                        continue
+                    }
+                    val moved = at - down.position
+                    if (carry != null && held && stayed && abs(moved.x) > aside && abs(moved.x) > 2 * abs(moved.y) &&
+                        carry.start((drawn.before + drawn.rows[drawn.from]).toList(), at)
+                    ) {
+                        carrying = true
+                        scrolling.cancel()
+                        continue
+                    }
+                    y = middle(pressed)
+                    rowAt(y, drawn.rows)?.let {
+                        if (it != drawn.from) stayed = false
+                        onChoose(drawn.to(it))
+                    }
+                }
+                if (carrying) carry?.drop()
+            } finally {
+                scrolling.cancel()
+                if (carrying) carry?.cancel()
             }
-            scrolling.cancel()
             while (currentEvent.changes.any { it.pressed }) {
                 awaitPointerEvent(PointerEventPass.Initial).changes.forEach { it.consume() }
             }
@@ -162,6 +199,78 @@ fun Modifier.chooseRows(
 
 /** How close to the list's edge a stroke makes it scroll on. */
 private val EDGE = 56.dp
+
+/** How far aside a held finger goes to carry mail rather than choose more. */
+private val CARRY_ASIDE = 48.dp
+
+/** How long carried mail rests on a closed folder or account before it opens. */
+const val SPRING_MS = 550L
+
+/** A folder carried mail can be dropped on, where it is on the screen, and its name. */
+class Place(val bounds: Rect, val folder: FolderItem, val title: String)
+
+/**
+ * Chosen mail carried by a held finger from the list to a folder beside it, as on a Mac. The
+ * list starts and moves it; the folders put themselves in [places]; [onStart] says where the
+ * mail can go, [onDrop] moves it there.
+ */
+@Stable
+class Carry {
+    /** The carried messages, all of one account; null while none are carried. */
+    var messages by mutableStateOf<List<MessageItem>?>(null)
+        private set
+
+    /** Where the finger is, in the window. */
+    var at by mutableStateOf(Offset.Zero)
+        private set
+
+    /** The folder under the finger that takes the mail, if any. */
+    var over by mutableStateOf<Place?>(null)
+        private set
+
+    /** The ids of the folders the carried mail can go to. */
+    var allowed by mutableStateOf(emptySet<Long>())
+
+    internal var list: LayoutCoordinates? = null
+    val places = HashMap<Long, Place>()
+
+    /** The messages of these ids, as the list has them. */
+    var lookUp: (List<Long>) -> List<MessageItem> = { emptyList() }
+    var onStart: (List<MessageItem>) -> Unit = {}
+    var onDrop: (List<MessageItem>, FolderItem, String) -> Unit = { _, _, _ -> }
+
+    fun takes(folder: FolderItem): Boolean = messages != null && folder.id in allowed
+
+    /** Picks up [ids] at [local] in the list, if they can move together; false if they cannot. */
+    internal fun start(ids: List<Long>, local: Offset): Boolean {
+        val rows = lookUp(ids)
+        if (rows.isEmpty() || rows.size != ids.size || rows.any { !it.canMove } || rows.distinctBy { it.accountId }.size != 1) return false
+        allowed = emptySet()
+        messages = rows
+        onStart(rows)
+        move(local)
+        return true
+    }
+
+    internal fun move(local: Offset) {
+        val window = list?.takeIf { it.isAttached }?.localToRoot(local) ?: return
+        at = window
+        over = places.values.firstOrNull { it.bounds.contains(window) && takes(it.folder) }
+    }
+
+    /** The finger lifted: the mail goes to the folder under it, if one takes it. */
+    internal fun drop() {
+        val rows = messages
+        val place = over
+        cancel()
+        if (rows != null && place != null) onDrop(rows, place.folder, place.title)
+    }
+
+    internal fun cancel() {
+        messages = null
+        over = null
+    }
+}
 
 /** The mark before a row while choosing: a ring, filled when the row is chosen. */
 @Composable

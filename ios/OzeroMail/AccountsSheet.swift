@@ -7,6 +7,10 @@ struct AccountsActions {
     let onInAll: (AccountItem, Bool) -> Void
     let onOrder: ([AccountItem]) -> Void
     let onPin: (FolderItem, Bool) -> Void
+    /// A folder's card, or the form for a new folder.
+    let onFolderSheet: (FolderSheet) -> Void
+    /// The pinned folders of one account in their new order.
+    let onFolderOrder: ([FolderItem]) -> Void
     let onSignIn: (AccountItem) -> Void
     /// Opens an account's settings.
     let onAccount: (AccountItem) -> Void
@@ -69,15 +73,15 @@ struct AccountsSheet: View {
                     Button(action: actions.onSettings) { Image(systemName: "gear") }
                         .accessibilityLabel(Text("settings_title"))
                 }
-                // With one account there is nothing to switch or move.
-                if accounts.count > 1 {
+                // With one account and no folders to change there is nothing to edit.
+                if editable(accounts: accounts, folders: folders) {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button(editing ? "action_done" : "action_edit") { withAnimation(.smooth) { editing.toggle() } }
                     }
                 }
             }
             .navigationDestination(isPresented: $showFolders) {
-                FoldersPage(accounts: accounts, folders: folders, mailbox: mailbox, actions: actions)
+                FoldersPage(accounts: accounts, folders: folders, mailbox: mailbox, groups: $groups, actions: actions)
             }
         }
         .presentationDetents(fit > 0 ? [.height(fit), .large] : [.medium, .large], selection: $detent)
@@ -97,7 +101,7 @@ struct AccountsSheet: View {
                     actions.onMailbox(Mail.inbox)
                 }
                 SignInAgain(account: one, actions: actions)
-                AccountFolders(account: one, folders: folders, mailbox: mailbox, actions: actions)
+                AccountFolders(account: one, folders: folders, mailbox: mailbox, groups: $groups, actions: actions)
             } else {
                 let inAll = accounts.filter(\.inAll)
                 FolderRow(title: tr("folder_all_inbox"), open: mailbox == Mail.inbox,
@@ -185,13 +189,14 @@ private struct FoldersPage: View {
     let accounts: [AccountItem]
     let folders: [FolderItem]
     let mailbox: Mailbox
+    @Binding var groups: Groups
     let actions: AccountsActions
 
     var body: some View {
         List {
             ForEach(accounts, id: \.id) { account in
                 Section {
-                    AccountFolders(account: account, folders: folders, mailbox: mailbox, actions: actions)
+                    AccountFolders(account: account, folders: folders, mailbox: mailbox, groups: $groups, actions: actions)
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
                 } header: {
@@ -285,7 +290,21 @@ struct MailboxRows: View {
                     actions.onMailbox(Mail.inbox)
                 }
                 signInAgain(one)
-                AccountFolders(account: one, folders: folders, mailbox: mailbox, actions: actions)
+                if editing {
+                    EditFolders(account: one, folders: folders, actions: actions)
+                } else {
+                    AccountFolders(account: one, folders: folders, mailbox: mailbox, groups: $groups, actions: actions)
+                }
+            } header: {
+                // Beside the list there is no bar for Edit to go in.
+                if editInHeader && editable(accounts: accounts, folders: folders) {
+                    HStack {
+                        Spacer()
+                        Button(editing ? "action_done" : "action_edit") { withAnimation(.smooth) { editing.toggle() } }
+                            .font(.smallStrong)
+                            .textCase(nil)
+                    }
+                }
             }
         } else {
             Section {
@@ -296,6 +315,16 @@ struct MailboxRows: View {
                 }
             }
             inboxes
+            if editing {
+                // Each account's folders, to order, change and add to.
+                ForEach(accounts.filter { account in account.editsFolders || folders.contains { $0.accountId == account.id && $0.pinned } }, id: \.id) { account in
+                    Section {
+                        EditFolders(account: account, folders: folders, actions: actions)
+                    } header: {
+                        Label { Text(verbatim: account.name) } icon: { AccountDot(color: account.tint) }
+                    }
+                }
+            }
             allAccounts
         }
         if settings {
@@ -354,7 +383,7 @@ struct MailboxRows: View {
                         }
                         signInAgain(account)
                         if shown {
-                            AccountFolders(account: account, folders: folders, mailbox: mailbox, actions: actions, depth: 1)
+                            AccountFolders(account: account, folders: folders, mailbox: mailbox, groups: $groups, actions: actions, depth: 1)
                         }
                     }
                 }
@@ -408,11 +437,13 @@ struct MailboxRows: View {
 
 /// An account's folders, `depth` steps in: its system ones in the usual order, then its own. Of
 /// those, the pinned ones show, or all while the account has few and none pinned; Other folders
-/// shows the rest, each inside the one it is in. Holding one of its own pins or unpins it.
+/// shows the rest, each inside the one it is in, unless the person closed that one. Holding one
+/// of its own offers what can be done with it, pinning first.
 private struct AccountFolders: View {
     let account: AccountItem
     let folders: [FolderItem]
     let mailbox: Mailbox
+    @Binding var groups: Groups
     let actions: AccountsActions
     var depth = 0
 
@@ -426,19 +457,36 @@ private struct AccountFolders: View {
         }
         let own = mine.filter { $0.role == .custom }
         let few = !own.contains(where: \.pinned) && own.count <= fewFolders
-        let shown = treeOrder(all || few ? own : own.filter(\.pinned))
-        let ids = Set(shown.map(\.id))
-        ForEach(shown, id: \.id) { folder in
+        let rows = folderTree(all || few ? own : own.filter(\.pinned), shows: groups.showsInside, depth: depth)
+        ForEach(rows, id: \.folder.id) { row in
+            let folder = row.folder
             let box = Mailbox.folder(id: folder.id)
-            // Inside a folder that shows too, it goes under it by its own name.
-            let nested = folder.parent.map(ids.contains) ?? false
-            FolderRow(icon: folder.pinned && (all || few) ? "pin" : "folder", title: folder.shownName(ids),
-                      open: box == mailbox, depth: depth + (nested ? 1 : 0)) { actions.onMailbox(box) }
-                .contextMenu {
-                    Button { actions.onPin(folder, !folder.pinned) } label: {
-                        Label(folder.pinned ? "action_unpin" : "action_pin", systemImage: folder.pinned ? "pin.slash" : "pin")
+            HStack(spacing: 4) {
+                FolderRow(icon: folder.pinned && (all || few) ? "pin" : "folder", title: row.title,
+                          open: box == mailbox, depth: row.depth) { actions.onMailbox(box) }
+                if row.inside {
+                    Twisty(folder: row.title, open: groups.showsInside(folder.id)) {
+                        withAnimation(.smooth) { groups = groups.toggledInside(folder.id) }
                     }
                 }
+            }
+            .contextMenu {
+                Button { actions.onPin(folder, !folder.pinned) } label: {
+                    Label(folder.pinned ? "action_unpin" : "action_pin", systemImage: folder.pinned ? "pin.slash" : "pin")
+                }
+                if account.editsFolders {
+                    Divider()
+                    Button { actions.onFolderSheet(.new(account: account.id, parent: folder)) } label: {
+                        Label("folder_new_inside", systemImage: "folder.badge.plus")
+                    }
+                    Button { actions.onFolderSheet(.card(folder)) } label: { Label("folder_rename", systemImage: "pencil") }
+                    Button { actions.onFolderSheet(.card(folder)) } label: { Label("folder_move", systemImage: "folder") }
+                    Divider()
+                    Button(role: .destructive) { actions.onFolderSheet(.card(folder, deleting: true)) } label: {
+                        Label("folder_delete_ask", systemImage: "trash")
+                    }
+                }
+            }
         }
         if !few {
             Button { withAnimation(.smooth) { all.toggle() } } label: {
@@ -446,7 +494,7 @@ private struct AccountFolders: View {
                     Image(systemName: all ? "chevron.up" : "ellipsis").frame(width: slot)
                     Text(all ? "folders_pinned_only" : "folders_other")
                     Spacer()
-                    if !all { Text(verbatim: "\(own.count - shown.count)").font(.small) }
+                    if !all { Text(verbatim: "\(own.filter { !$0.pinned }.count)").font(.small) }
                 }
                 .foregroundStyle(.secondary)
                 .padding(.leading, indent(depth))
@@ -461,31 +509,43 @@ private struct AccountFolders: View {
     }
 }
 
-/// Where a message can move, from `targets`, each with the name it shows with: the account's
-/// inbox and archive, then its own folders in tree order.
-func moveOrder(_ targets: [FolderItem]) -> [(folder: FolderItem, title: String)] {
-    let ids = Set(targets.map(\.id))
-    let usual = targets.filter { $0.role != .custom }.sorted { $0.role.rank < $1.role.rank }
-    return usual.map { ($0, $0.title) } + treeOrder(targets.filter { $0.role == .custom }).map { ($0, $0.shownName(ids)) }
+/// An account's own folders while editing: the pinned ones first, moved by their handles, then
+/// the rest as a tree; a tap opens a folder's card, where the account's folders can change. Then
+/// a new folder.
+private struct EditFolders: View {
+    let account: AccountItem
+    let folders: [FolderItem]
+    let actions: AccountsActions
+
+    var body: some View {
+        let own = folders.filter { $0.accountId == account.id && $0.role == .custom }
+        let pinned = own.filter(\.pinned).sorted { ($0.rank ?? .max, $0.shortName.lowercased()) < ($1.rank ?? .max, $1.shortName.lowercased()) }
+        ForEach(pinned, id: \.id) { folder in
+            FolderRow(icon: "pin", title: folder.shortName, open: false) { open(folder) }
+        }
+        .onMove { from, to in
+            var order = pinned
+            order.move(fromOffsets: from, toOffset: to)
+            actions.onFolderOrder(order)
+        }
+        .environment(\.editMode, .constant(.active))
+        ForEach(folderTree(own.filter { !$0.pinned }), id: \.folder.id) { row in
+            FolderRow(icon: "folder", title: row.title, open: false, depth: row.depth) { open(row.folder) }
+        }
+        if account.editsFolders {
+            NewFolderButton(title: tr("folder_new")) { actions.onFolderSheet(.new(account: account.id, parent: nil)) }
+        }
+    }
+
+    private func open(_ folder: FolderItem) {
+        // Without folders to change, the card only pins.
+        if account.editsFolders { actions.onFolderSheet(.card(folder)) } else { actions.onPin(folder, !folder.pinned) }
+    }
 }
 
-/// `folders` in tree order: each folder with the ones inside it right under it, by the names
-/// they show with.
-private func treeOrder(_ folders: [FolderItem]) -> [FolderItem] {
-    let ids = Set(folders.map(\.id))
-    let inside = Dictionary(grouping: folders) { folder in folder.parent.flatMap { ids.contains($0) ? $0 : nil } }
-    func under(_ parent: Int64?) -> [FolderItem] {
-        (inside[parent] ?? []).sorted { $0.shownName(ids).lowercased() < $1.shownName(ids).lowercased() }
-            .flatMap { [$0] + under($0.id) }
-    }
-    return under(nil)
-}
-
-private extension FolderItem {
-    /// Inside a folder that shows too, among `ids`, or at the top, its own name; else the whole path.
-    func shownName(_ ids: Set<Int64>) -> String {
-        (parent.map(ids.contains) ?? true) ? shortName : name
-    }
+/// Something to edit: accounts to switch and move, or folders to make, change or order.
+private func editable(accounts: [AccountItem], folders: [FolderItem]) -> Bool {
+    accounts.count > 1 || accounts.contains(where: \.editsFolders) || folders.filter(\.pinned).count > 1
 }
 
 /// An account with no more own folders than this and none pinned shows them all.

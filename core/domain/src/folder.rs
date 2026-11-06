@@ -113,6 +113,58 @@ pub struct Folder {
     pub role: FolderRole,
     /// The person pinned it, so the apps show it with the account's usual folders.
     pub pinned: bool,
+    /// Its place among the account's pinned folders, as the person ordered them; None for
+    /// one pinned before they did, which goes after them by name.
+    pub rank: Option<u32>,
+}
+
+impl Folder {
+    /// Whether its server has it: not one made on the device, see [`on_server`].
+    pub fn on_server(&self) -> bool {
+        on_server(&self.remote_id)
+    }
+}
+
+/// Whether a folder's `remote_id` is the server's: `Store::create_folder` gives one made on
+/// the device an id starting with `:new:` until the server gives it one.
+pub fn on_server(remote_id: &str) -> bool {
+    !remote_id.starts_with(":new:")
+}
+
+/// What the account's folder names split their paths with: `.` on servers that keep folders
+/// under INBOX, `/` on the rest and for labels. Only one of them, so a name such as
+/// "Dr. Who" stays whole.
+pub fn folder_separator<'a>(mut names: impl Iterator<Item = &'a str>) -> char {
+    if names.any(|n| n.starts_with("INBOX.")) {
+        '.'
+    } else {
+        '/'
+    }
+}
+
+/// What the person did to one of their own folders on the device that its server does not
+/// have yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FolderEdit {
+    /// Made it.
+    Create,
+    /// Renamed it or put it in another folder.
+    Change,
+    /// Deleted it, with its mail.
+    Delete,
+}
+
+/// A folder change waiting for the server, with what the server needs to make it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderChange {
+    pub folder: FolderId,
+    pub edit: FolderEdit,
+    /// The folder's id on the server; none yet for one being made.
+    pub remote_id: String,
+    /// The id of the folder it goes inside; None at the top level.
+    pub parent: Option<String>,
+    /// Its own name, without the folders it is inside.
+    pub name: String,
 }
 
 #[cfg(test)]

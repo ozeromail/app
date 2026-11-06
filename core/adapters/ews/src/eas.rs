@@ -353,6 +353,40 @@ impl EasSession {
         Err(protocol("FolderSync keeps refusing its key"))
     }
 
+    /// Sends a FolderCreate, FolderUpdate or FolderDelete, by its `tag`, with the key of an up-to-date list,
+    /// keeping the key it answers with. A folder no longer there is `Gone`.
+    async fn change_list(
+        &mut self,
+        tag: &'static str,
+        fields: impl FnOnce(String) -> Vec<Node>,
+    ) -> Result<Node, ProviderError> {
+        let command = tag.trim_start_matches("FolderHierarchy:");
+        self.folder_list().await?;
+        let key = self.state.get("folders.key").unwrap_or_else(|| "0".into());
+        let request = Node::new(tag, fields(key));
+        let answer = self.command(command, &request, false).await?;
+        match status(&answer) {
+            1 => {
+                let new_key = answer.text_at(&["FolderHierarchy:SyncKey"]);
+                self.state.set("folders.key", Some(new_key));
+                Ok(answer)
+            }
+            4 => Err(ProviderError::Gone),
+            s => Err(ProviderError::Rejected(format!("{command} status {s}"))),
+        }
+    }
+
+    /// Changes the saved folder list as the server did, so its key still fits it.
+    fn edit_saved(&self, edit: impl FnOnce(&mut Vec<Entry>)) {
+        let mut list = self
+            .state
+            .get("folders")
+            .map(|f| read_folders(&f))
+            .unwrap_or_default();
+        edit(&mut list);
+        self.state.set("folders", Some(&write_folders(&list)));
+    }
+
     fn synced(&self, folder: &str) -> Option<Synced> {
         let saved = self.state.get(&format!("sync.{folder}"))?;
         let mut parts = saved.splitn(4, '\t');
@@ -925,6 +959,74 @@ impl MailProvider for EasSession {
                 "EmptyFolderContents status {s}, {e}"
             ))),
         }
+    }
+
+    async fn create_folder(
+        &mut self,
+        parent: Option<&str>,
+        name: &str,
+    ) -> Result<String, ProviderError> {
+        let name = name.trim();
+        let parent = parent.unwrap_or("0");
+        let answer = self
+            .change_list("FolderHierarchy:FolderCreate", |key| {
+                vec![
+                    Node::text("FolderHierarchy:SyncKey", key),
+                    Node::text("FolderHierarchy:ParentId", parent),
+                    Node::text("FolderHierarchy:DisplayName", name),
+                    // A mail folder of the user's.
+                    Node::text("FolderHierarchy:Type", "12"),
+                ]
+            })
+            .await?;
+        let id = answer.text_at(&["FolderHierarchy:ServerId"]).to_owned();
+        self.edit_saved(|list| {
+            list.push(Entry {
+                id: id.clone(),
+                parent: parent.to_owned(),
+                kind: "12".into(),
+                name: name.to_owned(),
+            });
+        });
+        Ok(id)
+    }
+
+    async fn change_folder(
+        &mut self,
+        folder: &str,
+        parent: Option<&str>,
+        name: &str,
+    ) -> Result<String, ProviderError> {
+        let name = name.trim();
+        let parent = parent.unwrap_or("0");
+        self.change_list("FolderHierarchy:FolderUpdate", |key| {
+            vec![
+                Node::text("FolderHierarchy:SyncKey", key),
+                Node::text("FolderHierarchy:ServerId", folder),
+                Node::text("FolderHierarchy:ParentId", parent),
+                Node::text("FolderHierarchy:DisplayName", name),
+            ]
+        })
+        .await?;
+        self.edit_saved(|list| {
+            for e in list.iter_mut().filter(|e| e.id == folder) {
+                e.parent = parent.to_owned();
+                e.name = name.to_owned();
+            }
+        });
+        Ok(folder.to_owned())
+    }
+
+    async fn delete_folder(&mut self, folder: &str) -> Result<(), ProviderError> {
+        self.change_list("FolderHierarchy:FolderDelete", |key| {
+            vec![
+                Node::text("FolderHierarchy:SyncKey", key),
+                Node::text("FolderHierarchy:ServerId", folder),
+            ]
+        })
+        .await?;
+        self.edit_saved(|list| list.retain(|e| e.id != folder));
+        Ok(())
     }
 
     async fn create_snoozed(&mut self, name: &str) -> Result<NewFolder, ProviderError> {
