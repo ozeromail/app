@@ -78,10 +78,14 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarDuration
@@ -90,20 +94,11 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
-import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.unit.Velocity
-import androidx.compose.animation.core.animate
-import androidx.compose.runtime.mutableFloatStateOf
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.Orientation
@@ -125,9 +120,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.VisibilityThreshold
 import androidx.compose.runtime.mutableIntStateOf
@@ -168,7 +161,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -564,7 +556,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             syncAgain -= next
             return sync(next, quietly)
         }
-        // The pulled drop lands before the gap closes, however quick the sync.
+        // The spinner shows for a moment, however quick the sync.
         if (pulled) delay(started + PULLED_MS - SystemClock.elapsedRealtime())
         upToDate = pulled && synced
         pulled = false
@@ -1365,11 +1357,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                 syncing = syncing,
                                 refreshing = pulled,
                                 listLoaded = listLoaded,
-                                checking = when {
-                                    waiting -> R.string.lake_loading_title to R.string.lake_loading_slow.takeIf { slow > 0 }
-                                    pulled -> R.string.lake_checking_title to R.string.status_slow.takeIf { slow > 0 }
-                                    else -> null
-                                },
+                                checking = if (waiting) R.string.lake_loading_title to R.string.lake_loading_slow.takeIf { slow > 0 } else null,
                                 checkedAt = checkedAt.takeIf { mailbox == Mail.INBOX },
                                 status = when (val shown = error) {
                                     null -> null
@@ -1381,8 +1369,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                     else -> Status(shown, retry = shown == R.string.error_server || shown == R.string.error_tls, account = failing.joinToString().ifEmpty { null })
                                 } ?: when {
                                     syncing && slow == 2 && !waiting -> Status(R.string.status_background)
-                                    // An empty list's words say it themselves.
-                                    pulled && messages.isNotEmpty() -> Status(if (slow > 0) R.string.status_slow else R.string.status_checking)
+                                    pulled -> Status(if (slow > 0) R.string.status_slow else R.string.status_checking)
                                     upToDate -> Status(R.string.lake_checked_now)
                                     else -> null
                                 },
@@ -1621,7 +1608,7 @@ private fun InboxList(
     checkedAt: Long?,
     /** What the line over the dock says. */
     status: Status?,
-    /** A pull asks for a sync; the empty list answers it with its own water. */
+    /** A pull asks for a sync. */
     onSync: () -> Unit,
     mailbox: Mailbox,
     /** The unified inbox or an account's: the list has tabs. */
@@ -1704,45 +1691,16 @@ private fun InboxList(
     val chooseNow by rememberUpdatedState(onChoose)
     val shownTitle = if (choosing) stringResource(R.string.select_count, picked.size) else title
     var dockHeight by remember { mutableStateOf(0.dp) }
-    // Whether this tab just had mail: then the done note draws itself in as the last message
-    // leaves, and not on opening the app or switching to an empty tab.
-    // Right after a switch the list is still the old tab's, so it does not count.
-    val oldTabList = remember(tab, mailbox) { messages }
     // With nothing in any tab there is one lake under them all, which stays put as they change.
     val allEmpty = tabbed && inboxEmpty
-    var hadMail by remember(tab, mailbox) { mutableStateOf(false) }
-    LaunchedEffect(messages) { hadMail = messages.isNotEmpty() && messages !== oldTabList }
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     // The compact title shows once the large one has scrolled under the status bar.
     // Half way through the title, under the back arrow's 4 + 44 + 2 dp.
     val titleGone = with(density) { 62.dp.roundToPx() }
     val scrolled by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > titleGone } }
     val glideScope = rememberCoroutineScope()
-    val pull = remember(density) { ListPull(with(density) { PULL_THRESHOLD.toPx() }, glideScope) }
-    pull.onPull = { if (!refreshing) onSync() }
-    // There is one water, under the title, and it stays put: a pull over an empty list's lake
-    // gathers a drop over it, and a pull on a list moves the rows down to uncover the same water.
     val lake = messages.isEmpty() && (!syncing || listLoaded) && error == null
-    // Each pull that lets go past a third of the way drops a drop, sized by how far it went.
-    val drops = remember { MutableSharedFlow<Float>(extraBufferCapacity = 1) }
-    // After a sync the gap stays open until its water has calmed, so the calm is seen; and after
-    // a tug, until its drop is in. The finger can pull again meanwhile, from there.
-    var waterCalm by remember { mutableStateOf(true) }
-    val held = remember { Animatable(0f) }
-    val holdTo = if (!lake && (refreshing || !waterCalm)) 1f else 0f
-    LaunchedEffect(holdTo) { held.animateTo(holdTo, Motion.settle()) }
-    val lakeNow by rememberUpdatedState(lake)
-    val holdNow by rememberUpdatedState(holdTo)
-    var pressing by remember { mutableStateOf(false) }
-    // A pull the list never heard end, as when the screen changed under the finger, would leave
-    // its drop hanging: once the finger is up, and in another folder, the pull goes back.
-    fun settlePull() {
-        if (!pressing) pull.settle()
-    }
-    LaunchedEffect(mailbox) { settlePull() }
-    // How far the list is down, in pulls: with the finger, or held, and a finger pulls on from where it is held.
-    val opened = { maxOf(pull.fraction, held.value + if (pressing) pull.fraction * 0.6f else 0f) }
-    val sink = if (lake) Modifier else Modifier.graphicsLayer { translationY = pullGap(opened()) }
+    val pullState = rememberPullToRefreshState()
     // Where the title ends on screen, or null once it has scrolled away.
     val underTitle = {
         val info = listState.layoutInfo
@@ -1764,8 +1722,7 @@ private fun InboxList(
         val info = listState.layoutInfo
         leaving = info.visibleItemsInfo.firstOrNull { it.key is Long }?.let { row ->
             val skip = messages.indexOfFirst { it.id == row.key }.coerceAtLeast(0)
-            val gap = if (lake) 0f else with(density) { pullGap(opened()) }
-            Leaving(tab, messages.drop(skip).take(PAGE_ROWS), row.offset - info.viewportStartOffset + gap)
+            Leaving(tab, messages.drop(skip).take(PAGE_ROWS), (row.offset - info.viewportStartOffset).toFloat())
         }
         onTab(next)
         glideScope.launch {
@@ -1815,7 +1772,7 @@ private fun InboxList(
                         afloats = afloats,
                         rows = from?.rows ?: others[category].orEmpty(),
                         words = emptyTitle(inbox = true, allEmpty = false, category),
-                        water = !lake,
+                        lake = !lake,
                         thumb = thumb,
                         top = { from?.top ?: underTitle() ?: with(density) { (top + 48.dp).toPx() } },
                         onGone = { if (leaving?.tab == category) leaving = null },
@@ -1823,33 +1780,21 @@ private fun InboxList(
                 }
             }
         }
-        // The list is never held by the pull itself, so a finger can pull again at any time:
-        // every pull drops a drop, and one that goes all the way syncs, unless one runs.
-        Box(
-            Modifier.fillMaxSize().whilePressed { down ->
-                if (down) {
-                    pressing = true
-                    pull.touched()
-                    return@whilePressed
-                }
-                // Only a finger that pulled: a tap or a scroll up while the list goes back up drops nothing.
-                val f = pull.fraction
-                if (pull.drawn && f >= TUG) drops.tryEmit(f)
-                // After the list has had its own say on this release.
-                glideScope.launch {
-                    withFrameNanos {}
-                    settlePull()
-                }
-                // The list stays where the finger left it, and is held or let go from there.
-                val at = opened()
-                pressing = false
-                if (!lakeNow && at > held.value) {
-                    glideScope.launch {
-                        held.snapTo(at)
-                        held.animateTo(holdNow, Motion.settle())
-                    }
-                }
-            }.nestedScroll(pull),
+        // The system's own pull, as in Gmail: its spinner shows while the check runs.
+        PullToRefreshBox(
+            isRefreshing = refreshing,
+            onRefresh = { if (!refreshing) onSync() },
+            modifier = Modifier.fillMaxSize(),
+            state = pullState,
+            indicator = {
+                PullToRefreshDefaults.Indicator(
+                    state = pullState,
+                    isRefreshing = refreshing,
+                    modifier = Modifier.align(Alignment.TopCenter).padding(top = top),
+                    containerColor = colors.surfaceContainerHigh,
+                    color = colors.onSurfaceVariant,
+                )
+            },
         ) {
             LazyColumn(
                 Modifier
@@ -1866,13 +1811,13 @@ private fun InboxList(
             ) {
                 item(key = "title") { Hero(shownTitle, owner, onBack, heroActions) }
                 items(signedOut, key = { "signed-out-${it.id}" }) { account ->
-                    Afloat(thumb, page, depth = { 0 }, modifier = rowMove().then(sink)) { SignedOutRow(account, onClick = { onSignIn(account) }) }
+                    Afloat(thumb, page, depth = { 0 }, modifier = rowMove()) { SignedOutRow(account, onClick = { onSignIn(account) }) }
                 }
                 items(unsent, key = { "unsent-${it.id}" }) { failed ->
-                    Afloat(thumb, page, depth = { 0 }, modifier = rowMove().then(sink)) { UnsentRow(failed, onClick = { onUnsent(failed) }) }
+                    Afloat(thumb, page, depth = { 0 }, modifier = rowMove()) { UnsentRow(failed, onClick = { onUnsent(failed) }) }
                 }
                 if (swipeTip && messages.isNotEmpty()) {
-                    item(key = "tip") { Afloat(thumb, page, depth = { 0 }, modifier = rowMove().then(sink)) { SwipeTip(swipes, lift = !wide, onDismiss = onSwipeTip) } }
+                    item(key = "tip") { Afloat(thumb, page, depth = { 0 }, modifier = rowMove()) { SwipeTip(swipes, lift = !wide, onDismiss = onSwipeTip) } }
                 }
                 if (lake) {
                     item(key = "empty") {
@@ -1890,14 +1835,9 @@ private fun InboxList(
                             key(mailbox) {
                                 StillNote(
                                     stringResource(emptyTitle(tabbed, allEmpty, tab)),
-                                    drawIn = hadMail && tabbed,
                                     grey = !tabbed,
                                     checking = checking?.let { (head, line) -> stringResource(head) to line?.let { stringResource(it) } },
                                     checkedAt = checkedAt,
-                                    refreshing = refreshing,
-                                    pulled = { pull.fraction },
-                                    drops = drops,
-                                    glide = thumb,
                                     wordsModifier = if (allEmpty) Modifier else slide,
                                 )
                             }
@@ -1913,7 +1853,7 @@ private fun InboxList(
                         afloats = afloats,
                         id = message.id,
                         depth = { (index - firstRow).coerceIn(0, 8) },
-                        modifier = rowMove(Motion.behind(behind.coerceAtMost(6), Motion.CLOSE, IntOffset.VisibilityThreshold)).then(sink),
+                        modifier = rowMove(Motion.behind(behind.coerceAtMost(6), Motion.CLOSE, IntOffset.VisibilityThreshold)),
                         pull = rowPull,
                         index = index,
                     ) {
@@ -1946,19 +1886,6 @@ private fun InboxList(
                         }
                     }
                 }
-            }
-            // The rows move down with the finger and still water shows in the gap they leave.
-            if (!lake) {
-                PullWater(
-                    grey = !tabbed,
-                    fraction = { pull.fraction },
-                    depth = { with(density) { pullGap(opened()) } },
-                    refreshing = refreshing,
-                    top = underTitle,
-                    drops = drops,
-                    onCalm = { waterCalm = it },
-                    modifier = Modifier.fillMaxSize(),
-                )
             }
         }
         // The compact title, over the list once it scrolls.
@@ -2728,7 +2655,7 @@ private fun edgeSpring(lead: Boolean): SpringSpec<Float> = if (lead) EDGE_LEADS 
 private val EDGE_LEADS = spring<Float>(dampingRatio = 1f, stiffness = 1540f)
 private val EDGE_FOLLOWS = spring<Float>(dampingRatio = 1f, stiffness = 315f)
 
-/** The least a pulled refresh lasts: the drop's fall and its first rings. */
+/** The least a pulled refresh lasts, so its spinner is seen. */
 private const val PULLED_MS = 1100L
 
 /** How long rows below one that left are held back as they close up; then moves are even again. */
@@ -2763,10 +2690,10 @@ private fun Afloat(
 
 /**
  * The page of the tab [at], under the list while the thumb is near: its first [rows], or its
- * [words] once it is empty, over still [water] where the list has none of its own to share.
+ * [words] once it is empty, under a still [lake] where the list has none of its own to share.
  */
 @Composable
-private fun Page(at: Int, afloats: Afloats, rows: List<MessageItem>, words: Int, water: Boolean, thumb: () -> Float, top: () -> Float, onGone: () -> Unit) {
+private fun Page(at: Int, afloats: Afloats, rows: List<MessageItem>, words: Int, lake: Boolean, thumb: () -> Float, top: () -> Float, onGone: () -> Unit) {
     val thumbNow by rememberUpdatedState(thumb)
     // Read as it is drawn, so the page just left takes over from the list's rows in the same frame.
     val near by remember(at) { derivedStateOf { nearPage(at, thumbNow()) } }
@@ -2786,11 +2713,10 @@ private fun Page(at: Int, afloats: Afloats, rows: List<MessageItem>, words: Int,
     if (!near && !lingering) return
     Column(Modifier.fillMaxWidth().offset { IntOffset(0, top().roundToInt()) }) {
         if (rows.isEmpty()) {
-            // The water stays where it is and only shows; the words go with the page.
+            // The lake stays where it is and only shows; the words go with the page.
             StillNote(
                 stringResource(words),
-                drawIn = false,
-                water = { if (water) glidedAlpha(thumb() - at) else 0f },
+                mark = { if (lake) glidedAlpha(thumb() - at) else 0f },
                 wordsModifier = Modifier.glided { thumb() - at },
             )
         } else {
@@ -2827,84 +2753,6 @@ private class Afloats {
 }
 
 /**
- * A pull down on the list at its top, in pulls: one is enough to sync. Unlike Material's pull to
- * refresh it keeps nothing from one touch to the next, so a scroll either way never brings back
- * an old pull and its drop, and a finger that comes back while it goes up takes it from there.
- */
-@Stable
-private class ListPull(private val threshold: Float, private val scope: CoroutineScope) : NestedScrollConnection {
-    var fraction by mutableFloatStateOf(0f)
-        private set
-
-    /** Whether the finger on the list now has pulled it down. */
-    var drawn = false
-        private set
-
-    var onPull: () -> Unit = {}
-
-    // How far the finger has drawn it, in px: the list follows at half of that.
-    private var distance = 0f
-    private var going: Job? = null
-
-    /** A finger is down: whatever it does, it has not pulled yet. */
-    fun touched() {
-        drawn = false
-    }
-
-    override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset =
-        if (source == NestedScrollSource.UserInput && available.y < 0f && fraction > 0f) Offset(0f, by(available.y)) else Offset.Zero
-
-    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset =
-        if (source == NestedScrollSource.UserInput && available.y > 0f) Offset(0f, by(available.y)) else Offset.Zero
-
-    override suspend fun onPreFling(available: Velocity): Velocity {
-        if (fraction == 0f) return Velocity.Zero
-        if (fraction > 1f) onPull()
-        settle()
-        return if (available.y > 0f) available else Velocity.Zero
-    }
-
-    /** Back up, unless a finger holds it; also for a pull whose end the list never heard. */
-    fun settle() {
-        distance = 0f
-        if (fraction == 0f || going?.isActive == true) return
-        going = scope.launch { animate(fraction, 0f, animationSpec = Motion.settle()) { value, _ -> fraction = value } }
-    }
-
-    private fun by(dy: Float): Float {
-        if (going?.isActive == true) {
-            going?.cancel()
-            distance = distanceFor(fraction)
-        }
-        if (dy > 0f) drawn = true
-        // Past the most it shows, the finger draws nothing more, so coming back moves it at once.
-        val next = (distance + dy).coerceIn(0f, distanceFor(MOST))
-        val used = next - distance
-        distance = next
-        fraction = fractionFor(distance)
-        return used
-    }
-
-    // As Material has it: with the finger up to one pull, then against a growing tension up to one more.
-    private fun fractionFor(distance: Float): Float {
-        val p = distance * DRAG / threshold
-        if (p <= 1f) return p
-        val t = (p - 1f).coerceIn(0f, 2f)
-        return 1f + t - t * t / 4f
-    }
-
-    private fun distanceFor(fraction: Float): Float {
-        val p = if (fraction <= 1f) fraction else 1f + 2f - 2f * sqrt((2f - fraction).coerceAtLeast(0f))
-        return p * threshold / DRAG
-    }
-
-    companion object {
-        private const val DRAG = 0.5f
-        private const val MOST = 2f
-    }
-}
-
-/**
  * A line over the dock: what the app is doing, or what went wrong, and whether a new check may
  * help; with [account], what went wrong for those accounts alone.
  */
@@ -2925,14 +2773,6 @@ private const val PAGE_LINGER_MS = 1200L
 
 /** How a row's neighbours drift after it, as through water. */
 private val DRIFT = Motion.drift<Float>()
-
-/** How far a finger pulls the list for one pull, as Material's pull to refresh has it. */
-private val PULL_THRESHOLD = 80.dp
-
-/** How far a pull must go, in pulls, to drop a drop when let go. */
-private const val TUG = 1f / 3f
-
-
 
 /** Something on a tab's page, [at] tabs from its place: it leaves to the side the thumb moves away from and fades. */
 private fun Modifier.glided(at: () -> Float): Modifier = graphicsLayer {

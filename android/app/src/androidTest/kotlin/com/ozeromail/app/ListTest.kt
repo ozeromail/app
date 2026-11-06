@@ -1,14 +1,8 @@
 package com.ozeromail.app
 
-import android.graphics.Bitmap
-import android.graphics.Color.blue
-import android.graphics.Color.green
-import android.graphics.Color.red
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -22,23 +16,27 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class ListTest : TestMail() {
     @Test
-    fun pullDropsTheRowsAndTheyComeBack() {
+    fun pullChecksAndLeavesTheRowsInPlace() {
         val (a) = letters()
         film("pull", every = 3) {
             track("a", text(a))
+            track("checking", hasText(CHECKING))
             frame()
             val row = last("a")!!
             drag(row.at(0.5f), Offset(screen.width * 0.5f, row.center.y + screen.height * 0.3f), ms = 500)
             frames(10)
+            // The system's spinner comes down over the list; the rows stay where they are.
+            val moved = frames.maxOf { abs((it.at["a"]?.top ?: row.top) - row.top) }
             up()
-            val back = until(400) { abs(last("a")!!.top - row.top) < 1f }
+            val checking = until(120) { last("checking") != null }
             frames(10)
-            assertTrue("the rows did not come back up after the pull", back)
+            assertTrue("the rows moved with the pull ($moved px)", moved < 1f)
+            assertTrue("the pull did not say it checks", checking)
         }
     }
 
     @Test
-    fun onlyAPullDropsADrop() {
+    fun aPullOnAnEmptyFolderChecks() {
         rule.onNode(hasContentDescription("Accounts")).performClick()
         // The folders may be there before the sheet is laid out: wait until it has come up.
         var at = -1f
@@ -51,39 +49,13 @@ class ListTest : TestMail() {
         waitFor { has(hasText("Empty")) }
         rule.onNode(hasText("Empty")).apply { runCatching { performScrollTo() } }.performClick()
         waitFor { has(hasText("Nothing here")) }
-        film("drops", every = 4) {
-            track("words", hasText("Nothing here"))
-            frames(60)
+        film("empty-pull", every = 4) {
+            track("checking", hasText(CHECKING))
+            frames(30)
             val dp = rule.density.density
-            // The lake stands over its words; under its horizon, down to where a drop lands, only
-            // a falling drop is the accent's blue: the water of a plain folder is grey.
-            val lake = last("words")!!.top - (6.dp + LAKE_HEIGHT).value * dp
-            look = { accentPixels(it, (lake + (HORIZON + 2.dp).value * dp).toInt(), (lake + (HORIZON + FALL + 2.dp).value * dp).toInt()) }
-            val at = Offset(screen.width / 2, screen.height * 0.6f)
-            fun tapsAndScrolls(): Int {
-                val from = frames.size
-                repeat(3) {
-                    down(at)
-                    frames(3)
-                    up()
-                    frames(40)
-                }
-                swipe(at, Offset(at.x, at.y - 300 * dp), ms = 200)
-                frames(60)
-                // A little way down, less than it takes to drop.
-                swipe(at, Offset(at.x, at.y + 30 * dp), ms = 200)
-                frames(60)
-                return frames.drop(from).maxOf { it.seen ?: 0 }
-            }
-            val before = tapsAndScrolls()
-            val from = frames.size
-            swipe(at, Offset(at.x, at.y + 250 * dp), ms = 500)
-            frames(90)
-            val pulled = frames.drop(from).maxOf { it.seen ?: 0 }
-            val after = tapsAndScrolls()
-            assertTrue("a pull dropped no drop ($pulled px of blue)", pulled > DROP_PX)
-            assertTrue("taps or scrolls dropped a drop ($before px of blue)", before < DROP_PX)
-            assertTrue("after a pull, taps or scrolls dropped a drop ($after px of blue)", after < DROP_PX)
+            val from = Offset(screen.width / 2, screen.height * 0.4f)
+            swipe(from, Offset(from.x, from.y + 250 * dp), ms = 500)
+            assertTrue("a pull on an empty folder did not say it checks", until(120) { last("checking") != null })
         }
     }
 
@@ -171,20 +143,8 @@ class ListTest : TestMail() {
         }
     }
 
-    /** Pixels of the accent's blue between [top] and [bottom]. */
-    private fun accentPixels(shot: Bitmap, top: Int, bottom: Int): Int {
-        val from = top.coerceIn(0, shot.height)
-        val rows = bottom.coerceIn(from, shot.height) - from
-        val accent = Accent.toArgb()
-        val pixels = IntArray(shot.width * rows)
-        shot.getPixels(pixels, 0, shot.width, 0, from, shot.width, rows)
-        return pixels.count { c ->
-            abs(red(c) - red(accent)) < 40 && abs(green(c) - green(accent)) < 40 && blue(c) > blue(accent) - 40
-        }
-    }
-
     companion object {
-        /** More blue than this is a drop. */
-        const val DROP_PX = 30
+        /** What the line over the dock says while a pull's check runs. */
+        const val CHECKING = "Checking for new mail…"
     }
 }
