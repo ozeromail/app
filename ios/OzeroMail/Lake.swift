@@ -16,8 +16,6 @@ struct LakeNote: View {
     var touch: ListTouch?
 
     @State private var still = Still()
-    /// The checking words, kept while they fade out.
-    @State private var shownChecking: LakeWords?
 
     private var waiting: Bool { checking != nil }
 
@@ -42,7 +40,7 @@ struct LakeNote: View {
                 }
                 .opacity(waiting ? 0 : 1)
                 // Until then the list is not empty yet, only on its way: these words take its place.
-                if let shown = checking ?? shownChecking {
+                if let shown = checking {
                     VStack(spacing: 6) {
                         Text(LocalizedStringKey(shown.title)).font(.heading).multilineTextAlignment(.center)
                         if let text = shown.text {
@@ -53,12 +51,10 @@ struct LakeNote: View {
                                 .padding(.horizontal, 32)
                         }
                     }
-                    .opacity(waiting ? 1 : 0)
+                    .transition(.opacity)
                 }
             }
-            .animation(.easeOut(duration: 0.4), value: waiting)
-            .onAppear { shownChecking = checking }
-            .onChange(of: checking) { _, now in if let now { shownChecking = now } }
+            .animation(.easeOut(duration: 0.4), value: checking)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, Lake.top)
@@ -120,7 +116,8 @@ final class FollowingRecognizer: UIGestureRecognizer, UIGestureRecognizerDelegat
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
-        state = .ended
+        // Only once the last finger is up.
+        if event.allTouches?.allSatisfy({ $0.phase == .ended || $0.phase == .cancelled }) ?? true { state = .ended }
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
@@ -195,6 +192,7 @@ final class Still {
     /// Where the water starts across the screen, as the finger is told.
     @ObservationIgnored var left: CGFloat = 0
 
+    @ObservationIgnored private var sleeps = 0
     @ObservationIgnored private var now: Double = 0
     @ObservationIgnored private var begun: Double = -1
     @ObservationIgnored private var waves: [Wave] = []
@@ -235,6 +233,8 @@ final class Still {
 
     /// Wakes the clock of water at rest; the next frame starts afresh rather than a step late.
     func wake() {
+        // A sleep on its way is called off.
+        sleeps += 1
         if !awake {
             stepped = -1
             awake = true
@@ -247,6 +247,8 @@ final class Still {
         if begun < 0 { begun = ms }
         now = ms
         self.frozen = frozen
+        // Still water holds no dip.
+        if frozen { holdX = nil }
     }
 
     /// A finger at `x`, the list pulled `pull` pulls down, or none: the surface under it follows.
@@ -398,8 +400,9 @@ final class Still {
         }
         // Not while the frame draws: the observed value changes right after it.
         if !busy && awake {
+            let asked = sleeps
             Task { @MainActor in
-                if self.awake && !self.busy { self.awake = false }
+                if self.awake && !self.busy && self.sleeps == asked { self.awake = false }
             }
         }
     }
