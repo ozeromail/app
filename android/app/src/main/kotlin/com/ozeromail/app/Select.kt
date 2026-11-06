@@ -197,9 +197,9 @@ class ChoiceMain(val label: String, val icon: Int, val onClick: () -> Unit)
  * Read or Unread, Delete (for good in the trash), More, and [main] when one applies.
  */
 @Composable
-fun ChoiceBar(main: ChoiceMain?, unread: Boolean, forever: Boolean, onCancel: () -> Unit, onRead: () -> Unit, onDelete: () -> Unit, onMore: () -> Unit) {
+fun ChoiceBar(surface: Modifier, main: ChoiceMain?, unread: Boolean, forever: Boolean, onCancel: () -> Unit, onRead: () -> Unit, onDelete: () -> Unit, onMore: () -> Unit) {
     val colors = MaterialTheme.colorScheme
-    Row(Modifier.fillMaxWidth().padding(horizontal = Gap.bar), horizontalArrangement = Arrangement.spacedBy(Gap.inBar)) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = Gap.bar).then(surface), horizontalArrangement = Arrangement.spacedBy(Gap.inBar)) {
         BarAction(R.drawable.ic_close, stringResource(R.string.action_cancel), colors.onSurface, onClick = onCancel)
         BarAction(
             R.drawable.ic_unread,

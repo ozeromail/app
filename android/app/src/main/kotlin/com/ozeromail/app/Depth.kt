@@ -2,8 +2,11 @@ package com.ozeromail.app
 
 import android.graphics.BlurMaskFilter
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.material3.ColorScheme
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -24,6 +27,10 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.HazeStyle
+import dev.chrisbanes.haze.HazeTint
+import dev.chrisbanes.haze.hazeEffect
 
 // A little depth in the icon's paper, kept faint. What lies on top of the page (the accent
 // buttons, the tabs' thumb, a screen pushed in) lifts with a short, straight shadow and
@@ -111,6 +118,30 @@ fun Modifier.sunk(colors: ColorScheme): Modifier = drawWithCache {
 fun Modifier.dock(colors: ColorScheme, solid: Boolean = false): Modifier =
     background(if (solid) colors.background else colors.bar)
         .hairline(colors.outlineVariant.copy(alpha = 0.6f), top = true)
+
+/** What the floating dock's glass shows through, blurred: the list under it. Null where nothing floats. */
+val LocalGlass = staticCompositionLocalOf<HazeState?> { null }
+
+/**
+ * Frosted glass, as the bars on iOS: what lies under it shows through, blurred and veiled in the
+ * paper's colour, with a soft shadow and a faint rim. Without a [state] it is the grey fill cut into the page.
+ */
+fun Modifier.glass(state: HazeState?, colors: ColorScheme, shape: Shape): Modifier {
+    if (state == null) return clip(shape).background(colors.surfaceVariant).sunk(colors)
+    val veil = if (colors.night) colors.surfaceContainerHigh.copy(alpha = 0.66f) else colors.background.copy(alpha = 0.62f)
+    return floating(colors, shape)
+        .clip(shape)
+        .hazeEffect(state, frost(colors, veil))
+        .border(1.dp, if (colors.night) colors.lit else colors.outlineVariant.copy(alpha = 0.8f), shape)
+}
+
+/** A bar across the screen over the list, such as the compact title: frosted as [glass], edge to edge, faded by [alpha]. */
+fun Modifier.frosted(state: HazeState, colors: ColorScheme, alpha: () -> Float = { 1f }): Modifier =
+    hazeEffect(state, frost(colors, colors.background.copy(alpha = 0.72f))) { this.alpha = alpha() }
+
+/** The blur of [glass] and [frosted], veiled in [veil]. */
+private fun frost(colors: ColorScheme, veil: Color) =
+    HazeStyle(backgroundColor = colors.background, tint = HazeTint(veil), blurRadius = 24.dp, noiseFactor = 0f)
 
 /** A screen pushed in over another: its left edge casts a soft shadow on the one beneath. */
 fun Modifier.sheetEdge(colors: ColorScheme): Modifier = drawWithCache {

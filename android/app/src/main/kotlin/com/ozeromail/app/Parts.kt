@@ -118,21 +118,22 @@ fun BackArrow(onBack: () -> Unit, modifier: Modifier = Modifier) {
     )
 }
 
-/** The rounded grey shape of the search field and the quick reply, cut into the page. */
+/** The rounded shape of the search field and the quick reply: grey and cut into the page, or glass in the dock. */
 @Composable
 fun PillBox(
     modifier: Modifier = Modifier,
     @DrawableRes icon: Int? = null,
     height: Dp = 48.dp,
+    onClick: (() -> Unit)? = null,
     content: @Composable RowScope.() -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
     Row(
         modifier
             .height(height)
-            .clip(CircleShape)
-            .background(colors.surfaceVariant)
-            .sunk(colors)
+            // On glass where it floats over the list, as in the dock.
+            .glass(LocalGlass.current, colors, CircleShape)
+            .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick) else Modifier)
             .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -151,7 +152,7 @@ fun Pill(
     @DrawableRes icon: Int? = null,
     height: Dp = 48.dp,
 ) {
-    PillBox(modifier.clip(CircleShape).clickable(role = Role.Button, onClick = onClick), icon, height) {
+    PillBox(modifier, icon, height, onClick) {
         Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant, style = Type.Body, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
