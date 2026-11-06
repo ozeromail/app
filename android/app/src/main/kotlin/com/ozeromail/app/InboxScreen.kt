@@ -123,6 +123,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.VisibilityThreshold
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.layout
@@ -130,6 +131,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.graphics.ColorProducer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -154,6 +156,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.LifecycleStartEffect
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -1698,6 +1702,8 @@ private fun InboxList(
     val chooseNow by rememberUpdatedState(onChoose)
     val shownTitle = if (choosing) stringResource(R.string.select_count, picked.size) else title
     var dockHeight by remember { mutableStateOf(0.dp) }
+    // What the dock and the compact title float over, seen through their glass.
+    val haze = rememberHazeState()
     // With nothing in any tab there is one lake under them all, which stays put as they change.
     val allEmpty = tabbed && inboxEmpty
     val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
@@ -1772,138 +1778,141 @@ private fun InboxList(
     val short = LocalRoom.current.short
     val heroActions: (@Composable RowScope.() -> Unit)? = titleActions?.let { actions -> { actions(this, if (short) 40.dp else 48.dp) } }
     Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
-        // The other tabs' pages, under the list: the one left goes on from where the finger let it
-        // go, and the next shows under the finger before it is picked.
-        if (tabbed && !allEmpty) {
-            Category.entries.forEachIndexed { at, category ->
-                if (category == tab) return@forEachIndexed
-                val from = leaving?.takeIf { it.tab == category }
-                key(category) {
-                    Page(
-                        at = at,
-                        afloats = afloats,
-                        rows = from?.rows ?: others[category].orEmpty(),
-                        words = emptyTitle(inbox = true, allEmpty = false, category),
-                        water = !lake,
-                        thumb = thumb,
-                        top = { from?.top ?: underTitle() ?: with(density) { (top + 48.dp).toPx() } },
-                        onGone = { if (leaving?.tab == category) leaving = null },
-                    )
+        // The list and the pages beside it, which show blurred through the glass over them.
+        Box(Modifier.fillMaxSize().hazeSource(haze)) {
+            // The other tabs' pages, under the list: the one left goes on from where the finger let it
+            // go, and the next shows under the finger before it is picked.
+            if (tabbed && !allEmpty) {
+                Category.entries.forEachIndexed { at, category ->
+                    if (category == tab) return@forEachIndexed
+                    val from = leaving?.takeIf { it.tab == category }
+                    key(category) {
+                        Page(
+                            at = at,
+                            afloats = afloats,
+                            rows = from?.rows ?: others[category].orEmpty(),
+                            words = emptyTitle(inbox = true, allEmpty = false, category),
+                            water = !lake,
+                            thumb = thumb,
+                            top = { from?.top ?: underTitle() ?: with(density) { (top + 48.dp).toPx() } },
+                            onGone = { if (leaving?.tab == category) leaving = null },
+                        )
+                    }
                 }
             }
-        }
-        // The system's own pull, as in Gmail: its spinner shows while the check runs.
-        PullToRefreshBox(
-            isRefreshing = refreshing && pulling,
-            onRefresh = {
-                if (!refreshing) {
-                    pulling = true
-                    onSync()
-                }
-            },
-            modifier = Modifier.fillMaxSize().then(if (lake) Modifier.tracks(finger) else Modifier),
-            state = pullState,
-            indicator = {
-                PullToRefreshDefaults.Indicator(
-                    state = pullState,
-                    isRefreshing = refreshing && pulling,
-                    modifier = Modifier.align(Alignment.TopCenter).padding(top = top),
-                    containerColor = colors.surfaceContainerHigh,
-                    color = colors.onSurfaceVariant,
-                )
-            },
-        ) {
-            LazyColumn(
-                Modifier
-                    .fillMaxSize()
-                    .chooseRows(
-                        listState,
-                        rows = { rowsNow.map { it.id } },
-                        chosen = { chosenNow.filterTo(LinkedHashSet()) { id -> rowsNow.any { it.id == id } } },
-                        onChoose = { chooseNow(it) },
-                        onHold = { haptics.performHapticFeedback(HapticFeedbackType.LongPress) },
-                    ),
-                state = listState,
-                contentPadding = PaddingValues(top = top, bottom = dockHeight + 16.dp),
+            // The system's own pull, as in Gmail: its spinner shows while the check runs.
+            PullToRefreshBox(
+                isRefreshing = refreshing && pulling,
+                onRefresh = {
+                    if (!refreshing) {
+                        pulling = true
+                        onSync()
+                    }
+                },
+                modifier = Modifier.fillMaxSize().then(if (lake) Modifier.tracks(finger) else Modifier),
+                state = pullState,
+                indicator = {
+                    PullToRefreshDefaults.Indicator(
+                        state = pullState,
+                        isRefreshing = refreshing && pulling,
+                        modifier = Modifier.align(Alignment.TopCenter).padding(top = top),
+                        containerColor = colors.surfaceContainerHigh,
+                        color = colors.onSurfaceVariant,
+                    )
+                },
             ) {
-                item(key = "title") { Hero(shownTitle, owner, onBack, heroActions) }
-                items(signedOut, key = { "signed-out-${it.id}" }) { account ->
-                    Afloat(thumb, page, depth = { 0 }, modifier = rowMove()) { SignedOutRow(account, onClick = { onSignIn(account) }) }
-                }
-                items(unsent, key = { "unsent-${it.id}" }) { failed ->
-                    Afloat(thumb, page, depth = { 0 }, modifier = rowMove()) { UnsentRow(failed, onClick = { onUnsent(failed) }) }
-                }
-                if (swipeTip && messages.isNotEmpty()) {
-                    item(key = "tip") { Afloat(thumb, page, depth = { 0 }, modifier = rowMove()) { SwipeTip(swipes, lift = !wide, onDismiss = onSwipeTip) } }
-                }
-                if (lake) {
-                    item(key = "empty") {
-                        // New mail covers the lake rather than cutting it off.
-                        // One lake for every tab: only the words go with the tabs. It fades in, without
-                        // moving, when the tabs come from a list with mail.
-                        var fresh by remember { mutableStateOf(glide.isRunning || glide.value != 0f) }
-                        LaunchedEffect(fresh) {
-                            if (!fresh) return@LaunchedEffect
-                            snapshotFlow { glide.isRunning || glide.value != 0f }.first { !it }
-                            fresh = false
-                        }
-                        val fade = if (fresh) Modifier.graphicsLayer { alpha = glidedAlpha(thumb() - page) } else Modifier
-                        Box(Modifier.animateItem(fadeInSpec = null, placementSpec = null, fadeOutSpec = Motion.calm(Motion.SMALL)).then(fade)) {
-                            key(mailbox) {
-                                StillNote(
-                                    stringResource(emptyTitle(tabbed, allEmpty, tab)),
-                                    grey = !tabbed,
-                                    checking = checking?.let { (head, line) -> stringResource(head) to line?.let { stringResource(it) } },
-                                    checkedAt = checkedAt,
-                                    refreshing = refreshing,
-                                    finger = finger,
-                                    pulled = { pullState.distanceFraction },
-                                    glide = thumb,
-                                    wordsModifier = if (allEmpty) Modifier else slide,
-                                )
+                LazyColumn(
+                    Modifier
+                        .fillMaxSize()
+                        .chooseRows(
+                            listState,
+                            rows = { rowsNow.map { it.id } },
+                            chosen = { chosenNow.filterTo(LinkedHashSet()) { id -> rowsNow.any { it.id == id } } },
+                            onChoose = { chooseNow(it) },
+                            onHold = { haptics.performHapticFeedback(HapticFeedbackType.LongPress) },
+                        ),
+                    state = listState,
+                    contentPadding = PaddingValues(top = top, bottom = dockHeight + 16.dp),
+                ) {
+                    item(key = "title") { Hero(shownTitle, owner, onBack, heroActions) }
+                    items(signedOut, key = { "signed-out-${it.id}" }) { account ->
+                        Afloat(thumb, page, depth = { 0 }, modifier = rowMove()) { SignedOutRow(account, onClick = { onSignIn(account) }) }
+                    }
+                    items(unsent, key = { "unsent-${it.id}" }) { failed ->
+                        Afloat(thumb, page, depth = { 0 }, modifier = rowMove()) { UnsentRow(failed, onClick = { onUnsent(failed) }) }
+                    }
+                    if (swipeTip && messages.isNotEmpty()) {
+                        item(key = "tip") { Afloat(thumb, page, depth = { 0 }, modifier = rowMove()) { SwipeTip(swipes, lift = !wide, onDismiss = onSwipeTip) } }
+                    }
+                    if (lake) {
+                        item(key = "empty") {
+                            // New mail covers the lake rather than cutting it off.
+                            // One lake for every tab: only the words go with the tabs. It fades in, without
+                            // moving, when the tabs come from a list with mail.
+                            var fresh by remember { mutableStateOf(glide.isRunning || glide.value != 0f) }
+                            LaunchedEffect(fresh) {
+                                if (!fresh) return@LaunchedEffect
+                                snapshotFlow { glide.isRunning || glide.value != 0f }.first { !it }
+                                fresh = false
+                            }
+                            val fade = if (fresh) Modifier.graphicsLayer { alpha = glidedAlpha(thumb() - page) } else Modifier
+                            Box(Modifier.animateItem(fadeInSpec = null, placementSpec = null, fadeOutSpec = Motion.calm(Motion.SMALL)).then(fade)) {
+                                key(mailbox) {
+                                    StillNote(
+                                        stringResource(emptyTitle(tabbed, allEmpty, tab)),
+                                        grey = !tabbed,
+                                        checking = checking?.let { (head, line) -> stringResource(head) to line?.let { stringResource(it) } },
+                                        checkedAt = checkedAt,
+                                        refreshing = refreshing,
+                                        finger = finger,
+                                        pulled = { pullState.distanceFraction },
+                                        glide = thumb,
+                                        wordsModifier = if (allEmpty) Modifier else slide,
+                                    )
+                                }
                             }
                         }
                     }
-                }
-                itemsIndexed(messages, key = { _, it -> it.id }) { index, message ->
-                    // Rows below one that left close up after it, each a little later than the one above.
-                    val behind = if (index >= closedAt) index - closedAt + 1 else 0
-                    Afloat(
-                        thumb,
-                        page,
-                        afloats = afloats,
-                        id = message.id,
-                        depth = { (index - firstRow).coerceIn(0, 8) },
-                        modifier = rowMove(Motion.behind(behind.coerceAtMost(6), Motion.CLOSE, IntOffset.VisibilityThreshold)),
-                        pull = rowPull,
-                        index = index,
-                    ) {
-                        if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.row), color = colors.outlineVariant)
-                        SwipeRow(
-                            swipes.on(message),
-                            enabled = !choosing,
-                            applies = { it.appliesTo(message) },
-                            label = { it.label(message) },
-                            onSwipe = { action, reset ->
-                                // Read and Flag leave the row where it is: nothing below has a gap to close.
-                                if (!action.stays) closedAt = index
-                                onSwipe(message, action, reset)
-                            },
-                            onPull = { rowPull.hold(message.id, index, it) },
+                    itemsIndexed(messages, key = { _, it -> it.id }) { index, message ->
+                        // Rows below one that left close up after it, each a little later than the one above.
+                        val behind = if (index >= closedAt) index - closedAt + 1 else 0
+                        Afloat(
+                            thumb,
+                            page,
+                            afloats = afloats,
+                            id = message.id,
+                            depth = { (index - firstRow).coerceIn(0, 8) },
+                            modifier = rowMove(Motion.behind(behind.coerceAtMost(6), Motion.CLOSE, IntOffset.VisibilityThreshold)),
+                            pull = rowPull,
+                            index = index,
                         ) {
-                            MessageRow(
-                                message,
-                                choosing = mode,
-                                chosen = message.id in chosen,
-                                showing = message.id == showing,
-                                onClick = {
-                                    when {
-                                        !choosing -> onOpen(message)
-                                        message.id in chosen -> onChoose(chosen - message.id)
-                                        else -> onChoose(chosen + message.id)
-                                    }
+                            if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.row), color = colors.outlineVariant)
+                            SwipeRow(
+                                swipes.on(message),
+                                enabled = !choosing,
+                                applies = { it.appliesTo(message) },
+                                label = { it.label(message) },
+                                onSwipe = { action, reset ->
+                                    // Read and Flag leave the row where it is: nothing below has a gap to close.
+                                    if (!action.stays) closedAt = index
+                                    onSwipe(message, action, reset)
                                 },
-                            )
+                                onPull = { rowPull.hold(message.id, index, it) },
+                            ) {
+                                MessageRow(
+                                    message,
+                                    choosing = mode,
+                                    chosen = message.id in chosen,
+                                    showing = message.id == showing,
+                                    onClick = {
+                                        when {
+                                            !choosing -> onOpen(message)
+                                            message.id in chosen -> onChoose(chosen - message.id)
+                                            else -> onChoose(chosen + message.id)
+                                        }
+                                    },
+                                )
+                            }
                         }
                     }
                 }
@@ -1914,8 +1923,9 @@ private fun InboxList(
             Box(
                 Modifier
                     .fillMaxWidth()
+                    // The blur fades through its own alpha; a layer around it would not fade it.
+                    .frosted(haze, colors) { mini }
                     .graphicsLayer { alpha = mini }
-                    .background(colors.bar)
                     .padding(top = top)
                     .height(if (short) 44.dp else 48.dp)
                     .hairline(colors.outlineVariant, top = false),
@@ -1932,11 +1942,13 @@ private fun InboxList(
             // Low on the screen, in reach of the thumb that swiped.
             Toast(snackbar, onGo = onGo, modifier = Modifier.padding(bottom = 8.dp))
             Reveal(status) {
+                // Floats over the list on glass, as the dock under it.
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .background(colors.bar)
-                        .padding(start = Gap.screen, end = if (it.retry) 8.dp else Gap.screen)
+                        .padding(horizontal = Gap.bar, vertical = 4.dp)
+                        .glass(haze, colors, RoundedCornerShape(Radius.dialog))
+                        .padding(start = Gap.inCard, end = if (it.retry) 4.dp else Gap.inCard)
                         .heightIn(min = 34.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -1949,7 +1961,7 @@ private fun InboxList(
                     if (it.retry) TextButton(onClick = onSync) { Text(stringResource(R.string.status_try_again)) }
                 }
             }
-            Dock(
+            CompositionLocalProvider(LocalGlass provides haze) { Dock(
                 modifier = Modifier.onSizeChanged { dockHeight = with(density) { it.height.toDp() } },
                 tab = tab,
                 // With every tab empty there is nothing to switch to: one lake, no tabs.
@@ -1966,6 +1978,8 @@ private fun InboxList(
                 choosing = mode,
                 choiceBar = {
                     ChoiceBar(
+                        // Over the list it floats on glass, as the dock it takes the place of.
+                        Modifier.glass(haze, colors, RoundedCornerShape(Radius.sheet)),
                         main = main,
                         unread = picked.any { it.threadUnread > 0u },
                         forever = picked.isNotEmpty() && picked.none { it.canTrash },
@@ -1976,7 +1990,7 @@ private fun InboxList(
                     )
                 },
                 wide = wide,
-            )
+            ) }
         } }
         // The rarer ways to choose, in a sheet like every menu.
         Sheet(visible = more, onClose = { more = false }) {
@@ -2133,7 +2147,6 @@ private fun Dock(
     Column(
         modifier
             .fillMaxWidth()
-            .dock(colors)
             .navigationBarsPadding()
             .then(raise)
             .padding(top = if (short) 6.dp else Gap.barTop, bottom = if (short) 6.dp else Gap.barBottom),
@@ -2194,8 +2207,7 @@ private fun EmptyButton(label: String, onClick: () -> Unit, modifier: Modifier =
     Box(
         modifier
             .height(40.dp)
-            .clip(RoundedCornerShape(Radius.medium))
-            .background(colors.surfaceVariant)
+            .glass(LocalGlass.current, colors, CircleShape)
             .clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -2220,7 +2232,7 @@ private fun SearchTile(onClick: () -> Unit, size: Dp = 48.dp) {
 @Composable
 private fun ComposeTile(onClick: () -> Unit, size: Dp = 48.dp) {
     val colors = MaterialTheme.colorScheme
-    IconTile(R.drawable.ic_compose, stringResource(R.string.compose_new), onClick, background = colors.accent, tint = colors.onAccent, size = size)
+    IconTile(R.drawable.ic_compose, stringResource(R.string.compose_new), onClick, background = colors.accent, tint = colors.onAccent, shape = CircleShape, size = size)
 }
 
 /** The accounts' colours, overlapping; opens the accounts. */
@@ -2231,9 +2243,7 @@ private fun AccountsButton(accounts: List<AccountItem>, onClick: () -> Unit) {
     Box(
         Modifier
             .size(48.dp)
-            .clip(RoundedCornerShape(Radius.tile))
-            .background(colors.surfaceVariant)
-            .sunk(colors)
+            .glass(LocalGlass.current, colors, CircleShape)
             .clickable(onClickLabel = label, role = Role.Button, onClick = onClick)
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
@@ -2273,7 +2283,6 @@ private fun Tabs(
     modifier: Modifier = Modifier.fillMaxWidth().padding(horizontal = Gap.bar),
 ) {
     val colors = MaterialTheme.colorScheme
-    val thumb = RoundedCornerShape(Radius.thumb)
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
     val index = Category.entries.indexOf(tab)
@@ -2292,9 +2301,7 @@ private fun Tabs(
     val press by animateFloatAsState(if (pressed) 1f else 0f, Motion.settle(), label = "press")
     BoxWithConstraints(
         modifier
-            .clip(RoundedCornerShape(Radius.medium))
-            .background(colors.surfaceVariant)
-            .sunk(colors)
+            .glass(LocalGlass.current, colors, CircleShape)
             .whilePressed { pressed = it }
             .padding(3.dp),
     ) {
@@ -2316,8 +2323,8 @@ private fun Tabs(
                     scaleX = 1f - 0.03f * press
                     scaleY = sqrt(width.toPx() / long()) * (1f - 0.06f * press)
                 }
-                .lifted(colors, thumb)
-                .background(colors.raised, thumb),
+                .lifted(colors, CircleShape)
+                .background(colors.raised, CircleShape),
         )
         Row(
             Modifier
