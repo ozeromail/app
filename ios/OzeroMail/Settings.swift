@@ -279,7 +279,7 @@ enum Settings {
     }
 
     /// The sizes of mail's text the person can pick from, against the usual one.
-    static let textScales = [0.9, 1, 1.1, 1.2, 1.35]
+    static let textScales = [0.85, 1, 1.1, 1.2, 1.35]
     static let usualSize = 1
 
     /// The tip about swipes was read, so it does not show again.

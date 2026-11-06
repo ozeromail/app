@@ -98,7 +98,7 @@ data class Swipes(
 )
 
 /** The sizes of mail's text the person can pick from, against the usual one. */
-val TEXT_SCALES = listOf(0.9f, 1f, 1.1f, 1.2f, 1.35f)
+val TEXT_SCALES = listOf(0.85f, 1f, 1.1f, 1.2f, 1.35f)
 const val USUAL_SIZE = 1
 
 /** The person's choices, kept on the phone. */
