@@ -57,6 +57,13 @@ class Film(private val rule: ComposeTestRule, private val window: Window, val na
 
     fun frames(count: Int) = repeat(count) { frame() }
 
+    /** The screen as it is now, at full size, kept beside the film as `<name>-<label>.png`. */
+    fun still(label: String) {
+        val shot = shoot()
+        TestStorage().openOutputFile("films/$name-$label.png").use { shot.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        shot.recycle()
+    }
+
     /** Frames until [done], at most [max]; whether it came. */
     fun until(max: Int, done: () -> Boolean): Boolean {
         repeat(max) {
