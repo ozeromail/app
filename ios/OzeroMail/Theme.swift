@@ -75,8 +75,8 @@ extension Color {
 }
 
 extension View {
-    /// A dock lying on the list: the system's bar with a soft shadow above its top edge. A
-    /// `floating` dock has none on iOS 26: its buttons are glass.
+    /// A dock lying on the list: the system's bar with a hairline along its top edge, no shadow. A
+    /// `floating` dock has neither on iOS 26: its buttons are glass.
     @ViewBuilder
     func dockBackground(floating: Bool = false) -> some View {
         if floating && hasGlass { self } else { barFill() }
@@ -84,12 +84,7 @@ extension View {
 
     private func barFill() -> some View {
         background(.bar)
-            .overlay(alignment: .top) {
-                LinearGradient(colors: [.clear, .ozeroShade(day: 0.04, night: 0.3)], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 10)
-                    .offset(y: -10)
-                    .allowsHitTesting(false)
-            }
+            .overlay(alignment: .top) { Divider() }
     }
 }
 
