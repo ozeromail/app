@@ -173,7 +173,7 @@ fun Modifier.chooseRows(
                     }
                     val moved = at - down.position
                     if (carry != null && held && stayed && abs(moved.x) > aside && abs(moved.x) > 2 * abs(moved.y) &&
-                        carry.start(drawn.to(drawn.from).toList(), at)
+                        carry.start((drawn.before + drawn.rows[drawn.from]).toList(), at)
                     ) {
                         carrying = true
                         scrolling.cancel()
