@@ -2,7 +2,7 @@
   <img src="docs/assets/ozero-mark.svg" width="120" alt="">
 </p>
 
-<h1 align="center">ozero mail</h1>
+<h1 align="center">Ozero Mail</h1>
 
 <p align="center">A mail client for Android and iOS: one Rust core, a native UI on each platform.</p>
 

@@ -1,20 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The logo's window in one color as the status bar needs: frame, sun and water. -->
+<!-- The mark as a filled disc in one colour, as the status bar needs at this size. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
-    <path
-        android:pathData="M1.3,12a10.7,10.7 0 1,0 21.4,0a10.7,10.7 0 1,0 -21.4,0"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="2" />
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M11.557,10.054a2,2 0 1,0 4,0a2,2 0 1,0 -4,0" />
-    <path
-        android:pathData="M4.2,13.6H19.8M6.6,16.4H17.4"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeLineCap="round"
-        android:strokeWidth="1.6" />
+    <group android:translateX="-1.25" android:translateY="0" android:scaleX="0.5" android:scaleY="0.5">
+        <group>
+            <clip-path android:pathData="M-10,-10H58V26.7H-10z" />
+            <path android:fillColor="#FFFFFFFF" android:pathData="M6.5,24a17.5,17.5 0 1,0 35,0a17.5,17.5 0 1,0 -35,0" />
+        </group>
+        <group>
+            <clip-path android:pathData="M-10,28.3H58V58H-10z" />
+            <path android:fillColor="#FFFFFFFF" android:pathData="M11.5,24a17.5,17.5 0 1,0 35,0a17.5,17.5 0 1,0 -35,0" />
+        </group>
+    </group>
 </vector>
