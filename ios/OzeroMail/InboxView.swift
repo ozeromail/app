@@ -238,6 +238,7 @@ private struct InboxList: View {
     let proxy: ScrollViewProxy
     /// Only a pull's or Try again's sync says so; syncs on their own stay quiet over the saved mail.
     @State private var refreshing = false
+    @State private var dragging = false
     /// A check the user waits on: how long it has gone (0, slow, given up), and whether it just went through.
     @State private var slow = 0
     @State private var upToDate = false
@@ -361,6 +362,7 @@ private struct InboxList: View {
         .environment(\.defaultMinListRowHeight, 0)
         // The system's own pull, as in Mail: its spinner shows while the check runs.
         .refreshable { await pulled() }
+        .onScrollPhaseChange { _, phase in dragging = phase == .interacting }
         // A check the user waits on says when it is slow, and lets go after a while: the sync goes
         // on behind, and the words then say so, until it ends.
         .task(id: refreshing || waiting) {
@@ -493,6 +495,11 @@ private struct InboxList: View {
     /// The system's pull: its spinner shows until the check is through, or has gone too long and
     /// lets the list go while it runs on.
     private func pulled() async {
+        // The system takes the pull as it passes its mark; the check waits for the finger, as
+        // rows that change under it jolt.
+        while dragging, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
         check()
         while refreshing, !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(50))

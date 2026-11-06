@@ -6,6 +6,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import kotlin.math.abs
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -26,10 +27,10 @@ class ListTest : TestMail() {
             drag(row.at(0.5f), Offset(screen.width * 0.5f, row.center.y + screen.height * 0.3f), ms = 500)
             frames(10)
             // The system's spinner comes down over the list; the rows stay where they are.
-            val moved = frames.maxOf { abs((it.at["a"]?.top ?: row.top) - row.top) }
             up()
             val checking = until(120) { last("checking") != null }
-            frames(10)
+            frames(30)
+            val moved = frames.maxOf { abs((it.at["a"]?.top ?: row.top) - row.top) }
             assertTrue("the rows moved with the pull ($moved px)", moved < 1f)
             assertTrue("the pull did not say it checks", checking)
         }
@@ -54,6 +55,16 @@ class ListTest : TestMail() {
             frames(30)
             val dp = rule.density.density
             val from = Offset(screen.width / 2, screen.height * 0.4f)
+            // Taps and a short pull are not a check.
+            repeat(3) {
+                down(from)
+                frames(3)
+                up()
+                frames(20)
+            }
+            swipe(from, Offset(from.x, from.y + 30 * dp), ms = 200)
+            frames(60)
+            assertTrue("a tap or a short pull started a check", frames.none { it.at["checking"] != null })
             swipe(from, Offset(from.x, from.y + 250 * dp), ms = 500)
             assertTrue("a pull on an empty folder did not say it checks", until(120) { last("checking") != null })
         }
@@ -145,6 +156,6 @@ class ListTest : TestMail() {
 
     companion object {
         /** What the line over the dock says while a pull's check runs. */
-        const val CHECKING = "Checking for new mail…"
+        val CHECKING: String get() = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.status_checking)
     }
 }
