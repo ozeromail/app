@@ -4,8 +4,6 @@ import SwiftUI
 struct OzeroMailApp: App {
     init() {
         Crashes.shared.install()
-        // A pull to refresh shows the water, not a spinner.
-        UIRefreshControl.appearance().tintColor = .clear
         // Screen titles in Inter and the paper's ink, as the rest of the app; the bar stays the system's.
         let bar = UINavigationBar.appearance()
         let ink = UIColor(Color.ozeroInk)
