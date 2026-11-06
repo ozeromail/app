@@ -468,13 +468,8 @@ final class Mail: Sendable {
         try move(messages) { try core.moveToFolder(messages: $0, folder: folder.id) }
     }
 
-    /// Where `moveToFolder` can take `messages` together: their account's inbox, archive and own
-    /// folders, but the ones they are in; none for messages of several accounts.
-    func moveTargets(of messages: [MessageItem]) async throws -> [FolderItem] {
-        try core.moveTargets(messages: messages.map(\.id))
-    }
-
-    /// What the move sheet offers `messages`: `moveTargets`, the folders to put first, and
+    /// What the move sheet offers `messages`: where they can move together (their account's
+    /// inbox, archive and own folders, but the ones they are in), the folders to put first, and
     /// whether a new folder can be made for them.
     func moveChoice(of messages: [MessageItem]) async throws -> MoveChoice {
         let ids = messages.map(\.id)

@@ -1077,8 +1077,6 @@ fn header<'a>(fields: impl IntoIterator<Item = (&'a str, &'a str)>) -> Vec<u8> {
     header
 }
 
-/// A folder's full path, so folders of one name under different parents tell apart, and
-/// whether it is at the top. `parent_of` gives a folder's name and parent by its id.
 /// A folder for a request: `id`, or the top of the mailbox without one.
 fn folder_ref(id: Option<&str>) -> String {
     match id {
@@ -1098,6 +1096,8 @@ fn new_folder_id(answer: &Element) -> Result<String, ProviderError> {
         .ok_or_else(|| protocol("no id for the folder"))
 }
 
+/// A folder's full path, so folders of one name under different parents tell apart, and
+/// whether it is at the top. `parent_of` gives a folder's name and parent by its id.
 fn path<'a>(
     name: &str,
     parent: &'a str,

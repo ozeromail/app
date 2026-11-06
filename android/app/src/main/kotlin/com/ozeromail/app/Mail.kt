@@ -437,7 +437,11 @@ class Mail(private val context: Context) {
     }
 
     /** The folder mail from [messages]' sender went to before, or mail went to lately; null if none. */
-    suspend fun quickMove(messages: List<MessageItem>): FolderItem? = io { core.moveSuggestions(messages.map { it.id }) }.firstOrNull()?.folder
+    suspend fun quickMove(messages: List<MessageItem>): FolderItem? = try {
+        io { core.moveSuggestions(messages.map { it.id }) }.firstOrNull()?.folder
+    } catch (_: CoreException) {
+        null
+    }
 
     /** Makes a folder of [account]'s own inside [parent], or at the top; its server gets it in the background. */
     suspend fun createFolder(account: Long, parent: FolderItem?, name: String): FolderItem {

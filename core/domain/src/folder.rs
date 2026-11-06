@@ -119,10 +119,26 @@ pub struct Folder {
 }
 
 impl Folder {
-    /// Whether its server has it: not one made on the device, whose id `Store::create_folder`
-    /// starts with `:new:` until the server gives it one.
+    /// Whether its server has it: not one made on the device, see [`on_server`].
     pub fn on_server(&self) -> bool {
-        !self.remote_id.starts_with(":new:")
+        on_server(&self.remote_id)
+    }
+}
+
+/// Whether a folder's `remote_id` is the server's: `Store::create_folder` gives one made on
+/// the device an id starting with `:new:` until the server gives it one.
+pub fn on_server(remote_id: &str) -> bool {
+    !remote_id.starts_with(":new:")
+}
+
+/// What the account's folder names split their paths with: `.` on servers that keep folders
+/// under INBOX, `/` on the rest and for labels. Only one of them, so a name such as
+/// "Dr. Who" stays whole.
+pub fn folder_separator<'a>(mut names: impl Iterator<Item = &'a str>) -> char {
+    if names.any(|n| n.starts_with("INBOX.")) {
+        '.'
+    } else {
+        '/'
     }
 }
 

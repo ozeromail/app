@@ -13,7 +13,7 @@ use ozero_domain::{
     Invite, InviteKind, InviteRow, ListQuery, ListScope, MessageId, MessageLocation, MessageRow,
     Moved, NewAccount, NewFolder, NewMail, NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile,
     RecentFile, SavedDraft, SavedInvite, SearchFilter, Sender, Server, ServerDraft, Store,
-    StoreError, Unsent, Unsubscribe, default_label, full_text, typed_addresses,
+    StoreError, Unsent, Unsubscribe, default_label, folder_separator, full_text, typed_addresses,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{
@@ -577,15 +577,8 @@ impl Store for SqliteStore {
     ) -> Result<(), StoreError> {
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(storage)?;
-        let (account, old): (i64, String) = tx
-            .query_row(
-                "SELECT account_id, name FROM folder WHERE id = ?1 AND role = 'custom'",
-                [folder.0],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()
-            .map_err(storage)?
-            .ok_or(StoreError::NotFound)?;
+        let (account, old) =
+            folder_name(&tx, folder, "role = 'custom'")?.ok_or(StoreError::NotFound)?;
         // One being made stays one being made, under its new name.
         tx.execute(
             "UPDATE folder SET server_name = CASE WHEN edit IS NULL THEN name ELSE server_name END,
@@ -595,22 +588,15 @@ impl Store for SqliteStore {
             params![folder.0, name, parent.map(|p| p.0), leaf],
         )
         .map_err(storage)?;
-        rename_inner(&tx, account, &old, name)?;
+        rename_inner(&tx, account, "name", &old, name)?;
         tx.commit().map_err(storage)
     }
 
     fn delete_folder(&self, folder: FolderId, not_before: i64) -> Result<(), StoreError> {
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(storage)?;
-        let (account, name): (i64, String) = tx
-            .query_row(
-                "SELECT account_id, name FROM folder WHERE id = ?1 AND role = 'custom'",
-                [folder.0],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()
-            .map_err(storage)?
-            .ok_or(StoreError::NotFound)?;
+        let (account, name) =
+            folder_name(&tx, folder, "role = 'custom'")?.ok_or(StoreError::NotFound)?;
         for id in with_inner(&tx, account, folder, &name)? {
             tx.execute(
                 "UPDATE folder SET edit = 'delete', edit_at = ?2 WHERE id = ?1",
@@ -624,42 +610,23 @@ impl Store for SqliteStore {
     fn folder_mail(&self, folder: FolderId) -> Result<u32, StoreError> {
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(storage)?;
-        let Some((account, name)) = tx
-            .query_row(
-                "SELECT account_id, name FROM folder WHERE id = ?1",
-                [folder.0],
-                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
-            )
-            .optional()
-            .map_err(storage)?
-        else {
+        let Some((account, name)) = folder_name(&tx, folder, "1")? else {
             return Ok(0);
         };
-        let mut count = 0;
-        for id in with_inner(&tx, account, folder, &name)? {
-            count += tx
-                .query_row(
-                    "SELECT count(*) FROM message WHERE folder_id = ?1",
-                    [id],
-                    |r| r.get::<_, u32>(0),
-                )
-                .map_err(storage)?;
-        }
-        Ok(count)
+        let ids = with_inner(&tx, account, folder, &name)?;
+        let marks = vec!["?"; ids.len()].join(",");
+        tx.query_row(
+            &format!("SELECT count(*) FROM message WHERE folder_id IN ({marks})"),
+            rusqlite::params_from_iter(&ids),
+            |r| r.get(0),
+        )
+        .map_err(storage)
     }
 
     fn keep_folder(&self, folder: FolderId) -> Result<bool, StoreError> {
         let mut conn = self.conn();
         let tx = conn.transaction().map_err(storage)?;
-        let Some((account, name)) = tx
-            .query_row(
-                "SELECT account_id, name FROM folder WHERE id = ?1 AND edit = 'delete'",
-                [folder.0],
-                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
-            )
-            .optional()
-            .map_err(storage)?
-        else {
+        let Some((account, name)) = folder_name(&tx, folder, "edit = 'delete'")? else {
             return Ok(false);
         };
         for id in with_inner(&tx, account, folder, &name)? {
@@ -754,7 +721,7 @@ impl Store for SqliteStore {
         .map_err(storage)?;
         // IMAP names inner folders by the outer one's id: they moved along.
         if change.edit == FolderEdit::Change && new != change.remote_id {
-            rename_inner_ids(&tx, account, &change.remote_id, new)?;
+            rename_inner(&tx, account, "remote_id", &change.remote_id, new)?;
         }
         tx.commit().map_err(storage)
     }
@@ -791,7 +758,7 @@ impl Store for SqliteStore {
                         params![change.folder.0, was],
                     )
                     .map_err(storage)?;
-                    rename_inner(&tx, account, &name, &was)?;
+                    rename_inner(&tx, account, "name", &name, &was)?;
                 }
             }
         }
@@ -3123,86 +3090,81 @@ fn folder_row(account: AccountId) -> impl Fn(&Row<'_>) -> rusqlite::Result<Folde
     }
 }
 
-/// The folder and the account's folders inside it, by `name`, its whole path: theirs start
-/// with it and a separator.
+/// The account and whole path of the folder, if it is there and matches `filter`, a condition
+/// on its row.
+fn folder_name(
+    tx: &Transaction<'_>,
+    folder: FolderId,
+    filter: &str,
+) -> Result<Option<(i64, String)>, StoreError> {
+    tx.query_row(
+        &format!("SELECT account_id, name FROM folder WHERE id = ?1 AND {filter}"),
+        [folder.0],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+    .optional()
+    .map_err(storage)
+}
+
+/// The account's folders, each with its `column`: its name or its server id.
+fn account_paths(
+    tx: &Transaction<'_>,
+    account: i64,
+    column: &str,
+) -> Result<Vec<(i64, String)>, StoreError> {
+    tx.prepare_cached(&format!(
+        "SELECT id, {column} FROM folder WHERE account_id = ?1"
+    ))
+    .and_then(|mut s| {
+        s.query_map([account], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect()
+    })
+    .map_err(storage)
+}
+
+/// What follows `outer` among `paths` in each path inside it, the separator first: past the
+/// one separator the account's names use.
+fn inside_of<'a>(
+    paths: &'a [(i64, String)],
+    outer: &'a str,
+) -> impl Iterator<Item = (i64, &'a str)> {
+    let split = folder_separator(paths.iter().map(|(_, p)| p.as_str()));
+    paths.iter().filter_map(move |(id, path)| {
+        let rest = path.strip_prefix(outer)?;
+        rest.starts_with(split).then_some((*id, rest))
+    })
+}
+
+/// The folder and the account's folders inside it, by `name`, its whole path.
 fn with_inner(
     tx: &Transaction<'_>,
     account: i64,
     folder: FolderId,
     name: &str,
 ) -> Result<Vec<i64>, StoreError> {
-    let inner: Vec<(i64, String)> = tx
-        .prepare_cached("SELECT id, name FROM folder WHERE account_id = ?1 AND id != ?2")
-        .and_then(|mut s| {
-            s.query_map(params![account, folder.0], |r| Ok((r.get(0)?, r.get(1)?)))?
-                .collect()
-        })
-        .map_err(storage)?;
+    let paths = account_paths(tx, account, "name")?;
     Ok(std::iter::once(folder.0)
-        .chain(
-            inner
-                .into_iter()
-                .filter(|(_, n)| inside(n, name).is_some())
-                .map(|(id, _)| id),
-        )
+        .chain(inside_of(&paths, name).map(|(id, _)| id))
         .collect())
 }
 
-/// What follows `outer` in `name`, the separator first, if it is inside it.
-fn inside<'a>(name: &'a str, outer: &str) -> Option<&'a str> {
-    let rest = name.strip_prefix(outer)?;
-    rest.starts_with(['/', '.']).then_some(rest)
-}
-
-/// Gives the account's folders inside the one named `old` the name `new` in front instead.
+/// Gives the account's folders inside the one whose `column`, its name or its server id, is
+/// `old` the `new` one in front instead, as the server renames them.
 fn rename_inner(
     tx: &Transaction<'_>,
     account: i64,
+    column: &str,
     old: &str,
     new: &str,
 ) -> Result<(), StoreError> {
-    let all: Vec<(i64, String)> = tx
-        .prepare_cached("SELECT id, name FROM folder WHERE account_id = ?1")
-        .and_then(|mut s| {
-            s.query_map([account], |r| Ok((r.get(0)?, r.get(1)?)))?
-                .collect()
-        })
+    let paths = account_paths(tx, account, column)?;
+    let mut update = tx
+        .prepare_cached(&format!("UPDATE folder SET {column} = ?2 WHERE id = ?1"))
         .map_err(storage)?;
-    for (id, name) in all {
-        if let Some(rest) = inside(&name, old) {
-            tx.execute(
-                "UPDATE folder SET name = ?2 WHERE id = ?1",
-                params![id, format!("{new}{rest}")],
-            )
+    for (id, rest) in inside_of(&paths, old) {
+        update
+            .execute(params![id, format!("{new}{rest}")])
             .map_err(storage)?;
-        }
-    }
-    Ok(())
-}
-
-/// Gives the account's folders whose ids are inside the one `old` the id `new` in front
-/// instead, as IMAP renames them.
-fn rename_inner_ids(
-    tx: &Transaction<'_>,
-    account: i64,
-    old: &str,
-    new: &str,
-) -> Result<(), StoreError> {
-    let all: Vec<(i64, String)> = tx
-        .prepare_cached("SELECT id, remote_id FROM folder WHERE account_id = ?1")
-        .and_then(|mut s| {
-            s.query_map([account], |r| Ok((r.get(0)?, r.get(1)?)))?
-                .collect()
-        })
-        .map_err(storage)?;
-    for (id, remote_id) in all {
-        if let Some(rest) = inside(&remote_id, old) {
-            tx.execute(
-                "UPDATE folder SET remote_id = ?2 WHERE id = ?1",
-                params![id, format!("{new}{rest}")],
-            )
-            .map_err(storage)?;
-        }
     }
     Ok(())
 }

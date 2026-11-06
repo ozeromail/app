@@ -1328,10 +1328,6 @@ fn message_bytes<'a>(
     data.filter(|_| found == Some(uid))
 }
 
-/// A LIST entry that can hold messages. On Gmail, archiving is moving to All Mail (`\All`),
-/// and Important (`\Important`) is left out, as it only repeats mail from other folders. A
-/// folder without a special use is the snoozed one by its name, at the top or right under
-/// INBOX, the parts split by `delimiter`.
 /// A folder's own name as the server writes it; refused with the delimiter in it, which
 /// would make folders inside folders.
 fn own_name(name: &str, delimiter: Option<char>) -> Result<String, ProviderError> {
@@ -1357,6 +1353,10 @@ fn mailbox(remote_id: &str) -> Result<Mailbox<'_>, ProviderError> {
     Mailbox::try_from(remote_id).map_err(|_| protocol("bad folder name"))
 }
 
+/// A LIST entry that can hold messages. On Gmail, archiving is moving to All Mail (`\All`),
+/// and Important (`\Important`) is left out, as it only repeats mail from other folders. A
+/// folder without a special use is the snoozed one by its name, at the top or right under
+/// INBOX, the parts split by `delimiter`.
 fn folder(
     items: &[FlagNameAttribute<'_>],
     mailbox: &Mailbox<'_>,

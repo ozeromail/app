@@ -23,7 +23,6 @@ struct MessageView: View {
     @State private var unread: Set<Int64>?
     @State private var known: Set<Int64> = []
     @State private var showAll = false
-    /// The folders the message can move to, picked from More.
     /// The folder it most likely goes to, offered first in More.
     @State private var quick: FolderItem?
     /// Whether the person left the list it came from here, and the question before they do.

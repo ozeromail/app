@@ -21,7 +21,8 @@ use ozero_domain::{
     MailProvider, MailSender, MailService, MessageId, MessageRow, Moved, NewAccount, NewFolder,
     NewMail, Older, OpId, OutboxId, Outgoing, OutgoingFile, People, Person, ProviderError,
     ProviderState, RawMessage, RecentFile, SavedDraft, SearchFilter, Sender, Server, Store,
-    StoreError, close_blank_lines, html, parse_recipients, saves_sent_itself, typo,
+    StoreError, close_blank_lines, folder_separator, html, parse_recipients, saves_sent_itself,
+    typo,
 };
 use ozero_ews::{EasSession, EwsSession, discover};
 use ozero_gmail::{GmailSession, oauth};
@@ -2333,7 +2334,6 @@ impl Core {
         self.items(rows)
     }
 
-    /// The account's folders that `keep` takes, placed in its folder tree.
     /// The account a folder is of, and the account's folders.
     fn folder_account(&self, folder: FolderId) -> Result<(Account, Vec<Folder>), CoreError> {
         for account in self.store.accounts()? {
@@ -2345,6 +2345,7 @@ impl Core {
         Err(CoreError::Gone)
     }
 
+    /// The account's folders that `keep` takes, placed in its folder tree.
     fn account_folders(
         &self,
         account: AccountId,
@@ -3822,12 +3823,7 @@ fn place(
     }
     let leaf = name.trim();
     let tree = folder_tree(folders);
-    // Servers that keep folders under INBOX name them with `.`, the rest with `/`.
-    let split = if folders.iter().any(|f| f.name.starts_with("INBOX.")) {
-        '.'
-    } else {
-        '/'
-    };
+    let split = folder_separator(folders.iter().map(|f| f.name.as_str()));
     let parent = parent.map(FolderId);
     let outer = match parent {
         Some(id) => Some(
@@ -3872,13 +3868,7 @@ fn edits_folders(kind: AccountKind) -> bool {
 /// every folder, counts as at the top.
 fn folder_tree(folders: &[Folder]) -> Vec<(Option<FolderId>, String)> {
     let by_name: HashMap<&str, &Folder> = folders.iter().map(|f| (f.name.as_str(), f)).collect();
-    // Servers that keep folders under INBOX split names with `.`; the rest, and labels, with `/`.
-    // Only one of them, so a name such as "Dr. Who" stays whole.
-    let split = if folders.iter().any(|f| f.name.starts_with("INBOX.")) {
-        '.'
-    } else {
-        '/'
-    };
+    let split = folder_separator(folders.iter().map(|f| f.name.as_str()));
     folders
         .iter()
         .map(|folder| {
