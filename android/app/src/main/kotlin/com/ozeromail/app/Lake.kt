@@ -37,6 +37,8 @@ import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -86,8 +88,13 @@ fun StillNote(
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         val tint = if (grey) colors.outline else colors.accent
-        Canvas(Modifier.fillMaxWidth().height(LAKE_HEIGHT).graphicsLayer { alpha = water() }) {
-            still.draw(this, tint, HORIZON, size.height, finger?.x, pulled(), glide())
+        // Where the water starts across the window, so a finger's place on it is known.
+        val left = remember { FloatArray(1) }
+        Canvas(
+            Modifier.fillMaxWidth().height(LAKE_HEIGHT).graphicsLayer { alpha = water() }
+                .onGloballyPositioned { left[0] = it.positionInRoot().x },
+        ) {
+            still.draw(this, tint, HORIZON, size.height, finger?.x?.minus(left[0]), pulled(), glide())
         }
         Box(wordsModifier, contentAlignment = Alignment.TopCenter) {
             Words(title, null, Modifier.graphicsLayer { alpha = known }) { checkedAt?.let { Checked(it) } }
@@ -99,20 +106,23 @@ fun StillNote(
     }
 }
 
-/** Where a finger is on the list, across in px, or null while none is on it. */
+/** Where a finger is on the list, across the window in px, or null while none is on it. */
 @Stable
 class Finger {
     private val at = mutableFloatStateOf(Float.NaN)
 
+    /** Where the tracked view starts across the window. */
+    internal var origin = 0f
+
     val x: Float? get() = at.floatValue.takeUnless { it.isNaN() }
 
     fun set(x: Float?) {
-        at.floatValue = x ?: Float.NaN
+        at.floatValue = x?.let { it + origin } ?: Float.NaN
     }
 }
 
 /** Tells [finger] where the first finger on this is, without taking its gesture from anything under it. */
-fun Modifier.tracks(finger: Finger) = pointerInput(finger) {
+fun Modifier.tracks(finger: Finger) = onGloballyPositioned { finger.origin = it.positionInRoot().x }.pointerInput(finger) {
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
         finger.set(down.position.x)
@@ -193,7 +203,7 @@ private class Still {
     private var holdDepth = 0f
 
     // The surface along the horizon: how far each point across is pressed down, in dp, and how
-    // fast it moves. A finger, touches and the tabs push it; a wave runs along it, comes back off
+    // fast it moves. A finger and the tabs push it; a wave runs along it, comes back off
     // the banks and dies away.
     private val height = FloatArray(SPAN)
     private val speed = FloatArray(SPAN)
@@ -222,7 +232,7 @@ private class Still {
     private val settled get() = rough < 0.05f && moving < 0.01f
 
     /** Whether something on the water is moving, so every frame counts. */
-    val busy get() = beat || holding || waves.isNotEmpty() || !flat || abs(jolt) > 1f || abs(glideV) > 0.01f
+    val busy get() = beat || !flat || abs(jolt) > 1f || abs(glideV) > 0.01f
 
     /** The clock goes to sleep: the next frame starts afresh rather than a step late. */
     fun rest() {
@@ -430,7 +440,7 @@ private class Still {
         val hzPx = hz * u
         val stroke = 1.dp.toPx()
         val below = bottom / u
-        clipRect(top = hzPx - HOLD_DEEPEST * u, bottom = bottom) {
+        clipRect(top = hzPx, bottom = bottom) {
             // The reflection: a soft glow under the horizon, flattened by perspective, and a few
             // streaks that follow the surface. It breathes deeper while the water swells.
             val r = 150.dp.toPx()

@@ -152,8 +152,6 @@ private struct WaterCanvas: View {
     let touch: ListTouch?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    /// Where the water starts across the screen, as the finger is told.
-    @State private var left: CGFloat = 0
 
     var body: some View {
         let water = grey ? Color(uiColor: .tertiaryLabel) : Color.ozeroFill
@@ -161,10 +159,10 @@ private struct WaterCanvas: View {
             Canvas { context, size in
                 still.frame(at: timeline.date, frozen: reduceMotion)
                 still.draw(in: &context, size: size, water: water, surface: Lake.horizon,
-                           finger: touch?.x.map { $0 - left }, pull: touch?.pull ?? 0)
+                           finger: touch?.x.map { $0 - still.left }, pull: touch?.pull ?? 0)
             }
         }
-        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minX } action: { left = $0 }
+        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minX } action: { still.left = $0 }
         .onAppear { touch?.onChange = { [weak still] in still?.wake() } }
     }
 }
@@ -194,6 +192,9 @@ final class Still {
         didSet { wake() }
     }
 
+    /// Where the water starts across the screen, as the finger is told.
+    @ObservationIgnored var left: CGFloat = 0
+
     @ObservationIgnored private var now: Double = 0
     @ObservationIgnored private var begun: Double = -1
     @ObservationIgnored private var waves: [Wave] = []
@@ -209,18 +210,19 @@ final class Still {
     @ObservationIgnored private var holdDepth: Double = 0
     // The surface along the horizon: how far each point across is pressed down, and how fast it
     // moves. A finger pushes it; a wave runs along it, comes back off the banks and dies away.
-    @ObservationIgnored private var height = [Double](repeating: 0, count: span)
-    @ObservationIgnored private var speed = [Double](repeating: 0, count: span)
+    // Made as it first draws: a view may make one and never show it.
+    @ObservationIgnored private var height: [Double] = []
+    @ObservationIgnored private var speed: [Double] = []
     // Earlier shapes of it, so a nearer streak sees a wave a moment later, as if it came closer.
-    @ObservationIgnored private var past = [[Double]](repeating: [Double](repeating: 0, count: span), count: pastCount)
+    @ObservationIgnored private var past: [[Double]] = []
     @ObservationIgnored private var pastAt = 0
     @ObservationIgnored private var pastTick = 0
     @ObservationIgnored private var rough: Double = 0
     @ObservationIgnored private var moving: Double = 0
     @ObservationIgnored private var crests: [(x: Double, y: Double, r: Double, amp: Double, depth: Double)] = []
-    @ObservationIgnored private var ys = [Double](repeating: 0, count: linePoints)
-    @ObservationIgnored private var glints = [Double](repeating: 0, count: linePoints)
-    @ObservationIgnored private var soft = [Double](repeating: 0, count: linePoints)
+    @ObservationIgnored private var ys: [Double] = []
+    @ObservationIgnored private var glints: [Double] = []
+    @ObservationIgnored private var soft: [Double] = []
 
     /// Whether the surface is level and no crest runs over it, so lines are drawn straight.
     private var flat: Bool { sea == 0 && settled && waves.isEmpty && holdX == nil }
@@ -229,7 +231,7 @@ final class Still {
     private var settled: Bool { rough < 0.05 && moving < 0.01 }
 
     /// Whether something on the water is moving, so every frame counts.
-    private var busy: Bool { beat || holdX != nil || !waves.isEmpty || !flat }
+    private var busy: Bool { beat || !flat }
 
     /// Wakes the clock of water at rest; the next frame starts afresh rather than a step late.
     func wake() {
@@ -405,6 +407,14 @@ final class Still {
     /// The horizon lies `surface` down and the water fills the rest; a finger at `finger` across,
     /// the list pulled `pull` pulls, draws it down.
     func draw(in context: inout GraphicsContext, size: CGSize, water: Color, surface: CGFloat, finger: CGFloat?, pull: CGFloat) {
+        if height.isEmpty {
+            height = [Double](repeating: 0, count: span)
+            speed = height
+            past = [[Double]](repeating: height, count: pastCount)
+            ys = [Double](repeating: 0, count: linePoints)
+            glints = ys
+            soft = ys
+        }
         let hz = Double(surface)
         horizon = hz
         middle = size.width / 2

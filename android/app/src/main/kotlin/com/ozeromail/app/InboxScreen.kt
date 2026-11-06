@@ -1777,7 +1777,7 @@ private fun InboxList(
                         afloats = afloats,
                         rows = from?.rows ?: others[category].orEmpty(),
                         words = emptyTitle(inbox = true, allEmpty = false, category),
-                        mark = !lake,
+                        water = !lake,
                         thumb = thumb,
                         top = { from?.top ?: underTitle() ?: with(density) { (top + 48.dp).toPx() } },
                         onGone = { if (leaving?.tab == category) leaving = null },
@@ -1794,7 +1794,7 @@ private fun InboxList(
                     onSync()
                 }
             },
-            modifier = Modifier.fillMaxSize().tracks(finger),
+            modifier = Modifier.fillMaxSize().then(if (lake) Modifier.tracks(finger) else Modifier),
             state = pullState,
             indicator = {
                 PullToRefreshDefaults.Indicator(
@@ -2704,10 +2704,10 @@ private fun Afloat(
 
 /**
  * The page of the tab [at], under the list while the thumb is near: its first [rows], or its
- * [words] once it is empty, under the lake [mark] where the list has none of its own to share.
+ * [words] once it is empty, over still [water] where the list has none of its own to share.
  */
 @Composable
-private fun Page(at: Int, afloats: Afloats, rows: List<MessageItem>, words: Int, mark: Boolean, thumb: () -> Float, top: () -> Float, onGone: () -> Unit) {
+private fun Page(at: Int, afloats: Afloats, rows: List<MessageItem>, words: Int, water: Boolean, thumb: () -> Float, top: () -> Float, onGone: () -> Unit) {
     val thumbNow by rememberUpdatedState(thumb)
     // Read as it is drawn, so the page just left takes over from the list's rows in the same frame.
     val near by remember(at) { derivedStateOf { nearPage(at, thumbNow()) } }
@@ -2730,7 +2730,7 @@ private fun Page(at: Int, afloats: Afloats, rows: List<MessageItem>, words: Int,
             // The water stays where it is and only shows; the words go with the page.
             StillNote(
                 stringResource(words),
-                water = { if (mark) glidedAlpha(thumb() - at) else 0f },
+                water = { if (water) glidedAlpha(thumb() - at) else 0f },
                 wordsModifier = Modifier.glided { thumb() - at },
             )
         } else {
