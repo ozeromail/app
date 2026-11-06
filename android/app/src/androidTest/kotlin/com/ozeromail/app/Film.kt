@@ -104,10 +104,10 @@ class Film(private val rule: ComposeTestRule, private val window: Window, val na
         }
         val index = frames.size
         val picture = shooting && index % every == 0
-        val shot = if (picture) shoot() else null
         frames += Frame(rule.mainClock.currentTime, finger, at)
-        if (shot != null) {
-            if (picture) pictures += index to Bitmap.createScaledBitmap(shot, shot.width / SCALE, shot.height / SCALE, true)
+        if (picture) {
+            val shot = shoot()
+            pictures += index to Bitmap.createScaledBitmap(shot, shot.width / SCALE, shot.height / SCALE, true)
             shot.recycle()
         }
     }

@@ -1701,6 +1701,9 @@ private fun InboxList(
     val glideScope = rememberCoroutineScope()
     val lake = messages.isEmpty() && (!syncing || listLoaded) && error == null
     val pullState = rememberPullToRefreshState()
+    // Only a pull's own check shows the spinner: Try again says so on the status line alone.
+    var pulling by remember { mutableStateOf(false) }
+    LaunchedEffect(refreshing) { if (!refreshing) pulling = false }
     // Where the title ends on screen, or null once it has scrolled away.
     val underTitle = {
         val info = listState.layoutInfo
@@ -1782,14 +1785,19 @@ private fun InboxList(
         }
         // The system's own pull, as in Gmail: its spinner shows while the check runs.
         PullToRefreshBox(
-            isRefreshing = refreshing,
-            onRefresh = { if (!refreshing) onSync() },
+            isRefreshing = refreshing && pulling,
+            onRefresh = {
+                if (!refreshing) {
+                    pulling = true
+                    onSync()
+                }
+            },
             modifier = Modifier.fillMaxSize(),
             state = pullState,
             indicator = {
                 PullToRefreshDefaults.Indicator(
                     state = pullState,
-                    isRefreshing = refreshing,
+                    isRefreshing = refreshing && pulling,
                     modifier = Modifier.align(Alignment.TopCenter).padding(top = top),
                     containerColor = colors.surfaceContainerHigh,
                     color = colors.onSurfaceVariant,
