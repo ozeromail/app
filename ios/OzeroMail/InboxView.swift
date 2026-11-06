@@ -249,7 +249,7 @@ private struct InboxList: View {
     /// The row to bring back to the top once the tab's mail is in.
     @State private var returning: Int64?
 
-    /// The first mail of an empty list is on its way: the water waits, and says what for.
+    /// The first mail of an empty list is on its way: its words say what the list waits for.
     private var waiting: Bool {
         // Only the first time: after that an empty list is empty until a sync brings something.
         model.syncing && model.listLoaded && model.messages.isEmpty && !model.everSynced.contains(model.mailbox.key)
@@ -510,7 +510,7 @@ private struct InboxList: View {
             // An account's inbox, as the unified one, with the inbox sync.
             let synced = await model.sync(model.tabbed ? Mail.inbox : model.mailbox)
             // The spinner shows for a moment, however quick the sync.
-            try? await Task.sleep(until: started + .milliseconds(1100))
+            try? await Task.sleep(until: started + Self.pulledFor)
             // Not one let go of: nobody waits on it any more, and a newer one may run.
             guard mine == checks, refreshing else { return }
             upToDate = synced
@@ -523,6 +523,8 @@ private struct InboxList: View {
     private static let slowAfter: Duration = .seconds(10)
     private static let giveUpAfter: Duration = .seconds(30)
     private static let upToDateFor: Duration = .seconds(2)
+    /// The least a check shows its spinner, so a quick one is still seen.
+    private static let pulledFor: Duration = .milliseconds(1100)
 
     @ViewBuilder
     private func swipe(_ action: SwipeAction, _ message: MessageItem) -> some View {

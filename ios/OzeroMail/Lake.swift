@@ -2,7 +2,7 @@ import SwiftUI
 
 /// A list with nothing in it, as the system shows one: still water over its title, and under it
 /// when it was checked. While there are `checking` words, as the first mail is on its way, they
-/// take the place of the title and say what it waits for. `grey` water is for plain folders.
+/// take the place of the title and say what it waits for. `grey` is for plain folders.
 struct LakeNote: View {
     let title: LocalizedStringKey
     var grey = false

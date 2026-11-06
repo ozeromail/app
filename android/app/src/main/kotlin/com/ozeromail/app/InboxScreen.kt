@@ -563,7 +563,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         return synced
     }
 
-    // The first mail of an empty list is on its way: the water waits, and says what for. Only the
+    // The first mail of an empty list is on its way: its words say what the list waits for. Only the
     // first time: after that an empty list is empty until a sync brings something.
     val waiting = syncing && listLoaded && messages.isEmpty() && mailbox.key() !in everSynced
     // A check the user waits on says when it is slow; a pull lets go after a while, and the sync
@@ -1772,7 +1772,7 @@ private fun InboxList(
                         afloats = afloats,
                         rows = from?.rows ?: others[category].orEmpty(),
                         words = emptyTitle(inbox = true, allEmpty = false, category),
-                        lake = !lake,
+                        mark = !lake,
                         thumb = thumb,
                         top = { from?.top ?: underTitle() ?: with(density) { (top + 48.dp).toPx() } },
                         onGone = { if (leaving?.tab == category) leaving = null },
@@ -1821,8 +1821,8 @@ private fun InboxList(
                 }
                 if (lake) {
                     item(key = "empty") {
-                        // New mail covers the water rather than cutting it off.
-                        // One water for every tab: only the words go with the tabs. It fades in, without
+                        // New mail covers the lake rather than cutting it off.
+                        // One lake for every tab: only the words go with the tabs. It fades in, without
                         // moving, when the tabs come from a list with mail.
                         var fresh by remember { mutableStateOf(glide.isRunning || glide.value != 0f) }
                         LaunchedEffect(fresh) {
@@ -2690,10 +2690,10 @@ private fun Afloat(
 
 /**
  * The page of the tab [at], under the list while the thumb is near: its first [rows], or its
- * [words] once it is empty, under a still [lake] where the list has none of its own to share.
+ * [words] once it is empty, under the lake [mark] where the list has none of its own to share.
  */
 @Composable
-private fun Page(at: Int, afloats: Afloats, rows: List<MessageItem>, words: Int, lake: Boolean, thumb: () -> Float, top: () -> Float, onGone: () -> Unit) {
+private fun Page(at: Int, afloats: Afloats, rows: List<MessageItem>, words: Int, mark: Boolean, thumb: () -> Float, top: () -> Float, onGone: () -> Unit) {
     val thumbNow by rememberUpdatedState(thumb)
     // Read as it is drawn, so the page just left takes over from the list's rows in the same frame.
     val near by remember(at) { derivedStateOf { nearPage(at, thumbNow()) } }
@@ -2716,7 +2716,7 @@ private fun Page(at: Int, afloats: Afloats, rows: List<MessageItem>, words: Int,
             // The lake stays where it is and only shows; the words go with the page.
             StillNote(
                 stringResource(words),
-                mark = { if (lake) glidedAlpha(thumb() - at) else 0f },
+                mark = { if (mark) glidedAlpha(thumb() - at) else 0f },
                 wordsModifier = Modifier.glided { thumb() - at },
             )
         } else {

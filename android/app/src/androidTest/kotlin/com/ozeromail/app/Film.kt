@@ -31,7 +31,7 @@ import org.json.JSONObject
  * pictures as one contact sheet, which the CI job keeps.
  */
 class Film(private val rule: ComposeTestRule, private val window: Window, val name: String, private val every: Int = 2) {
-    class Frame(val ms: Long, val finger: Offset?, val at: Map<String, Rect?>, val seen: Int?)
+    class Frame(val ms: Long, val finger: Offset?, val at: Map<String, Rect?>)
 
     private val tracks = linkedMapOf<String, SemanticsMatcher>()
     val frames = mutableListOf<Frame>()
@@ -41,9 +41,6 @@ class Film(private val rule: ComposeTestRule, private val window: Window, val na
 
     /** Pictures are slow; a stretch that must pass quickly, as before Undo, goes without. */
     var shooting = true
-
-    /** Something read off the whole screen on every frame, as [Frame.seen]: what no node tells. */
-    var look: ((Bitmap) -> Int)? = null
 
     fun track(label: String, matcher: SemanticsMatcher) {
         tracks[label] = matcher
@@ -107,9 +104,8 @@ class Film(private val rule: ComposeTestRule, private val window: Window, val na
         }
         val index = frames.size
         val picture = shooting && index % every == 0
-        val looking = look
-        val shot = if (picture || looking != null) shoot() else null
-        frames += Frame(rule.mainClock.currentTime, finger, at, shot?.let { looking?.invoke(it) })
+        val shot = if (picture) shoot() else null
+        frames += Frame(rule.mainClock.currentTime, finger, at)
         if (shot != null) {
             if (picture) pictures += index to Bitmap.createScaledBitmap(shot, shot.width / SCALE, shot.height / SCALE, true)
             shot.recycle()
@@ -191,7 +187,6 @@ class Film(private val rule: ComposeTestRule, private val window: Window, val na
             JSONObject()
                 .put("ms", frame.ms)
                 .put("finger", frame.finger?.let { JSONArray(listOf(it.x.toDouble(), it.y.toDouble())) } ?: JSONObject.NULL)
-                .put("seen", frame.seen ?: JSONObject.NULL)
                 .put("at", JSONObject(frame.at.mapValues { (_, r) -> r?.let { JSONArray(listOf(it.left, it.top, it.right, it.bottom).map(Float::toDouble)) } ?: JSONObject.NULL }))
         }))
         storage.openOutputFile("films/$name.json").use { it.write(json.toString(1).toByteArray()) }

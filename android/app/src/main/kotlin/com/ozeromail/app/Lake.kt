@@ -1,10 +1,10 @@
 package com.ozeromail.app
 
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -20,6 +20,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -46,7 +47,7 @@ fun StillNote(
     mark: () -> Float = { 1f },
     wordsModifier: Modifier = Modifier,
 ) {
-    val known by animateFloatAsState(if (checking != null) 0f else 1f, Motion.calm(WORDS_MS), label = "words")
+    val known by animateFloatAsState(if (checking != null) 0f else 1f, Motion.calm(Motion.NOTE), label = "words")
     val waitWords = rememberLast(checking)
     val fading by remember { derivedStateOf { known < 1f } }
     Column(
@@ -68,18 +69,21 @@ fun StillNote(
 /** Still water, drawn small: a horizon fading out at both ends, and its reflection under it. */
 @Composable
 private fun LakeMark(tint: Color, modifier: Modifier) {
-    Canvas(modifier.size(72.dp, 18.dp)) {
-        val unit = size.width / 72f
-        LINES.forEachIndexed { i, (width, alpha) ->
-            val w = width * unit
-            val left = (size.width - w) / 2
-            drawRect(
-                Brush.horizontalGradient(listOf(Color.Transparent, tint.copy(alpha = alpha), Color.Transparent), startX = left, endX = left + w),
-                topLeft = Offset(left, (1f + i * 7f) * unit),
-                size = Size(w, 1.5f * unit),
-            )
-        }
-    }
+    Spacer(
+        modifier.size(72.dp, 18.dp).drawWithCache {
+            val unit = size.width / 72f
+            val lines = LINES.mapIndexed { i, (width, alpha) ->
+                val w = width * unit
+                val left = (size.width - w) / 2
+                Triple(
+                    Brush.horizontalGradient(listOf(Color.Transparent, tint.copy(alpha = alpha), Color.Transparent), startX = left, endX = left + w),
+                    Offset(left, (1f + i * 7f) * unit),
+                    Size(w, 1.5f * unit),
+                )
+            }
+            onDrawBehind { lines.forEach { (brush, at, box) -> drawRect(brush, topLeft = at, size = box) } }
+        },
+    )
 }
 
 /** The lake's lines, top down: width in 72ths of it, and how strong. */
@@ -106,9 +110,6 @@ private fun Checked(at: Long) {
 
 /** Within this long a check is "just now". */
 private const val CHECKED_NOW_MS = 60_000L
-
-/** How long the words take to change. */
-private const val WORDS_MS = 400
 
 /** An empty list's title and the line under it, and [more] under them. */
 @Composable
