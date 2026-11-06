@@ -25,8 +25,8 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
-// A little depth in the icon's paper, kept faint. What lies on top of the page (the docks, the
-// accent buttons, the tabs' thumb, a screen pushed in) lifts with a short, straight shadow and
+// A little depth in the icon's paper, kept faint. What lies on top of the page (the accent
+// buttons, the tabs' thumb, a screen pushed in) lifts with a short, straight shadow and
 // light along its top edge; what holds things (fields, the tabs' track, the accounts button) is
 // cut in, with a shadow under its top edge; dots are tiny windows. At night shadows hardly show,
 // so the thumb is a shade lighter and a lit edge carries the lifted buttons; the docks stay the
@@ -107,14 +107,9 @@ fun Modifier.sunk(colors: ColorScheme): Modifier = drawWithCache {
     onDrawBehind { drawRect(brush, size = Size(size.width, deep)) }
 }
 
-/** A bottom dock lying on the list: its fill, see-through as the bars unless [solid], with a soft shadow above its top edge. */
+/** A bottom dock over the list: its fill, see-through as the bars unless [solid], and a hairline along its top edge. */
 fun Modifier.dock(colors: ColorScheme, solid: Boolean = false): Modifier =
     background(if (solid) colors.background else colors.bar)
-        .drawWithCache {
-            val fall = 6.dp.toPx()
-            val brush = Brush.verticalGradient(listOf(Color.Transparent, colors.shade(0.03f, 0.2f)), startY = -fall, endY = 0f)
-            onDrawBehind { drawRect(brush, Offset(0f, -fall), Size(size.width, fall)) }
-        }
         .hairline(colors.outlineVariant.copy(alpha = 0.6f), top = true)
 
 /** A screen pushed in over another: its left edge casts a soft shadow on the one beneath. */
