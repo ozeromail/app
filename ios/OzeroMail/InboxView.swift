@@ -457,7 +457,7 @@ private struct InboxList: View {
             let end = geometry.contentSize.height + geometry.contentInsets.bottom - geometry.containerSize.height
             return TabsScroll(offset: offset, nearEnd: geometry.contentOffset.y >= end - Self.tabsStay)
         } action: { old, now in
-            touch.pull = max(0, -now.offset) / Lake.pullGap
+            if lake { touch.pull = max(0, -now.offset) / Lake.pullGap }
             hideTabs(old: old.offset, now: now)
         }
         // Each tab keeps its place: the row at its top when it was left comes back to the top.

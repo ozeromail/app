@@ -15,6 +15,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -81,7 +82,7 @@ fun StillNote(
     val known by animateFloatAsState(if (checking != null) 0f else 1f, Motion.calm(Motion.NOTE), label = "words")
     val waitWords = rememberLast(checking)
     val fading by remember { derivedStateOf { known < 1f } }
-    LaunchedEffect(checking != null, refreshing) { still.beat = checking != null || refreshing }
+    SideEffect { still.beat = checking != null || refreshing }
     Column(
         Modifier.fillMaxWidth().padding(top = LAKE_TOP, bottom = 48.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -125,13 +126,17 @@ class Finger {
 fun Modifier.tracks(finger: Finger) = onGloballyPositioned { finger.origin = it.positionInRoot().x }.pointerInput(finger) {
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-        finger.set(down.position.x)
-        do {
-            val event = awaitPointerEvent(PointerEventPass.Initial)
-            val change = event.changes.firstOrNull { it.id == down.id } ?: break
-            finger.set(change.position.x)
-        } while (change.pressed)
-        finger.set(null)
+        try {
+            finger.set(down.position.x)
+            do {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                finger.set(change.position.x)
+            } while (change.pressed)
+        } finally {
+            // Also when this goes away under the finger: the water is not held by one gone.
+            finger.set(null)
+        }
     }
 }
 
@@ -172,8 +177,12 @@ private class Still {
         get() = clock.longValue
         set(value) {
             if (begun < 0) begun = value
+            asleep = false
             clock.longValue = value
         }
+
+    // While the clock sleeps, a draw does not step: its time is the last frame's, not now.
+    private var asleep = false
 
     /** Wakes the clock of water at rest. */
     val wake = Channel<Unit>(Channel.CONFLATED)
@@ -181,6 +190,7 @@ private class Still {
     /** A wait: the water swells until it is over. */
     var beat = false
         set(value) {
+            if (value == field) return
             field = value
             wake.trySend(Unit)
         }
@@ -236,6 +246,7 @@ private class Still {
 
     /** The clock goes to sleep: the next frame starts afresh rather than a step late. */
     fun rest() {
+        asleep = true
         stepped = -1
         glideV = 0f
         jolt = 0f
@@ -394,8 +405,8 @@ private class Still {
     /** Steps the water up to [now], for the tabs standing at [glide]. */
     private fun advance(glide: Float) {
         if (glide != glidAt && stepped < 0) wake.trySend(Unit)
-        var dt = if (stepped < 0) 0f else min(0.05f, (now - stepped) / 1000f)
-        stepped = now
+        var dt = if (stepped < 0 || asleep) 0f else min(0.05f, (now - stepped) / 1000f)
+        stepped = if (asleep) -1 else now
         // How sharply the tabs move. A snap to the next tab is a jump, not a move.
         if (dt > 0f) {
             val v = if (abs(glide - glidAt) > 0.5f) glideV else (glide - glidAt) / dt
