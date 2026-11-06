@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuite name="com.ozeromail.app.KeyboardTest" tests="21" failures="0" errors="0" skipped="0" time="533.214" timestamp="2026-11-06T20:03:53" hostname="localhost">
+  <properties>
+    <property name="device" value="emulator-5554 - 14" />
+    <property name="flavor" value="" />
+    <property name="project" value=":app" />
+  </properties>
+  <testcase name="closingANewMessageLetsGoOfTheKeyboardAtOnce" classname="com.ozeromail.app.KeyboardTest" time="32.893" />
+  <testcase name="tabTapSwitchesTabAndBack" classname="com.ozeromail.app.ListTest" time="59.338" />
+  <testcase name="openALetterAndComeBack" classname="com.ozeromail.app.ListTest" time="26.384" />
+  <testcase name="tabDragSwitchesTab" classname="com.ozeromail.app.ListTest" time="29.378" />
+  <testcase name="aPullOnAnEmptyFolderChecks" classname="com.ozeromail.app.ListTest" time="30.008" />
+  <testcase name="holdAndDrawChoosesRows" classname="com.ozeromail.app.ListTest" time="30.27" />
+  <testcase name="pullChecksAndLeavesTheRowsInPlace" classname="com.ozeromail.app.ListTest" time="18.357" />
+  <testcase name="inboxByDayAndNight" classname="com.ozeromail.app.LookTest" time="14.28" />
+  <testcase name="neighboursFollowAHeldRow" classname="com.ozeromail.app.SwipeTest" time="19.252" />
+  <testcase name="longSwipeDeletes" classname="com.ozeromail.app.SwipeTest" time="18.34" />
+  <testcase name="dragPastTheEdgeAndBackDoesNothing" classname="com.ozeromail.app.SwipeTest" time="17.548" />
+  <testcase name="longSwipeBackToShortIsDone" classname="com.ozeromail.app.SwipeTest" time="20.898" />
+  <testcase name="dockDraggedUpRaisesTheMailboxes" classname="com.ozeromail.app.SwipeTest" time="19.579" />
+  <testcase name="quickFlickTakesTheRow" classname="com.ozeromail.app.SwipeTest" time="18.338" />
+  <testcase name="doneSwipeTakesTheRowAndRowsBelowCloseUp" classname="com.ozeromail.app.SwipeTest" time="20.624" />
+  <testcase name="shortSwipeSpringsBack" classname="com.ozeromail.app.SwipeTest" time="15.559" />
+  <testcase name="scrollingIsNotASwipe" classname="com.ozeromail.app.SwipeTest" time="14.992" />
+  <testcase name="readSwipeLeavesTheRowInPlace" classname="com.ozeromail.app.SwipeTest" time="15.108" />
+  <testcase name="dockDraggedALittleFallsBack" classname="com.ozeromail.app.SwipeTest" time="20.517" />
+  <testcase name="undoBringsTheRowBack" classname="com.ozeromail.app.SwipeTest" time="17.658" />
+  <testcase name="doneSwipeInTheArchiveMovesBackToInbox" classname="com.ozeromail.app.SwipeTest" time="24.734" />
+</testsuite>
