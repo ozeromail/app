@@ -59,8 +59,10 @@ private fun WebView.configure(images: List<RemoteImage?>, onShown: () -> Unit) {
         useWideViewPort = true
         builtInZoomControls = true
         displayZoomControls = false
-        // Mail's text at the size the person picked.
-        textZoom = (Settings(context).textScale * 100).roundToInt()
+        // Mail's text at the size the person picked, grown or shrunk with the system's text size
+        // as the rest of the app is. A web view left alone follows the system; setting the zoom
+        // replaces that, so it is multiplied back in.
+        textZoom = (Settings(context).textScale * resources.configuration.fontScale * 100).roundToInt()
     }
     webViewClient = object : WebViewClient() {
         override fun onPageCommitVisible(view: WebView, url: String?) = onShown()
