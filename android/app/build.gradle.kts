@@ -182,6 +182,7 @@ dependencies {
     implementation(libs.jna) { artifact { type = "aar" } }
     implementation(libs.coroutines.android)
     implementation(libs.work.runtime)
+    implementation(libs.haze)
     debugImplementation(libs.leakcanary)
     baselineProfile(project(":baselineprofile"))
     debugImplementation(libs.compose.ui.test.manifest)
