@@ -292,13 +292,14 @@ fun ReasonSheet(organizer: String, onSend: (String) -> Unit) {
 private fun RowScope.WideButton(text: String, filled: Boolean, height: Dp, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(Radius.medium)
+    val fill = if (filled) colors.accent else colors.background
     Box(
         Modifier
             .weight(1f)
             .height(height)
-            .then(if (filled) Modifier.lifted(colors, shape, colors.accent) else Modifier)
+            .liftedIfAccent(colors, fill, shape)
             .clip(shape)
-            .background(if (filled) colors.accent else colors.background)
+            .background(fill)
             .border(1.dp, if (filled) colors.accent else colors.outlineVariant, shape)
             .clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,

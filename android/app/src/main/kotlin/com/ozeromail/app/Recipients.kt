@@ -36,7 +36,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -173,9 +172,10 @@ fun Recipients(
         LazyColumn(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = Gap.bar)
+                // Room for the shadow: the popup's window ends where the list does.
+                .padding(start = Gap.bar, end = Gap.bar, top = 8.dp, bottom = 14.dp)
                 .heightIn(max = 320.dp)
-                .shadow(8.dp, RoundedCornerShape(Radius.tile))
+                .floating(colors, RoundedCornerShape(Radius.tile))
                 .clip(RoundedCornerShape(Radius.tile))
                 .background(colors.surface)
                 .border(1.dp, colors.outlineVariant, RoundedCornerShape(Radius.tile)),
