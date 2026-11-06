@@ -392,6 +392,13 @@ fun Modifier.whilePressed(onChange: (Boolean) -> Unit): Modifier = pointerInput(
     }
 }
 
+/** Takes the touches its content leaves, so they do not reach what is under it. */
+fun Modifier.holdTouches(): Modifier = pointerInput(Unit) {
+    awaitPointerEventScope {
+        while (true) awaitPointerEvent()
+    }
+}
+
 /** Takes every touch, so a screen on its way out cannot be tapped twice. */
 fun Modifier.blockTouches(): Modifier = pointerInput(Unit) {
     awaitPointerEventScope {

@@ -102,7 +102,6 @@ import kotlinx.coroutines.withContext
  */
 @Composable
 fun Sheet(visible: Boolean, onClose: () -> Unit, lift: Lift? = null, content: @Composable ColumnScope.() -> Unit) {
-    val colors = MaterialTheme.colorScheme
     // How much of the sheet is still below the screen, from 0 to 1: the scrim darkens as it rises.
     var hidden by remember { mutableFloatStateOf(0f) }
     // Raised by a finger, the sheet comes up with it rather than on its own.
@@ -117,13 +116,7 @@ fun Sheet(visible: Boolean, onClose: () -> Unit, lift: Lift? = null, content: @C
             enter = if (lifted) EnterTransition.None else fadeIn(Motion.calm(Motion.SCRIM)),
             exit = fadeOut(Motion.calm(Motion.SCRIM)),
         ) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .graphicsLayer { alpha = 1f - hidden }
-                    .background(colors.scrim)
-                    .clickable(remember { MutableInteractionSource() }, indication = null, enabled = visible, onClick = onClose),
-            )
+            Scrim(visible, onClose) { 1f - hidden }
         }
         AnimatedVisibility(
             visible,
@@ -201,16 +194,7 @@ private fun SheetBody(
     }
 
     // Not while closing: back then belongs to the screen.
-    PredictiveBackHandler(enabled = visible) { progress ->
-        try {
-            progress.collect { pulled = it.progress * height * 0.5f }
-            close()
-        } catch (e: CancellationException) {
-            // The gesture's own job is cancelled with it; the sheet still has to rise back.
-            withContext(NonCancellable) { settle() }
-            throw e
-        }
-    }
+    BackLowers(visible, onProgress = { pulled = it * height * 0.5f }, onDone = { close() }, onCancel = { settle() })
 
     if (lift != null) {
         LaunchedEffect(lift) {
@@ -288,6 +272,36 @@ private fun SheetBody(
                 .background(colors.surfaceContainerHighest, RoundedCornerShape(2.dp)),
         )
         Column(Modifier.verticalScroll(rememberScrollState()), content = content)
+    }
+}
+
+/** The dim over the screen under a sheet: a tap on it calls [onClose]. */
+@Composable
+fun Scrim(visible: Boolean, onClose: () -> Unit, alpha: () -> Float = { 1f }) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .graphicsLayer { this.alpha = alpha() }
+            .background(MaterialTheme.colorScheme.scrim)
+            .clickable(remember { MutableInteractionSource() }, indication = null, enabled = visible, onClick = onClose),
+    )
+}
+
+/**
+ * The back gesture lowering a sheet: [onProgress] gets how far it has come, 0 to 1, then [onDone];
+ * let go before the end, [onCancel] brings the sheet back up.
+ */
+@Composable
+fun BackLowers(enabled: Boolean, onProgress: (Float) -> Unit, onDone: () -> Unit, onCancel: suspend () -> Unit) {
+    PredictiveBackHandler(enabled) { progress ->
+        try {
+            progress.collect { onProgress(it.progress) }
+            onDone()
+        } catch (e: CancellationException) {
+            // The gesture's own job is cancelled with it; the sheet still has to rise back.
+            withContext(NonCancellable) { onCancel() }
+            throw e
+        }
     }
 }
 
