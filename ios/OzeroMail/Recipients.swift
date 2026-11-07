@@ -98,8 +98,11 @@ struct Recipients<Field: Hashable>: View {
 
     @ViewBuilder
     private func suggestions(for typing: String, done: [String]) -> some View {
-        let shown = local.text == typing ? local.people : []
+        // Not the people already picked.
+        let picked = Set(done.map { $0.lowercased() })
+        let shown = (local.text == typing ? local.people : []).filter { !picked.contains($0.email.lowercased()) }
         let listed = (directory.text == typing ? directory.people : [])
+            .filter { !picked.contains($0.email.lowercased()) }
             .filter { found in !shown.contains { $0.email.caseInsensitiveCompare(found.email) == .orderedSame } }
         if !shown.isEmpty || !listed.isEmpty || offerContacts {
             // The likeliest person nearest the field, whichever side the list is on.
