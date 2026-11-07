@@ -2445,6 +2445,61 @@ fn a_taken_back_answer_keeps_its_quote() {
 }
 
 #[test]
+fn finds_inbox_mail_from_blocked_senders_until_it_moves() {
+    let store = store();
+    let account = account(&store, "a@example.com");
+    let folder = inbox(&store, account);
+    let other = NewMessage {
+        from: Address {
+            name: None,
+            email: "bob@example.org".into(),
+        },
+        ..message(2, 200)
+    };
+    store
+        .save_messages(folder, &[message(1, 100), other])
+        .unwrap();
+    assert!(store.blocked_in_inbox(account).unwrap().is_empty());
+    let anna = list(&store, ListScope::Folder(folder), 10, None)
+        .into_iter()
+        .find(|m| m.from.email == "anna@example.com")
+        .unwrap()
+        .id;
+
+    assert_eq!(store.block_sender(anna).unwrap(), "anna@example.com");
+    assert_eq!(store.block_sender(anna).unwrap(), "anna@example.com");
+    assert_eq!(store.blocked_senders().unwrap(), ["anna@example.com"]);
+    assert_eq!(store.blocked_in_inbox(account).unwrap(), [anna]);
+    // On its way out: not swept again.
+    store
+        .save_folders(
+            account,
+            &[
+                NewFolder {
+                    remote_id: "INBOX".into(),
+                    name: "Inbox".into(),
+                    role: FolderRole::Inbox,
+                },
+                NewFolder {
+                    remote_id: "Archive".into(),
+                    name: "Archive".into(),
+                    role: FolderRole::Archive,
+                },
+            ],
+        )
+        .unwrap();
+    store.queue(anna, Action::Archive, 0).unwrap();
+    assert!(store.blocked_in_inbox(account).unwrap().is_empty());
+
+    store.unblock_sender("ANNA@example.com").unwrap();
+    assert!(store.blocked_senders().unwrap().is_empty());
+    assert_eq!(
+        store.block_sender(MessageId(999)),
+        Err(StoreError::NotFound)
+    );
+}
+
+#[test]
 fn shows_images_from_people_and_chosen_senders() {
     let store = store();
     let folder = inbox(&store, account(&store, "a@example.com"));

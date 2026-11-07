@@ -163,6 +163,7 @@ fun MessageScreen(
     /** Into another folder of its account, named as shown; null where mail does not move from. */
     onMove: ((FolderItem, String) -> Unit)?,
     onSpam: (() -> Unit)?,
+    onBlock: (() -> Unit)?,
     onFlag: (Boolean) -> Unit,
     onDone: (() -> Unit)?,
     onSnooze: (() -> Unit)?,
@@ -574,6 +575,12 @@ fun MessageScreen(
                         SheetAction(R.drawable.ic_spam, stringResource(R.string.action_spam), colors.onSurface) {
                             sheet = null
                             spam()
+                        }
+                    }
+                    onBlock?.let { block ->
+                        SheetAction(R.drawable.ic_block, stringResource(R.string.action_block), colors.onSurface) {
+                            sheet = null
+                            block()
                         }
                     }
                 }

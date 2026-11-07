@@ -451,4 +451,6 @@ pub const MIGRATIONS: &[&str] = &[
     ALTER TABLE draft ADD COLUMN bcc TEXT NOT NULL DEFAULT '';
     ALTER TABLE outbox ADD COLUMN bcc TEXT NOT NULL DEFAULT '';
     ",
+    // 46: senders the user blocked, whose mail goes to junk as it comes.
+    "CREATE TABLE blocked_sender (email TEXT PRIMARY KEY COLLATE NOCASE) WITHOUT ROWID;",
 ];

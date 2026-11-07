@@ -826,6 +826,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         move: suspend (List<MessageItem>) -> List<Long>,
         reset: () -> Unit = {},
         to: FolderItem? = null,
+        undone: suspend () -> Unit = {},
     ) {
         val account = gone.map { it.accountId }.distinct().singleOrNull()
         val go = (to ?: folders.find { it.accountId == account && it.role == role })?.let { Mailbox.Folder(it.id) }
@@ -843,9 +844,21 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             if (open?.id in moved) open = null
             // Also after success: a list read before the archive may bring the row back.
             reset()
-            if (offerUndo(toast, go.takeIf { it != mailbox })) takeBack(actions)
+            if (offerUndo(toast, go.takeIf { it != mailbox })) {
+                takeBack(actions)
+                undone()
+            }
         }
     }
+
+    /** Blocks [message]'s sender; Undo unblocks them and brings their mail back. */
+    fun block(message: MessageItem) = remove(
+        listOf(message),
+        context.getString(R.string.inbox_blocked, message.fromEmail),
+        FolderRole.JUNK,
+        { mail.blockSender(message) },
+        undone = { mail.unblockSender(message.fromEmail) },
+    )
 
     /** Delete: into the trash, or for good from there. */
     fun delete(gone: List<MessageItem>, reset: () -> Unit = {}) {
@@ -1241,6 +1254,11 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                 closeSearch()
                 spam(listOf(message))
             }.takeIf { message.canSpam },
+            onBlock = {
+                open = null
+                closeSearch()
+                block(message)
+            }.takeIf { message.canSpam && message.fromEmail.isNotBlank() },
             onFlag = { flagged -> setFlag(listOf(message), flagged) },
             onDone = {
                 moveOn()

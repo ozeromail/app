@@ -1674,6 +1674,8 @@ impl Core {
                     sync_folders(&*self.store, remote, parser, &folders, SYNC_LIMIT, since).await
                 };
                 self.refused(&account, synced)?;
+                // New mail from blocked senders goes on to spam.
+                self.sweep_blocked(id, now())?;
             }
             if let Some(remote) = slot {
                 remote.close().await;
@@ -2063,6 +2065,28 @@ impl Core {
         Ok(())
     }
 
+    /// Blocks the message's sender: their mail in the inboxes goes to spam now, held for
+    /// `undo`, and what comes later as each sync brings it. Returns the actions for `undo`;
+    /// `unblock_sender` takes the block back. An account without spam keeps their mail.
+    pub fn block_sender(&self, message: i64) -> Result<Vec<i64>, CoreError> {
+        self.store.block_sender(MessageId(message))?;
+        let mut actions = vec![];
+        for account in self.store.accounts()? {
+            actions.extend(self.sweep_blocked(account.id, now() + HOLD)?);
+        }
+        Ok(ids(actions))
+    }
+
+    /// The senders the user blocked, by address.
+    pub fn blocked_senders(&self) -> Result<Vec<String>, CoreError> {
+        Ok(self.store.blocked_senders()?)
+    }
+
+    /// The sender's new mail stays in the inbox again; what went to spam stays there.
+    pub fn unblock_sender(&self, email: String) -> Result<(), CoreError> {
+        Ok(self.store.unblock_sender(&email)?)
+    }
+
     /// Whether the images of all mail load on their own, but in junk.
     pub fn images_always(&self) -> Result<bool, CoreError> {
         Ok(self.store.images_always()?)
@@ -2250,6 +2274,20 @@ impl Core {
     }
 
     /// Queues a move held for the undo time and returns its ops for `undo`.
+    /// Moves the account's inbox mail from blocked senders to its spam, from `not_before`;
+    /// nothing for an account without spam.
+    fn sweep_blocked(&self, account: AccountId, not_before: i64) -> Result<Vec<OpId>, CoreError> {
+        let blocked = self.store.blocked_in_inbox(account)?;
+        if blocked.is_empty() {
+            return Ok(vec![]);
+        }
+        let actions: Vec<_> = blocked.into_iter().map(|m| (m, Action::Spam)).collect();
+        match self.store.queue_all(&actions, not_before) {
+            Err(StoreError::NoSpam) => Ok(vec![]),
+            queued => Ok(queued?),
+        }
+    }
+
     fn hold_move(&self, messages: Vec<i64>, action: Action) -> Result<Vec<i64>, CoreError> {
         Ok(ids(self
             .store

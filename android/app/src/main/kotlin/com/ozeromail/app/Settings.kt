@@ -95,6 +95,7 @@ private const val SWIPES = -1L
 private const val SIGNATURE = -2L
 private const val READING = -4L
 private const val NOTIFICATIONS = -5L
+private const val BLOCKED = -6L
 
 /**
  * The settings, a screen of their own: [page] is [SETTINGS], one of its pages or an account's
@@ -117,6 +118,7 @@ fun SettingsScreen(
         SIGNATURE -> stringResource(R.string.signature_title)
         READING -> stringResource(R.string.settings_reading)
         NOTIFICATIONS -> stringResource(R.string.notify_title)
+        BLOCKED -> stringResource(R.string.blocked_title)
         else -> account?.name ?: stringResource(R.string.settings_title)
     }
     // Whether images load without asking, shared by the first page and Reading, and saved in a
@@ -157,13 +159,14 @@ fun SettingsScreen(
                 )
                 page == READING -> ReadingSettings(mail, images)
                 page == NOTIFICATIONS -> NotificationSettings(accounts, actions)
+                page == BLOCKED -> BlockedSenders(mail)
                 account != null -> AccountSettings(
                     account,
                     inAll = account.inAll.takeIf { !account.inAllFixed },
                     signature = signature,
                     actions = actions,
                 )
-                else -> AppSettings(images.on, accounts, swipes, signature, actions, onOpen)
+                else -> AppSettings(mail, images.on, accounts, swipes, signature, actions, onOpen)
             }
         }
     }
@@ -175,6 +178,7 @@ fun SettingsScreen(
  */
 @Composable
 private fun AppSettings(
+    mail: Mail,
     imagesAlways: Boolean?,
     accounts: List<AccountItem>,
     swipes: Swipes,
@@ -185,6 +189,14 @@ private fun AppSettings(
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
     val textSize = remember { Settings(context).textSize }
+    var blocked by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(Unit) {
+        blocked = try {
+            mail.blockedSenders().size
+        } catch (_: CoreException) {
+            null
+        }
+    }
     Section(stringResource(R.string.accounts_title)) {
         accounts.forEach { account ->
             // The address, or what the account is when its name is the address.
@@ -213,6 +225,11 @@ private fun AppSettings(
             stringResource(R.string.signature_title),
             signature.lines().firstOrNull { it.isNotBlank() } ?: stringResource(R.string.signature_none),
         ) { onOpen(SIGNATURE) }
+        SettingRow(
+            R.drawable.ic_block,
+            stringResource(R.string.blocked_title),
+            blocked?.let { if (it == 0) stringResource(R.string.blocked_none) else it.toString() },
+        ) { onOpen(BLOCKED) }
     }
     Section(stringResource(R.string.settings_reading)) {
         SettingRow(R.drawable.ic_text_size, stringResource(R.string.reading_size), stringResource(SIZE_NAMES[textSize])) { onOpen(READING) }
@@ -517,6 +534,40 @@ private fun ReadingSettings(mail: Mail, images: ImagesAlways) {
             }
         }
     }
+}
+
+/** The senders blocked, each with a way to unblock them, and what blocking does. */
+@Composable
+private fun BlockedSenders(mail: Mail) {
+    val colors = MaterialTheme.colorScheme
+    val scope = rememberCoroutineScope()
+    var senders by remember { mutableStateOf(emptyList<String>()) }
+    LaunchedEffect(Unit) {
+        try {
+            senders = mail.blockedSenders()
+        } catch (_: CoreException) {
+            // The page says what blocking does all the same.
+        }
+    }
+    if (senders.isNotEmpty()) {
+        Section(null) {
+            senders.forEach { email ->
+                SettingRow(lead = { Glyph(R.drawable.ic_block, null, colors.onSurfaceVariant) }, title = email, next = false) {
+                    IconTile(R.drawable.ic_close, stringResource(R.string.blocked_unblock), {
+                        senders = senders - email
+                        scope.launch {
+                            try {
+                                mail.unblockSender(email)
+                            } catch (_: CoreException) {
+                                senders = senders + email
+                            }
+                        }
+                    }, size = 40.dp, tint = colors.onSurfaceVariant)
+                }
+            }
+        }
+    }
+    Hint(stringResource(R.string.blocked_hint))
 }
 
 /** Whether images load without asking, null until read, and how to change it. */
