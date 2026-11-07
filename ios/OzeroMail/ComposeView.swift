@@ -25,7 +25,8 @@ struct ComposeView: View {
 
     @State private var to = ""
     @State private var cc = ""
-    /// Kept while it is emptied, so it does not jump away.
+    @State private var bcc = ""
+    /// Both copies come out together, as in the iPhone's Mail; kept while emptied, so they do not jump away.
     @State private var hasCc = false
     @State private var subject = ""
     @State private var text = ""
@@ -79,7 +80,7 @@ struct ComposeView: View {
     /// The files the text shows as images, which go without a chip.
     @State private var shownFiles: [Int64] = []
 
-    private enum Field { case to, cc, subject, signature }
+    private enum Field { case to, cc, bcc, subject, signature }
 
     /// A photo in the text, as it was picked and made lighter; `full` when the original is sent.
     private struct Picture {
@@ -106,7 +107,7 @@ struct ComposeView: View {
     private var current: DraftItem {
         DraftItem(
             id: 0, accountId: accountId, to: to, subject: subject, text: text, replyTo: start.replyTo, quote: quote,
-            saved: 0, forward: start.forward, files: files, signature: signature, cc: cc)
+            saved: 0, forward: start.forward, files: files, signature: signature, cc: cc, bcc: bcc)
     }
 
     /// Something written here or before, which Delete throws away.
@@ -363,7 +364,7 @@ struct ComposeView: View {
                     .submitLabel(.next)
                     .onSubmit { focus = hasCc ? .cc : .subject }
                 if !hasCc {
-                    Button("compose_cc") {
+                    Button("compose_cc_bcc") {
                         hasCc = true
                         focus = .cc
                     }
@@ -375,6 +376,12 @@ struct ComposeView: View {
             if hasCc {
                 Divider()
                 Recipients(mail: mail, text: $cc, placeholder: "compose_cc", focus: $focus, field: .cc)
+                    .submitLabel(.next)
+                    .onSubmit { focus = .bcc }
+                    // Over the field below, as that is over the subject.
+                    .zIndex(1.5)
+                Divider()
+                Recipients(mail: mail, text: $bcc, placeholder: "compose_bcc", focus: $focus, field: .bcc)
                     .submitLabel(.next)
                     .onSubmit { focus = .subject }
                     .zIndex(1)
@@ -567,7 +574,8 @@ struct ComposeView: View {
         guard firstSeen == nil else { return }
         to = start.to
         cc = start.cc
-        hasCc = !start.cc.isBlank
+        bcc = start.bcc
+        hasCc = !start.cc.isBlank || !start.bcc.isBlank
         subject = start.subject
         text = start.text
         accountId = start.accountId

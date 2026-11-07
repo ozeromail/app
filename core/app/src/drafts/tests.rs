@@ -11,6 +11,7 @@ fn to_push(id: i64, message_id: &str) -> DraftToPush {
             id: OutboxId(0),
             to: vec![],
             cc: vec![],
+            bcc: vec![],
             subject: format!("Draft {id}"),
             text: String::new(),
             message_id: message_id.into(),

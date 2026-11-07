@@ -256,6 +256,12 @@ pub trait MailSender: Send {
         to: &[String],
         message: &[u8],
     ) -> impl Future<Output = Result<(), ProviderError>> + Send;
+
+    /// Whether the server takes the recipients from the message, `Bcc` included, and drops
+    /// that header itself; otherwise it gets only `to`, and the message has no `Bcc`.
+    fn reads_recipients(&self) -> bool {
+        false
+    }
 }
 
 /// Writes a queued message as MIME.

@@ -14,6 +14,8 @@ pub struct Draft {
     pub to: Vec<String>,
     /// As `to`; may be empty.
     pub cc: Vec<String>,
+    /// Blind copies, as `cc`: in the envelope, never in the message others get.
+    pub bcc: Vec<String>,
     pub subject: String,
     pub text: String,
     /// The message this answers.
@@ -42,6 +44,8 @@ pub struct SavedDraft {
     pub to: String,
     /// The copies, as `to`.
     pub cc: String,
+    /// The blind copies, as `to`.
+    pub bcc: String,
     pub subject: String,
     pub text: String,
     pub signature: String,
@@ -114,6 +118,8 @@ pub struct Outgoing {
     pub id: OutboxId,
     pub to: Vec<String>,
     pub cc: Vec<String>,
+    /// Written as a `Bcc` header only where the sender takes the recipients from it.
+    pub bcc: Vec<String>,
     pub subject: String,
     /// With the quote under it.
     pub text: String,

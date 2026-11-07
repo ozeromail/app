@@ -17,6 +17,9 @@ impl MessageBuilder for MimeBuilder {
         if !message.cc.is_empty() {
             header(&mut out, "Cc", &message.cc.join(",\r\n "));
         }
+        if !message.bcc.is_empty() {
+            header(&mut out, "Bcc", &message.bcc.join(",\r\n "));
+        }
         header(&mut out, "Subject", &encoded_words(&message.subject));
         header(&mut out, "Message-ID", &format!("<{}>", message.message_id));
         if let Some(parent) = &message.in_reply_to {
@@ -309,6 +312,7 @@ mod tests {
             id: OutboxId(1),
             to: vec!["bob@example.org".into(), "cat@example.net".into()],
             cc: vec!["dan@example.com".into()],
+            bcc: vec![],
             subject: subject.into(),
             text: text.into(),
             message_id: "1.2@example.com".into(),
@@ -327,6 +331,27 @@ mod tests {
             "Wed, 14 Oct 2026 09:48:03 +0000"
         );
         assert_eq!(rfc5322_date(951_782_400), "Tue, 29 Feb 2000 00:00:00 +0000");
+    }
+
+    #[test]
+    fn writes_blind_copies_only_when_there_are_some() {
+        let from = Address {
+            name: None,
+            email: "anna@example.com".into(),
+        };
+        let none = MimeBuilder.build(&from, &outgoing("Hi", "Text"));
+        assert!(!String::from_utf8_lossy(&none).contains("Bcc:"));
+        let blind = Outgoing {
+            bcc: vec!["eve@example.com".into()],
+            ..outgoing("Hi", "Text")
+        };
+        let raw = MimeBuilder.build(&from, &blind);
+        let parsed = MessageParser::default().parse(&raw).unwrap();
+        let bcc = parsed
+            .bcc()
+            .and_then(|a| a.first())
+            .and_then(|a| a.address());
+        assert_eq!(bcc, Some("eve@example.com"));
     }
 
     #[test]

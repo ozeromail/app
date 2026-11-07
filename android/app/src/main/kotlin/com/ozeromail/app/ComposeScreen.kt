@@ -194,8 +194,9 @@ fun ComposeScreen(
     val start = composing.draft
     var to by rememberSaveable { mutableStateOf(start.to) }
     var cc by rememberSaveable { mutableStateOf(start.cc) }
-    // Kept while it is emptied, so it does not jump away.
-    var hasCc by rememberSaveable { mutableStateOf(start.cc.isNotBlank()) }
+    var bcc by rememberSaveable { mutableStateOf(start.bcc) }
+    // Both copies come out together, as in Apple Mail; kept while emptied, so they do not jump away.
+    var hasCc by rememberSaveable { mutableStateOf(start.cc.isNotBlank() || start.bcc.isNotBlank()) }
     var subject by rememberSaveable { mutableStateOf(start.subject) }
     // With its styles and images as marks; the editor shows what they mean.
     val textState = rememberSaveable { mutableStateOf(start.text) }
@@ -246,7 +247,7 @@ fun ComposeScreen(
     val from = accounts.find { it.id == accountId } ?: accounts.firstOrNull()
 
     // Account 0 is kept as none, and opens with the first account again.
-    fun current() = DraftItem(0, accountId, to, subject, text, start.replyTo, quote, 0, start.forward, files, signature, cc)
+    fun current() = DraftItem(0, accountId, to, subject, text, start.replyTo, quote, 0, start.forward, files, signature, cc, bcc)
     fun keep() {
         if (changed && !finished) keeper.save(current())
     }
@@ -453,7 +454,7 @@ fun ComposeScreen(
                 Recipients(mail, to, { to = it }, R.string.compose_to, addresses, Modifier.weight(1f), Modifier.focusRequester(toFocus))
                 if (!hasCc) {
                     Text(
-                        stringResource(R.string.compose_cc),
+                        stringResource(R.string.compose_cc_bcc),
                         color = colors.primary,
                         style = Type.Caption,
                         fontWeight = Weight.SemiBold,
@@ -467,6 +468,8 @@ fun ComposeScreen(
             if (hasCc) {
                 HorizontalDivider(color = colors.outlineVariant)
                 Recipients(mail, cc, { cc = it }, R.string.compose_cc, addresses)
+                HorizontalDivider(color = colors.outlineVariant)
+                Recipients(mail, bcc, { bcc = it }, R.string.compose_bcc, addresses)
             }
             HorizontalDivider(color = colors.outlineVariant)
             Plain(

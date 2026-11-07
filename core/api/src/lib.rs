@@ -760,6 +760,7 @@ impl Core {
                     files: vec![],
                     signature: String::new(),
                     cc: String::new(),
+                    bcc: String::new(),
                 })?;
                 self.store.leave(id, false)?;
                 Ok(Unsubscribed::Sent)
@@ -1034,6 +1035,7 @@ impl Core {
             files: vec![],
             signature,
             cc: String::new(),
+            bcc: String::new(),
         })
     }
 
@@ -1074,6 +1076,7 @@ impl Core {
             account_id: message.account_id,
             to: correspondents.answer(&account.email).join(", "),
             cc: cc.join(", "),
+            bcc: String::new(),
             subject: ozero_domain::reply_subject(&message.subject),
             text: String::new(),
             reply_to: Some(message.id),
@@ -1120,18 +1123,21 @@ impl Core {
             forward,
             signature,
             cc,
+            bcc,
             ..
         } = draft;
         let to = parse_recipients(&to).ok_or(CoreError::BadRecipients)?;
-        let cc = match cc.trim() {
-            "" => vec![],
-            cc => parse_recipients(cc).ok_or(CoreError::BadCopies)?,
+        let copies = |list: &str| match list.trim() {
+            "" => Ok(vec![]),
+            list => parse_recipients(list).ok_or(CoreError::BadCopies),
         };
+        let (cc, bcc) = (copies(&cc)?, copies(&bcc)?);
         let from = self.account(AccountId(account))?;
         let draft = Draft {
             account_id: from.id,
             to,
             cc,
+            bcc,
             subject,
             text,
             signature,
@@ -1178,6 +1184,7 @@ impl Core {
             account_id,
             to: draft.to,
             cc: draft.cc,
+            bcc: draft.bcc,
             subject: draft.subject,
             text: draft.text,
             signature: draft.signature,
@@ -1930,6 +1937,7 @@ impl Core {
             forward: Some(message.id),
             files: vec![],
             cc: String::new(),
+            bcc: String::new(),
             // Removed meanwhile: the send says so.
             signature: self
                 .account(AccountId(message.account_id))
@@ -2687,6 +2695,7 @@ impl Core {
             account_id: account.id,
             to: vec![to],
             cc: vec![],
+            bcc: vec![],
             subject,
             text,
             signature: String::new(),
@@ -2705,6 +2714,7 @@ impl Core {
                     account_id: Some(account.id),
                     to: draft.to.join(", "),
                     cc: String::new(),
+                    bcc: String::new(),
                     subject: draft.subject.clone(),
                     text: draft.text.clone(),
                     signature: String::new(),
@@ -3211,6 +3221,10 @@ impl MailSender for Remote {
             Self::Eas(p) => p.send(from, to, message).await,
             Self::Imap(_) => Err(ProviderError::Rejected("IMAP sends over SMTP".into())),
         }
+    }
+
+    fn reads_recipients(&self) -> bool {
+        !matches!(self, Self::Imap(_))
     }
 }
 
@@ -4022,6 +4036,9 @@ pub struct DraftItem {
     /// Copies (`Cc`), as `to`; empty for none.
     #[uniffi(default = "")]
     pub cc: String,
+    /// Blind copies (`Bcc`), as `to`; empty for none.
+    #[uniffi(default = "")]
+    pub bcc: String,
 }
 
 /// A draft as its list shows it.
@@ -4135,6 +4152,7 @@ impl From<SavedDraft> for DraftItem {
             files: d.files.into_iter().map(DraftFileItem::from).collect(),
             signature: d.signature,
             cc: d.cc,
+            bcc: d.bcc,
         }
     }
 }
