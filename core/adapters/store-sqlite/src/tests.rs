@@ -2466,8 +2466,8 @@ fn finds_inbox_mail_from_blocked_senders_until_it_moves() {
         .unwrap()
         .id;
 
-    assert_eq!(store.block_sender(anna).unwrap(), "anna@example.com");
-    assert_eq!(store.block_sender(anna).unwrap(), "anna@example.com");
+    store.block_sender(anna).unwrap();
+    store.block_sender(anna).unwrap();
     assert_eq!(store.blocked_senders().unwrap(), ["anna@example.com"]);
     assert_eq!(store.blocked_in_inbox(account).unwrap(), [anna]);
     // On its way out: not swept again.

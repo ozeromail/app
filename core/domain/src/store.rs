@@ -137,8 +137,8 @@ pub trait Store: Send + Sync {
     fn image_senders(&self) -> Result<Vec<String>, StoreError>;
     /// The sender's images wait to be asked for again.
     fn forbid_images(&self, email: &str) -> Result<(), StoreError>;
-    /// Blocks the message's sender, and returns their address.
-    fn block_sender(&self, message: MessageId) -> Result<String, StoreError>;
+    /// Blocks the message's sender.
+    fn block_sender(&self, message: MessageId) -> Result<(), StoreError>;
     /// The senders the user blocked, by address.
     fn blocked_senders(&self) -> Result<Vec<String>, StoreError>;
     /// The sender's mail stays in the inbox again.

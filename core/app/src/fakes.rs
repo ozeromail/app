@@ -461,7 +461,7 @@ impl Store for Memory {
         Ok(())
     }
 
-    fn block_sender(&self, _: MessageId) -> Result<String, StoreError> {
+    fn block_sender(&self, _: MessageId) -> Result<(), StoreError> {
         Err(StoreError::NotFound)
     }
 

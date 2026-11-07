@@ -1,6 +1,7 @@
 package com.ozeromail.app
 
 import androidx.annotation.DrawableRes
+import androidx.annotation.StringRes
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -471,7 +472,6 @@ private fun ChoiceText(text: String, on: Boolean) {
 private fun ReadingSettings(mail: Mail, images: ImagesAlways) {
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
-    val scope = rememberCoroutineScope()
     val prefs = remember { Settings(context) }
     var size by rememberSaveable { mutableStateOf(prefs.textSize) }
     var senders by remember { mutableStateOf(emptyList<String>()) }
@@ -518,16 +518,31 @@ private fun ReadingSettings(mail: Mail, images: ImagesAlways) {
     Hint(stringResource(if (shown) R.string.images_always_hint else R.string.images_ask_hint))
     if (shown || senders.isEmpty()) return
     Caption(stringResource(R.string.images_allowed))
+    SenderList(senders, { senders = it }, R.drawable.ic_photo, R.string.images_forbid) { mail.forbidImages(it) }
+}
+
+/** [senders] by address, each with a way to take it off the list: at once, back if [remove] fails. */
+@Composable
+private fun SenderList(
+    senders: List<String>,
+    onChange: (List<String>) -> Unit,
+    @DrawableRes icon: Int,
+    @StringRes removeLabel: Int,
+    remove: suspend (String) -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val scope = rememberCoroutineScope()
+    val current by rememberUpdatedState(senders)
     Section(null) {
         senders.forEach { email ->
-            SettingRow(lead = { Glyph(R.drawable.ic_photo, null, colors.onSurfaceVariant) }, title = email, next = false) {
-                IconTile(R.drawable.ic_close, stringResource(R.string.images_forbid), {
-                    senders = senders - email
+            SettingRow(lead = { Glyph(icon, null, colors.onSurfaceVariant) }, title = email, next = false) {
+                IconTile(R.drawable.ic_close, stringResource(removeLabel), {
+                    onChange(current - email)
                     scope.launch {
                         try {
-                            mail.forbidImages(email)
+                            remove(email)
                         } catch (_: CoreException) {
-                            senders = senders + email
+                            onChange(current + email)
                         }
                     }
                 }, size = 40.dp, tint = colors.onSurfaceVariant)
@@ -539,8 +554,6 @@ private fun ReadingSettings(mail: Mail, images: ImagesAlways) {
 /** The senders blocked, each with a way to unblock them, and what blocking does. */
 @Composable
 private fun BlockedSenders(mail: Mail) {
-    val colors = MaterialTheme.colorScheme
-    val scope = rememberCoroutineScope()
     var senders by remember { mutableStateOf(emptyList<String>()) }
     LaunchedEffect(Unit) {
         try {
@@ -550,22 +563,7 @@ private fun BlockedSenders(mail: Mail) {
         }
     }
     if (senders.isNotEmpty()) {
-        Section(null) {
-            senders.forEach { email ->
-                SettingRow(lead = { Glyph(R.drawable.ic_block, null, colors.onSurfaceVariant) }, title = email, next = false) {
-                    IconTile(R.drawable.ic_close, stringResource(R.string.blocked_unblock), {
-                        senders = senders - email
-                        scope.launch {
-                            try {
-                                mail.unblockSender(email)
-                            } catch (_: CoreException) {
-                                senders = senders + email
-                            }
-                        }
-                    }, size = 40.dp, tint = colors.onSurfaceVariant)
-                }
-            }
-        }
+        SenderList(senders, { senders = it }, R.drawable.ic_block, R.string.blocked_unblock) { mail.unblockSender(it) }
     }
     Hint(stringResource(R.string.blocked_hint))
 }

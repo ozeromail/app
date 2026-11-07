@@ -1674,8 +1674,10 @@ impl Core {
                     sync_folders(&*self.store, remote, parser, &folders, SYNC_LIMIT, since).await
                 };
                 self.refused(&account, synced)?;
-                // New mail from blocked senders goes on to spam.
-                self.sweep_blocked(id, now())?;
+                if mailbox == INBOX {
+                    // New mail from blocked senders goes on to spam.
+                    self.sweep_blocked(id, now())?;
+                }
             }
             if let Some(remote) = slot {
                 remote.close().await;
@@ -2273,7 +2275,6 @@ impl Core {
             .collect())
     }
 
-    /// Queues a move held for the undo time and returns its ops for `undo`.
     /// Moves the account's inbox mail from blocked senders to its spam, from `not_before`;
     /// nothing for an account without spam.
     fn sweep_blocked(&self, account: AccountId, not_before: i64) -> Result<Vec<OpId>, CoreError> {
@@ -2288,6 +2289,7 @@ impl Core {
         }
     }
 
+    /// Queues a move held for the undo time and returns its ops for `undo`.
     fn hold_move(&self, messages: Vec<i64>, action: Action) -> Result<Vec<i64>, CoreError> {
         Ok(ids(self
             .store
