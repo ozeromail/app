@@ -2528,8 +2528,14 @@ internal fun MessageRow(message: MessageItem, onClick: () -> Unit, choosing: Flo
         if (choosing > 0f) ChoiceMark(chosen, choosing, Modifier.align(Alignment.CenterStart).padding(start = 14.dp))
         // The dot and the bold text are not heard: TalkBack says it in words, as VoiceOver does.
         val unreadWord = stringResource(R.string.inbox_row_unread)
-        val said = Modifier.semantics { if (unread) stateDescription = unreadWord }
-        MessageLine(message, unread, dot, account, MARK_ROOM * choosing, said.clickable(onClick = onClick))
+        MessageLine(
+            message,
+            unread,
+            dot,
+            account,
+            MARK_ROOM * choosing,
+            Modifier.semantics { if (unread) stateDescription = unreadWord }.clickable(onClick = onClick),
+        )
     }
 }
 
