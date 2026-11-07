@@ -14,11 +14,10 @@ impl MessageBuilder for MimeBuilder {
         header(&mut out, "From", &mailbox(from));
         // One address per line keeps each line short (RFC 5322 folding).
         header(&mut out, "To", &message.to.join(",\r\n "));
-        if !message.cc.is_empty() {
-            header(&mut out, "Cc", &message.cc.join(",\r\n "));
-        }
-        if !message.bcc.is_empty() {
-            header(&mut out, "Bcc", &message.bcc.join(",\r\n "));
+        for (name, list) in [("Cc", &message.cc), ("Bcc", &message.bcc)] {
+            if !list.is_empty() {
+                header(&mut out, name, &list.join(",\r\n "));
+            }
         }
         header(&mut out, "Subject", &encoded_words(&message.subject));
         header(&mut out, "Message-ID", &format!("<{}>", message.message_id));

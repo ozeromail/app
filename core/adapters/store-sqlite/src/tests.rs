@@ -1372,7 +1372,7 @@ fn saved(draft: &Draft, now: i64) -> SavedDraft {
         account_id: Some(draft.account_id),
         to: draft.to.join(", "),
         cc: draft.cc.join(", "),
-        bcc: String::new(),
+        bcc: draft.bcc.join(", "),
         subject: draft.subject.clone(),
         text: draft.text.clone(),
         signature: draft.signature.clone(),
