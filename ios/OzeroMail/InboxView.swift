@@ -972,6 +972,8 @@ private struct SwipeTip: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .background(Color.ozeroAccent.opacity(0.1), in: .rect(cornerRadius: 16))
+        // On the page, not on the system's row: in the dark that is black.
+        .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
         .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
         .selectionDisabled()
