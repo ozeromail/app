@@ -464,7 +464,8 @@ pub const MIGRATIONS: &[&str] = &[
     ALTER TABLE draft ADD COLUMN alias TEXT NOT NULL DEFAULT '';
     ALTER TABLE outbox ADD COLUMN alias TEXT NOT NULL DEFAULT '';
     ",
-    // 48: previews saved with the "[image: Logo]" marks they open with, which new ones skip.
+    // 48: previews saved with the "[image: Logo]" marks they open with, which new ones skip;
+    // twice, as mail such as Google's opens with two in a row.
     "
     UPDATE message SET snippet = ltrim(substr(snippet, instr(snippet, ']') + 1))
     WHERE snippet LIKE '[image:%]%';

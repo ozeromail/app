@@ -370,8 +370,6 @@ private struct InboxList: View {
                     if index >= model.messages.count - InboxModel.ahead { Task { await model.loadMore() } }
                 }
                 .listRowBackground(OpenRow.background(model, message))
-                // Room on the left for the unread dot, about as much before it as after it.
-                .listRowInsets(EdgeInsets(top: 8, leading: 24, bottom: 8, trailing: 16))
                 // Lines between the rows only, as on Android: none over the first or under the last.
                 .listSectionSeparator(.hidden)
             }
@@ -694,17 +692,20 @@ struct OpenRow: View {
     let message: MessageItem
 
     var body: some View {
-        if model.sideways {
-            Button {
-                // While choosing, the list's own selection takes the tap.
-                if model.chosen.isEmpty { model.open(message) }
-            } label: {
-                MessageRow(message: message).contentShape(.rect)
+        Group {
+            if model.sideways {
+                Button {
+                    // While choosing, the list's own selection takes the tap.
+                    if model.chosen.isEmpty { model.open(message) }
+                } label: {
+                    MessageRow(message: message).contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+            } else {
+                NavigationLink(value: Route.message(message)) { MessageRow(message: message) }
             }
-            .buttonStyle(.plain)
-        } else {
-            NavigationLink(value: Route.message(message)) { MessageRow(message: message) }
         }
+        .listRowInsets(MessageRow.insets)
     }
 
     /// The row's background, set where the list takes its row: the paper, a light wash of the
@@ -950,6 +951,8 @@ private struct NoticeRow: View {
             .background(background, in: .rect(cornerRadius: 16))
         }
         .buttonStyle(.plain)
+        // On the page, not on the system's row: in the dark that is black.
+        .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
         .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
         .selectionDisabled()
@@ -987,6 +990,7 @@ private struct LeftInbox: View {
     var body: some View {
         List(model.inboxRows, id: \.id) { message in
             MessageRow(message: message)
+                .listRowInsets(MessageRow.insets)
                 .listRowBackground(Color.ozeroPage)
         }
         .listStyle(.plain)
@@ -1059,6 +1063,9 @@ private struct ShakeToUndo: ViewModifier {
 /// account's name by the time, after a small dot of its colour, marks it.
 struct MessageRow: View {
     let message: MessageItem
+
+    /// The row in its list: room on the left for the unread dot, about as much before it as after it.
+    static let insets = EdgeInsets(top: 8, leading: 24, bottom: 8, trailing: 16)
 
     // What is read is in the paper's ink.
     var body: some View { content.ink() }
