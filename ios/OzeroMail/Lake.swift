@@ -211,6 +211,7 @@ final class Still {
     // Made as it first draws: a view may make one and never show it.
     @ObservationIgnored private var height: [Double] = []
     @ObservationIgnored private var speed: [Double] = []
+    @ObservationIgnored private var forces: [Double] = []
     // Earlier shapes of it, so a nearer streak sees a wave a moment later, as if it came closer.
     @ObservationIgnored private var past: [[Double]] = []
     @ObservationIgnored private var pastAt = 0
@@ -292,24 +293,29 @@ final class Still {
         calm += (min(1, energy) - calm) * min(1, dt * 2)
     }
 
-    /// One step of the surface: a damped wave between two banks, held under a finger, thicker once a wait is over.
+    /// One step of the surface: a damped wave between two banks that gravity draws back to the
+    /// horizon, held under a finger, livelier while a wait lasts. Short ripples die first.
     private func flow(_ dt: Double) {
         if settled && holdX == nil { return }
-        let damping = beat ? 0.9 : 1.5
+        let damping = beat ? dampingWaiting : dampingCalm
         for i in 0..<span {
-            let bend = height[i > 0 ? i - 1 : 1] - 2 * height[i] + height[i < span - 1 ? i + 1 : span - 2]
-            var force = stiff * bend - damping * speed[i]
+            let l = i > 0 ? i - 1 : 1
+            let r = i < span - 1 ? i + 1 : span - 2
+            let bend = height[l] - 2 * height[i] + height[r]
+            let stir = speed[l] - 2 * speed[i] + speed[r]
+            var force = stiff * bend + viscous * stir - level * height[i] - damping * speed[i]
             if let held = holdX {
                 // The finger draws the water toward where it holds it, and lets the rest be.
                 let d = middle - banks + Double(i) * spacing - held
                 let hold = exp(-d * d / (2 * holdWidth * holdWidth))
                 force += hold * (holdPull * (holdDepth - height[i]) - holdDamp * speed[i])
             }
-            speed[i] += force * dt
+            forces[i] = force
         }
         var fast: Double = 0
         rough = 0
         for i in 0..<span {
+            speed[i] += forces[i] * dt
             height[i] += speed[i] * dt
             fast = max(fast, abs(speed[i]))
             rough = max(rough, abs(height[i]))
@@ -413,6 +419,7 @@ final class Still {
         if height.isEmpty {
             height = [Double](repeating: 0, count: span)
             speed = height
+            forces = height
             past = [[Double]](repeating: height, count: pastCount)
             ys = [Double](repeating: 0, count: linePoints)
             glints = ys
@@ -566,6 +573,14 @@ private let spacing: Double = 3
 private let waveSpeed: Double = 150
 private let banks: Double = 150
 private let stiff = waveSpeed * waveSpeed / (spacing * spacing)
+
+/// How the surface comes back level: gravity's pull toward the horizon, ω² of a ~0.6 Hz sway; the
+/// damping of its speed, a slight overshoot and calm in under 3 s, lighter while a wait lasts; and
+/// the water's viscosity, which stills short ripples sooner than long waves.
+private let level: Double = 14
+private let dampingCalm: Double = 4.5
+private let dampingWaiting: Double = 2.7
+private let viscous = 30 / (spacing * spacing)
 
 /// A finger on the water: how deep a touch alone draws it down and the deepest a pull does; how
 /// wide the dip is; and how firmly it holds the surface there, and calms it.
