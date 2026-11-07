@@ -5,15 +5,13 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
-import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.NotificationCompat.Action
 import androidx.core.app.RemoteInput
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.MessageItem
-import uniffi.ozero_api.richEscape
 
 /**
  * Done, Read and Reply on a new mail notification. Each changes the database first, as a tap in
@@ -22,60 +20,56 @@ import uniffi.ozero_api.richEscape
 class NotificationActions : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val id = intent.getLongExtra(MESSAGE, 0)
-        val reply = RemoteInput.getResultsFromIntent(intent)?.getCharSequence(REPLY)?.toString()
+        val reply = RemoteInput.getResultsFromIntent(intent)?.getCharSequence(Kind.REPLY.name)?.toString()
         val mail = (context.applicationContext as OzeroApp).mail
         val pending = goAsync()
-        CoroutineScope(Dispatchers.Default).launch {
+        CoroutineScope(Dispatchers.IO).launch {
             try {
                 val message = mail.message(id) ?: return@launch
-                when (intent.action) {
-                    DONE -> mail.archive(listOf(message))
-                    READ -> mail.markRead(listOf(message))
-                    REPLY -> if (!reply.isNullOrBlank()) {
-                        mail.send(mail.reply(message, all = false).copy(text = richEscape(reply.trim())))
-                        mail.markRead(listOf(message))
-                    }
+                when (intent.action?.let(Kind::valueOf)) {
+                    Kind.DONE -> mail.archive(listOf(message))
+                    Kind.READ -> mail.markRead(listOf(message))
+                    Kind.REPLY -> if (!reply.isNullOrBlank()) mail.quickReply(message, reply)
+                    null -> Unit
                 }
             } catch (e: CoreException) {
                 Log.w("Ozero", "notification action not done", e)
             } finally {
-                NotificationManagerCompat.from(context).cancel(id.toInt())
+                dismissMail(context, id)
                 pending.finish()
             }
         }
     }
 
+    private enum class Kind { DONE, READ, REPLY }
+
     companion object {
-        private const val DONE = "com.ozeromail.app.DONE"
-        private const val READ = "com.ozeromail.app.READ"
-        private const val REPLY = "com.ozeromail.app.REPLY"
         private const val MESSAGE = "message"
 
         /** Done when it can be archived, Read, and Reply typed in the notification. */
-        fun actions(context: Context, message: MessageItem): List<NotificationCompat.Action> {
-            fun intent(action: String, mutable: Boolean = false) = PendingIntent.getBroadcast(
-                context,
-                // One for each message and action, so none replaces another's.
-                message.id.toInt() * 3 + listOf(DONE, READ, REPLY).indexOf(action),
-                Intent(context, NotificationActions::class.java).setAction(action).putExtra(MESSAGE, message.id),
-                PendingIntent.FLAG_UPDATE_CURRENT or if (mutable) PendingIntent.FLAG_MUTABLE else PendingIntent.FLAG_IMMUTABLE,
-            )
-            val done = NotificationCompat.Action.Builder(0, context.getString(R.string.action_done), intent(DONE))
-                .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_ARCHIVE)
-                .setShowsUserInterface(false)
-                .build()
-            val read = NotificationCompat.Action.Builder(0, context.getString(R.string.action_read), intent(READ))
-                .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_MARK_AS_READ)
-                .setShowsUserInterface(false)
-                .build()
-            // Mutable: the system writes the typed answer into it.
-            val reply = NotificationCompat.Action.Builder(0, context.getString(R.string.message_reply), intent(REPLY, mutable = true))
-                .addRemoteInput(RemoteInput.Builder(REPLY).setLabel(context.getString(R.string.message_reply_prompt)).build())
-                .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
-                .setAllowGeneratedReplies(false)
-                .setShowsUserInterface(false)
-                .build()
-            return listOfNotNull(done.takeIf { message.canArchive }, read, reply)
+        fun actions(context: Context, message: MessageItem): List<Action> {
+            fun action(kind: Kind, label: Int, semantic: Int, mutable: Boolean = false) = Action.Builder(
+                0,
+                context.getString(label),
+                PendingIntent.getBroadcast(
+                    context,
+                    // One for each message and action, so none replaces another's.
+                    message.id.toInt() * Kind.entries.size + kind.ordinal,
+                    Intent(context, NotificationActions::class.java).setAction(kind.name).putExtra(MESSAGE, message.id),
+                    PendingIntent.FLAG_UPDATE_CURRENT or if (mutable) PendingIntent.FLAG_MUTABLE else PendingIntent.FLAG_IMMUTABLE,
+                ),
+            ).setSemanticAction(semantic).setShowsUserInterface(false)
+            return buildList {
+                if (message.canArchive) add(action(Kind.DONE, R.string.action_done, Action.SEMANTIC_ACTION_ARCHIVE).build())
+                add(action(Kind.READ, R.string.action_read, Action.SEMANTIC_ACTION_MARK_AS_READ).build())
+                // Mutable: the system writes the typed answer into it.
+                add(
+                    action(Kind.REPLY, R.string.message_reply, Action.SEMANTIC_ACTION_REPLY, mutable = true)
+                        .addRemoteInput(RemoteInput.Builder(Kind.REPLY.name).setLabel(context.getString(R.string.message_reply_prompt)).build())
+                        .setAllowGeneratedReplies(false)
+                        .build(),
+                )
+            }
         }
     }
 }
