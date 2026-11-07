@@ -9,6 +9,11 @@ struct OzeroMailApp: App {
         let ink = UIColor(Color.ozeroInk)
         bar.largeTitleTextAttributes = [.font: UIFont.inter(34, .bold, .largeTitle), .foregroundColor: ink]
         bar.titleTextAttributes = [.font: UIFont.inter(17, .semibold, .headline), .foregroundColor: ink]
+        // Segments keep the system's glass and lens, in Inter and quieter, as Android's tabs: the
+        // others grey, the chosen one in ink.
+        let segments = UISegmentedControl.appearance()
+        segments.setTitleTextAttributes([.font: UIFont.inter(13, .medium, .footnote), .foregroundColor: UIColor(Color.ozeroMuted)], for: .normal)
+        segments.setTitleTextAttributes([.font: UIFont.inter(13, .semibold, .footnote), .foregroundColor: ink], for: .selected)
     }
 
     var body: some Scene {

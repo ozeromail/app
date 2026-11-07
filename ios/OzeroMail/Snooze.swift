@@ -89,6 +89,9 @@ struct SnoozeSheet: View {
                     .tint(.primary)
                 }
             }
+            // Rows on the sheet's paper, as on Android.
+            .listStyle(.plain)
+            .paperList()
             .navigationTitle("snooze_title")
             .navigationBarTitleDisplayMode(.inline)
         }

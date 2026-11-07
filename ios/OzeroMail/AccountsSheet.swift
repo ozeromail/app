@@ -13,10 +13,10 @@ struct AccountsActions {
     let onSettings: () -> Void
 }
 
-/// The mailboxes, for going places. It grows out of the accounts button and lies on the sheet's
-/// glass, without cards: all inboxes and each account's inbox as rows, the mailboxes of all
-/// accounts as tiles. Folders, one row, open the folders of every account as a page. The settings sit
-/// in the sheet's bar at the left, Edit at the right as in the iPhone's own Mail; Edit turns the
+/// The mailboxes, for going places. It grows out of the accounts button and lies on paper, as
+/// on Android, without cards: all inboxes and each account's inbox as rows, the mailboxes of all
+/// accounts as tiles. Folders, one row, open the folders of every account as a page. The heading sits
+/// at the left, the settings and Edit at the right; Edit turns the
 /// rows into switches to move, an account's settings open from its ⓘ there, or by holding it.
 struct AccountsSheet: View {
     let accounts: [AccountItem]
@@ -62,29 +62,45 @@ struct AccountsSheet: View {
                 fit = height
                 detent = .height(height)
             }
+            // The heading lies on the paper at the left, as on Android, not in a bar; the title
+            // stays for the back button of the folders' page.
             .navigationTitle("folders_title")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button(action: actions.onSettings) { Image(systemName: "gear") }
-                        .accessibilityLabel(Text("settings_title"))
-                }
-                // With one account there is nothing to switch or move.
-                if accounts.count > 1 {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button(editing ? "action_done" : "action_edit") { withAnimation(.smooth) { editing.toggle() } }
-                    }
-                }
-            }
+            .toolbar(.hidden, for: .navigationBar)
+            .safeAreaInset(edge: .top, spacing: 0) { heading }
             .navigationDestination(isPresented: $showFolders) {
                 FoldersPage(accounts: accounts, folders: folders, mailbox: mailbox, actions: actions)
             }
         }
         .presentationDetents(fit > 0 ? [.height(fit), .large] : [.medium, .large], selection: $detent)
-        // Thick enough that the inbox's colours behind do not smudge the rows; still the sheet's glass.
-        .presentationBackground(.ultraThickMaterial)
+        .paperSheet()
         .presentationDragIndicator(.visible)
         .modifier(ZoomFrom(zoom: zoom))
+    }
+
+    /// "Mailboxes" at the left; the settings and Edit at the right, Edit in the accent.
+    private var heading: some View {
+        HStack(spacing: 4) {
+            Text("folders_title")
+                .font(.heading)
+                .accessibilityAddTraits(.isHeader)
+            Spacer()
+            Button(action: actions.onSettings) {
+                Image(systemName: "gear").font(.row).foregroundStyle(.secondary).frame(width: 44, height: 44)
+            }
+            .accessibilityLabel(Text("settings_title"))
+            // With one account there is nothing to switch or move.
+            if accounts.count > 1 {
+                Button(editing ? "action_done" : "action_edit") { withAnimation(.smooth) { editing.toggle() } }
+                    .font(.textStrong)
+                    .foregroundStyle(Color.ozeroAccent)
+                    .frame(minWidth: 44, minHeight: 44)
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.leading, 20)
+        .padding(.trailing, 12)
+        .padding(.top, 14)
+        .ink()
     }
 
     @ViewBuilder private var home: some View {

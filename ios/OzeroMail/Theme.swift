@@ -76,15 +76,17 @@ extension Color {
 
 extension View {
     /// A dock lying on the list: the system's bar with a hairline along its top edge, no shadow. A
-    /// `floating` dock has neither on iOS 26: its buttons are glass.
+    /// `floating` dock has neither on iOS 26: its buttons are glass. A `solid` one is the paper
+    /// itself, as Android's quick reply.
     @ViewBuilder
-    func dockBackground(floating: Bool = false) -> some View {
-        if floating && hasGlass { self } else { barFill() }
-    }
-
-    private func barFill() -> some View {
-        background(.bar)
-            .overlay(alignment: .top) { Divider() }
+    func dockBackground(floating: Bool = false, solid: Bool = false) -> some View {
+        if floating && hasGlass {
+            self
+        } else if solid {
+            background(Color.ozeroPage).overlay(alignment: .top) { Divider() }
+        } else {
+            background(.bar).overlay(alignment: .top) { Divider() }
+        }
     }
 }
 
@@ -192,6 +194,12 @@ extension View {
         foregroundStyle(Color.ozeroInk, Color.ozeroMuted, Color.ozeroMuted.opacity(0.7))
     }
 
+    /// A sheet on the paper, as Android's, not the system's grey glass: what is behind does not
+    /// show through, and the sheet's own shape and drag stay the system's.
+    func paperSheet() -> some View {
+        presentationBackground(Color.ozeroPage)
+    }
+
     /// A list or form on the paper's page instead of the system's grey.
     func paperList() -> some View {
         scrollContentBackground(.hidden).background(Color.ozeroPage)
@@ -208,5 +216,16 @@ struct PaperForm<Content: View>: View {
             Group { content }.listRowBackground(Color.ozeroCard)
         }
         .paperList()
+    }
+}
+
+/// What a group of a form is, over it: small and quiet, as Android's captions.
+struct FormCaption: View {
+    let key: LocalizedStringKey
+
+    init(_ key: LocalizedStringKey) { self.key = key }
+
+    var body: some View {
+        Text(key).font(.smallStrong).foregroundStyle(Color.ozeroMuted).textCase(nil)
     }
 }
