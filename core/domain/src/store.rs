@@ -137,6 +137,14 @@ pub trait Store: Send + Sync {
     fn image_senders(&self) -> Result<Vec<String>, StoreError>;
     /// The sender's images wait to be asked for again.
     fn forbid_images(&self, email: &str) -> Result<(), StoreError>;
+    /// Blocks the message's sender, and returns their address.
+    fn block_sender(&self, message: MessageId) -> Result<String, StoreError>;
+    /// The senders the user blocked, by address.
+    fn blocked_senders(&self) -> Result<Vec<String>, StoreError>;
+    /// The sender's mail stays in the inbox again.
+    fn unblock_sender(&self, email: &str) -> Result<(), StoreError>;
+    /// The account's mail in its inbox from blocked senders, not on its way out already.
+    fn blocked_in_inbox(&self, account: AccountId) -> Result<Vec<MessageId>, StoreError>;
     /// Whether all mail's images load without asking, but in junk.
     fn images_always(&self) -> Result<bool, StoreError>;
     fn set_images_always(&self, always: bool) -> Result<(), StoreError>;

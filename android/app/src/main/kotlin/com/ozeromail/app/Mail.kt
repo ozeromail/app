@@ -406,6 +406,22 @@ class Mail(private val context: Context) {
      */
     suspend fun archive(messages: List<MessageItem>): List<Long> = move(messages) { core.archive(it) }
 
+    /**
+     * Blocks [message]'s sender: their mail in the inboxes goes to spam now, and later mail as it
+     * comes. Returns the actions for [undo]; [unblockSender] takes the block back.
+     */
+    suspend fun blockSender(message: MessageItem): List<Long> {
+        val actions = io { core.blockSender(message.id) }
+        pushAll()
+        return actions
+    }
+
+    /** The senders blocked, by address. */
+    suspend fun blockedSenders(): List<String> = io { core.blockedSenders() }
+
+    /** The sender's new mail stays in the inbox again. */
+    suspend fun unblockSender(email: String) = io { core.unblockSender(email) }
+
     /** As [archive], into the account's spam. */
     suspend fun spam(messages: List<MessageItem>): List<Long> = move(messages) { core.spam(it) }
 

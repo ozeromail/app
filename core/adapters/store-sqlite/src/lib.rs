@@ -883,6 +883,57 @@ impl Store for SqliteStore {
             .map_err(storage)
     }
 
+    fn block_sender(&self, message: MessageId) -> Result<String, StoreError> {
+        let conn = self.conn();
+        let email: String = conn
+            .query_row(
+                "SELECT from_email FROM message WHERE id = ?1 AND from_email != ''",
+                [message.0],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(storage)?
+            .ok_or(StoreError::NotFound)?;
+        conn.execute(
+            "INSERT OR IGNORE INTO blocked_sender (email) VALUES (?1)",
+            [&email],
+        )
+        .map_err(storage)?;
+        Ok(email)
+    }
+
+    fn blocked_senders(&self) -> Result<Vec<String>, StoreError> {
+        self.conn()
+            .prepare_cached("SELECT email FROM blocked_sender ORDER BY email")
+            .and_then(|mut s| s.query_map([], |r| r.get(0))?.collect())
+            .map_err(storage)
+    }
+
+    fn unblock_sender(&self, email: &str) -> Result<(), StoreError> {
+        self.conn()
+            .execute("DELETE FROM blocked_sender WHERE email = ?1", [email])
+            .map(|_| ())
+            .map_err(storage)
+    }
+
+    fn blocked_in_inbox(&self, account: AccountId) -> Result<Vec<MessageId>, StoreError> {
+        self.conn()
+            // Left out while a move of it is held, as lists do (`not_moving`).
+            .prepare_cached(
+                "SELECT m.id FROM message m JOIN folder f ON f.id = m.folder_id
+                 WHERE f.account_id = ?1 AND f.role = 'inbox'
+                   AND m.from_email IN (SELECT email FROM blocked_sender)
+                   AND NOT EXISTS (SELECT 1 FROM op WHERE op.message_id = m.id
+                       AND op.kind IN ('archive', 'trash', 'spam', 'inbox', 'snooze', 'move', 'delete', 'empty'))
+                 ORDER BY m.id",
+            )
+            .and_then(|mut s| {
+                s.query_map([account.0], |r| Ok(MessageId(r.get(0)?)))?
+                    .collect()
+            })
+            .map_err(storage)
+    }
+
     fn images_always(&self) -> Result<bool, StoreError> {
         self.conn()
             .query_row(concat!("SELECT ", images_always!()), [], |r| r.get(0))

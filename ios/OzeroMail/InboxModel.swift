@@ -598,6 +598,14 @@ final class InboxModel {
         return true
     }
 
+    /// Blocks the message's sender; Undo unblocks them and brings their mail back.
+    func block(_ message: MessageItem) async {
+        let email = message.fromEmail
+        if await remove([message], toast: tr("inbox_blocked", email), role: .junk, move: { _ in try await mail.blockSender(message) }) {
+            try? await mail.unblockSender(email)
+        }
+    }
+
     /// Done: into the archive.
     func archive(_ gone: [MessageItem]) async {
         await remove(gone, toast: tr("inbox_archived"), role: .archive, move: mail.archive)

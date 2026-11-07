@@ -393,6 +393,11 @@ struct MessageView: View {
             Button("action_spam", systemImage: "xmark.bin") {
                 leave { await model.spam([message]) }
             }
+            if !message.fromEmail.isBlank {
+                Button("action_block", systemImage: "nosign") {
+                    leave { await model.block(message) }
+                }
+            }
         }
     }
 

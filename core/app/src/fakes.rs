@@ -461,6 +461,22 @@ impl Store for Memory {
         Ok(())
     }
 
+    fn block_sender(&self, _: MessageId) -> Result<String, StoreError> {
+        Err(StoreError::NotFound)
+    }
+
+    fn blocked_senders(&self) -> Result<Vec<String>, StoreError> {
+        Ok(vec![])
+    }
+
+    fn unblock_sender(&self, _: &str) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn blocked_in_inbox(&self, _: AccountId) -> Result<Vec<MessageId>, StoreError> {
+        Ok(vec![])
+    }
+
     fn images_always(&self) -> Result<bool, StoreError> {
         Ok(false)
     }

@@ -451,6 +451,19 @@ final class Mail: Sendable {
         try core.undoAnswer(answered: answered)
     }
 
+    /// Blocks `message`'s sender: their mail in the inboxes goes to spam now, and later mail as
+    /// it comes. Returns the actions for `undo`; `unblockSender` takes the block back.
+    func blockSender(_ message: MessageItem) async throws -> [Int64] {
+        let actions = try core.blockSender(message: message.id)
+        try? pushAll()
+        return actions
+    }
+
+    /// The sender's new mail stays in the inbox again.
+    func unblockSender(_ email: String) async throws {
+        try core.unblockSender(email: email)
+    }
+
     /// As `archive`, into the account's spam.
     func spam(_ messages: [MessageItem]) async throws -> [Int64] {
         try move(messages) { try core.spam(messages: $0) }
