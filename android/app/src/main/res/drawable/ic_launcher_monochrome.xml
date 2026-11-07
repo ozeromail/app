@@ -6,7 +6,7 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <group android:translateX="21.807" android:translateY="27.326" android:scaleX="1.1497" android:scaleY="1.1497">
+    <group android:translateX="26.029" android:translateY="30.824" android:scaleX="0.9990" android:scaleY="0.9990">
         <group>
             <clip-path android:pathData="M-10,-10H66V27H-10z" />
             <path android:pathData="M9.4,24a14.6,14.6 0 1,0 29.2,0a14.6,14.6 0 1,0 -29.2,0" android:strokeColor="#FF000000" android:strokeWidth="9" />
