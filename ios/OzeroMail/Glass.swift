@@ -28,6 +28,19 @@ extension View {
 }
 
 extension View {
+    /// Whose mail a list shows, under its large title, as the system's subtitle on iOS 26; before,
+    /// the list says it in its first row.
+    @ViewBuilder
+    func ownerSubtitle(_ owner: String?) -> some View {
+        if #available(iOS 26, *), let owner {
+            navigationSubtitle(Text(verbatim: owner))
+        } else {
+            self
+        }
+    }
+}
+
+extension View {
     /// The system's glass button style on iOS 26, `prominent` for the one main action in the
     /// accent; before, the bordered styles. Capsule-shaped, as iOS 26 draws its buttons.
     @ViewBuilder

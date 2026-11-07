@@ -309,10 +309,12 @@ private struct InboxList: View {
 
     var body: some View {
         List(selection: $model.chosen) {
-            if let owner = model.owner {
+            if let owner = model.owner, !hasGlass {
+                // On iOS 26 the system's subtitle under the large title says it.
                 Text(verbatim: owner)
                     .font(.small)
                     .foregroundStyle(.secondary)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 8, trailing: 20))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
                     .selectionDisabled()
@@ -368,10 +370,10 @@ private struct InboxList: View {
                     if index >= model.messages.count - InboxModel.ahead { Task { await model.loadMore() } }
                 }
                 .listRowBackground(OpenRow.background(model, message))
+                // Lines between the rows only, as on Android: none over the first or under the last.
+                .listSectionSeparator(.hidden)
             }
-            if model.loadingOlder {
-                ProgressView().frame(maxWidth: .infinity).listRowSeparator(.hidden)
-            }
+            // Older mail comes in quietly, with no spinner of its own.
         }
         .listStyle(.plain)
         .paperList()
@@ -404,6 +406,7 @@ private struct InboxList: View {
         .animation(.smooth, value: model.messages.map(\.id))
         .middle(Room.list)
         .navigationTitle(title)
+        .ownerSubtitle(choosing ? nil : model.owner)
         // On its side a large title would take a third of the height.
         .navigationBarTitleDisplayMode(model.sideways ? .inline : .automatic)
         .navigationBarBackButtonHidden(choosing)

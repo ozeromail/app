@@ -235,6 +235,7 @@ struct ComposeView: View {
                 }
             }
         }
+        .coordinateSpace(.named(recipientsSheet))
         .presentationDetents(growing ? [fitted] : [.large])
         // A low sheet is clear glass on iOS 26, and the inbox would show through the text being
         // written: the page is opaque, as in the iPhone's own Mail.
