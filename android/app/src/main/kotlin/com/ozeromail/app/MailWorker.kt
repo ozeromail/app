@@ -160,6 +160,15 @@ private fun notifySignIn(context: Context, accounts: List<AccountItem>) {
     }
 }
 
+/** Takes [message]'s notification away, and the summary with the last one. */
+internal fun dismissMail(context: Context, message: Long) {
+    val manager = NotificationManagerCompat.from(context)
+    manager.cancel(message.toInt())
+    if (manager.activeNotifications.none { it.notification.group == GROUP && it.id != SUMMARY_ID && it.id != message.toInt() }) {
+        manager.cancel(SUMMARY_ID)
+    }
+}
+
 /**
  * One notification per message, newest first, grouped under a summary; a tap opens the inbox,
  * and Done, Read and Reply work from the notification.

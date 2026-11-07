@@ -40,7 +40,6 @@ import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.DraftFileItem
 import uniffi.ozero_api.DraftItem
 import uniffi.ozero_api.DraftRow
-import uniffi.ozero_api.PeopleItem
 import uniffi.ozero_api.Endpoint
 import uniffi.ozero_api.FolderItem
 import uniffi.ozero_api.FolderRole
@@ -53,13 +52,15 @@ import uniffi.ozero_api.Mailbox
 import uniffi.ozero_api.MessageBody
 import uniffi.ozero_api.MessageItem
 import uniffi.ozero_api.NewMail
+import uniffi.ozero_api.PeopleItem
 import uniffi.ozero_api.PersonCard
 import uniffi.ozero_api.PersonFound
 import uniffi.ozero_api.RecentFileItem
 import uniffi.ozero_api.SearchFilterItem
-import uniffi.ozero_api.Unsubscribed
 import uniffi.ozero_api.UnsentItem
+import uniffi.ozero_api.Unsubscribed
 import uniffi.ozero_api.googleSignIn
+import uniffi.ozero_api.richEscape
 
 /** What the screens need from the core; every call runs off the main thread. */
 class Mail(private val context: Context) {
@@ -538,6 +539,16 @@ class Mail(private val context: Context) {
 
     /** An answer to [message]: to its sender, or with [all] to everyone it went to as well. */
     suspend fun reply(message: MessageItem, all: Boolean): DraftItem = io { core.reply(message, all) }
+
+    /**
+     * Sends [text] as a short answer to [message]'s sender, typed in its notification, and marks
+     * it read. A reply begun in the app stays a draft as it was.
+     */
+    suspend fun quickReply(message: MessageItem, text: String) {
+        markRead(listOf(message))
+        val answer = reply(message, all = false)
+        send(answer.copy(id = 0, cc = "", quote = "", files = emptyList(), text = richEscape(text.trim())))
+    }
 
     /** Who [message] went to, and who else a reply to all would copy. */
     suspend fun people(message: MessageItem): PeopleItem = io { core.people(message) }
