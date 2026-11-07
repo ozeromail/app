@@ -200,34 +200,80 @@ extension AccountKind {
 private let sizeNames = ["reading_size_smaller", "reading_size_usual", "reading_size_larger", "reading_size_large",
                          "reading_size_largest"].map { tr($0) }
 
-/// Which action each swipe does, short and long, tried on a row each time one changes.
+/// A message to swipe, which then asks what that swipe does, and the four swipes by side, each
+/// with what it does; a tap picks for it as a swipe does.
 private struct SwipeSettings: View {
     @Binding var swipes: Swipes
-    @State private var offset: CGFloat = 0
-    @State private var shown = SwipeAction.done
+    /// The swipe being picked for.
+    @State private var slot: SwipeSlot?
+    @AppStorage("swipes_tried") private var tried = false
 
     var body: some View {
         PaperForm {
-            Section { preview.listRowInsets(EdgeInsets()) }
-            side("swipes_left", $swipes.left)
-            long("swipes_left_long", $swipes.leftLong)
-            side("swipes_right", $swipes.right)
-            long("swipes_right_long", $swipes.rightLong)
+            Section {
+                SwipeTrial(swipes: swipes) { slot = $0 }.listRowInsets(EdgeInsets())
+            } footer: {
+                if !tried { Text("swipes_try") }
+            }
+            side("swipes_side_left", [.left, .leftLong])
+            side("swipes_side_right", [.right, .rightLong])
         }
         .navigationTitle("swipes_title")
-        .onChange(of: swipes.left) { play(-1, swipes.left) }
-        .onChange(of: swipes.right) { play(1, swipes.right) }
-        // A long one turned off shows the short one again.
-        .onChange(of: swipes.leftLong) { play(-1, swipes.leftLong ?? swipes.left, far: swipes.leftLong != nil) }
-        .onChange(of: swipes.rightLong) { play(1, swipes.rightLong ?? swipes.right, far: swipes.rightLong != nil) }
-        .onAppear { play(-1, swipes.left) }
+        .sheet(item: $slot) { slot in
+            SwipePicker(slot: slot, swipes: swipes) { action in
+                swipes = swipes.with(slot, action)
+                tried = true
+                self.slot = nil
+            }
+            .presentationDetents([.medium, .large])
+        }
     }
 
-    /// A message row: the side it slides from shows that swipe's action.
-    private var preview: some View {
-        ZStack(alignment: offset < 0 ? .trailing : .leading) {
-            Rectangle().fill(offset == 0 ? Color.clear : shown.tint)
-            Image(systemName: shown.icon).foregroundStyle(.white).padding(.horizontal, 24)
+    private func side(_ title: LocalizedStringKey, _ slots: [SwipeSlot]) -> some View {
+        Section(title) {
+            ForEach(slots) { slot in
+                let action = swipes[slot]
+                Button { self.slot = slot } label: {
+                    LabeledContent {
+                        Text(verbatim: action?.label ?? tr("swipes_off"))
+                    } label: {
+                        Label { Text(slot.isLong ? "swipes_long" : "swipes_short") } icon: { ActionDot(action: action) }
+                    }
+                }
+                .tint(.primary)
+            }
+        }
+    }
+}
+
+/// A message row that swipes as one in the list does, ticking at each mark, then springs back;
+/// `onPick` gets the swipe it was let go in. A long one that is off is reached all the same, so
+/// it can be turned on. Each time `swipes` changes, it slides that way to show the swipe now.
+private struct SwipeTrial: View {
+    let swipes: Swipes
+    let onPick: (SwipeSlot) -> Void
+
+    @State private var offset: CGFloat = 0
+    @State private var width: CGFloat = 0
+    @State private var held = false
+    /// The swipe the strip shows when no finger holds the row: the one last picked or shown.
+    @State private var shown = SwipeSlot.left
+
+    private var reached: SwipeSlot? { held ? SwipeSlot.at(offset, width: width) : nil }
+
+    var body: some View {
+        let slot = reached ?? (held ? nil : shown)
+        let action = slot.flatMap { swipes[$0] }
+        let left = offset != 0 ? offset < 0 : slot?.isLeft ?? true
+        ZStack(alignment: left ? .trailing : .leading) {
+            Rectangle().fill(slot == nil ? Color.clear : action?.tint ?? SwipeAction.offTint)
+            if offset != 0, let slot {
+                Label(action?.label ?? tr("swipes_off"), systemImage: action?.icon ?? "xmark")
+                    .labelStyle(SideLabel(left: slot.isLeft))
+                    .font(.text.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 22)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text("swipes_sample_from").fontWeight(.medium)
                 Text("swipes_sample_subject").font(.text).foregroundStyle(.secondary)
@@ -237,31 +283,104 @@ private struct SwipeSettings: View {
             .background(Color.ozeroCard)
             .offset(x: offset)
         }
-        .frame(height: 64)
+        .frame(height: 72)
         .clipped()
-    }
-
-    private func play(_ way: CGFloat, _ action: SwipeAction, far: Bool = false) {
-        shown = action
-        withAnimation(.smooth(duration: 0.35)) { offset = way * (far ? 220 : 96) } completion: {
-            withAnimation(.smooth(duration: 0.35)) { offset = 0 }
+        .contentShape(.rect)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+        .gesture(
+            DragGesture(minimumDistance: 10)
+                .onChanged { drag in
+                    // Sideways only, so the page still scrolls under a finger going up or down.
+                    guard held || abs(drag.translation.width) > abs(drag.translation.height) else { return }
+                    held = true
+                    offset = min(max(drag.translation.width, -width * 0.85), width * 0.85)
+                }
+                .onEnded { _ in
+                    let at = reached
+                    held = false
+                    withAnimation(.smooth(duration: 0.35)) { offset = 0 }
+                    if let at {
+                        shown = at
+                        onPick(at)
+                    }
+                }
+        )
+        .sensoryFeedback(.selection, trigger: reached)
+        .onChange(of: swipes) { before, now in
+            // The first one changed; a short one that turned its long one off comes first.
+            guard let changed = SwipeSlot.allCases.first(where: { before[$0] != now[$0] }) else { return }
+            shown = changed
+            let way: CGFloat = changed.isLeft ? -1 : 1
+            withAnimation(.smooth(duration: 0.35)) { offset = way * width * (changed.isLong ? 0.68 : 0.32) } completion: {
+                withAnimation(.smooth(duration: 0.35)) { offset = 0 }
+            }
         }
     }
+}
 
-    private func side(_ title: LocalizedStringKey, _ selection: Binding<SwipeAction>) -> some View {
-        Picker(title, selection: selection) {
-            ForEach(SwipeAction.picked) { Label($0.label, systemImage: $0.icon).tag($0) }
+/// The icon before the word on the right, after it on the left, so it sits at the edge.
+private struct SideLabel: LabelStyle {
+    let left: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 8) {
+            if left { configuration.title }
+            configuration.icon
+            if !left { configuration.title }
         }
-        .pickerStyle(.inline)
     }
+}
 
-    /// A long swipe's action, or none.
-    private func long(_ title: LocalizedStringKey, _ selection: Binding<SwipeAction?>) -> some View {
-        Picker(title, selection: selection) {
-            Label("swipes_off", systemImage: "xmark").tag(SwipeAction?.none)
-            ForEach(SwipeAction.picked) { Label($0.label, systemImage: $0.icon).tag(Optional($0)) }
+/// What `slot` can do, the one it does marked; a long one can be off, but not what its short one does.
+private struct SwipePicker: View {
+    let slot: SwipeSlot
+    let swipes: Swipes
+    let onPick: (SwipeAction?) -> Void
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    let options: [SwipeAction?] = slot.isLong ? SwipeAction.picked + [nil] : SwipeAction.picked
+                    ForEach(options, id: \.self) { action in
+                        let taken = slot.isLong && action == swipes[slot.short]
+                        Button { onPick(action) } label: {
+                            HStack {
+                                Label {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(verbatim: action?.label ?? tr("swipes_off"))
+                                        if taken { Text("swipes_same").font(.small).foregroundStyle(.secondary) }
+                                    }
+                                } icon: {
+                                    ActionDot(action: action)
+                                }
+                                Spacer()
+                                if swipes[slot] == action { Image(systemName: "checkmark").foregroundStyle(Color.ozeroAccent) }
+                            }
+                        }
+                        .tint(.primary)
+                        .disabled(taken)
+                    }
+                } footer: {
+                    Text(slot.isLong ? "swipes_long_note" : "swipes_short_note")
+                }
+            }
+            .navigationTitle(slot.title)
+            .navigationBarTitleDisplayMode(.inline)
         }
-        .pickerStyle(.inline)
+    }
+}
+
+/// An action's icon on its colour in a round drop, as its swipe shows it; off, a cross on grey.
+private struct ActionDot: View {
+    let action: SwipeAction?
+
+    var body: some View {
+        Image(systemName: action?.icon ?? "xmark")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: 26, height: 26)
+            .background(action?.tint ?? SwipeAction.offTint, in: .circle)
     }
 }
 

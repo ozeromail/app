@@ -2,7 +2,6 @@ package com.ozeromail.app
 
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
-import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,7 +16,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -48,11 +46,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -63,7 +61,6 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
@@ -148,32 +145,48 @@ fun SettingsScreen(
             }
         }
     }
-    Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-        Hero(title, null, onBack)
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(bottom = 32.dp)) {
-            when {
-                page == SWIPES -> {
-                    SwipePreview(swipes)
-                    SwipeSettings(swipes, actions.onSwipes)
+    val context = LocalContext.current
+    val prefs = remember { Settings(context) }
+    // The swipe being picked for on the swipes' page.
+    var slot by rememberSaveable { mutableStateOf<SwipeSlot?>(null) }
+    var tried by remember { mutableStateOf(prefs.swipesTried) }
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+            Hero(title, null, onBack)
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(bottom = 32.dp)) {
+                when {
+                    page == SWIPES -> {
+                        SwipeTrial(swipes) { slot = it }
+                        if (!tried) Hint(stringResource(R.string.swipes_try))
+                        SwipeSlots(swipes) { slot = it }
+                    }
+                    // The page's title names the field, so it goes without a label.
+                    page == SIGNATURE -> SignatureField(
+                        signature,
+                        null,
+                        stringResource(R.string.signature_placeholder),
+                        stringResource(R.string.signature_hint),
+                        actions.onSignature,
+                    )
+                    page == READING -> ReadingSettings(mail, images)
+                    page == NOTIFICATIONS -> NotificationSettings(accounts, actions)
+                    page == BLOCKED -> BlockedSenders(mail)
+                    account != null -> AccountSettings(
+                        account,
+                        inAll = account.inAll.takeIf { !account.inAllFixed },
+                        signature = signature,
+                        actions = actions,
+                    )
+                    else -> AppSettings(mail, images.on, accounts, swipes, signature, actions, onOpen)
                 }
-                // The page's title names the field, so it goes without a label.
-                page == SIGNATURE -> SignatureField(
-                    signature,
-                    null,
-                    stringResource(R.string.signature_placeholder),
-                    stringResource(R.string.signature_hint),
-                    actions.onSignature,
-                )
-                page == READING -> ReadingSettings(mail, images)
-                page == NOTIFICATIONS -> NotificationSettings(accounts, actions)
-                page == BLOCKED -> BlockedSenders(mail)
-                account != null -> AccountSettings(
-                    account,
-                    inAll = account.inAll.takeIf { !account.inAllFixed },
-                    signature = signature,
-                    actions = actions,
-                )
-                else -> AppSettings(mail, images.on, accounts, swipes, signature, actions, onOpen)
+            }
+        }
+        if (page == SWIPES) {
+            SwipeSheet(slot, swipes, onClose = { slot = null }) { picked, action ->
+                actions.onSwipes(swipes.with(picked, action))
+                slot = null
+                tried = true
+                prefs.swipesTried = true
             }
         }
     }
@@ -603,57 +616,56 @@ fun readingStyle(style: TextStyle = Type.Reading): TextStyle {
     return style.scaled(scale)
 }
 
+/** The four swipes by side, each with what it does; a tap picks for it as a swipe on the sample does. */
+@Composable
+private fun SwipeSlots(swipes: Swipes, onOpen: (SwipeSlot) -> Unit) {
+    listOf(
+        R.string.swipes_side_left to listOf(SwipeSlot.LEFT, SwipeSlot.LEFT_LONG),
+        R.string.swipes_side_right to listOf(SwipeSlot.RIGHT, SwipeSlot.RIGHT_LONG),
+    ).forEach { (side, slots) ->
+        Section(stringResource(side)) {
+            slots.forEach { slot ->
+                val action = swipes[slot]
+                SettingRow(
+                    lead = { ActionDot(action) },
+                    title = stringResource(if (slot.long) R.string.swipes_long else R.string.swipes_short),
+                    value = stringResource(action?.label ?: R.string.swipes_off),
+                    onClick = { onOpen(slot) },
+                )
+            }
+        }
+    }
+}
+
 /**
- * A message row the swipes play on: each time a side changes, it slides that way to show what
- * the swipe now does.
+ * What [slot] can do, the one it does marked; a long one can be off, but not what its short one
+ * does. Open while [slot] is not null; [onPick] gets the slot and the action picked.
  */
 @Composable
-private fun SwipePreview(swipes: Swipes) {
+private fun SwipeSheet(slot: SwipeSlot?, swipes: Swipes, onClose: () -> Unit, onPick: (SwipeSlot, SwipeAction?) -> Unit) {
     val colors = MaterialTheme.colorScheme
-    val reach = with(LocalDensity.current) { 96.dp.toPx() }
-    val further = with(LocalDensity.current) { 220.dp.toPx() }
-    val offset = remember { Animatable(0f) }
-    var last by remember { mutableStateOf(swipes) }
-    var action by remember { mutableStateOf(swipes.left) }
-    LaunchedEffect(swipes) {
-        // Left first on the way in, then whichever swipe changed; a long one that is now off shows the short.
-        val (way, long) = when {
-            swipes.leftLong != last.leftLong -> -1f to swipes.leftLong
-            swipes.rightLong != last.rightLong -> 1f to swipes.rightLong
-            swipes.right != last.right && swipes.left == last.left -> 1f to null
-            else -> -1f to null
-        }
-        last = swipes
-        action = long ?: if (way < 0f) swipes.left else swipes.right
-        offset.animateTo(way * if (long != null) further else reach, Motion.settle())
-        offset.animateTo(0f, Motion.settle())
-    }
-    val left = offset.value < 0f
-    val (fill, on) = action.colors()
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = Gap.screen, vertical = 8.dp)
-            .height(64.dp)
-            .clip(RoundedCornerShape(Radius.tile))
-            .background(if (offset.value == 0f) colors.surfaceVariant else fill),
-    ) {
-        Glyph(
-            action.icon,
-            null,
-            on,
-            Modifier.align(if (left) Alignment.CenterEnd else Alignment.CenterStart).padding(horizontal = 24.dp),
+    // Kept while the sheet goes down, so its rows stay as they were.
+    val shown = rememberLast(slot) ?: SwipeSlot.LEFT
+    Sheet(visible = slot != null, onClose = onClose) {
+        SheetTitle(stringResource(shown.title), Modifier.padding(horizontal = Gap.sheet))
+        Text(
+            stringResource(if (shown.long) R.string.swipes_long_note else R.string.swipes_short_note),
+            color = colors.onSurfaceVariant,
+            style = Type.Caption,
+            modifier = Modifier.padding(start = Gap.sheet, end = Gap.sheet, top = 2.dp, bottom = 8.dp),
         )
-        Column(
-            Modifier
-                .fillMaxSize()
-                .offset { IntOffset(offset.value.roundToInt(), 0) }
-                .background(colors.surfaceVariant)
-                .padding(horizontal = Gap.card),
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text(stringResource(R.string.swipes_sample_from), style = Type.Row, maxLines = 1)
-            Text(stringResource(R.string.swipes_sample_subject), color = colors.onSurfaceVariant, style = Type.Subject, maxLines = 1)
+        val options: List<SwipeAction?> = if (shown.long) SwipeAction.PICKED + null else SwipeAction.PICKED
+        val short = swipes[shown.short]
+        options.forEach { action ->
+            val taken = shown.long && action == short
+            val on = swipes[shown] == action
+            SheetRow(onClick = { if (!taken) onPick(shown, action) }, lead = { Box(Modifier.alpha(if (taken) 0.4f else 1f)) { ActionDot(action, 28.dp) } }) {
+                Column(Modifier.weight(1f).alpha(if (taken) 0.4f else 1f)) {
+                    Text(stringResource(action?.label ?: R.string.swipes_off), style = Type.Row, fontWeight = if (on) Weight.SemiBold else null)
+                    if (taken) Text(stringResource(R.string.swipes_same), color = colors.onSurfaceVariant, style = Type.Caption)
+                }
+                if (on) Glyph(R.drawable.ic_done, null, colors.primary, size = 20.dp)
+            }
         }
     }
 }
