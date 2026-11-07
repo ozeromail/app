@@ -210,6 +210,12 @@ struct InboxView: View {
             onAccountSignature: { account, text in
                 model.changeAccount(account) { try await model.mail.setAccountSignature(account, signature: text) }
             },
+            onAlias: { account, email, name in
+                model.changeAccount(account) { try await model.mail.saveAlias(account, email: email, name: name) }
+            },
+            onRemoveAlias: { account, email in
+                model.changeAccount(account) { try await model.mail.removeAlias(account, email: email) }
+            },
             onSignIn: { model.signingIn = $0 },
             onKeepDays: { account, days in model.changeAccount { try await model.mail.setKeepDays(account, days: days) } },
             onNewMail: { account, check in model.changeAccount { try await model.mail.setNewMail(account, check) } },

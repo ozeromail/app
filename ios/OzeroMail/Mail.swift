@@ -206,6 +206,15 @@ final class Mail: Sendable {
         try core.setAccountSender(account: account.id, name: name)
     }
 
+    /// Adds another address `account` sends from, or renames it; an empty `name` uses the account's.
+    func saveAlias(_ account: AccountItem, email: String, name: String) async throws {
+        try core.saveAlias(account: account.id, email: email, name: name)
+    }
+
+    func removeAlias(_ account: AccountItem, email: String) async throws {
+        try core.removeAlias(account: account.id, email: email)
+    }
+
     /// Pins `folder` among its account's usual folders, or unpins it.
     func setPinned(_ folder: FolderItem, _ pinned: Bool) async throws {
         try core.setFolderPinned(folder: folder.id, pinned: pinned)
