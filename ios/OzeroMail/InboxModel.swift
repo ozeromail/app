@@ -940,7 +940,7 @@ extension DraftItem {
     /// Nothing worth keeping: no text or files, and for a new message no recipients or subject
     /// either.
     var isBlank: Bool {
-        text.isBlank && files.isEmpty && (replyTo != nil || (to.isBlank && cc.isBlank && subject.isBlank))
+        text.isBlank && files.isEmpty && (replyTo != nil || (to.isBlank && cc.isBlank && bcc.isBlank && subject.isBlank))
     }
 }
 

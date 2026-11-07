@@ -309,6 +309,7 @@ fn sync_an_imap_inbox_into_the_list() {
             files: vec![],
             signature: String::new(),
             cc: String::new(),
+            bcc: String::new(),
         })
         .unwrap()
     };
@@ -444,6 +445,7 @@ fn sync_an_imap_inbox_into_the_list() {
         files: vec![],
         signature: "Test".into(),
         cc: String::new(),
+        bcc: String::new(),
     };
     for text in ["First", "Second"] {
         draft.text = text.into();
@@ -760,6 +762,7 @@ fn keeps_files_with_a_draft_up_to_the_limit() {
         files: vec![],
         signature: String::new(),
         cc: String::new(),
+        bcc: String::new(),
     };
     let id = core.save_draft(draft.clone()).unwrap();
     let attach = |name: &str, size: u64| {
@@ -827,6 +830,7 @@ fn saves_a_gmail_account_that_can_send() {
         files: vec![],
         signature: String::new(),
         cc: String::new(),
+        bcc: String::new(),
     })
     .unwrap();
 }
@@ -879,6 +883,7 @@ fn signs_with_the_accounts_signature_else_the_default_one() {
         files: vec![],
         signature: "--\nA.".into(),
         cc: String::new(),
+        bcc: String::new(),
     };
     let saved = core.save_draft(draft.clone()).unwrap();
     assert_eq!(core.drafts().unwrap()[0].draft.signature, "--\nA.");
@@ -951,6 +956,7 @@ fn saves_an_exchange_account_that_sends_without_smtp() {
         files: vec![],
         signature: String::new(),
         cc: String::new(),
+        bcc: String::new(),
     })
     .unwrap();
 }

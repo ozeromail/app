@@ -1129,6 +1129,10 @@ impl MailSender for EasSession {
             s => Err(ProviderError::Rejected(format!("SendMail status {s}"))),
         }
     }
+
+    fn reads_recipients(&self) -> bool {
+        true
+    }
 }
 
 fn policies(more: Vec<Node>) -> Node {

@@ -159,7 +159,7 @@ fun SaveOnPause(
 }
 
 /** Nothing worth keeping: no text or files, and for a new message no recipients or subject either. */
-fun DraftItem.isBlank(): Boolean = text.isBlank() && files.isEmpty() && (replyTo != null || (to.isBlank() && cc.isBlank() && subject.isBlank()))
+fun DraftItem.isBlank(): Boolean = text.isBlank() && files.isEmpty() && (replyTo != null || (to.isBlank() && cc.isBlank() && bcc.isBlank() && subject.isBlank()))
 
 /**
  * The drafts on the phone, last saved first, in rows like mail's; a tap opens one to go on

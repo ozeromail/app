@@ -1532,9 +1532,10 @@ impl Store for SqliteStore {
         let id = tx
             .query_row(
                 "INSERT INTO outbox (account_id, recipients, subject, text, reply_to, in_reply_to,
-                                     message_id, date, not_before, quote, forward, signature, cc)
+                                     message_id, date, not_before, quote, forward, signature, cc,
+                                     bcc)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
-                         (SELECT id FROM message WHERE id = ?11), ?12, ?13)
+                         (SELECT id FROM message WHERE id = ?11), ?12, ?13, ?14)
                  RETURNING id",
                 params![
                     draft.account_id.0,
@@ -1550,6 +1551,7 @@ impl Store for SqliteStore {
                     draft.forward.map(|m| m.0),
                     draft.signature,
                     draft.cc.join("\n"),
+                    draft.bcc.join("\n"),
                 ],
                 |r| r.get(0),
             )
@@ -1581,7 +1583,7 @@ impl Store for SqliteStore {
         let taken = tx
             .query_row(
                 "SELECT account_id, recipients, subject, text, reply_to, quote, forward, copy,
-                        signature, cc
+                        signature, cc, bcc
                  FROM outbox WHERE id = ?1 AND (not_before > ?2 OR failed IS NOT NULL)",
                 params![id.0, now],
                 |r| {
@@ -1590,6 +1592,7 @@ impl Store for SqliteStore {
                         account_id: Some(AccountId(r.get(0)?)),
                         to: recipients(&r.get::<_, String>(1)?).join(", "),
                         cc: recipients(&r.get::<_, String>(9)?).join(", "),
+                        bcc: recipients(&r.get::<_, String>(10)?).join(", "),
                         subject: r.get(2)?,
                         text: r.get(3)?,
                         signature: r.get(8)?,
@@ -1638,7 +1641,8 @@ impl Store for SqliteStore {
                      recipients = ?2, subject = ?3, text = ?4,
                      reply_to = (SELECT id FROM message WHERE id = ?5),
                      quote = ?6, saved = ?7,
-                     forward = (SELECT id FROM message WHERE id = ?9), signature = ?10, cc = ?11
+                     forward = (SELECT id FROM message WHERE id = ?9), signature = ?10, cc = ?11,
+                     bcc = ?12
                  WHERE id = ?8 AND gone IS NULL",
                 params![
                     draft.account_id.map(|a| a.0),
@@ -1652,6 +1656,7 @@ impl Store for SqliteStore {
                     draft.forward.map(|m| m.0),
                     draft.signature,
                     draft.cc,
+                    draft.bcc,
                 ],
             )
             .map_err(storage)?;
@@ -1664,7 +1669,7 @@ impl Store for SqliteStore {
         let rows: Result<Vec<SavedDraft>, _> = conn
             .prepare_cached(
                 "SELECT id, account_id, recipients, subject, text, reply_to, quote, saved, forward,
-                        signature, cc
+                        signature, cc, bcc
                  FROM draft WHERE gone IS NULL ORDER BY saved DESC, id DESC",
             )
             .and_then(|mut s| {
@@ -1674,6 +1679,7 @@ impl Store for SqliteStore {
                         account_id: r.get::<_, Option<i64>>(1)?.map(AccountId),
                         to: r.get(2)?,
                         cc: r.get(10)?,
+                        bcc: r.get(11)?,
                         subject: r.get(3)?,
                         text: r.get(4)?,
                         signature: r.get(9)?,
@@ -1726,7 +1732,7 @@ impl Store for SqliteStore {
         let rows = conn
             .prepare_cached(
                 "SELECT d.id, d.saved, d.recipients, d.subject, d.text, d.signature, d.quote,
-                        d.message_id, m.message_id, d.cc
+                        d.message_id, m.message_id, d.cc, d.bcc
                  FROM draft d LEFT JOIN message m ON m.id = d.reply_to
                  WHERE d.account_id = ?1 AND d.gone IS NULL AND d.pushed IS NOT d.saved
                  ORDER BY d.id",
@@ -1744,6 +1750,7 @@ impl Store for SqliteStore {
                             id: OutboxId(0),
                             to: typed_addresses(&r.get::<_, String>(2)?),
                             cc: typed_addresses(&r.get::<_, String>(9)?),
+                            bcc: typed_addresses(&r.get::<_, String>(10)?),
                             subject: r.get(3)?,
                             text: full_text(&text, &signature, &quote),
                             message_id: r.get::<_, Option<String>>(7)?.unwrap_or_default(),
@@ -2099,7 +2106,7 @@ impl Store for SqliteStore {
         let rows = conn
             .prepare_cached(
                 "SELECT id, recipients, subject, text, message_id, in_reply_to, date, quote, forward,
-                        signature, cc
+                        signature, cc, bcc
                  FROM outbox
                  WHERE account_id = ?1 AND not_before <= ?2 AND failed IS NULL ORDER BY id",
             )
@@ -2109,6 +2116,7 @@ impl Store for SqliteStore {
                         id: OutboxId(r.get(0)?),
                         to: recipients(&r.get::<_, String>(1)?),
                         cc: recipients(&r.get::<_, String>(10)?),
+                        bcc: recipients(&r.get::<_, String>(11)?),
                         subject: r.get(2)?,
                         text: full_text(
                             &r.get::<_, String>(3)?,
@@ -3611,10 +3619,10 @@ fn insert_file(conn: &Connection, draft: DraftId, file: &OutgoingFile) -> Result
 fn insert_draft(conn: &Connection, draft: &SavedDraft) -> Result<DraftId, StoreError> {
     conn.query_row(
         "INSERT INTO draft (account_id, recipients, subject, text, reply_to, quote, saved, forward,
-                            signature, cc)
+                            signature, cc, bcc)
          VALUES ((SELECT id FROM account WHERE id = ?1), ?2, ?3, ?4,
                  (SELECT id FROM message WHERE id = ?5), ?6, ?7,
-                 (SELECT id FROM message WHERE id = ?8), ?9, ?10)
+                 (SELECT id FROM message WHERE id = ?8), ?9, ?10, ?11)
          RETURNING id",
         params![
             draft.account_id.map(|a| a.0),
@@ -3627,6 +3635,7 @@ fn insert_draft(conn: &Connection, draft: &SavedDraft) -> Result<DraftId, StoreE
             draft.forward.map(|m| m.0),
             draft.signature,
             draft.cc,
+            draft.bcc,
         ],
         |r| r.get(0),
     )

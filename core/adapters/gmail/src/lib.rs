@@ -720,6 +720,10 @@ impl MailSender for GmailSession {
         let path = format!("/upload{BASE}/messages/send?uploadType=media");
         self.request("POST", &path, Some(body)).await.map(|_| ())
     }
+
+    fn reads_recipients(&self) -> bool {
+        true
+    }
 }
 
 /// The label that puts a message in `folder`; none for the archive.

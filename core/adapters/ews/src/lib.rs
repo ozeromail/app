@@ -791,6 +791,10 @@ impl MailSender for EwsSession {
             .await
             .map(drop)
     }
+
+    fn reads_recipients(&self) -> bool {
+        true
+    }
 }
 
 /// The flags of a message: read, flagged, answered, draft.

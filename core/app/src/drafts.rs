@@ -149,6 +149,8 @@ pub async fn import_drafts(
             account_id: Some(account),
             to: typed(&header.to),
             cc: typed(&header.cc),
+            // The parser does not read `Bcc`.
+            bcc: String::new(),
             subject: header.subject,
             // Plain text, so any marks in it stay as written.
             text: ozero_domain::rich::escape(&body.text),

@@ -446,4 +446,9 @@ pub const MIGRATIONS: &[&str] = &[
         at   INTEGER NOT NULL
     );
     ",
+    // 45: blind copies of each message being written or sent, as `cc`.
+    "
+    ALTER TABLE draft ADD COLUMN bcc TEXT NOT NULL DEFAULT '';
+    ALTER TABLE outbox ADD COLUMN bcc TEXT NOT NULL DEFAULT '';
+    ",
 ];

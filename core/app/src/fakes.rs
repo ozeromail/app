@@ -260,11 +260,13 @@ impl MailProvider for Server {
     }
 }
 
-/// A fake SMTP server: records each message, or fails with the first of `refuse`.
+/// A fake SMTP server: records each message, or fails with the first of `refuse`. With
+/// `reads_recipients`, a server such as Gmail's instead.
 #[derive(Default)]
 pub struct Postman {
     pub sent: Vec<(String, Vec<String>, Vec<u8>)>,
     pub refuse: Vec<ProviderError>,
+    pub reads_recipients: bool,
 }
 
 impl MailSender for Postman {
@@ -281,14 +283,22 @@ impl MailSender for Postman {
             Err(self.refuse.remove(0))
         })
     }
+
+    fn reads_recipients(&self) -> bool {
+        self.reads_recipients
+    }
 }
 
-/// Writes only the subject.
+/// Writes only the subject, and the blind copies if any.
 pub struct Builder;
 
 impl MessageBuilder for Builder {
     fn build(&self, _: &Address, message: &Outgoing) -> Vec<u8> {
-        message.subject.clone().into_bytes()
+        let mut out = message.subject.clone();
+        if !message.bcc.is_empty() {
+            out += &format!("\nBcc: {}", message.bcc.join(", "));
+        }
+        out.into_bytes()
     }
 }
 

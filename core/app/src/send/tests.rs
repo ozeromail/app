@@ -8,6 +8,7 @@ fn outgoing(id: i64, to: &str) -> Outgoing {
         id: OutboxId(id),
         to: vec![to.into()],
         cc: vec![],
+        bcc: vec![],
         subject: format!("Message {id}"),
         text: String::new(),
         message_id: format!("{id}@example.com"),
@@ -72,6 +73,64 @@ fn sends_and_keeps_a_copy_in_sent() {
             ("Sent".into(), b"Message 1".to_vec()),
             ("Sent".into(), b"Message 2".to_vec())
         ]
+    );
+}
+
+#[test]
+fn blind_copies_go_in_the_envelope_and_the_sent_copy_only() {
+    let store = Memory::default();
+    let (mut postman, mut server) = (Postman::default(), Server::default());
+    let copy = SentCopy {
+        provider: &mut server,
+        folder: "Sent",
+    };
+    let message = Outgoing {
+        bcc: vec!["eve@example.com".into(), "bob@example.org".into()],
+        ..outgoing(1, "bob@example.org")
+    };
+    run(push_sends(
+        &store,
+        &mut postman,
+        &Builder,
+        &anna(),
+        Some(copy),
+        vec![message],
+    ))
+    .unwrap();
+
+    let to = vec!["bob@example.org".to_string(), "eve@example.com".to_string()];
+    assert_eq!(
+        postman.sent,
+        [("anna@example.com".into(), to, b"Message 1".to_vec())]
+    );
+    let copy = b"Message 1\nBcc: eve@example.com, bob@example.org".to_vec();
+    assert_eq!(server.appended, [("Sent".into(), copy)]);
+}
+
+#[test]
+fn a_server_that_reads_recipients_gets_the_blind_copies_in_the_message() {
+    let store = Memory::default();
+    let mut postman = Postman {
+        reads_recipients: true,
+        ..Postman::default()
+    };
+    let message = Outgoing {
+        bcc: vec!["eve@example.com".into()],
+        ..outgoing(1, "bob@example.org")
+    };
+    run(push_sends(
+        &store,
+        &mut postman,
+        &Builder,
+        &anna(),
+        None::<SentCopy<'_, Server>>,
+        vec![message],
+    ))
+    .unwrap();
+
+    assert_eq!(
+        postman.sent[0].2,
+        b"Message 1\nBcc: eve@example.com".to_vec()
     );
 }
 
