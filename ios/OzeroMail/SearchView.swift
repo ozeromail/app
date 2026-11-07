@@ -165,6 +165,7 @@ struct SearchView: View {
                         Task { try? await model.mail.rememberSearch(text) }
                     })
                     .listRowBackground(OpenRow.background(model, message))
+                    .listRowInsets(MessageRow.insets)
             }
             if asking {
                 Text("search_server")
