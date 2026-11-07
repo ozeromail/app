@@ -2,7 +2,6 @@ package com.ozeromail.app
 
 import android.content.Intent
 import android.net.MailTo
-import android.net.ParseException
 import android.net.Uri
 
 /** A message another app asks for: from a mailto link, or something shared, with its files. */
@@ -16,13 +15,7 @@ data class Shared(
 
 /** What [intent] asks to write, or null when it asks for no message. */
 fun sharedOf(intent: Intent): Shared? {
-    val mailto = intent.data?.takeIf { it.scheme == MAILTO }?.let { link ->
-        try {
-            MailTo.parse(link.toString())
-        } catch (_: ParseException) {
-            null
-        }
-    }
+    val mailto = intent.data?.toString()?.takeIf(MailTo::isMailTo)?.let(MailTo::parse)
     val files = when (intent.action) {
         Intent.ACTION_VIEW, Intent.ACTION_SENDTO -> if (mailto == null) return null else emptyList()
         Intent.ACTION_SEND -> listOfNotNull(intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java))
@@ -39,5 +32,3 @@ fun sharedOf(intent: Intent): Shared? {
         files = files,
     )
 }
-
-private const val MAILTO = "mailto"

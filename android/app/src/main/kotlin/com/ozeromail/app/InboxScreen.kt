@@ -694,16 +694,20 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         if (!mail.undo(actions)) note(undoLate)
     }
 
+    /** A blank message with its signature; unsigned rather than not at all. */
+    suspend fun freshDraft() = try {
+        mail.newDraft()
+    } catch (_: CoreException) {
+        NEW_DRAFT
+    }
+
     // A mailto link or something shared from another app. What was being written is kept as a draft.
     LaunchedEffect(Unit) {
         for (shared in mail.shared) {
-            val draft = try {
-                mail.newDraft()
-            } catch (_: CoreException) {
-                NEW_DRAFT
-            }
-            val asked = draft.copy(to = shared.to, cc = shared.cc, subject = shared.subject, text = shared.text)
-            composing = Composing(asked, shared = shared.files)
+            composing = Composing(
+                freshDraft().copy(to = shared.to, cc = shared.cc, subject = shared.subject, text = shared.text),
+                shared = shared.files,
+            )
         }
     }
 
@@ -748,19 +752,14 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         open = null
         scope.launch {
             if (!offerUndo(sending)) return@launch
-            mail.undoSend(id)?.let { composing = message.copy(draft = it) }
+            mail.undoSend(id)?.let { composing = message.copy(draft = it, shared = emptyList()) }
         }
     }
 
     /** A new message, to [to] if given. */
     fun compose(to: String = "") {
         scope.launch {
-            // Unsigned rather than not at all.
-            val draft = try {
-                mail.newDraft()
-            } catch (_: CoreException) {
-                NEW_DRAFT
-            }
+            val draft = freshDraft()
             // A second tap meanwhile opens nothing more.
             if (composing == null) composing = Composing(draft.copy(to = to))
         }
