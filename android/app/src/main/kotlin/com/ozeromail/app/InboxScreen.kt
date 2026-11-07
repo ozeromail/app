@@ -148,6 +148,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -2525,7 +2526,10 @@ internal fun MessageRow(message: MessageItem, onClick: () -> Unit, choosing: Flo
     )
     Box(Modifier.fillMaxWidth().background(tint)) {
         if (choosing > 0f) ChoiceMark(chosen, choosing, Modifier.align(Alignment.CenterStart).padding(start = 14.dp))
-        MessageLine(message, unread, dot, account, MARK_ROOM * choosing, Modifier.clickable(onClick = onClick))
+        // The dot and the bold text are not heard: TalkBack says it in words, as VoiceOver does.
+        val unreadWord = stringResource(R.string.inbox_row_unread)
+        val said = Modifier.semantics { if (unread) stateDescription = unreadWord }
+        MessageLine(message, unread, dot, account, MARK_ROOM * choosing, said.clickable(onClick = onClick))
     }
 }
 
