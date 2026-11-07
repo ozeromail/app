@@ -31,6 +31,8 @@ struct ComposeView: View {
     @State private var subject = ""
     @State private var text = ""
     @State private var accountId: Int64 = 0
+    /// Which of the account's other addresses it goes from; empty for its own.
+    @State private var alias = ""
     @State private var quote = ""
     @State private var signature = ""
     @State private var quotable = true
@@ -107,7 +109,7 @@ struct ComposeView: View {
     private var current: DraftItem {
         DraftItem(
             id: 0, accountId: accountId, to: to, subject: subject, text: text, replyTo: start.replyTo, quote: quote,
-            saved: 0, forward: start.forward, files: files, signature: signature, cc: cc, bcc: bcc)
+            saved: 0, forward: start.forward, files: files, signature: signature, cc: cc, bcc: bcc, alias: alias)
     }
 
     /// Something written here or before, which Delete throws away.
@@ -495,25 +497,22 @@ struct ComposeView: View {
         if let from {
             Menu {
                 ForEach(accounts, id: \.id) { account in
-                    Button {
-                        // Its signature comes too, unless this message's was changed.
-                        if signature == from.signsWith { signature = account.signsWith }
-                        accountId = account.id
-                    } label: {
-                        // The name to pick by, the address it sends from under it.
-                        if account.id == from.id {
-                            Label { Text(verbatim: account.name); Text(verbatim: account.email) } icon: { Image(systemName: "checkmark") }
-                        } else {
-                            Text(verbatim: account.name)
-                            Text(verbatim: account.email)
+                    // Each account with its other addresses under it, one tap each.
+                    Section {
+                        senderButton(account, from: from, alias: "", title: account.name, detail: account.email)
+                        ForEach(account.aliases, id: \.email) { other in
+                            senderButton(
+                                account, from: from, alias: other.email, title: other.email,
+                                detail: other.name.isEmpty ? (account.senderName.isEmpty ? account.email : account.senderName) : other.name)
                         }
                     }
                 }
             } label: {
                 HStack(spacing: 8) {
                     AccountInitial(name: from.name, color: from.tint, size: 22)
-                    // The account's short name: a long address would be cut off here.
-                    Text(verbatim: from.name).font(.text).lineLimit(1).foregroundStyle(.primary)
+                    // The account's short name: a long address would be cut off here. Another of
+                    // its addresses shows as itself, the one thing that tells it apart.
+                    Text(verbatim: alias.isEmpty ? from.name : alias).font(.text).lineLimit(1).foregroundStyle(.primary)
                 }
                 .padding(.leading, 8)
                 .padding(.trailing, 12)
@@ -521,7 +520,25 @@ struct ComposeView: View {
                 .contentShape(.capsule)
                 .glassSurface(in: .capsule, fallback: Color.ozeroCard)
             }
-            .disabled(accounts.count < 2)
+            .disabled(accounts.count < 2 && from.aliases.isEmpty)
+        }
+    }
+
+    /// Sends from [account], or its other address [alias] when that is not empty.
+    private func senderButton(_ account: AccountItem, from: AccountItem, alias other: String, title: String, detail: String) -> some View {
+        Button {
+            // Its signature comes too, unless this message's was changed.
+            if signature == from.signsWith { signature = account.signsWith }
+            accountId = account.id
+            alias = other
+        } label: {
+            // The name to pick by, the address it sends from under it.
+            if account.id == from.id && alias.caseInsensitiveCompare(other) == .orderedSame {
+                Label { Text(verbatim: title); Text(verbatim: detail) } icon: { Image(systemName: "checkmark") }
+            } else {
+                Text(verbatim: title)
+                Text(verbatim: detail)
+            }
         }
     }
 
@@ -579,6 +596,7 @@ struct ComposeView: View {
         subject = start.subject
         text = start.text
         accountId = start.accountId
+        alias = start.alias
         quote = start.quote
         signature = start.signature
         files = start.files
