@@ -1,26 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The mark in one colour for themed icons. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <group android:translateX="29.7" android:translateY="32.4" android:scaleX="0.9" android:scaleY="0.9">
+    <group android:translateX="21.807" android:translateY="27.326" android:scaleX="1.1497" android:scaleY="1.1497">
         <group>
-            <clip-path android:pathData="M-10,-10H58V27H-10z" />
-            <path
-                android:pathData="M9.4,24a14.6,14.6 0 1,0 29.2,0a14.6,14.6 0 1,0 -29.2,0"
-                android:strokeColor="#FF000000"
-                android:strokeWidth="6" />
+            <clip-path android:pathData="M-10,-10H66V27H-10z" />
+            <path android:pathData="M9.4,24a14.6,14.6 0 1,0 29.2,0a14.6,14.6 0 1,0 -29.2,0" android:strokeColor="#FF000000" android:strokeWidth="9" />
         </group>
         <group>
-            <clip-path android:pathData="M-10,27H58V58H-10z" />
-            <group android:translateX="6">
-                <path
-                    android:pathData="M9.4,24a14.6,14.6 0 1,0 29.2,0a14.6,14.6 0 1,0 -29.2,0"
-                    android:strokeColor="#FF000000"
-                    android:strokeWidth="6" />
-            </group>
+            <clip-path android:pathData="M-10,27H66V66H-10z" />
+            <path android:pathData="M17.4,24a14.6,14.6 0 1,0 29.2,0a14.6,14.6 0 1,0 -29.2,0" android:strokeColor="#FF000000" android:strokeWidth="10" />
         </group>
     </group>
 </vector>
