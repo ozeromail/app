@@ -265,6 +265,7 @@ struct ReasonSheet: View {
         .fixedSize(horizontal: false, vertical: true)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
         .presentationDetents([.height(height)])
+        .paperSheet()
     }
 }
 

@@ -82,10 +82,9 @@ extension View {
     func dockBackground(floating: Bool = false, solid: Bool = false) -> some View {
         if floating && hasGlass {
             self
-        } else if solid {
-            background(Color.ozeroPage).overlay(alignment: .top) { Divider() }
         } else {
-            background(.bar).overlay(alignment: .top) { Divider() }
+            background(solid ? AnyShapeStyle(Color.ozeroPage) : AnyShapeStyle(.bar))
+                .overlay(alignment: .top) { Divider() }
         }
     }
 }
@@ -215,6 +214,19 @@ struct PaperForm<Content: View>: View {
         Form {
             Group { content }.listRowBackground(Color.ozeroCard)
         }
+        .paperList()
+    }
+}
+
+/// A list of plain rows on the paper, as Android's sheets: no cards, no grey bands under the rows.
+struct PaperList<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        List {
+            Group { content }.listRowBackground(Color.clear)
+        }
+        .listStyle(.plain)
         .paperList()
     }
 }

@@ -64,6 +64,7 @@ struct PersonSheet: View {
         .padding(.top, 28)
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+        .paperSheet()
         .task { await load() }
         .sheet(item: $contact) { shown in
             ContactCard(shown: shown) {

@@ -84,10 +84,7 @@ struct AccountsSheet: View {
                 .font(.heading)
                 .accessibilityAddTraits(.isHeader)
             Spacer()
-            Button(action: actions.onSettings) {
-                Image(systemName: "gear").font(.row).foregroundStyle(.secondary).frame(width: 44, height: 44)
-            }
-            .accessibilityLabel(Text("settings_title"))
+            BarIcon(icon: "gear", label: "settings_title", tint: .secondary, action: actions.onSettings)
             // With one account there is nothing to switch or move.
             if accounts.count > 1 {
                 Button(editing ? "action_done" : "action_edit") { withAnimation(.smooth) { editing.toggle() } }

@@ -76,7 +76,6 @@ struct InboxView: View {
                 snoozing.then()
                 Task { await model.snooze(snoozing.messages, until: until) }
             }
-            .paperSheet()
         }
         .moveDialog($model.moving, targets: \.targets) { moving, folder, title in
             Task { await model.moveToFolder(moving.messages, to: folder, title: title) }

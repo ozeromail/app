@@ -235,8 +235,6 @@ struct ComposeView: View {
         }
         .coordinateSpace(.named(recipientsSheet))
         .presentationDetents(growing ? [fitted] : [.large])
-        // A low sheet is clear glass on iOS 26, and the inbox would show through the text being
-        // written: the page is opaque, as in the iPhone's own Mail.
         .paperSheet()
         .animation(.smooth, value: pageHeight)
         .onChange(of: editing) { _, now in
@@ -556,11 +554,7 @@ struct ComposeView: View {
                 }
             }
         } label: {
-            Image(systemName: "paperclip")
-                .font(.row)
-                .foregroundStyle(.primary)
-                .frame(width: 44, height: 44)
-                .contentShape(.circle)
+            RoundGlyph(icon: "paperclip", size: 44, tint: .primary).contentShape(.circle)
         }
         .accessibilityLabel(Text("compose_attach"))
     }
@@ -991,43 +985,5 @@ final class DraftKeeper: Sendable {
     /// Throws the saved draft away, and stops saving. Returns the id it had, 0 for none.
     func discard() async -> Int64 {
         await state.discard(with: mail)
-    }
-}
-
-/// A plain icon in the bar over the keyboard, as on Android: the sheet is paper, so its buttons
-/// lie on it without glass; only Send is filled.
-struct BarIcon: View {
-    let icon: String
-    let label: LocalizedStringKey
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.row)
-                .foregroundStyle(.primary)
-                .frame(width: 44, height: 44)
-                .contentShape(.circle)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(Text(label))
-    }
-}
-
-/// Send: the one filled button over the keyboard, a round of the accent with Android's arrow.
-struct SendButton: View {
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "arrow.up")
-                .font(.row.weight(.semibold))
-                .foregroundStyle(.white)
-                .frame(width: 44, height: 44)
-                .background(Color.ozeroFill.lifted, in: .circle)
-                .contentShape(.circle)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(Text("compose_send"))
     }
 }
