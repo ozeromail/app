@@ -492,7 +492,7 @@ private extension FolderItem {
 private let fewFolders = 5
 
 /// A section's heading that hides or shows it, with a chevron that says which, and `trailing`
-/// at its end. Without `onToggle` the chevron stays, pointing down.
+/// at its end. Without `onToggle` (as in Edit) it is a plain label with no chevron.
 private struct PartHeader<Trailing: View>: View {
     let title: LocalizedStringKey
     let open: Bool
@@ -516,9 +516,11 @@ private struct PartHeader<Trailing: View>: View {
     private var label: some View {
         HStack(spacing: 4) {
             Text(title)
-            Image(systemName: "chevron.right")
-                .font(.label)
-                .rotationEffect(.degrees(open ? 90 : 0))
+            if onToggle != nil {
+                Image(systemName: "chevron.right")
+                    .font(.label)
+                    .rotationEffect(.degrees(open ? 90 : 0))
+            }
         }
     }
 }
