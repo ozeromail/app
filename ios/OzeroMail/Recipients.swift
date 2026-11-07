@@ -1,5 +1,8 @@
 import SwiftUI
 
+/// The sheet the fields of addresses are on, which cuts off what goes past its edges.
+let recipientsSheet = "recipients.sheet"
+
 /// Who a message goes to, as one field: the people picked, each a chip with their name, then the
 /// address being typed. `text` keeps them as typed addresses, comma apart. While an address is
 /// typed, the people it may be rise over the field, the likeliest nearest to it and the thumb;
@@ -19,9 +22,12 @@ struct Recipients<Field: Hashable>: View {
     /// Counts the times the contacts came, so the people are looked up again with them.
     @State private var contactsGiven = 0
     @State private var offerContacts = PhoneContacts.askable
-    /// Room over the field for the people; else they go under it.
-    @State private var above = true
+    /// The room the page leaves over and under the field: the people go on the roomier side,
+    /// no taller than it.
+    @State private var room = Room()
     @State private var listHeight: CGFloat = 0
+
+    private var above: Bool { room.above >= min(listHeight, Self.maxHeight) || room.above >= room.below }
 
     var body: some View {
         let parts = Typed.of(text)
@@ -47,11 +53,15 @@ struct Recipients<Field: Hashable>: View {
             .autocorrectionDisabled()
             .focused(focus, equals: field)
         }
-        .onGeometryChange(for: Bool.self) { $0.frame(in: .scrollView).minY > Self.maxHeight + 8 } action: { above = $0 }
+        .onGeometryChange(for: Room.self) { proxy in
+            // The page that scrolls, else the sheet: a list past their edges would be cut off.
+            guard let page = proxy.bounds(of: .scrollView) ?? proxy.bounds(of: .named(recipientsSheet)) else { return Room() }
+            return Room(above: max(0, -page.minY - Self.gap), below: max(0, page.maxY - proxy.size.height - Self.gap))
+        } action: { room = $0 }
         .overlay(alignment: above ? .top : .bottom) {
             if focus.wrappedValue == field && !typing.isEmpty {
                 suggestions(for: typing, done: parts.done)
-                    .alignmentGuide(above ? .top : .bottom) { above ? $0[.bottom] + 8 : $0[.top] - 8 }
+                    .alignmentGuide(above ? .top : .bottom) { above ? $0[.bottom] + Self.gap : $0[.top] - Self.gap }
             }
         }
         .task(id: parts.done) {
@@ -77,6 +87,12 @@ struct Recipients<Field: Hashable>: View {
     }
 
     private static var maxHeight: CGFloat { 320 }
+    private static var gap: CGFloat { 8 }
+
+    private struct Room: Equatable {
+        var above: CGFloat = 0
+        var below: CGFloat = 0
+    }
 
     @ViewBuilder
     private func suggestions(for typing: String, done: [String]) -> some View {
@@ -111,7 +127,7 @@ struct Recipients<Field: Hashable>: View {
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listHeight = $0 }
             }
             .defaultScrollAnchor(above ? .bottom : .top)
-            .frame(height: min(listHeight, Self.maxHeight))
+            .frame(height: min(listHeight, Self.maxHeight, max(above ? room.above : room.below, 56)))
             .background(Color.ozeroPage, in: .rect(cornerRadius: 16))
             .overlay { RoundedRectangle(cornerRadius: 16).stroke(Color(.separator), lineWidth: 0.5) }
             .shadow(color: .black.opacity(0.12), radius: 12, y: 4)

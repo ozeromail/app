@@ -3628,3 +3628,27 @@ fn stores_opened_at_once_all_take_their_key() {
         t.join().unwrap().unwrap();
     }
 }
+
+#[test]
+fn drops_the_image_marks_saved_previews_open_with() {
+    let conn = connect(Connection::open_in_memory).unwrap();
+    conn.execute_batch("CREATE TABLE message (snippet TEXT);")
+        .unwrap();
+    for snippet in [
+        "[image: G] [image: x] You allowed",
+        "Hi [image: x]",
+        "[image: open",
+    ] {
+        conn.execute("INSERT INTO message VALUES (?1)", [snippet])
+            .unwrap();
+    }
+    conn.execute_batch(schema::MIGRATIONS[47]).unwrap();
+    let left: Vec<String> = conn
+        .prepare("SELECT snippet FROM message ORDER BY rowid")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(left, ["You allowed", "Hi [image: x]", "[image: open"]);
+}

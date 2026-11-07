@@ -251,12 +251,13 @@ impl Body {
     pub fn snippet(&self) -> String {
         const LEN: usize = 160;
         let (mut out, mut len) = (String::new(), 0);
-        let words = self
+        let lines: Vec<String> = self
             .text
             .lines()
             .filter(|l| !is_quoted(l))
-            .flat_map(str::split_whitespace);
-        for word in words {
+            .map(without_images)
+            .collect();
+        for word in lines.iter().flat_map(|l| l.split_whitespace()) {
             let word_len = word.chars().count();
             if len == 0 && word_len > LEN {
                 // One long word, such as a link: cut it rather than show nothing.
@@ -316,6 +317,24 @@ impl Body {
 /// A line of quoted mail, `> ...`.
 fn is_quoted(line: &str) -> bool {
     line.trim_start().starts_with('>')
+}
+
+/// The line without the "[image: Logo]" marks that text parts such as Gmail's put where the
+/// HTML part shows an image.
+fn without_images(line: &str) -> String {
+    const MARK: &str = "[image:";
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(start) = rest.find(MARK) {
+        let Some(len) = rest[start..].find(']') else {
+            break;
+        };
+        out.push_str(&rest[..start]);
+        out.push(' ');
+        rest = &rest[start + len + 1..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Where a saved message lives on its server.
@@ -431,6 +450,14 @@ mod tests {
         assert_eq!(
             close_blank_lines("\n Hi,\n\n \n\t\nsee you\n\n\n"),
             "Hi,\n\nsee you"
+        );
+    }
+
+    #[test]
+    fn snippet_skips_image_marks() {
+        assert_eq!(
+            snippet("[image: Google]\nYou allowed[image: x] access [image: open"),
+            "You allowed access [image: open"
         );
     }
 
