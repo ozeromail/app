@@ -370,6 +370,8 @@ private struct InboxList: View {
                     if index >= model.messages.count - InboxModel.ahead { Task { await model.loadMore() } }
                 }
                 .listRowBackground(OpenRow.background(model, message))
+                // Room on the left for the unread dot, about as much before it as after it.
+                .listRowInsets(EdgeInsets(top: 8, leading: 24, bottom: 8, trailing: 16))
                 // Lines between the rows only, as on Android: none over the first or under the last.
                 .listSectionSeparator(.hidden)
             }
@@ -1101,7 +1103,7 @@ struct MessageRow: View {
                 .fill(Color.ozeroFill.window)
                 .frame(width: 7, height: 7)
                 .opacity(unread ? 1 : 0)
-                .offset(x: -13, y: 7)
+                .offset(x: -15.5, y: 7)
                 .animation(.easeOut(duration: 0.15), value: unread)
         }
         .padding(.vertical, 6)
@@ -1117,12 +1119,32 @@ struct AccountTag: View {
     @ScaledMetric(relativeTo: .caption2) private var width: CGFloat = 70
 
     var body: some View {
-        AccountDot(color: account.tint, size: 6)
-        Text(verbatim: account.name)
-            .font(.label)
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .frame(maxWidth: width, alignment: .leading)
+        // As on Android: the dot close to the name, a little more room before the time.
+        HStack(spacing: 5) {
+            AccountDot(color: account.tint, size: 6)
+            // Only as wide as the name: a frame with a most width would take all of it.
+            CappedWidth(max: width) {
+                Text(verbatim: account.name)
+                    .font(.label)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.trailing, 2)
+    }
+}
+
+/// Its content as wide as it needs, up to `max`, past which it is cut.
+private struct CappedWidth: Layout {
+    let max: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let child = subviews.first else { return .zero }
+        return child.sizeThatFits(ProposedViewSize(width: min(proposal.width ?? max, max), height: proposal.height))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
     }
 }
 
