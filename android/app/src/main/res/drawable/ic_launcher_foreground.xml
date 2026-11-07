@@ -1,26 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The mark on the paper tile: a ring whose lower half refracts aside in the accent. -->
+<!-- The mark on the paper tile: the ink warms toward the water line, the water is brightest just under it. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <group android:translateX="29.7" android:translateY="32.4" android:scaleX="0.9" android:scaleY="0.9">
+    <group android:translateX="21.807" android:translateY="27.326" android:scaleX="1.1497" android:scaleY="1.1497">
         <group>
-            <clip-path android:pathData="M-10,-10H58V27H-10z" />
-            <path
-                android:pathData="M9.4,24a14.6,14.6 0 1,0 29.2,0a14.6,14.6 0 1,0 -29.2,0"
-                android:strokeColor="#FF142036"
-                android:strokeWidth="6" />
+            <clip-path android:pathData="M-10,-10H66V27H-10z" />
+            <path android:pathData="M9.4,24a14.6,14.6 0 1,0 29.2,0a14.6,14.6 0 1,0 -29.2,0" android:strokeWidth="9">
+                <aapt:attr name="android:strokeColor">
+                    <gradient android:type="linear" android:startX="0" android:startY="4.9" android:endX="0" android:endY="27"
+                        android:startColor="#FF101A2E" android:endColor="#FF2C4A80" />
+                </aapt:attr>
+            </path>
         </group>
         <group>
-            <clip-path android:pathData="M-10,27H58V58H-10z" />
-            <group android:translateX="6">
-                <path
-                    android:pathData="M9.4,24a14.6,14.6 0 1,0 29.2,0a14.6,14.6 0 1,0 -29.2,0"
-                    android:strokeColor="#FF2F8CFF"
-                    android:strokeWidth="6" />
-            </group>
+            <clip-path android:pathData="M-10,27H66V66H-10z" />
+            <path android:pathData="M17.4,24a14.6,14.6 0 1,0 29.2,0a14.6,14.6 0 1,0 -29.2,0" android:strokeWidth="10">
+                <aapt:attr name="android:strokeColor">
+                    <gradient android:type="linear" android:startX="0" android:startY="27" android:endX="0" android:endY="43.6"
+                        android:startColor="#FF50A0FF" android:endColor="#FF1A6FE0" />
+                </aapt:attr>
+            </path>
         </group>
     </group>
 </vector>
