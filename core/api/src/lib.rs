@@ -15,13 +15,13 @@ use ozero_app::sync::{
     sync_folders, sync_mail, wait_for_mail,
 };
 use ozero_domain::{
-    Account, AccountId, AccountKind, Action, Address, Answer, Attachment, Body, Card, Category,
-    Changes, Checkpoint, Contact, DayEvent, Draft, DraftFile, DraftId, FileId, Folder, FolderId,
-    FolderRole, Frequency, Invite, InviteKind, InviteRow, Leave, ListQuery, ListScope, Listed,
-    MailProvider, MailSender, MailService, MessageId, MessageRow, Moved, NewAccount, NewFolder,
-    NewMail, Older, OpId, OutboxId, Outgoing, OutgoingFile, People, Person, ProviderError,
-    ProviderState, RawMessage, RecentFile, SavedDraft, SearchFilter, Sender, Server, Store,
-    StoreError, close_blank_lines, html, parse_recipients, saves_sent_itself, typo,
+    Account, AccountId, AccountKind, Action, Address, Alias, Answer, Attachment, Body, Card,
+    Category, Changes, Checkpoint, Contact, DayEvent, Draft, DraftFile, DraftId, FileId, Folder,
+    FolderId, FolderRole, Frequency, Invite, InviteKind, InviteRow, Leave, ListQuery, ListScope,
+    Listed, MailProvider, MailSender, MailService, MessageId, MessageRow, Moved, NewAccount,
+    NewFolder, NewMail, Older, OpId, OutboxId, Outgoing, OutgoingFile, People, Person,
+    ProviderError, ProviderState, RawMessage, RecentFile, SavedDraft, SearchFilter, Sender, Server,
+    Store, StoreError, close_blank_lines, html, parse_recipients, saves_sent_itself, typo,
 };
 use ozero_ews::{EasSession, EwsSession, discover};
 use ozero_gmail::{GmailSession, oauth};
@@ -290,13 +290,14 @@ impl Core {
         // The unified inbox keeps one account at least, so the last one in it stays.
         let only = accounts.len() == 1;
         let last = accounts.iter().filter(|a| a.in_all).count() == 1;
-        Ok(accounts
+        accounts
             .into_iter()
             .map(|a| {
                 let fixed = only || a.in_all && last;
-                AccountItem::new(a, &signature, fixed)
+                let aliases = self.store.aliases(a.id)?;
+                Ok(AccountItem::new(a, &signature, fixed, aliases))
             })
-            .collect())
+            .collect()
     }
 
     /// Puts the accounts in this order, by id.
@@ -338,6 +339,26 @@ impl Core {
             name
         };
         Ok(self.store.set_account_name(account.id, name)?)
+    }
+
+    /// Adds another address the account sends from, or renames one; an empty `name` uses the
+    /// account's. Fails with `BadRecipients` if it is no address, or the account's own.
+    pub fn save_alias(&self, account: i64, email: String, name: String) -> Result<(), CoreError> {
+        let account = self.account(AccountId(account))?;
+        let email = email.trim();
+        if !ozero_domain::is_address(email) || email.eq_ignore_ascii_case(&account.email) {
+            return Err(CoreError::BadRecipients);
+        }
+        let alias = Alias {
+            email: email.to_owned(),
+            name: name.trim().to_owned(),
+        };
+        Ok(self.store.save_alias(account.id, &alias)?)
+    }
+
+    /// The account no longer sends from the address; mail already written from it still does.
+    pub fn remove_alias(&self, account: i64, email: String) -> Result<(), CoreError> {
+        Ok(self.store.remove_alias(AccountId(account), &email)?)
     }
 
     /// Sets when the phone looks for the account's new mail with the app closed.
@@ -761,6 +782,7 @@ impl Core {
                     signature: String::new(),
                     cc: String::new(),
                     bcc: String::new(),
+                    alias: String::new(),
                 })?;
                 self.store.leave(id, false)?;
                 Ok(Unsubscribed::Sent)
@@ -1036,6 +1058,7 @@ impl Core {
             signature,
             cc: String::new(),
             bcc: String::new(),
+            alias: String::new(),
         })
     }
 
@@ -1050,6 +1073,13 @@ impl Core {
             .find(|d| d.reply_to == Some(MessageId(message.id)));
         let account = self.account(AccountId(message.account_id))?;
         let correspondents = self.store.correspondents(MessageId(message.id))?;
+        // From the address it came to, the account's own or another of its addresses.
+        let aliases = self.store.aliases(account.id)?;
+        let own: Vec<&str> = [account.email.as_str()]
+            .into_iter()
+            .chain(aliases.iter().map(|a| a.email.as_str()))
+            .collect();
+        let me = correspondents.came_to(&own).unwrap_or(&account.email);
         // A begun reply's copies as typed, what is not an address yet too; reply all adds the
         // others it lacks.
         let typed = begun.as_ref().map_or("", |d| d.cc.trim());
@@ -1059,8 +1089,13 @@ impl Core {
             .into_iter()
             .collect();
         if all {
-            for other in correspondents.others(&account.email) {
-                if !has.iter().any(|c| c.eq_ignore_ascii_case(&other.email)) {
+            for other in correspondents.others(me) {
+                // Never to the account's other addresses either.
+                let known = has.iter().map(String::as_str).chain(own.iter().copied());
+                if !known
+                    .into_iter()
+                    .any(|c| c.eq_ignore_ascii_case(&other.email))
+                {
                     cc.push(other.email.clone());
                 }
             }
@@ -1074,9 +1109,13 @@ impl Core {
         Ok(DraftItem {
             id: 0,
             account_id: message.account_id,
-            to: correspondents.answer(&account.email).join(", "),
+            to: correspondents.answer(me).join(", "),
             cc: cc.join(", "),
             bcc: String::new(),
+            alias: Some(me)
+                .filter(|m| !m.eq_ignore_ascii_case(&account.email))
+                .unwrap_or_default()
+                .to_owned(),
             subject: ozero_domain::reply_subject(&message.subject),
             text: String::new(),
             reply_to: Some(message.id),
@@ -1124,6 +1163,7 @@ impl Core {
             signature,
             cc,
             bcc,
+            alias,
             ..
         } = draft;
         let to = parse_recipients(&to).ok_or(CoreError::BadRecipients)?;
@@ -1138,6 +1178,7 @@ impl Core {
             to,
             cc,
             bcc,
+            alias,
             subject,
             text,
             signature,
@@ -1185,6 +1226,7 @@ impl Core {
             to: draft.to,
             cc: draft.cc,
             bcc: draft.bcc,
+            alias: draft.alias,
             subject: draft.subject,
             text: draft.text,
             signature: draft.signature,
@@ -1942,6 +1984,7 @@ impl Core {
             files: vec![],
             cc: String::new(),
             bcc: String::new(),
+            alias: String::new(),
             // Removed meanwhile: the send says so.
             signature: self
                 .account(AccountId(message.account_id))
@@ -2736,6 +2779,7 @@ impl Core {
             to: vec![to],
             cc: vec![],
             bcc: vec![],
+            alias: String::new(),
             subject,
             text,
             signature: String::new(),
@@ -2755,6 +2799,7 @@ impl Core {
                     to: draft.to.join(", "),
                     cc: String::new(),
                     bcc: String::new(),
+                    alias: String::new(),
                     subject: draft.subject.clone(),
                     text: draft.text.clone(),
                     signature: String::new(),
@@ -3798,12 +3843,29 @@ pub struct AccountItem {
     /// Whether it is in the unified inbox cannot change: it is the only account, or the last
     /// one in it.
     pub in_all_fixed: bool,
+    /// The other addresses it sends from, by address.
+    pub aliases: Vec<AliasItem>,
+}
+
+/// Another address an account sends from.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AliasItem {
+    pub email: String,
+    /// The name its mail goes out under; empty for the account's `sender_name`.
+    pub name: String,
 }
 
 impl AccountItem {
     /// `signature` is the default one, for accounts without their own.
-    fn new(a: Account, signature: &str, in_all_fixed: bool) -> Self {
+    fn new(a: Account, signature: &str, in_all_fixed: bool, aliases: Vec<Alias>) -> Self {
         Self {
+            aliases: aliases
+                .into_iter()
+                .map(|a| AliasItem {
+                    email: a.email,
+                    name: a.name,
+                })
+                .collect(),
             sender_name: sender(&a).name.unwrap_or_default(),
             in_all_fixed,
             in_all: a.in_all,
@@ -4084,6 +4146,9 @@ pub struct DraftItem {
     /// Blind copies (`Bcc`), as `to`; empty for none.
     #[uniffi(default = "")]
     pub bcc: String,
+    /// Which of the account's `aliases` it goes from; empty for the account's own address.
+    #[uniffi(default = "")]
+    pub alias: String,
 }
 
 /// A draft as its list shows it.
@@ -4198,6 +4263,7 @@ impl From<SavedDraft> for DraftItem {
             signature: d.signature,
             cc: d.cc,
             bcc: d.bcc,
+            alias: d.alias,
         }
     }
 }

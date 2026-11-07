@@ -8,9 +8,9 @@ use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
 use ozero_domain::{
-    Account, AccountId, Action, Address, Answer, Body, Category, Changes, Checkpoint, Contact,
-    Correspondent, Correspondents, DayEvent, Draft, DraftCopy, DraftFile, DraftId, DraftToPush,
-    FileId, Flags, Folder, FolderId, FolderRole, ListQuery, MailProvider, MailSender,
+    Account, AccountId, Action, Address, Alias, Answer, Body, Category, Changes, Checkpoint,
+    Contact, Correspondent, Correspondents, DayEvent, Draft, DraftCopy, DraftFile, DraftId,
+    DraftToPush, FileId, Flags, Folder, FolderId, FolderRole, ListQuery, MailProvider, MailSender,
     MessageBuilder, MessageId, MessageLocation, MessageParser, MessageRow, Moved, NewAccount,
     NewFolder, NewMail, NewMessage, Older, Op, OpId, OutboxId, Outgoing, OutgoingFile,
     ProviderError, RawMessage, RecentFile, SavedDraft, SavedInvite, SearchFilter, ServerDraft,
@@ -530,6 +530,18 @@ impl Store for Memory {
     }
 
     fn set_account_signature(&self, _: AccountId, _: &str) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn aliases(&self, _: AccountId) -> Result<Vec<Alias>, StoreError> {
+        Ok(vec![])
+    }
+
+    fn save_alias(&self, _: AccountId, _: &Alias) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    fn remove_alias(&self, _: AccountId, _: &str) -> Result<(), StoreError> {
         Ok(())
     }
 

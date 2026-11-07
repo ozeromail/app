@@ -310,6 +310,7 @@ fn sync_an_imap_inbox_into_the_list() {
             signature: String::new(),
             cc: String::new(),
             bcc: String::new(),
+            alias: String::new(),
         })
         .unwrap()
     };
@@ -446,6 +447,7 @@ fn sync_an_imap_inbox_into_the_list() {
         signature: "Test".into(),
         cc: String::new(),
         bcc: String::new(),
+        alias: String::new(),
     };
     for text in ["First", "Second"] {
         draft.text = text.into();
@@ -685,6 +687,96 @@ fn tells_who_a_message_went_to_and_copies_the_others_on_reply_all() {
 }
 
 #[test]
+fn answers_from_the_address_the_mail_came_to() {
+    let db = TempDb::new("aliases");
+    let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
+    let store = &core.store;
+    let account = store
+        .add_account(&NewAccount {
+            kind: AccountKind::Imap,
+            email: "me@example.com".into(),
+            display_name: "Me".into(),
+            server: None,
+            smtp: None,
+        })
+        .unwrap();
+    for bad in ["hello", "ME@example.com"] {
+        assert!(matches!(
+            core.save_alias(account.0, bad.into(), String::new()),
+            Err(CoreError::BadRecipients)
+        ));
+    }
+    core.save_alias(account.0, " hello@example.com ".into(), "Shop".into())
+        .unwrap();
+    core.save_alias(account.0, "hi@example.com".into(), String::new())
+        .unwrap();
+    let aliases = &core.accounts().unwrap()[0].aliases;
+    assert_eq!(
+        aliases,
+        &[
+            AliasItem {
+                email: "hello@example.com".into(),
+                name: "Shop".into()
+            },
+            AliasItem {
+                email: "hi@example.com".into(),
+                name: String::new()
+            }
+        ]
+    );
+
+    let folder = NewFolder {
+        remote_id: "INBOX".into(),
+        name: "Inbox".into(),
+        role: FolderRole::Inbox,
+    };
+    let folder = store.save_folders(account, &[folder]).unwrap()[0].id;
+    let to = |email: &str| Address {
+        name: None,
+        email: email.into(),
+    };
+    let message = ozero_domain::NewMessage {
+        remote_id: "1".into(),
+        message_id: None,
+        references: vec![],
+        from: to("anna@example.com"),
+        answer_to: vec![],
+        to: vec![to("HELLO@example.com")],
+        cc: vec![to("hi@example.com"), to("bob@example.com")],
+        bcc: vec![],
+        subject: "Order".into(),
+        snippet: String::new(),
+        date: 10,
+        flags: Default::default(),
+        category: Category::People,
+        unsubscribe: None,
+    };
+    let changes = Changes {
+        checkpoint: store.checkpoint(folder).unwrap().0,
+        new: vec![message],
+        flags: vec![],
+        gone: vec![],
+    };
+    store.save_changes(folder, &changes).unwrap();
+    let item = core.inbox(None, Category::People, 10).unwrap().remove(0);
+
+    let all = core.reply(item, true).unwrap();
+    assert_eq!(all.alias, "hello@example.com");
+    assert_eq!(
+        (all.to.as_str(), all.cc.as_str()),
+        ("anna@example.com", "bob@example.com")
+    );
+    // It keeps the address as it is saved.
+    let id = core.save_draft(all).unwrap();
+    let saved = core.drafts().unwrap().remove(0).draft;
+    assert_eq!((saved.id, saved.alias.as_str()), (id, "hello@example.com"));
+
+    core.remove_alias(account.0, "hi@example.com".into())
+        .unwrap();
+    assert_eq!(core.accounts().unwrap()[0].aliases.len(), 1);
+}
+
+#[test]
 fn rows_are_marked_only_with_several_accounts() {
     let db = TempDb::new("marks");
     let core = Core::open(db.0.clone(), vec![7; 32]).unwrap();
@@ -765,6 +857,7 @@ fn keeps_files_with_a_draft_up_to_the_limit() {
         signature: String::new(),
         cc: String::new(),
         bcc: String::new(),
+        alias: String::new(),
     };
     let id = core.save_draft(draft.clone()).unwrap();
     let attach = |name: &str, size: u64| {
@@ -833,6 +926,7 @@ fn saves_a_gmail_account_that_can_send() {
         signature: String::new(),
         cc: String::new(),
         bcc: String::new(),
+        alias: String::new(),
     })
     .unwrap();
 }
@@ -886,6 +980,7 @@ fn signs_with_the_accounts_signature_else_the_default_one() {
         signature: "--\nA.".into(),
         cc: String::new(),
         bcc: String::new(),
+        alias: String::new(),
     };
     let saved = core.save_draft(draft.clone()).unwrap();
     assert_eq!(core.drafts().unwrap()[0].draft.signature, "--\nA.");
@@ -959,6 +1054,7 @@ fn saves_an_exchange_account_that_sends_without_smtp() {
         signature: String::new(),
         cc: String::new(),
         bcc: String::new(),
+        alias: String::new(),
     })
     .unwrap();
 }

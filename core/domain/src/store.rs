@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::{
-    Account, AccountId, Action, Body, Category, Changes, Checkpoint, Contact, Correspondent,
+    Account, AccountId, Action, Alias, Body, Category, Changes, Checkpoint, Contact, Correspondent,
     Correspondents, DayEvent, Draft, DraftCopy, DraftFile, DraftId, DraftToPush, FileId, Folder,
     FolderId, ListQuery, MessageId, MessageLocation, MessageRow, Moved, NewAccount, NewFolder,
     NewMail, NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile, RecentFile, SavedDraft,
@@ -30,6 +30,11 @@ pub trait Store: Send + Sync {
     fn set_account_notify(&self, account: AccountId, notify: bool) -> Result<(), StoreError>;
     /// Sets the account's own signature; empty uses the default one.
     fn set_account_signature(&self, account: AccountId, signature: &str) -> Result<(), StoreError>;
+    /// The account's other addresses, by address.
+    fn aliases(&self, account: AccountId) -> Result<Vec<Alias>, StoreError>;
+    /// Adds the address to the account, or renames it.
+    fn save_alias(&self, account: AccountId, alias: &Alias) -> Result<(), StoreError>;
+    fn remove_alias(&self, account: AccountId, email: &str) -> Result<(), StoreError>;
     /// The signature of accounts without one of their own; empty for none.
     fn signature(&self) -> Result<String, StoreError>;
     fn set_signature(&self, signature: &str) -> Result<(), StoreError>;
