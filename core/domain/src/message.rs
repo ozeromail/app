@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::{AccountId, Category, FolderId};
 
 /// Local id of a message.
@@ -251,27 +253,29 @@ impl Body {
     pub fn snippet(&self) -> String {
         const LEN: usize = 160;
         let (mut out, mut len) = (String::new(), 0);
-        let lines: Vec<String> = self
+        let lines = self
             .text
             .lines()
             .filter(|l| !is_quoted(l))
-            .map(without_images)
-            .collect();
-        for word in lines.iter().flat_map(|l| l.split_whitespace()) {
-            let word_len = word.chars().count();
-            if len == 0 && word_len > LEN {
-                // One long word, such as a link: cut it rather than show nothing.
-                return word.chars().take(LEN).collect();
+            .map(without_images);
+        // Line by line, so a long body is read only as far as the cut.
+        'words: for line in lines {
+            for word in line.split_whitespace() {
+                let word_len = word.chars().count();
+                if len == 0 && word_len > LEN {
+                    // One long word, such as a link: cut it rather than show nothing.
+                    return word.chars().take(LEN).collect();
+                }
+                if len + word_len + 1 > LEN {
+                    break 'words;
+                }
+                if len > 0 {
+                    out.push(' ');
+                    len += 1;
+                }
+                out.push_str(word);
+                len += word_len;
             }
-            if len + word_len + 1 > LEN {
-                break;
-            }
-            if len > 0 {
-                out.push(' ');
-                len += 1;
-            }
-            out.push_str(word);
-            len += word_len;
         }
         out
     }
@@ -321,8 +325,11 @@ fn is_quoted(line: &str) -> bool {
 
 /// The line without the "[image: Logo]" marks that text parts such as Gmail's put where the
 /// HTML part shows an image.
-fn without_images(line: &str) -> String {
+fn without_images(line: &str) -> Cow<'_, str> {
     const MARK: &str = "[image:";
+    if !line.contains(MARK) {
+        return Cow::Borrowed(line);
+    }
     let mut out = String::with_capacity(line.len());
     let mut rest = line;
     while let Some(start) = rest.find(MARK) {
@@ -334,7 +341,7 @@ fn without_images(line: &str) -> String {
         rest = &rest[start + len + 1..];
     }
     out.push_str(rest);
-    out
+    Cow::Owned(out)
 }
 
 /// Where a saved message lives on its server.

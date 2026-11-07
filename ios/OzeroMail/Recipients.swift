@@ -24,7 +24,7 @@ struct Recipients<Field: Hashable>: View {
     @State private var offerContacts = PhoneContacts.askable
     /// The room the page leaves over and under the field: the people go on the roomier side,
     /// no taller than it.
-    @State private var room = Room()
+    @State private var room = Sides()
     @State private var listHeight: CGFloat = 0
 
     private var above: Bool { room.above >= min(listHeight, Self.maxHeight) || room.above >= room.below }
@@ -53,10 +53,12 @@ struct Recipients<Field: Hashable>: View {
             .autocorrectionDisabled()
             .focused(focus, equals: field)
         }
-        .onGeometryChange(for: Room.self) { proxy in
+        .onGeometryChange(for: Sides.self) { proxy in
             // The page that scrolls, else the sheet: a list past their edges would be cut off.
-            guard let page = proxy.bounds(of: .scrollView) ?? proxy.bounds(of: .named(recipientsSheet)) else { return Room() }
-            return Room(above: max(0, -page.minY - Self.gap), below: max(0, page.maxY - proxy.size.height - Self.gap))
+            guard let page = proxy.bounds(of: .scrollView) ?? proxy.bounds(of: .named(recipientsSheet)) else { return Sides() }
+            // In steps of 8 pt, so scrolling does not redraw the field at every frame.
+            let step = { (room: CGFloat) in (max(0, room - Self.gap) / 8).rounded(.down) * 8 }
+            return Sides(above: step(-page.minY), below: step(page.maxY - proxy.size.height))
         } action: { room = $0 }
         .overlay(alignment: above ? .top : .bottom) {
             if focus.wrappedValue == field && !typing.isEmpty {
@@ -91,7 +93,7 @@ struct Recipients<Field: Hashable>: View {
     private static var maxHeight: CGFloat { 320 }
     private static var gap: CGFloat { 8 }
 
-    private struct Room: Equatable {
+    private struct Sides: Equatable {
         var above: CGFloat = 0
         var below: CGFloat = 0
     }
@@ -101,9 +103,9 @@ struct Recipients<Field: Hashable>: View {
         // Not the people already picked.
         let picked = Set(done.map { $0.lowercased() })
         let shown = (local.text == typing ? local.people : []).filter { !picked.contains($0.email.lowercased()) }
-        let listed = (directory.text == typing ? directory.people : [])
-            .filter { !picked.contains($0.email.lowercased()) }
-            .filter { found in !shown.contains { $0.email.caseInsensitiveCompare(found.email) == .orderedSame } }
+        // The directory's people, without those already above.
+        let taken = picked.union(shown.map { $0.email.lowercased() })
+        let listed = (directory.text == typing ? directory.people : []).filter { !taken.contains($0.email.lowercased()) }
         if !shown.isEmpty || !listed.isEmpty || offerContacts {
             // The likeliest person nearest the field, whichever side the list is on.
             let people: [Row] = shown.map { .person($0) }
