@@ -89,6 +89,7 @@
   "error_server_not_found": "No server found for this address. Enter it below.",
   "signin_gmail": "Gmail with an app password",
   "signin_gmail_text": "If Google sign-in doesn’t let you in, an app password will: turn on 2-Step Verification in your Google Account, then make one.",
+  "signin_gmail_store_text": "Gmail signs in with an app password: turn on 2-Step Verification in your Google Account, then make one.",
   "signin_other": "Other mail",
   "signin_app_password": "App password",
   "signin_app_password_text": "This service asks for an app password, not your usual one. Making one takes a minute.",

@@ -98,13 +98,14 @@ private enum class Provider(
     @StringRes val hint: Int = R.string.signin_app_password_text,
     val service: MailService? = null,
 ) {
-    // For those Google sign-in does not let in yet; Gmail addresses go to Google sign-in.
+    // With Google sign-in, for those it does not let in yet, and Gmail addresses go to it;
+    // without it, every Gmail address.
     GMAIL(
         "imap.gmail.com",
         "smtp.gmail.com",
         Mail.SMTPS_PORT,
         "https://myaccount.google.com/apppasswords",
-        R.string.signin_gmail_text,
+        if (BuildConfig.GOOGLE_SIGN_IN) R.string.signin_gmail_text else R.string.signin_gmail_store_text,
     ),
     ICLOUD("imap.mail.me.com", "smtp.mail.me.com", 587, "https://account.apple.com/account/manage", service = MailService.I_CLOUD),
     YAHOO("imap.mail.yahoo.com", "smtp.mail.yahoo.com", Mail.SMTPS_PORT, "https://login.yahoo.com/account/security", service = MailService.YAHOO),
@@ -126,10 +127,11 @@ private enum class Provider(
 
 /** Where the person is, past the first step. */
 private sealed interface Step : java.io.Serializable {
-    /** A known service, its address typed on the first step; for Gmail, on this one. */
-    data class Known(val provider: Provider) : Step {
-        val typed get() = provider == Provider.GMAIL
-    }
+    /**
+     * A known service, its address typed on the first step, or on this one when [typed]:
+     * for Gmail picked from the other ways in.
+     */
+    data class Known(val provider: Provider, val typed: Boolean = false) : Step
 
     /** An address sign-in does not know: its servers are looked for. */
     data object Found : Step
@@ -241,7 +243,11 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
 
     fun next() {
         if (busy || suggestedImapHost(email) == null) return
-        if (knownService(email) == MailService.GOOGLE) google() else go(Provider.of(email)?.let { Step.Known(it) } ?: Step.Found)
+        when {
+            knownService(email) != MailService.GOOGLE -> go(Provider.of(email)?.let { Step.Known(it) } ?: Step.Found)
+            BuildConfig.GOOGLE_SIGN_IN -> google()
+            else -> go(Step.Known(Provider.GMAIL))
+        }
     }
 
     Column(
@@ -403,7 +409,7 @@ private fun Start(
     onManual: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
-    val google = remember(email) { knownService(email) == MailService.GOOGLE }
+    val google = BuildConfig.GOOGLE_SIGN_IN && remember(email) { knownService(email) == MailService.GOOGLE }
     val ready = !busy && remember(email) { suggestedImapHost(email) != null }
     Form(
         top = {
@@ -423,11 +429,13 @@ private fun Start(
             }
         },
         bottom = {
-            SubmitButton(R.string.signin_google, busy = false, ready = !busy, onGoogle, quiet = true)
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                HorizontalDivider(Modifier.weight(1f), color = colors.outlineVariant)
-                Text(stringResource(R.string.signin_or), style = Type.Caption, color = colors.onSurfaceVariant)
-                HorizontalDivider(Modifier.weight(1f), color = colors.outlineVariant)
+            if (BuildConfig.GOOGLE_SIGN_IN) {
+                SubmitButton(R.string.signin_google, busy = false, ready = !busy, onGoogle, quiet = true)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    HorizontalDivider(Modifier.weight(1f), color = colors.outlineVariant)
+                    Text(stringResource(R.string.signin_or), style = Type.Caption, color = colors.onSurfaceVariant)
+                    HorizontalDivider(Modifier.weight(1f), color = colors.outlineVariant)
+                }
             }
             Field(email, onEmail, R.string.signin_email, KeyboardType.Email, onDone = onNext)
             SubmitButton(if (google) R.string.signin_google else R.string.signin_next, busy, ready, onNext)
@@ -467,7 +475,7 @@ private fun Manual(busy: Boolean, onBack: () -> Unit, onPick: (Step) -> Unit) {
                 HorizontalDivider(Modifier.padding(start = Gap.card), color = colors.outlineVariant)
                 Choice(stringResource(R.string.signin_other), !busy, onClick = { onPick(Step.Servers(imap = true)) })
                 HorizontalDivider(Modifier.padding(start = Gap.card), color = colors.outlineVariant)
-                Choice(stringResource(R.string.signin_gmail), !busy, onClick = { onPick(Step.Known(Provider.GMAIL)) })
+                Choice(stringResource(R.string.signin_gmail), !busy, onClick = { onPick(Step.Known(Provider.GMAIL, typed = true)) })
             }
         },
     )

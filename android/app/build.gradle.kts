@@ -23,6 +23,9 @@ android {
             ?: error("Version $version is not X.Y.Z with each part below 100")
         versionName = version
         versionCode = parts.toList().fold(0) { code, part -> code * 100 + part.toInt() }
+        // The store build has no Google sign-in until Google verifies the app: Gmail goes by
+        // an app password there. Every other build keeps it for the test users.
+        buildConfigField("boolean", "GOOGLE_SIGN_IN", (env("STORE_BUILD") != "true").toString())
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         testInstrumentationRunnerArguments["useTestStorageService"] = "true"
         // Each UI test starts from a fresh app: signed out, nothing saved.
@@ -36,6 +39,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     // Every test in a process of its own, so one crash cannot take the rest with it.
