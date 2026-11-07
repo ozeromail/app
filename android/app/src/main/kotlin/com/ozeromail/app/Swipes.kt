@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -97,6 +98,51 @@ data class Swipes(
     val rightLong: SwipeAction? = SwipeAction.SNOOZE,
 )
 
+/** One of the four swipes the person picks for: a side, short or long. */
+enum class SwipeSlot(@StringRes val title: Int, val left: Boolean, val long: Boolean) {
+    LEFT(R.string.swipes_left, left = true, long = false),
+    LEFT_LONG(R.string.swipes_left_long, left = true, long = true),
+    RIGHT(R.string.swipes_right, left = false, long = false),
+    RIGHT_LONG(R.string.swipes_right_long, left = false, long = true),
+    ;
+
+    /** The short one of the same side. */
+    val short: SwipeSlot
+        get() = if (left) LEFT else RIGHT
+
+    companion object {
+        /** The slot a row [offset] pixels out of [width] would act for, if any. */
+        fun at(offset: Float, width: Int): SwipeSlot? {
+            val far = if (width == 0) 0f else abs(offset) / width
+            val left = offset < 0f
+            return when {
+                far >= LONG -> if (left) LEFT_LONG else RIGHT_LONG
+                far >= SHORT -> if (left) LEFT else RIGHT
+                else -> null
+            }
+        }
+    }
+}
+
+/** What [slot] does; a long one can be off, null. */
+operator fun Swipes.get(slot: SwipeSlot): SwipeAction? = when (slot) {
+    SwipeSlot.LEFT -> left
+    SwipeSlot.LEFT_LONG -> leftLong
+    SwipeSlot.RIGHT -> right
+    SwipeSlot.RIGHT_LONG -> rightLong
+}
+
+/**
+ * [slot] doing [action]: a short one is never off, a long one never does what its short one
+ * does, so a short one taking its long one's action turns the long one off.
+ */
+fun Swipes.with(slot: SwipeSlot, action: SwipeAction?): Swipes = when (slot) {
+    SwipeSlot.LEFT -> (action ?: left).let { copy(left = it, leftLong = leftLong.takeIf { long -> long != it }) }
+    SwipeSlot.LEFT_LONG -> copy(leftLong = action.takeIf { it != left })
+    SwipeSlot.RIGHT -> (action ?: right).let { copy(right = it, rightLong = rightLong.takeIf { long -> long != it }) }
+    SwipeSlot.RIGHT_LONG -> copy(rightLong = action.takeIf { it != right })
+}
+
 /** The sizes of mail's text the person can pick from, against the usual one. */
 val TEXT_SCALES = listOf(0.85f, 1f, 1.1f, 1.2f, 1.35f)
 const val USUAL_SIZE = 1
@@ -131,6 +177,11 @@ class Settings(context: Context) {
     var swipeTipSeen: Boolean
         get() = prefs.getBoolean(TIP, false)
         set(value) = prefs.edit().putBoolean(TIP, value).apply()
+
+    /** A swipe was picked on its page by swiping the sample, so the line on how goes. */
+    var swipesTried: Boolean
+        get() = prefs.getBoolean(TRIED, false)
+        set(value) = prefs.edit().putBoolean(TRIED, value).apply()
 
     /** The size of mail's text, a place in [TEXT_SCALES]. */
     var textSize: Int
@@ -182,6 +233,7 @@ class Settings(context: Context) {
         private const val RIGHT_LONG = "swipe_right_long"
         private const val OFF = "OFF"
         private const val TIP = "swipe_tip_seen"
+        private const val TRIED = "swipes_tried"
         private const val EXPANDED = "expanded_groups"
         private const val CLOSED = "closed_parts"
         private const val SYNCED = "synced_boxes"
@@ -293,12 +345,11 @@ fun SwipeRow(
     // 0 while letting go does nothing, 1 for the short action, 2 for the long one.
     val stage by remember {
         derivedStateOf {
-            val far = if (width == 0) 0f else abs(offset) / width
+            val at = SwipeSlot.at(offset, width)
             acted ?: when {
-                offset == 0f -> 0
-                far >= LONG && side(offset < 0f).second != null -> 2
-                far >= SHORT -> 1
-                else -> 0
+                at == null -> 0
+                at.long && side(at.left).second != null -> 2
+                else -> 1
             }
         }
     }
@@ -536,29 +587,127 @@ fun SwipeTip(swipes: Swipes, lift: Boolean, onDismiss: () -> Unit) {
     }
 }
 
-/** The short and the long choice for each side, on its page of the settings; a long one can be off. */
+/**
+ * A message the person swipes on the swipes' page to pick for that swipe: it goes as a row in
+ * the list does, ticking at each mark, then springs back, and [onPick] gets the slot it was let
+ * go in. A long swipe that is off is reached all the same, so it can be turned on. Each time
+ * [swipes] changes, the message slides that way by itself to show the swipe now.
+ */
 @Composable
-fun SwipeSettings(swipes: Swipes, onChange: (Swipes) -> Unit) {
-    Side(R.string.swipes_left, SwipeAction.PICKED, swipes.left) { onChange(swipes.copy(left = it)) }
-    Side(R.string.swipes_left_long, SwipeAction.PICKED + null, swipes.leftLong) { onChange(swipes.copy(leftLong = it)) }
-    Side(R.string.swipes_right, SwipeAction.PICKED, swipes.right) { onChange(swipes.copy(right = it)) }
-    Side(R.string.swipes_right_long, SwipeAction.PICKED + null, swipes.rightLong) { onChange(swipes.copy(rightLong = it)) }
+fun SwipeTrial(swipes: Swipes, onPick: (SwipeSlot) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val scope = rememberCoroutineScope()
+    val haptics = LocalHapticFeedback.current
+    val picked by rememberUpdatedState(onPick)
+    var offset by remember { mutableFloatStateOf(0f) }
+    var width by remember { mutableIntStateOf(0) }
+    var held by remember { mutableStateOf(false) }
+    var moving by remember { mutableStateOf<Job?>(null) }
+    // The slot the strip shows when no finger holds the message: the one last picked or shown.
+    var shown by remember { mutableStateOf(SwipeSlot.LEFT) }
+    var last by remember { mutableStateOf(swipes) }
+    val reached by remember { derivedStateOf { if (held) SwipeSlot.at(offset, width) else null } }
+
+    fun glide(to: Float, then: () -> Unit = {}) {
+        moving?.cancel()
+        moving = scope.launch {
+            animate(offset, to, animationSpec = Motion.settle()) { value, _ -> offset = value }
+            then()
+        }
+    }
+    LaunchedEffect(swipes) {
+        // The first one changed; a short one that turned its long one off comes first.
+        val changed = SwipeSlot.entries.firstOrNull { swipes[it] != last[it] } ?: return@LaunchedEffect
+        last = swipes
+        shown = changed
+        // Out a little past the mark, then back; a finger taking hold stops it.
+        val way = if (changed.left) -1f else 1f
+        glide(way * width * (if (changed.long) LONG else SHORT) * 1.15f) { glide(0f) }
+    }
+    LaunchedEffect(Unit) {
+        var before: SwipeSlot? = null
+        snapshotFlow { reached }.collect { now ->
+            if (held && now != before) {
+                val further = now != null && (before == null || now.long)
+                haptics.performHapticFeedback(if (further) HapticFeedbackType.GestureThresholdActivate else HapticFeedbackType.SegmentTick)
+            }
+            before = now
+        }
+    }
+
+    // Only whether it is out and which way, so a drag does not recompose the strip each frame.
+    val out by remember { derivedStateOf { offset != 0f } }
+    val leftward by remember { derivedStateOf { offset < 0f } }
+    val slot = reached ?: if (held) null else shown
+    val left = if (out) leftward else slot?.left ?: true
+    val action = slot?.let { swipes[it] }
+    val (fill, on) = when {
+        slot == null -> colors.background to colors.onSurfaceVariant
+        action == null -> colors.outlineVariant to colors.onSurfaceVariant
+        else -> action.colors()
+    }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Gap.screen, vertical = 8.dp)
+            .height(72.dp)
+            .clip(RoundedCornerShape(Radius.tile))
+            .onSizeChanged { width = it.width }
+            .draggable(
+                rememberDraggableState { delta -> offset = (offset + delta).coerceIn(-width * 0.85f, width * 0.85f) },
+                Orientation.Horizontal,
+                onDragStarted = {
+                    moving?.cancel()
+                    held = true
+                },
+                onDragStopped = {
+                    val at = reached
+                    held = false
+                    glide(0f)
+                    if (at != null) {
+                        shown = at
+                        picked(at)
+                    }
+                },
+            ),
+    ) {
+        if (out) {
+            Row(
+                Modifier.matchParentSize().background(fill).padding(horizontal = 22.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, if (left) Alignment.End else Alignment.Start),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // Before a mark the strip is bare: letting go there picks nothing.
+                if (slot != null) {
+                    val word = @Composable {
+                        Text(stringResource(action?.label ?: R.string.swipes_off), color = on, style = Type.Text, fontWeight = Weight.SemiBold)
+                    }
+                    if (left) word()
+                    Glyph(action?.icon ?: R.drawable.ic_close, null, on, size = 20.dp)
+                    if (!left) word()
+                }
+            }
+        }
+        Column(
+            Modifier
+                .fillMaxSize()
+                .offset { IntOffset(offset.roundToInt(), 0) }
+                .background(colors.surfaceVariant)
+                .padding(horizontal = Gap.card),
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(stringResource(R.string.swipes_sample_from), style = Type.Row, maxLines = 1)
+            Text(stringResource(R.string.swipes_sample_subject), color = colors.onSurfaceVariant, style = Type.Subject, maxLines = 1)
+        }
+    }
 }
 
+/** [action]'s icon on its colour in a round drop, as its swipe shows it; off, a cross on grey. */
 @Composable
-private fun <T : SwipeAction?> Side(@StringRes title: Int, options: List<T>, picked: T, onPick: (T) -> Unit) {
-    val colors = MaterialTheme.colorScheme
-    // Four to a row: the name goes under the icon to fit.
-    Choices(title, options, picked, onPick, height = 56.dp) { action, on ->
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Glyph(action?.icon ?: R.drawable.ic_close, null, if (on) colors.primary else colors.onSurfaceVariant, size = 18.dp)
-            Text(
-                stringResource(action?.label ?: R.string.swipes_off),
-                color = if (on) colors.primary else colors.onSurface,
-                style = Type.Label,
-                maxLines = 1,
-            )
-        }
+fun ActionDot(action: SwipeAction?, size: Dp = 24.dp) {
+    val (fill, on) = action?.colors() ?: (MaterialTheme.colorScheme.outlineVariant to MaterialTheme.colorScheme.onSurfaceVariant)
+    Box(Modifier.size(size).background(fill, CircleShape), contentAlignment = Alignment.Center) {
+        Glyph(action?.icon ?: R.drawable.ic_close, null, on, size = size * 0.58f)
     }
 }
 
@@ -569,7 +718,6 @@ fun <T> Choices(
     options: List<T>,
     picked: T,
     onPick: (T) -> Unit,
-    height: Dp = 44.dp,
     content: @Composable (option: T, on: Boolean) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -588,7 +736,7 @@ fun <T> Choices(
                     Row(
                         Modifier
                             .weight(1f)
-                            .height(height)
+                            .height(44.dp)
                             .clip(shape)
                             .background(if (on) colors.primary.copy(alpha = 0.1f) else colors.surfaceVariant)
                             .then(if (on) Modifier.border(1.5.dp, colors.primary, shape) else Modifier)

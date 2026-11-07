@@ -65,6 +65,9 @@ enum SwipeAction: String, CaseIterable, Identifiable {
         }
     }
 
+    /// The fill of a long swipe that is off.
+    static let offTint = Color.gray.opacity(0.45)
+
     var tint: Color {
         switch self {
         case .done: .ozeroFill
@@ -89,6 +92,37 @@ enum SwipeAction: String, CaseIterable, Identifiable {
         case .inbox: message.canMoveToInbox
         case .read, .delete, .flag: true
         }
+    }
+}
+
+/// One of the four swipes the person picks for: a side, short or long.
+enum SwipeSlot: String, CaseIterable, Identifiable {
+    case left, leftLong, right, rightLong
+
+    var id: Self { self }
+    var isLeft: Bool { self == .left || self == .leftLong }
+    var isLong: Bool { self == .leftLong || self == .rightLong }
+    /// The short one of the same side.
+    var short: SwipeSlot { isLeft ? .left : .right }
+
+    var title: LocalizedStringKey {
+        switch self {
+        case .left: "swipes_left"
+        case .leftLong: "swipes_left_long"
+        case .right: "swipes_right"
+        case .rightLong: "swipes_right_long"
+        }
+    }
+
+    /// The slot a row `offset` points out of `width` would act for, if any: the short one from a
+    /// quarter of the way, the long one from three fifths, as in the list.
+    static func at(_ offset: CGFloat, width: CGFloat) -> SwipeSlot? {
+        guard width > 0 else { return nil }
+        let far = abs(offset) / width
+        let left = offset < 0
+        if far >= 0.6 { return left ? .leftLong : .rightLong }
+        if far >= 0.25 { return left ? .left : .right }
+        return nil
     }
 }
 
@@ -133,6 +167,33 @@ struct Swipes: Equatable {
 
     var summary: String {
         tr("swipes_summary", left.label, right.label)
+    }
+
+    /// What `slot` does; a long one can be off, nil.
+    subscript(slot: SwipeSlot) -> SwipeAction? {
+        switch slot {
+        case .left: left
+        case .leftLong: leftLong
+        case .right: right
+        case .rightLong: rightLong
+        }
+    }
+
+    /// `slot` doing `action`: a short one is never off, a long one never does what its short one
+    /// does, so a short one taking its long one's action turns the long one off.
+    func with(_ slot: SwipeSlot, _ action: SwipeAction?) -> Swipes {
+        var swipes = self
+        switch slot {
+        case .left:
+            swipes.left = action ?? left
+            if leftLong == swipes.left { swipes.leftLong = nil }
+        case .leftLong: swipes.leftLong = action == left ? nil : action
+        case .right:
+            swipes.right = action ?? right
+            if rightLong == swipes.right { swipes.rightLong = nil }
+        case .rightLong: swipes.rightLong = action == right ? nil : action
+        }
+        return swipes
     }
 }
 
