@@ -27,6 +27,7 @@ enum SettingsPage: Hashable {
     case swipes
     case signature
     case reading
+    case blocked
     case account(Int64)
 }
 
@@ -51,12 +52,15 @@ struct SettingsView: View {
             SwipeSettings(swipes: $swipes)
         case .signature:
             PaperForm {
-                SignatureSection(saved: signature, label: "signature_title", placeholder: "", hint: "signature_hint",
-                                 onSave: actions.onSignature)
+                // The page's title names the field, so it goes without a header.
+                SignatureSection(saved: signature, label: "signature_title", placeholder: tr("signature_placeholder"),
+                                 hint: "signature_hint", header: false, onSave: actions.onSignature)
             }
             .navigationTitle("signature_title")
         case .reading:
             ReadingSettings(mail: mail)
+        case .blocked:
+            BlockedSenders(mail: mail)
         case .account(let id):
             // Gone, say removed meanwhile: nothing to show.
             if let account = accounts.first(where: { $0.id == id }) {
@@ -77,6 +81,7 @@ private struct AppSettings: View {
     // Watched, so the row shows the size picked on the Reading page.
     @AppStorage("text_size") private var textSize = Settings.usualSize
     @State private var imagesAlways: Bool?
+    @State private var blocked: Int?
 
     var body: some View {
         PaperForm {
@@ -106,6 +111,8 @@ private struct AppSettings: View {
                           value: swipes.summary)
                 ValueLink(page: .signature, icon: "signature", title: "signature_title",
                           value: signature.components(separatedBy: .newlines).first { !$0.isBlank } ?? tr("signature_none"))
+                ValueLink(page: .blocked, icon: "nosign", title: "blocked_title",
+                          value: blocked.map { $0 == 0 ? tr("blocked_none") : String($0) })
             }
             Section("settings_reading") {
                 ValueLink(page: .reading, icon: "textformat.size", title: "reading_size", value: sizeNames[min(max(textSize, 0), sizeNames.count - 1)])
@@ -121,6 +128,8 @@ private struct AppSettings: View {
             }
         }
         .task { imagesAlways = try? await mail.imagesAlways() }
+        // Again on the way back, so the count follows what was unblocked meanwhile.
+        .onAppear { Task { blocked = (try? await mail.blockedSenders())?.count } }
         .navigationTitle("settings_title")
     }
 }
@@ -330,6 +339,41 @@ private struct ReadingSettings: View {
         senders.removeAll { $0 == email }
         Task {
             do { try await mail.forbidImages(of: email) } catch { senders.append(email) }
+        }
+    }
+}
+
+/// The senders blocked, each to unblock with a swipe, and what blocking does; none, a row that
+/// says so and how to block one. Nothing until they are read.
+private struct BlockedSenders: View {
+    let mail: Mail
+
+    @State private var senders: [String]?
+
+    var body: some View {
+        PaperForm {
+            if let senders {
+                Section {
+                    if senders.isEmpty {
+                        Label("blocked_empty", systemImage: "nosign").foregroundStyle(.secondary)
+                    }
+                    ForEach(senders, id: \.self) { email in
+                        Text(verbatim: email).lineLimit(1)
+                            .swipeActions { Button("blocked_unblock") { unblock(email) }.tint(.ozeroAccent) }
+                    }
+                } footer: {
+                    Text(verbatim: senders.isEmpty ? "\(tr("blocked_hint")) \(tr("blocked_empty_hint"))" : tr("blocked_hint"))
+                }
+            }
+        }
+        .navigationTitle("blocked_title")
+        .task { senders = (try? await mail.blockedSenders()) ?? [] }
+    }
+
+    private func unblock(_ email: String) {
+        senders?.removeAll { $0 == email }
+        Task {
+            do { try await mail.unblockSender(email) } catch { senders?.append(email) }
         }
     }
 }
@@ -580,6 +624,8 @@ private struct SignatureSection: View {
     let label: LocalizedStringKey
     let placeholder: String
     let hint: LocalizedStringKey
+    /// Whether `label` goes over the field too; a page named after it does without.
+    let header: Bool
     let onSave: (String) -> Void
 
     @State private var text: String
@@ -588,10 +634,11 @@ private struct SignatureSection: View {
     @FocusState private var editing: Bool
 
     init(saved: String, label: LocalizedStringKey, placeholder: String, hint: LocalizedStringKey,
-         onSave: @escaping (String) -> Void) {
+         header: Bool = true, onSave: @escaping (String) -> Void) {
         self.label = label
         self.placeholder = placeholder
         self.hint = hint
+        self.header = header
         self.onSave = onSave
         _text = State(initialValue: saved)
         _sent = State(initialValue: saved)
@@ -603,7 +650,7 @@ private struct SignatureSection: View {
                 .lineLimit(3...8)
                 .focused($editing)
         } header: {
-            Text(label)
+            if header { Text(label) }
         } footer: {
             Text(hint)
         }

@@ -573,12 +573,7 @@ fun <T> Choices(
     content: @Composable (option: T, on: Boolean) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
-    Text(
-        stringResource(title),
-        color = colors.onSurfaceVariant,
-        style = Type.Caption,
-        modifier = Modifier.padding(start = Gap.inset, end = Gap.inset, top = 8.dp, bottom = 8.dp),
-    )
+    SectionCaption(stringResource(title))
     // More than four take two rows, so each keeps room for its words.
     val perRow = (if (options.size > 4) (options.size + 1) / 2 else options.size).coerceAtLeast(1)
     Column(

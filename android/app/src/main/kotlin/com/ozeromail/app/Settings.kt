@@ -156,10 +156,11 @@ fun SettingsScreen(
                     SwipePreview(swipes)
                     SwipeSettings(swipes, actions.onSwipes)
                 }
+                // The page's title names the field, so it goes without a label.
                 page == SIGNATURE -> SignatureField(
                     signature,
-                    stringResource(R.string.signature_title),
-                    "",
+                    null,
+                    stringResource(R.string.signature_placeholder),
                     stringResource(R.string.signature_hint),
                     actions.onSignature,
                 )
@@ -327,7 +328,7 @@ private fun AccountSettings(
             )
         }
     }
-    Caption(stringResource(R.string.account_seen_as))
+    SectionCaption(stringResource(R.string.account_seen_as))
     NameField(
         key = "sender${account.id}",
         saved = account.senderName,
@@ -340,7 +341,7 @@ private fun AccountSettings(
         actions.onAccountSignature(account, it)
     }
     Aliases(account, actions)
-    Caption(stringResource(R.string.account_on_phone))
+    SectionCaption(stringResource(R.string.account_on_phone))
     NameField(
         key = "label${account.id}",
         saved = account.label,
@@ -357,7 +358,7 @@ private fun AccountSettings(
             }
         }
     }
-    Caption(stringResource(R.string.account_new_mail))
+    SectionCaption(stringResource(R.string.account_new_mail))
     Section(null) {
         SettingRow(
             R.drawable.ic_bell,
@@ -383,7 +384,7 @@ private fun AccountSettings(
     }
     Hint(stringResource(R.string.account_keep_hint))
     if (!account.needsSignIn) {
-        Caption(stringResource(R.string.account_sign_in))
+        SectionCaption(stringResource(R.string.account_sign_in))
         Section(null) {
             // Google asks for its own sign-in; the rest for the new password.
             val google = account.kind == AccountKind.GMAIL
@@ -488,7 +489,7 @@ private fun ReadingSettings(mail: Mail, images: ImagesAlways) {
             // Without them the page still sets the text size.
         }
     }
-    Caption(stringResource(R.string.reading_size))
+    SectionCaption(stringResource(R.string.reading_size))
     Column(
         Modifier
             .fillMaxWidth()
@@ -523,7 +524,7 @@ private fun ReadingSettings(mail: Mail, images: ImagesAlways) {
     }
     Hint(stringResource(if (shown) R.string.images_always_hint else R.string.images_ask_hint))
     if (shown || senders.isEmpty()) return
-    Caption(stringResource(R.string.images_allowed))
+    SectionCaption(stringResource(R.string.images_allowed))
     SenderList(senders, { senders = it }, R.drawable.ic_photo, R.string.images_forbid) { mail.forbidImages(it) }
 }
 
@@ -557,20 +558,34 @@ private fun SenderList(
     }
 }
 
-/** The senders blocked, each with a way to unblock them, and what blocking does. */
+/**
+ * The senders blocked, each with a way to unblock them, and what blocking does; none, a row
+ * that says so and how to block one. Nothing until they are read.
+ */
 @Composable
 private fun BlockedSenders(mail: Mail) {
-    var senders by remember { mutableStateOf(emptyList<String>()) }
+    var senders by remember { mutableStateOf<List<String>?>(null) }
     LaunchedEffect(Unit) {
-        try {
-            senders = mail.blockedSenders()
+        senders = try {
+            mail.blockedSenders()
         } catch (_: CoreException) {
             // The page says what blocking does all the same.
+            emptyList()
         }
     }
-    if (senders.isNotEmpty()) {
-        SenderList(senders, { senders = it }, R.drawable.ic_block, R.string.blocked_unblock) { mail.unblockSender(it) }
+    val shown = senders ?: return
+    if (shown.isEmpty()) {
+        Section(null) {
+            SettingRow(
+                lead = { Glyph(R.drawable.ic_block, null, MaterialTheme.colorScheme.onSurfaceVariant) },
+                title = stringResource(R.string.blocked_empty),
+                next = false,
+            )
+        }
+        Hint("${stringResource(R.string.blocked_hint)} ${stringResource(R.string.blocked_empty_hint)}")
+        return
     }
+    SenderList(shown, { senders = it }, R.drawable.ic_block, R.string.blocked_unblock) { mail.unblockSender(it) }
     Hint(stringResource(R.string.blocked_hint))
 }
 
@@ -646,7 +661,7 @@ private fun SwipePreview(swipes: Swipes) {
 /** A part of a page under its [title], its rows on one rounded card. */
 @Composable
 private fun Section(title: String?, rows: @Composable ColumnScope.() -> Unit) {
-    if (title != null) Caption(title)
+    if (title != null) SectionCaption(title)
     Column(
         Modifier
             .fillMaxWidth()
@@ -658,8 +673,9 @@ private fun Section(title: String?, rows: @Composable ColumnScope.() -> Unit) {
     )
 }
 
+/** What a part of a page is, over it, in line with what starts its rows. */
 @Composable
-private fun Caption(text: String) {
+internal fun SectionCaption(text: String) {
     Text(
         text,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -670,7 +686,7 @@ private fun Caption(text: String) {
 
 /** A line or two on what a setting does, under it. */
 @Composable
-private fun Hint(text: String, top: Dp = 0.dp, align: TextAlign = TextAlign.Start) {
+private fun Hint(text: String, top: Dp = 4.dp, align: TextAlign = TextAlign.Start) {
     Text(
         text,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -796,11 +812,11 @@ private fun NameField(
 }
 
 /**
- * A signature of a few lines under [label], [placeholder] while empty; saved when it loses focus
- * and when the page closes.
+ * A signature of a few lines under [label], if any, [placeholder] while empty; saved when it
+ * loses focus and when the page closes.
  */
 @Composable
-private fun SignatureField(saved: String, label: String, placeholder: String, hint: String, onSave: (String) -> Unit) {
+private fun SignatureField(saved: String, label: String?, placeholder: String, hint: String, onSave: (String) -> Unit) {
     var text by rememberSaveable { mutableStateOf(saved) }
     // What was last sent, so leaving after a save does not send it again.
     var sent by rememberSaveable { mutableStateOf(saved) }
@@ -816,7 +832,7 @@ private fun SignatureField(saved: String, label: String, placeholder: String, hi
     OutlinedTextField(
         value = text,
         onValueChange = { text = it },
-        label = { Text(label) },
+        label = label?.let { { Text(it) } },
         placeholder = { Text(placeholder) },
         supportingText = { Text(hint) },
         shape = RoundedCornerShape(Radius.medium),
@@ -839,7 +855,7 @@ private fun Aliases(account: AccountItem, actions: SettingsActions) {
     val colors = MaterialTheme.colorScheme
     // The address being changed: a new one when its address is empty.
     var editing by remember { mutableStateOf<AliasItem?>(null) }
-    Caption(stringResource(R.string.account_aliases))
+    SectionCaption(stringResource(R.string.account_aliases))
     Section(null) {
         account.aliases.forEach { alias ->
             SettingRow(

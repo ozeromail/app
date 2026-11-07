@@ -468,6 +468,11 @@ final class Mail: Sendable {
         return actions
     }
 
+    /// The senders whose mail goes to spam as it comes.
+    func blockedSenders() async throws -> [String] {
+        try core.blockedSenders()
+    }
+
     /// The sender's new mail stays in the inbox again.
     func unblockSender(_ email: String) async throws {
         try core.unblockSender(email: email)
