@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -204,6 +205,8 @@ fun ComposeScreen(
     // Where the caret is in the text, for photos to go after its line.
     var caret by rememberSaveable { mutableIntStateOf(start.text.length) }
     var accountId by rememberSaveable { mutableStateOf(start.accountId) }
+    // Which of the account's other addresses it goes from; empty for its own.
+    var alias by rememberSaveable { mutableStateOf(start.alias) }
     var signature by rememberSaveable { mutableStateOf(start.signature) }
     // Not saveable: a long quote would not fit in the saved state.
     var quote by remember { mutableStateOf(start.quote) }
@@ -247,7 +250,7 @@ fun ComposeScreen(
     val from = accounts.find { it.id == accountId } ?: accounts.firstOrNull()
 
     // Account 0 is kept as none, and opens with the first account again.
-    fun current() = DraftItem(0, accountId, to, subject, text, start.replyTo, quote, 0, start.forward, files, signature, cc, bcc)
+    fun current() = DraftItem(0, accountId, to, subject, text, start.replyTo, quote, 0, start.forward, files, signature, cc, bcc, alias)
     fun keep() {
         if (changed && !finished) keeper.save(current())
     }
@@ -589,7 +592,7 @@ fun ComposeScreen(
                                     IconTile(R.drawable.ic_delete, stringResource(R.string.action_delete_draft), ::discard, shape = CircleShape)
                                 }
                                 Box(Modifier.weight(1f)) {
-                                    if (from != null) Sender(from, enabled = accounts.size > 1, onClick = { picking = true })
+                                    if (from != null) Sender(from, alias, enabled = accounts.size > 1 || from.aliases.isNotEmpty(), onClick = { picking = true })
                                 }
                             }
                         }
@@ -705,7 +708,7 @@ fun ComposeScreen(
                         IconTile(R.drawable.ic_delete, stringResource(R.string.action_delete_draft), ::discard, shape = CircleShape)
                     }
                     Box(Modifier.weight(1f)) {
-                        if (from != null) Sender(from, enabled = accounts.size > 1, onClick = { picking = true })
+                        if (from != null) Sender(from, alias, enabled = accounts.size > 1 || from.aliases.isNotEmpty(), onClick = { picking = true })
                     }
                     attachTile()
                     sendTile()
@@ -765,6 +768,7 @@ fun ComposeScreen(
                         // Its signature comes too, unless this message's was changed.
                         if (signature == from?.signsWith) signature = account.signsWith
                         accountId = account.id
+                        alias = ""
                     },
                     lead = { AccountDot(account.tint, size = 12.dp) },
                 ) {
@@ -773,7 +777,26 @@ fun ComposeScreen(
                         Text(account.name, style = Type.Row, fontWeight = Weight.Regular, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(account.email, style = Type.Caption, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    if (account.id == from?.id) Glyph(R.drawable.ic_done, null, colors.accent)
+                    if (account.id == from?.id && alias.isEmpty()) Glyph(R.drawable.ic_done, null, colors.accent)
+                }
+                // Its other addresses under it, one tap each.
+                account.aliases.forEach { other ->
+                    SheetRow(
+                        onClick = {
+                            picking = false
+                            if (signature == from?.signsWith) signature = account.signsWith
+                            accountId = account.id
+                            alias = other.email
+                        },
+                        lead = { Spacer(Modifier.size(12.dp)) },
+                        start = 24.dp,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(other.email, style = Type.Row, fontWeight = Weight.Regular, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(other.name.ifEmpty { account.senderName.ifEmpty { account.email } }, style = Type.Caption, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        if (account.id == from?.id && alias.equals(other.email, ignoreCase = true)) Glyph(R.drawable.ic_done, null, colors.accent)
+                    }
                 }
             }
         }
@@ -852,9 +875,9 @@ private fun Quote(text: String?, forwarding: Boolean, onRemove: (() -> Unit)?) {
     }
 }
 
-/** The account the message goes from, as a chip by Send; a tap lists the others. */
+/** The account the message goes from, as a chip by Send, or its [alias]; a tap lists the others. */
 @Composable
-private fun Sender(from: AccountItem, enabled: Boolean, onClick: () -> Unit) {
+private fun Sender(from: AccountItem, alias: String, enabled: Boolean, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     Row(
         Modifier
@@ -867,8 +890,9 @@ private fun Sender(from: AccountItem, enabled: Boolean, onClick: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         AccountInitial(from.name, from.tint, 22.dp)
-        // The account's short name: a long address would be cut off here.
-        Text(from.name, style = Type.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        // The account's short name: a long address would be cut off here. Another of its
+        // addresses shows as itself, the one thing that tells it apart.
+        Text(alias.ifEmpty { from.name }, style = Type.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
