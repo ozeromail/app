@@ -148,6 +148,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -1941,24 +1942,29 @@ private fun InboxList(
         Column(Modifier.align(Alignment.BottomCenter)) { BarText {
             // Low on the screen, in reach of the thumb that swiped.
             Toast(snackbar, onGo = onGo, modifier = Modifier.padding(bottom = 8.dp))
-            Reveal(status) {
-                // Floats over the list on glass, as the dock under it.
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = Gap.bar, vertical = 4.dp)
-                        .glass(haze, colors, RoundedCornerShape(Radius.dialog))
-                        .padding(start = Gap.inCard, end = if (it.retry) 4.dp else Gap.inCard)
-                        .heightIn(min = 34.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    val text = when {
-                        it.text == R.string.status_offline_account -> stringResource(it.text, it.account.orEmpty())
-                        it.account != null -> stringResource(R.string.status_account_failed, it.account, stringResource(it.text))
-                        else -> stringResource(it.text)
+            // Quiet words over the dock, centred, with nothing around them; they only fade.
+            val shownStatus = rememberLast(status)
+            AnimatedVisibility(status != null, enter = fadeIn(Motion.calm(Motion.NOTE)), exit = fadeOut(Motion.calm(Motion.SMALL))) {
+                shownStatus?.let {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = Gap.bar).heightIn(min = 34.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        val text = when {
+                            it.text == R.string.status_offline_account -> stringResource(it.text, it.account.orEmpty())
+                            it.account != null -> stringResource(R.string.status_account_failed, it.account, stringResource(it.text))
+                            else -> stringResource(it.text)
+                        }
+                        Text(
+                            text,
+                            color = colors.onSurfaceVariant,
+                            style = Type.Caption,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.weight(1f, fill = false).padding(vertical = 8.dp),
+                        )
+                        if (it.retry) TextButton(onClick = onSync) { Text(stringResource(R.string.status_try_again)) }
                     }
-                    Text(text, color = colors.onSurfaceVariant, style = Type.Caption, modifier = Modifier.weight(1f).padding(vertical = 8.dp))
-                    if (it.retry) TextButton(onClick = onSync) { Text(stringResource(R.string.status_try_again)) }
                 }
             }
             CompositionLocalProvider(LocalGlass provides haze) { Dock(
