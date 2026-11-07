@@ -318,9 +318,10 @@ fun ComposeScreen(
     // Once: the screen may come back, say turned on its side, with them already in.
     var sharedAdded by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        if (sharedAdded) return@LaunchedEffect
-        sharedAdded = true
-        add(composing.shared)
+        if (!sharedAdded) {
+            sharedAdded = true
+            add(composing.shared)
+        }
     }
     // Photos go into the text after the caret's line, lighter; videos go with the files.
     fun addMedia(uris: List<Uri>) {
