@@ -130,6 +130,20 @@ fn migrate(conn: &Connection) -> Result<(), StoreError> {
     Ok(())
 }
 
+/// Lists leave out a message while its move to another folder is held.
+macro_rules! not_moving {
+    () => {
+        not_moving!("m")
+    };
+    ($m:literal) => {
+        concat!(
+            "NOT EXISTS (SELECT 1 FROM op WHERE op.message_id = ",
+            $m,
+            ".id AND op.kind IN ('archive', 'trash', 'spam', 'inbox', 'snooze', 'move', 'delete', 'empty'))"
+        )
+    };
+}
+
 /// Whether the person chose to see all mail's images.
 macro_rules! images_always {
     () => {
@@ -883,23 +897,17 @@ impl Store for SqliteStore {
             .map_err(storage)
     }
 
-    fn block_sender(&self, message: MessageId) -> Result<String, StoreError> {
-        let conn = self.conn();
-        let email: String = conn
-            .query_row(
-                "SELECT from_email FROM message WHERE id = ?1 AND from_email != ''",
+    fn block_sender(&self, message: MessageId) -> Result<(), StoreError> {
+        let changed = self
+            .conn()
+            .execute(
+                // REPLACE counts a sender already blocked, so zero means no such message.
+                "INSERT OR REPLACE INTO blocked_sender (email)
+                 SELECT from_email FROM message WHERE id = ?1 AND from_email != ''",
                 [message.0],
-                |r| r.get(0),
             )
-            .optional()
-            .map_err(storage)?
-            .ok_or(StoreError::NotFound)?;
-        conn.execute(
-            "INSERT OR IGNORE INTO blocked_sender (email) VALUES (?1)",
-            [&email],
-        )
-        .map_err(storage)?;
-        Ok(email)
+            .map_err(storage)?;
+        found(changed)
     }
 
     fn blocked_senders(&self) -> Result<Vec<String>, StoreError> {
@@ -918,15 +926,15 @@ impl Store for SqliteStore {
 
     fn blocked_in_inbox(&self, account: AccountId) -> Result<Vec<MessageId>, StoreError> {
         self.conn()
-            // Left out while a move of it is held, as lists do (`not_moving`).
-            .prepare_cached(
-                "SELECT m.id FROM message m JOIN folder f ON f.id = m.folder_id
-                 WHERE f.account_id = ?1 AND f.role = 'inbox'
-                   AND m.from_email IN (SELECT email FROM blocked_sender)
-                   AND NOT EXISTS (SELECT 1 FROM op WHERE op.message_id = m.id
-                       AND op.kind IN ('archive', 'trash', 'spam', 'inbox', 'snooze', 'move', 'delete', 'empty'))
-                 ORDER BY m.id",
-            )
+            // From the few blocked senders through `message_from`, not the whole inbox.
+            .prepare_cached(concat!(
+                "SELECT m.id FROM blocked_sender b
+                 JOIN message m ON lower(m.from_email) = lower(b.email)
+                 JOIN folder f ON f.id = m.folder_id
+                 WHERE f.account_id = ?1 AND f.role = 'inbox' AND ",
+                not_moving!(),
+                " ORDER BY m.id"
+            ))
             .and_then(|mut s| {
                 s.query_map([account.0], |r| Ok(MessageId(r.get(0)?)))?
                     .collect()
@@ -3023,20 +3031,6 @@ const SAVE_MESSAGE: &str = concat!(
     merged_flags!("excluded.flags"),
     ")"
 );
-
-/// Lists leave out a message while its move to another folder is held.
-macro_rules! not_moving {
-    () => {
-        not_moving!("m")
-    };
-    ($m:literal) => {
-        concat!(
-            "NOT EXISTS (SELECT 1 FROM op WHERE op.message_id = ",
-            $m,
-            ".id AND op.kind IN ('archive', 'trash', 'spam', 'inbox', 'snooze', 'move', 'delete', 'empty'))"
-        )
-    };
-}
 
 /// The messages of `m`'s conversation, `n`, that lists show with it: in its folder and
 /// inbox tab.
