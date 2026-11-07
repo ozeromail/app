@@ -225,7 +225,8 @@ private struct SwipeSettings: View {
                 tried = true
                 self.slot = nil
             }
-            .presentationDetents([.medium, .large])
+            // Tall enough for every action and the note under them.
+            .presentationDetents([.large])
             .paperSheet()
         }
     }
@@ -365,6 +366,7 @@ private struct SwipePicker: View {
                 } footer: {
                     Text(slot.isLong ? "swipes_long_note" : "swipes_short_note")
                 }
+                .listRowBackground(Color.clear)
             }
             .listStyle(.plain)
             .paperList()

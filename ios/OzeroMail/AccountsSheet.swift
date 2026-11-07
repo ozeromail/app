@@ -218,7 +218,8 @@ private struct FoldersPage: View {
             }
         }
         .listStyle(.plain)
-        .scrollContentBackground(.hidden)
+        // A page pushed in the sheet has the system's grey of its own; it stays on the paper.
+        .paperList()
         .environment(\.defaultMinListRowHeight, 52)
         .navigationTitle("folders_accounts")
     }

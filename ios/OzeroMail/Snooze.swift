@@ -67,29 +67,32 @@ struct SnoozeSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                if picking {
-                    DatePicker("snooze_pick", selection: $picked, in: now..., displayedComponents: [.date, .hourAndMinute])
-                        .datePickerStyle(.graphical)
-                    Button("action_snooze") { onPick(picked) }
-                        .disabled(picked <= .now)
-                } else {
-                    ForEach(snoozeChoices(now: now), id: \.label) { choice in
+                Group {
+                    if picking {
+                        DatePicker("snooze_pick", selection: $picked, in: now..., displayedComponents: [.date, .hourAndMinute])
+                            .datePickerStyle(.graphical)
+                        Button("action_snooze") { onPick(picked) }
+                            .disabled(picked <= .now)
+                    } else {
+                        ForEach(snoozeChoices(now: now), id: \.label) { choice in
+                            Button {
+                                onPick(choice.date)
+                            } label: {
+                                LabeledContent(LocalizedStringKey(choice.label), value: snoozeTime(choice.date))
+                            }
+                            .tint(.primary)
+                        }
                         Button {
-                            onPick(choice.date)
+                            picking = true
                         } label: {
-                            LabeledContent(LocalizedStringKey(choice.label), value: snoozeTime(choice.date))
+                            LabeledContent("snooze_pick") { Image(systemName: "chevron.right") }
                         }
                         .tint(.primary)
                     }
-                    Button {
-                        picking = true
-                    } label: {
-                        LabeledContent("snooze_pick") { Image(systemName: "chevron.right") }
-                    }
-                    .tint(.primary)
                 }
+                // Rows on the sheet's paper, as on Android.
+                .listRowBackground(Color.clear)
             }
-            // Rows on the sheet's paper, as on Android.
             .listStyle(.plain)
             .paperList()
             .navigationTitle("snooze_title")
