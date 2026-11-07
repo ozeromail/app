@@ -526,9 +526,10 @@ class Mail(private val context: Context) {
      * it read. A reply begun in the app stays a draft as it was.
      */
     suspend fun quickReply(message: MessageItem, text: String) {
-        markRead(listOf(message))
         val answer = reply(message, all = false)
         send(answer.copy(id = 0, cc = "", quote = "", files = emptyList(), text = richEscape(text.trim())))
+        // Only once it is sent: unread, a failed answer is not forgotten.
+        markRead(listOf(message))
     }
 
     /** Who [message] went to, and who else a reply to all would copy. */

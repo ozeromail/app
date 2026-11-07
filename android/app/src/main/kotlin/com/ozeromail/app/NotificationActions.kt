@@ -26,7 +26,7 @@ class NotificationActions : BroadcastReceiver() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val message = mail.message(id) ?: return@launch
-                when (intent.action?.let(Kind::valueOf)) {
+                when (Kind.entries.find { it.name == intent.action }) {
                     Kind.DONE -> mail.archive(listOf(message))
                     Kind.READ -> mail.markRead(listOf(message))
                     Kind.REPLY -> if (!reply.isNullOrBlank()) mail.quickReply(message, reply)
