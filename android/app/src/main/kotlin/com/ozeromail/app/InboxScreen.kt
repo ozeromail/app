@@ -1147,7 +1147,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             changeAccount(account) { mail.setAccountSignature(account, text) }
         },
         onAlias = { account, email, name ->
-            changeAccount(account) { mail.saveAlias(account, email, name) }
+            if (account.id !in removed) mail.saveAlias(account, email, name)
         },
         onRemoveAlias = { account, email ->
             changeAccount(account) { mail.removeAlias(account, email) }

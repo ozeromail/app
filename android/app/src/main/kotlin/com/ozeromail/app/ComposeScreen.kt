@@ -248,6 +248,16 @@ fun ComposeScreen(
     }
     // A new message starts from the first account.
     val from = accounts.find { it.id == accountId } ?: accounts.firstOrNull()
+    val canPick = accounts.size > 1 || from?.aliases?.isNotEmpty() == true
+
+    /** Sends from [account], or its other address [other] when that is not empty. */
+    fun pick(account: AccountItem, other: String) {
+        picking = false
+        // Its signature comes too, unless this message's was changed.
+        if (signature == from?.signsWith) signature = account.signsWith
+        accountId = account.id
+        alias = other
+    }
 
     // Account 0 is kept as none, and opens with the first account again.
     fun current() = DraftItem(0, accountId, to, subject, text, start.replyTo, quote, 0, start.forward, files, signature, cc, bcc, alias)
@@ -592,7 +602,7 @@ fun ComposeScreen(
                                     IconTile(R.drawable.ic_delete, stringResource(R.string.action_delete_draft), ::discard, shape = CircleShape)
                                 }
                                 Box(Modifier.weight(1f)) {
-                                    if (from != null) Sender(from, alias, enabled = accounts.size > 1 || from.aliases.isNotEmpty(), onClick = { picking = true })
+                                    if (from != null) Sender(from, alias, enabled = canPick, onClick = { picking = true })
                                 }
                             }
                         }
@@ -708,7 +718,7 @@ fun ComposeScreen(
                         IconTile(R.drawable.ic_delete, stringResource(R.string.action_delete_draft), ::discard, shape = CircleShape)
                     }
                     Box(Modifier.weight(1f)) {
-                        if (from != null) Sender(from, alias, enabled = accounts.size > 1 || from.aliases.isNotEmpty(), onClick = { picking = true })
+                        if (from != null) Sender(from, alias, enabled = canPick, onClick = { picking = true })
                     }
                     attachTile()
                     sendTile()
@@ -763,13 +773,7 @@ fun ComposeScreen(
         Sheet(visible = picking, onClose = { picking = false }) {
             accounts.forEach { account ->
                 SheetRow(
-                    onClick = {
-                        picking = false
-                        // Its signature comes too, unless this message's was changed.
-                        if (signature == from?.signsWith) signature = account.signsWith
-                        accountId = account.id
-                        alias = ""
-                    },
+                    onClick = { pick(account, "") },
                     lead = { AccountDot(account.tint, size = 12.dp) },
                 ) {
                     // The name to pick by, the address it sends from under it.
@@ -782,20 +786,15 @@ fun ComposeScreen(
                 // Its other addresses under it, one tap each.
                 account.aliases.forEach { other ->
                     SheetRow(
-                        onClick = {
-                            picking = false
-                            if (signature == from?.signsWith) signature = account.signsWith
-                            accountId = account.id
-                            alias = other.email
-                        },
+                        onClick = { pick(account, other.email) },
                         lead = { Spacer(Modifier.size(12.dp)) },
                         start = 24.dp,
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text(other.email, style = Type.Row, fontWeight = Weight.Regular, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(other.name.ifEmpty { account.senderName.ifEmpty { account.email } }, style = Type.Caption, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(other.sendsAs, style = Type.Caption, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-                        if (account.id == from?.id && alias.equals(other.email, ignoreCase = true)) Glyph(R.drawable.ic_done, null, colors.accent)
+                        if (account.id == from?.id && alias == other.email) Glyph(R.drawable.ic_done, null, colors.accent)
                     }
                 }
             }

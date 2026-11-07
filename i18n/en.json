@@ -265,7 +265,6 @@
   "account_alias_new": "New address",
   "account_alias_address": "Address",
   "account_alias_name": "Name in mail, if different",
-  "account_alias_same_name": "The account’s name",
   "account_alias_bad": "Type an address other than the account’s own.",
   "account_alias_server_hint": "Allow this address on your mail server first, or mail from it won’t go.",
   "account_aliases_hint": "Mail from these addresses goes through this account’s server, which has to allow them. Replies go from the address the mail came to.",

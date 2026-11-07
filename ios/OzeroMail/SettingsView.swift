@@ -11,7 +11,7 @@ struct SettingsActions {
     let onSignature: (String) -> Void
     let onAccountSignature: (AccountItem, String) -> Void
     /// Adds another address the account sends from, or renames one: address, name.
-    let onAlias: (AccountItem, String, String) -> Void
+    let onAlias: (AccountItem, String, String) async throws -> Void
     let onRemoveAlias: (AccountItem, String) -> Void
     let onSignIn: (AccountItem) -> Void
     let onKeepDays: (AccountItem, Int) -> Void
@@ -388,15 +388,13 @@ private struct AccountSettings: View {
                     Button { edit(alias) } label: {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(verbatim: alias.email).foregroundStyle(.primary).lineLimit(1)
-                            Text(verbatim: alias.name.isEmpty ? tr("account_alias_same_name") : alias.name)
+                            Text(verbatim: alias.sendsAs)
                                 .font(.small).foregroundStyle(.secondary).lineLimit(1)
                         }
                     }
-                    .swipeActions {
-                        Button("action_remove", role: .destructive) { actions.onRemoveAlias(account, alias.email) }
-                    }
                 }
-                Button { edit(AliasItem(email: "", name: "")) } label: {
+                .onDelete { $0.forEach { actions.onRemoveAlias(account, account.aliases[$0].email) } }
+                Button { edit(AliasItem(email: "", name: "", sendsAs: "")) } label: {
                     Label("account_alias_add", systemImage: "plus")
                 }
             } header: {
@@ -468,24 +466,27 @@ private struct AccountSettings: View {
             Text("account_remove_text")
         }
         .alert(aliasTitle, isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } })) {
-            if editing?.email.isEmpty ?? false {
+            if adding {
                 TextField("account_alias_address", text: $aliasEmail)
                     .keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
             }
             TextField("account_alias_name", text: $aliasName).textInputAutocapitalization(.words)
-            Button(editing?.email.isEmpty ?? false ? "account_alias_add_button" : "action_save") { saveAlias() }
+            Button(adding ? "account_alias_add_button" : "action_save") { saveAlias() }
             Button("action_cancel", role: .cancel) {}
         } message: {
             if aliasWrong {
                 Text("account_alias_bad")
-            } else if editing?.email.isEmpty ?? false {
+            } else if adding {
                 Text("account_alias_server_hint")
             }
         }
     }
 
+    /// A new address rather than one being renamed.
+    private var adding: Bool { editing?.email.isEmpty ?? false }
+
     private var aliasTitle: Text {
-        guard let editing, !editing.email.isEmpty else { return Text("account_alias_new") }
+        guard let editing, !adding else { return Text("account_alias_new") }
         return Text(verbatim: editing.email)
     }
 
@@ -496,20 +497,18 @@ private struct AccountSettings: View {
         editing = alias
     }
 
-    /// As the core checks it: one address, not the account's own. A wrong one asks again.
+    /// The core checks the address; one it refuses asks again, saying what is wrong. The alert
+    /// closes on any button, so it comes back.
     private func saveAlias() {
-        let email = aliasEmail.trimmingCharacters(in: .whitespaces)
-        let parts = email.split(separator: "@", omittingEmptySubsequences: false)
-        let wrong = parts.count != 2 || parts.contains(where: \.isEmpty) || email.contains(where: \.isWhitespace)
-            || email.caseInsensitiveCompare(account.email) == .orderedSame
-        if wrong {
-            aliasWrong = true
-            // The alert closes on any button; it comes back to say what is wrong.
-            let alias = editing
-            DispatchQueue.main.async { editing = alias }
-            return
+        let alias = editing
+        Task {
+            do {
+                try await actions.onAlias(account, aliasEmail, aliasName)
+            } catch CoreError.BadRecipients {
+                aliasWrong = true
+                editing = alias
+            } catch {}
         }
-        actions.onAlias(account, email, aliasName.trimmingCharacters(in: .whitespaces))
     }
 }
 

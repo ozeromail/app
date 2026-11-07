@@ -30,8 +30,8 @@ pub trait Store: Send + Sync {
     fn set_account_notify(&self, account: AccountId, notify: bool) -> Result<(), StoreError>;
     /// Sets the account's own signature; empty uses the default one.
     fn set_account_signature(&self, account: AccountId, signature: &str) -> Result<(), StoreError>;
-    /// The account's other addresses, by address.
-    fn aliases(&self, account: AccountId) -> Result<Vec<Alias>, StoreError>;
+    /// Each account's other addresses, by address; none for an account without any.
+    fn aliases(&self) -> Result<HashMap<AccountId, Vec<Alias>>, StoreError>;
     /// Adds the address to the account, or renames it.
     fn save_alias(&self, account: AccountId, alias: &Alias) -> Result<(), StoreError>;
     fn remove_alias(&self, account: AccountId, email: &str) -> Result<(), StoreError>;

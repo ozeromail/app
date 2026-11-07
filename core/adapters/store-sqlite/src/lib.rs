@@ -365,19 +365,29 @@ impl Store for SqliteStore {
         found(changed)
     }
 
-    fn aliases(&self, account: AccountId) -> Result<Vec<Alias>, StoreError> {
-        self.conn()
-            .prepare_cached("SELECT email, name FROM alias WHERE account_id = ?1 ORDER BY email")
+    fn aliases(&self) -> Result<HashMap<AccountId, Vec<Alias>>, StoreError> {
+        let rows: Vec<(i64, Alias)> = self
+            .conn()
+            .prepare_cached("SELECT account_id, email, name FROM alias ORDER BY account_id, email")
             .and_then(|mut s| {
-                s.query_map([account.0], |r| {
-                    Ok(Alias {
-                        email: r.get(0)?,
-                        name: r.get(1)?,
-                    })
+                s.query_map([], |r| {
+                    let alias = Alias {
+                        email: r.get(1)?,
+                        name: r.get(2)?,
+                    };
+                    Ok((r.get(0)?, alias))
                 })?
                 .collect()
             })
-            .map_err(storage)
+            .map_err(storage)?;
+        let mut by_account: HashMap<AccountId, Vec<Alias>> = HashMap::new();
+        for (account, alias) in rows {
+            by_account
+                .entry(AccountId(account))
+                .or_default()
+                .push(alias);
+        }
+        Ok(by_account)
     }
 
     fn save_alias(&self, account: AccountId, alias: &Alias) -> Result<(), StoreError> {
@@ -385,7 +395,7 @@ impl Store for SqliteStore {
             .execute(
                 "INSERT INTO alias (account_id, email, name) VALUES (?1, ?2, ?3)
                  ON CONFLICT (account_id, email) DO UPDATE SET name = excluded.name",
-                params![account.0, alias.email.trim(), alias.name.trim()],
+                params![account.0, alias.email, alias.name],
             )
             .map(|_| ())
             .map_err(storage)

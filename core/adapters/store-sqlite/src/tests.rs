@@ -1435,7 +1435,7 @@ fn a_message_goes_from_the_alias_it_was_written_from() {
         .unwrap();
     store.save_alias(a, &alias("hi@example.com", "")).unwrap();
     assert_eq!(
-        store.aliases(a).unwrap(),
+        store.aliases().unwrap()[&a],
         [
             alias("hi@example.com", ""),
             alias("shop@example.com", "Shop")
@@ -1467,7 +1467,7 @@ fn a_message_goes_from_the_alias_it_was_written_from() {
         ]
     );
     store.remove_alias(a, "hi@example.com").unwrap();
-    assert_eq!(store.aliases(a).unwrap().len(), 1);
+    assert_eq!(store.aliases().unwrap()[&a].len(), 1);
 }
 
 #[test]

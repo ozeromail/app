@@ -501,9 +501,7 @@ struct ComposeView: View {
                     Section {
                         senderButton(account, from: from, alias: "", title: account.name, detail: account.email)
                         ForEach(account.aliases, id: \.email) { other in
-                            senderButton(
-                                account, from: from, alias: other.email, title: other.email,
-                                detail: other.name.isEmpty ? (account.senderName.isEmpty ? account.email : account.senderName) : other.name)
+                            senderButton(account, from: from, alias: other.email, title: other.email, detail: other.sendsAs)
                         }
                     }
                 }
@@ -533,7 +531,7 @@ struct ComposeView: View {
             alias = other
         } label: {
             // The name to pick by, the address it sends from under it.
-            if account.id == from.id && alias.caseInsensitiveCompare(other) == .orderedSame {
+            if account.id == from.id && alias == other {
                 Label { Text(verbatim: title); Text(verbatim: detail) } icon: { Image(systemName: "checkmark") }
             } else {
                 Text(verbatim: title)
