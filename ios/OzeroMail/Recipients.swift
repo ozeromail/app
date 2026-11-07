@@ -61,7 +61,6 @@ struct Recipients<Field: Hashable>: View {
         .overlay(alignment: above ? .top : .bottom) {
             if focus.wrappedValue == field && !typing.isEmpty {
                 suggestions(for: typing, done: parts.done)
-                    .alignmentGuide(above ? .top : .bottom) { above ? $0[.bottom] + Self.gap : $0[.top] - Self.gap }
             }
         }
         .task(id: parts.done) {
@@ -85,6 +84,9 @@ struct Recipients<Field: Hashable>: View {
             directory = Found(text: typing, people: (try? await mail.searchDirectory(typing)) ?? [])
         }
     }
+
+    /// As tall as the people, no taller than the room on its side.
+    private var shownHeight: CGFloat { min(listHeight, Self.maxHeight, max(above ? room.above : room.below, 56)) }
 
     private static var maxHeight: CGFloat { 320 }
     private static var gap: CGFloat { 8 }
@@ -127,10 +129,12 @@ struct Recipients<Field: Hashable>: View {
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listHeight = $0 }
             }
             .defaultScrollAnchor(above ? .bottom : .top)
-            .frame(height: min(listHeight, Self.maxHeight, max(above ? room.above : room.below, 56)))
+            .frame(height: shownHeight)
             .background(Color.ozeroPage, in: .rect(cornerRadius: 16))
             .overlay { RoundedRectangle(cornerRadius: 16).stroke(Color(.separator), lineWidth: 0.5) }
             .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
+            // Past the field's edge by its own height: alignment guides here are not followed.
+            .offset(y: (above ? -1 : 1) * (shownHeight + Self.gap))
         }
     }
 
