@@ -125,6 +125,7 @@ struct PersonMailView: View {
             ForEach(messages ?? [], id: \.id) { message in
                 OpenRow(model: model, message: message)
                     .listRowBackground(OpenRow.background(model, message))
+                    .listRowInsets(MessageRow.insets)
             }
         }
         .listStyle(.plain)

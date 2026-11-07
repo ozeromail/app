@@ -370,6 +370,8 @@ private struct InboxList: View {
                     if index >= model.messages.count - InboxModel.ahead { Task { await model.loadMore() } }
                 }
                 .listRowBackground(OpenRow.background(model, message))
+                // Here, where the list takes its row: set inside the row, past its swipes and menu, it is lost.
+                .listRowInsets(MessageRow.insets)
                 // Lines between the rows only, as on Android: none over the first or under the last.
                 .listSectionSeparator(.hidden)
             }
@@ -692,20 +694,17 @@ struct OpenRow: View {
     let message: MessageItem
 
     var body: some View {
-        Group {
-            if model.sideways {
-                Button {
-                    // While choosing, the list's own selection takes the tap.
-                    if model.chosen.isEmpty { model.open(message) }
-                } label: {
-                    MessageRow(message: message).contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-            } else {
-                NavigationLink(value: Route.message(message)) { MessageRow(message: message) }
+        if model.sideways {
+            Button {
+                // While choosing, the list's own selection takes the tap.
+                if model.chosen.isEmpty { model.open(message) }
+            } label: {
+                MessageRow(message: message).contentShape(.rect)
             }
+            .buttonStyle(.plain)
+        } else {
+            NavigationLink(value: Route.message(message)) { MessageRow(message: message) }
         }
-        .listRowInsets(MessageRow.insets)
     }
 
     /// The row's background, set where the list takes its row: the paper, a light wash of the
