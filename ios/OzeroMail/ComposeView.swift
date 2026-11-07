@@ -122,7 +122,7 @@ struct ComposeView: View {
                 HStack(alignment: .bottom, spacing: 0) {
                     VStack(spacing: 0) {
                         HStack(spacing: 8) {
-                            RoundButton(icon: "xmark", label: "action_close", size: 44, action: close)
+                            BarIcon(icon: "xmark", label: "action_close", action: close)
                             if folded {
                                 Button {
                                     unfolded = true
@@ -219,10 +219,8 @@ struct ComposeView: View {
                         .padding(.bottom, 6)
                     }
                     errorLine
-                    // Glass buttons need no line over them.
-                    if !hasGlass { Divider() }
                     HStack(spacing: 8) {
-                        RoundButton(icon: "xmark", label: "action_close", size: 44, action: close)
+                        BarIcon(icon: "xmark", label: "action_close", action: close)
                         if hasDraft { deleteButton }
                         sender
                         Spacer(minLength: 0)
@@ -239,7 +237,7 @@ struct ComposeView: View {
         .presentationDetents(growing ? [fitted] : [.large])
         // A low sheet is clear glass on iOS 26, and the inbox would show through the text being
         // written: the page is opaque, as in the iPhone's own Mail.
-        .presentationBackground(Color.ozeroPage)
+        .paperSheet()
         .animation(.smooth, value: pageHeight)
         .onChange(of: editing) { _, now in
             if !now { unfolded = false }
@@ -489,7 +487,7 @@ struct ComposeView: View {
     }
 
     private var deleteButton: some View {
-        RoundButton(icon: "trash", label: "action_delete_draft", size: 44, action: discard)
+        BarIcon(icon: "trash", label: "action_delete_draft", action: discard)
     }
 
     /// The account the message goes from; a tap lists the others.
@@ -515,9 +513,10 @@ struct ComposeView: View {
                 }
                 .padding(.leading, 8)
                 .padding(.trailing, 12)
+                .frame(height: 36)
+                .background(Color.ozeroCard, in: .capsule)
                 .frame(height: 44)
                 .contentShape(.capsule)
-                .glassSurface(in: .capsule, fallback: Color.ozeroCard)
             }
             .disabled(accounts.count < 2 && from.aliases.isEmpty)
         }
@@ -562,7 +561,6 @@ struct ComposeView: View {
                 .foregroundStyle(.primary)
                 .frame(width: 44, height: 44)
                 .contentShape(.circle)
-                .glassSurface(in: .circle, fallback: Color.ozeroCard)
         }
         .accessibilityLabel(Text("compose_attach"))
     }
@@ -571,19 +569,10 @@ struct ComposeView: View {
     private var canSend: Bool { !busy && from != nil && adding.isEmpty && !to.isBlank }
 
     private var sendButton: some View {
-        Button(action: send) {
-            // The arrow of a quick reply, and of Android's Send.
-            Image(systemName: "arrow.up")
-                .foregroundStyle(.white)
-                .frame(width: 56, height: 44)
-                .contentShape(.capsule)
-                .glassSurface(in: .capsule, tint: .ozeroFill, fallback: Color.ozeroFill.lifted)
-        }
-        .buttonStyle(.plain)
-        // Greyed while it waits, as the iPhone's own Mail does.
-        .disabled(!canSend)
-        .opacity(canSend ? 1 : 0.45)
-        .accessibilityLabel(Text("compose_send"))
+        SendButton(action: send)
+            // Greyed while it waits, as the iPhone's own Mail does.
+            .disabled(!canSend)
+            .opacity(canSend ? 1 : 0.45)
     }
 
     private func begin() {
@@ -1002,5 +991,43 @@ final class DraftKeeper: Sendable {
     /// Throws the saved draft away, and stops saving. Returns the id it had, 0 for none.
     func discard() async -> Int64 {
         await state.discard(with: mail)
+    }
+}
+
+/// A plain icon in the bar over the keyboard, as on Android: the sheet is paper, so its buttons
+/// lie on it without glass; only Send is filled.
+struct BarIcon: View {
+    let icon: String
+    let label: LocalizedStringKey
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.row)
+                .foregroundStyle(.primary)
+                .frame(width: 44, height: 44)
+                .contentShape(.circle)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(label))
+    }
+}
+
+/// Send: the one filled button over the keyboard, a round of the accent with Android's arrow.
+struct SendButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "arrow.up")
+                .font(.row.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+                .background(Color.ozeroFill.lifted, in: .circle)
+                .contentShape(.circle)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text("compose_send"))
     }
 }

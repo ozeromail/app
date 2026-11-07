@@ -76,6 +76,7 @@ struct InboxView: View {
                 snoozing.then()
                 Task { await model.snooze(snoozing.messages, until: until) }
             }
+            .paperSheet()
         }
         .moveDialog($model.moving, targets: \.targets) { moving, folder, title in
             Task { await model.moveToFolder(moving.messages, to: folder, title: title) }
@@ -429,7 +430,7 @@ private struct InboxList: View {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button { model.path.append(.search) } label: { Image(systemName: "magnifyingglass") }
                         .accessibilityLabel(Text("search_prompt"))
-                    Button { model.write() } label: { Image(systemName: "square.and.pencil") }
+                    Button { model.write() } label: { Image(systemName: "pencil") }
                         .accessibilityLabel(Text("compose_new"))
                 }
             }
@@ -702,8 +703,13 @@ struct OpenRow: View {
                 MessageRow(message: message).contentShape(.rect)
             }
             .buttonStyle(.plain)
-        } else {
+        } else if #available(iOS 26, *) {
+            // No chevron at the end of the row, as on Android: a letter opens on a tap anyway.
             NavigationLink(value: Route.message(message)) { MessageRow(message: message) }
+                .navigationLinkIndicatorVisibility(.hidden)
+        } else {
+            MessageRow(message: message)
+                .background { NavigationLink(value: Route.message(message)) { EmptyView() }.opacity(0) }
         }
     }
 
@@ -763,7 +769,7 @@ private struct ComposeButton: View {
     let model: InboxModel
 
     var body: some View {
-        RoundButton(icon: "square.and.pencil", label: "compose_new", size: glassButton, tint: .white, background: .ozeroFill) {
+        RoundButton(icon: "pencil", label: "compose_new", size: glassButton, tint: .white, background: .ozeroFill) {
             model.write()
         }
     }

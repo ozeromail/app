@@ -197,6 +197,7 @@ struct MessageView: View {
                     self.person = nil
                     model.path.append(.person(card))
                 }
+                .paperSheet()
             }
         }
         .confirmationDialog(
@@ -213,6 +214,7 @@ struct MessageView: View {
                 self.declining = nil
                 send(declining.message, invite, .no, comment: reason)
             }
+            .paperSheet()
         }
         .sheet(item: $adding) { adding in
             AddToCalendar(invite: adding.invite) { self.adding = nil }.ignoresSafeArea()
@@ -1242,17 +1244,17 @@ private struct QuickReply: View {
                 Text(error).font(.small).foregroundStyle(Color.ozeroError).padding(.horizontal, 20)
             }
             HStack(spacing: 8) {
-                RoundButton(icon: "xmark", label: "action_close", size: 44, action: close)
-                RoundButton(icon: "arrow.up.left.and.arrow.down.right", label: "message_full_screen", size: 44, action: expand)
+                BarIcon(icon: "xmark", label: "action_close", action: close)
+                BarIcon(icon: "arrow.up.left.and.arrow.down.right", label: "message_full_screen", action: expand)
                     .disabled(busy)
                 Spacer()
-                RoundButton(icon: "arrow.up", label: "compose_send", size: 44, tint: .white, background: .ozeroFill, action: send)
+                SendButton(action: send)
                     .disabled(busy)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
         }
-        .dockBackground()
+        .dockBackground(solid: true)
         .onAppear {
             text = richShown(text: start.text)
             keeper = DraftKeeper(mail: mail, id: start.id)

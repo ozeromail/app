@@ -85,7 +85,7 @@ private struct AppSettings: View {
 
     var body: some View {
         PaperForm {
-            Section("accounts_title") {
+            Section {
                 ForEach(accounts, id: \.id) { account in
                     NavigationLink(value: Route.settings(.account(account.id))) {
                         Label {
@@ -104,21 +104,21 @@ private struct AppSettings: View {
                     }
                 }
                 SheetAction(icon: "plus", text: "inbox_add_account", color: .ozeroAccent, action: actions.onAdd)
-            }
-            Section("mail_settings") {
+            } header: { FormCaption("accounts_title") }
+            Section {
                 ValueLink(page: .notifications, icon: "bell", title: "notify_title", value: notifySummary(accounts))
-                ValueLink(page: .swipes, icon: "hand.draw", title: "swipes_title",
+                ValueLink(page: .swipes, icon: "arrow.left.arrow.right", title: "swipes_title",
                           value: swipes.summary)
-                ValueLink(page: .signature, icon: "signature", title: "signature_title",
+                ValueLink(page: .signature, icon: "pencil", title: "signature_title",
                           value: signature.components(separatedBy: .newlines).first { !$0.isBlank } ?? tr("signature_none"))
                 ValueLink(page: .blocked, icon: "nosign", title: "blocked_title",
                           value: blocked.map { $0 == 0 ? tr("blocked_none") : String($0) })
-            }
-            Section("settings_reading") {
+            } header: { FormCaption("mail_settings") }
+            Section {
                 ValueLink(page: .reading, icon: "textformat.size", title: "reading_size", value: sizeNames[min(max(textSize, 0), sizeNames.count - 1)])
                 ValueLink(page: .reading, icon: "photo", title: "images_title",
                           value: imagesAlways.map { tr($0 ? "images_always" : "images_ask") })
-            }
+            } header: { FormCaption("settings_reading") }
             Section {
                 SheetAction(icon: "envelope", text: "feedback_write", color: .ozeroAccent, action: actions.onWrite)
             } footer: {
@@ -226,6 +226,7 @@ private struct SwipeSettings: View {
                 self.slot = nil
             }
             .presentationDetents([.medium, .large])
+            .paperSheet()
         }
     }
 
@@ -365,6 +366,8 @@ private struct SwipePicker: View {
                     Text(slot.isLong ? "swipes_long_note" : "swipes_short_note")
                 }
             }
+            .listStyle(.plain)
+            .paperList()
             .navigationTitle(slot.title)
             .navigationBarTitleDisplayMode(.inline)
         }
@@ -428,14 +431,14 @@ private struct ReadingSettings: View {
                     Text(always ? "images_always_hint" : "images_ask_hint")
                 }
                 if !always && !senders.isEmpty {
-                    Section("images_allowed") {
+                    Section {
                         ForEach(senders, id: \.self) { email in
                             Text(verbatim: email).lineLimit(1)
                         }
                         .onDelete { places in
                             for email in places.map({ senders[$0] }) { forbid(email) }
                         }
-                    }
+                    } header: { FormCaption("images_allowed") }
                 }
             }
         }
@@ -572,12 +575,12 @@ private struct AccountSettings: View {
             } header: {
                 Text("account_on_phone")
             }
-            Section("account_color") {
+            Section {
                 Swatches(current: Int(account.colorIndex)) { actions.onColor(account, $0) }
                 if let inAll {
                     Toggle("all_in", isOn: Binding(get: { inAll }, set: { actions.onInAll(account, $0) }))
                 }
-            }
+            } header: { FormCaption("account_color") }
             Section {
                 Toggle(isOn: Binding(get: { account.notify }, set: { actions.onNotify(account, $0) })) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -604,7 +607,7 @@ private struct AccountSettings: View {
                 Text(verbatim: "\(check) \(tr("account_keep_hint"))")
             }
             if !account.needsSignIn {
-                Section("account_sign_in") {
+                Section {
                     Button { actions.onSignIn(account) } label: {
                         // Google asks for its own sign-in; the rest for the new password.
                         let google = account.kind == .gmail
@@ -615,7 +618,7 @@ private struct AccountSettings: View {
                         }
                     }
                     .tint(.primary)
-                }
+                } header: { FormCaption("account_sign_in") }
             }
             Section {
                 Button("account_remove", role: .destructive) { confirming = true }
