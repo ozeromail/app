@@ -1,13 +1,17 @@
 package com.ozeromail.app
 
+import androidx.activity.compose.BackHandler
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -36,6 +40,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -105,15 +110,57 @@ fun AccountsSheet(
     onClose: () -> Unit,
 ) {
     var editing by rememberSaveable { mutableStateOf(false) }
+    // Every account's folders, on a page of their own inside the sheet; Back returns to the list.
+    var folders by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(visible) { if (!visible) folders = false }
     Sheet(visible, onClose, lift) {
-        Column {
-            Row(Modifier.fillMaxWidth().padding(end = Gap.sheet - 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                SheetTitle(stringResource(R.string.folders_title), Modifier.weight(1f).padding(start = Gap.sheet, end = Gap.sheet, bottom = 10.dp))
-                // With one account there is nothing to switch or move.
-                if (state.accounts.size > 1) EditButton(editing, Modifier.padding(bottom = 10.dp)) { editing = !editing }
+        // Inside the sheet, so it comes after the sheet's own back handler and goes first.
+        BackHandler(folders) { folders = false }
+        AnimatedContent(
+            folders,
+            transitionSpec = {
+                val forward = targetState
+                (slideInHorizontally(Motion.calm(Motion.NOTE)) { if (forward) it / 4 else -it / 4 } + fadeIn(Motion.calm(Motion.NOTE)))
+                    .togetherWith(fadeOut(Motion.calm(Motion.SMALL)))
+            },
+            label = "folders",
+        ) { page ->
+            if (page) {
+                FoldersPage(state, actions) { folders = false }
+            } else {
+                Column {
+                    Row(Modifier.fillMaxWidth().padding(end = Gap.sheet - 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        SheetTitle(stringResource(R.string.folders_title), Modifier.weight(1f).padding(start = Gap.sheet, end = Gap.sheet, bottom = 10.dp))
+                        // With one account there is nothing to switch or move.
+                        if (state.accounts.size > 1) EditButton(editing, Modifier.padding(bottom = 10.dp)) { editing = !editing }
+                    }
+                    MailboxList(state, actions, editing, onEdit = null, onFolders = { folders = true })
+                    SettingsRow(actions.onSettings)
+                }
             }
-            MailboxList(state, actions, editing, onEdit = null)
-            SettingsRow(actions.onSettings)
+        }
+    }
+}
+
+/** Every account's folders under its name, reached from the sheet's Folders row. */
+@Composable
+private fun FoldersPage(state: MailboxesState, actions: AccountsActions, onBack: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Column {
+        Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            BackArrow(onBack)
+            SheetTitle(stringResource(R.string.folders_accounts), Modifier.weight(1f).padding(start = 4.dp, end = Gap.sheet))
+        }
+        state.accounts.forEach { account ->
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = 36.dp).padding(horizontal = Gap.sheet),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                AccountDot(account.tint)
+                Spacer(Modifier.width(8.dp))
+                Text(account.name, color = colors.onSurfaceVariant, style = Type.Label, fontWeight = Weight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            AccountFolders(account, state, actions)
         }
     }
 }
@@ -168,7 +215,14 @@ private fun SettingsRow(onSettings: () -> Unit) {
  * account, its inbox and folders. An account, when held, opens its settings.
  */
 @Composable
-private fun MailboxList(state: MailboxesState, actions: AccountsActions, editing: Boolean, onEdit: (() -> Unit)?) {
+private fun MailboxList(
+    state: MailboxesState,
+    actions: AccountsActions,
+    editing: Boolean,
+    onEdit: (() -> Unit)?,
+    /** In the sheet: one Folders row opens every account's folders, so an account row has one target. */
+    onFolders: (() -> Unit)? = null,
+) {
     val accounts = state.accounts
     val mailbox = state.mailbox
     val inboxes = state.folders.filter { it.role == FolderRole.INBOX }.associateBy { it.accountId }
@@ -230,18 +284,27 @@ private fun MailboxList(state: MailboxesState, actions: AccountsActions, editing
         } else {
             accounts.forEach { account ->
                 val box = inboxes[account.id]?.let { Mailbox.Folder(it.id) }
-                val shown = groups.open(account.id)
+                val shown = onFolders == null && groups.open(account.id)
                 FolderRow(
                     lead = { AccountDot(account.tint) },
                     title = account.name,
                     open = box != null && box == mailbox,
                     count = state.unread[account.id] ?: 0,
-                    end = { FoldersArrow(account.name, shown) { actions.onGroups(groups.toggle(account.id)) } },
+                    end = if (onFolders != null) null else ({ FoldersArrow(account.name, shown) { actions.onGroups(groups.toggle(account.id)) } }),
                     onLongClick = { actions.onAccount(account) },
                     longClickLabel = stringResource(R.string.account_settings),
                 ) { if (box != null) actions.onMailbox(box) }
                 SignInAgain(account, actions)
-                Folding(shown) { AccountFolders(account, state, actions, depth = 1) }
+                if (onFolders == null) Folding(shown) { AccountFolders(account, state, actions, depth = 1) }
+            }
+            if (onFolders != null) {
+                FolderRow(
+                    lead = { RowIcon(R.drawable.ic_folder, open = false) },
+                    title = stringResource(R.string.folders_accounts),
+                    open = false,
+                    end = { Glyph(R.drawable.ic_next, null, MaterialTheme.colorScheme.onSurfaceVariant, size = 18.dp) },
+                    onClick = onFolders,
+                )
             }
         }
     }
