@@ -225,9 +225,6 @@ private struct SwipeSettings: View {
                 tried = true
                 self.slot = nil
             }
-            // Tall enough for every action and the note under them.
-            .presentationDetents([.large])
-            .paperSheet()
         }
     }
 
@@ -341,7 +338,7 @@ private struct SwipePicker: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            PaperList {
                 Section {
                     let options: [SwipeAction?] = slot.isLong ? SwipeAction.picked + [nil] : SwipeAction.picked
                     ForEach(options, id: \.self) { action in
@@ -366,13 +363,11 @@ private struct SwipePicker: View {
                 } footer: {
                     Text(slot.isLong ? "swipes_long_note" : "swipes_short_note")
                 }
-                .listRowBackground(Color.clear)
             }
-            .listStyle(.plain)
-            .paperList()
             .navigationTitle(slot.title)
             .navigationBarTitleDisplayMode(.inline)
         }
+        .paperSheet()
     }
 }
 
@@ -415,7 +410,7 @@ private struct ReadingSettings: View {
                     Text(verbatim: "A").font(.custom("Literata", fixedSize: 21)).foregroundStyle(.secondary)
                 }
             } header: {
-                Text("reading_size")
+                FormCaption("reading_size")
             } footer: {
                 Text(verbatim: "\(sizeNames[Int(size)]). \(tr("reading_size_hint"))")
             }
@@ -428,7 +423,7 @@ private struct ReadingSettings: View {
                     .pickerStyle(.segmented)
                     .labelsHidden()
                 } header: {
-                    Text("images_title")
+                    FormCaption("images_title")
                 } footer: {
                     Text(always ? "images_always_hint" : "images_ask_hint")
                 }
@@ -547,7 +542,7 @@ private struct AccountSettings: View {
                     actions.onSender(account, $0)
                 }
             } header: {
-                Text("account_seen_as")
+                FormCaption("account_seen_as")
             }
             SignatureSection(saved: account.signature, label: "account_signature", placeholder: signature,
                              hint: "account_signature_hint") { actions.onAccountSignature(account, $0) }
@@ -566,7 +561,7 @@ private struct AccountSettings: View {
                     Label("account_alias_add", systemImage: "plus")
                 }
             } header: {
-                Text("account_aliases")
+                FormCaption("account_aliases")
             } footer: {
                 Text("account_aliases_hint")
             }
@@ -575,7 +570,7 @@ private struct AccountSettings: View {
                     actions.onLabel(account, $0)
                 }
             } header: {
-                Text("account_on_phone")
+                FormCaption("account_on_phone")
             }
             Section {
                 Swatches(current: Int(account.colorIndex)) { actions.onColor(account, $0) }
@@ -600,7 +595,7 @@ private struct AccountSettings: View {
                 // Six spans are too many for segments on a phone.
                 .pickerStyle(.menu)
             } header: {
-                Text("account_new_mail")
+                FormCaption("account_new_mail")
             } footer: {
                 let check = switch account.newMail {
                 case .manually: tr("account_new_mail_manually_hint")
@@ -774,7 +769,7 @@ private struct SignatureSection: View {
                 .lineLimit(3...8)
                 .focused($editing)
         } header: {
-            if header { Text(label) }
+            if header { FormCaption(label) }
         } footer: {
             Text(hint)
         }

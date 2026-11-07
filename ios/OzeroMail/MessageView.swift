@@ -197,7 +197,6 @@ struct MessageView: View {
                     self.person = nil
                     model.path.append(.person(card))
                 }
-                .paperSheet()
             }
         }
         .confirmationDialog(
@@ -214,7 +213,6 @@ struct MessageView: View {
                 self.declining = nil
                 send(declining.message, invite, .no, comment: reason)
             }
-            .paperSheet()
         }
         .sheet(item: $adding) { adding in
             AddToCalendar(invite: adding.invite) { self.adding = nil }.ignoresSafeArea()
@@ -1353,6 +1351,36 @@ struct RoundButton: View {
             .buttonStyle(.plain)
             .glassSurface(in: .circle, tint: background == .ozeroFill ? .ozeroFill : nil, fallback: background.buttonFill)
             .accessibilityLabel(Text(label))
+    }
+}
+
+/// A round button without glass, lying on a paper bar as on Android: the bar over the keyboard,
+/// a sheet's heading.
+struct BarIcon: View {
+    let icon: String
+    let label: LocalizedStringKey
+    var tint: Color = .primary
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) { RoundGlyph(icon: icon, size: 44, tint: tint).contentShape(.circle) }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text(label))
+    }
+}
+
+/// Send: the one filled button over the keyboard, a round of the accent with Android's arrow.
+struct SendButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            RoundGlyph(icon: "arrow.up", size: 44, tint: .white)
+                .background(Color.ozeroFill.lifted, in: .circle)
+                .contentShape(.circle)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text("compose_send"))
     }
 }
 
