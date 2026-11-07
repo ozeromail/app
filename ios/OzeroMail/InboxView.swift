@@ -307,8 +307,14 @@ private struct InboxList: View {
         model.messages.isEmpty && (!model.syncing || model.listLoaded) && model.error == nil
     }
 
+    /// The list's selection, only while choosing: a tap that opens a message also selects its
+    /// row, and coming back it would be chosen. A long press's Select starts choosing.
+    private var selection: Binding<Set<Int64>> {
+        Binding(get: { model.chosen }, set: { if choosing || $0.isEmpty { model.chosen = $0 } })
+    }
+
     var body: some View {
-        List(selection: $model.chosen) {
+        List(selection: selection) {
             if let owner = model.owner, !hasGlass {
                 // On iOS 26 the system's subtitle under the large title says it.
                 Text(verbatim: owner)
