@@ -3224,7 +3224,12 @@ impl MailSender for Remote {
     }
 
     fn reads_recipients(&self) -> bool {
-        !matches!(self, Self::Imap(_))
+        match self {
+            Self::Gmail(p) => p.reads_recipients(),
+            Self::Ews(p) => p.reads_recipients(),
+            Self::Eas(p) => p.reads_recipients(),
+            Self::Imap(_) => false,
+        }
     }
 }
 

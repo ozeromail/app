@@ -25,31 +25,25 @@ pub async fn push_sends<P: MailProvider>(
     mut copy: Option<SentCopy<'_, P>>,
     messages: Vec<Outgoing>,
 ) -> Result<(), SyncError> {
-    for message in messages {
+    for mut message in messages {
         // With its blind copies, for the sent copy and a server that drops them itself.
         let raw = builder.build(from, &message);
-        let wire = if message.bcc.is_empty() || sender.reads_recipients() {
-            None
+        let bcc = std::mem::take(&mut message.bcc);
+        let stripped;
+        let wire: &[u8] = if bcc.is_empty() || sender.reads_recipients() {
+            &raw
         } else {
-            Some(builder.build(
-                from,
-                &Outgoing {
-                    bcc: vec![],
-                    ..message.clone()
-                },
-            ))
+            stripped = builder.build(from, &message);
+            &stripped
         };
         // An address in more than one field gets one copy.
         let mut envelope: Vec<String> = Vec::new();
-        for address in message.to.iter().chain(&message.cc).chain(&message.bcc) {
+        for address in message.to.iter().chain(&message.cc).chain(&bcc) {
             if !envelope.iter().any(|a| a.eq_ignore_ascii_case(address)) {
                 envelope.push(address.clone());
             }
         }
-        match sender
-            .send(&from.email, &envelope, wire.as_deref().unwrap_or(&raw))
-            .await
-        {
+        match sender.send(&from.email, &envelope, wire).await {
             Ok(()) => {
                 // Recorded first: a failed copy must not send the message twice.
                 store.sent(message.id)?;
