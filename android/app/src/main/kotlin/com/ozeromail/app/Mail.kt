@@ -212,6 +212,11 @@ class Mail(private val context: Context) {
     /** The name the account's mail goes out under; empty leaves only the address. */
     suspend fun setSender(account: AccountItem, name: String) = io { core.setAccountSender(account.id, name) }
 
+    /** Adds another address [account] sends from, or renames it; an empty [name] uses the account's. */
+    suspend fun saveAlias(account: AccountItem, email: String, name: String) = io { core.saveAlias(account.id, email, name) }
+
+    suspend fun removeAlias(account: AccountItem, email: String) = io { core.removeAlias(account.id, email) }
+
     /** Pins [folder] among its account's usual folders, or unpins it. */
     suspend fun setPinned(folder: FolderItem, pinned: Boolean) = io { core.setFolderPinned(folder.id, pinned) }
 

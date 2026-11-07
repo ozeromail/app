@@ -58,6 +58,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -68,6 +69,7 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import uniffi.ozero_api.AccountItem
 import uniffi.ozero_api.AccountKind
+import uniffi.ozero_api.AliasItem
 import uniffi.ozero_api.CoreException
 import uniffi.ozero_api.NewMail
 import uniffi.ozero_api.accountColors
@@ -82,6 +84,9 @@ class SettingsActions(
     val onSender: (AccountItem, String) -> Unit,
     val onSignature: (String) -> Unit,
     val onAccountSignature: (AccountItem, String) -> Unit,
+    /** Adds another address the account sends from, or renames one: address, name. */
+    val onAlias: (AccountItem, String, String) -> Unit,
+    val onRemoveAlias: (AccountItem, String) -> Unit,
     val onSwipes: (Swipes) -> Unit,
     val onSignIn: (AccountItem) -> Unit,
     val onKeepDays: (AccountItem, Int) -> Unit,
@@ -334,6 +339,7 @@ private fun AccountSettings(
     SignatureField(account.signature, stringResource(R.string.account_signature), signature, stringResource(R.string.account_signature_hint)) {
         actions.onAccountSignature(account, it)
     }
+    Aliases(account, actions)
     Caption(stringResource(R.string.account_on_phone))
     NameField(
         key = "label${account.id}",
@@ -821,6 +827,111 @@ private fun SignatureField(saved: String, label: String, placeholder: String, hi
             .padding(horizontal = Gap.screen)
             .padding(top = 8.dp)
             .onFocusChanged { if (!it.isFocused) save() },
+    )
+}
+
+/**
+ * The account's other addresses, each with its name, and a way to add one. A tap on one
+ * renames it.
+ */
+@Composable
+private fun Aliases(account: AccountItem, actions: SettingsActions) {
+    val colors = MaterialTheme.colorScheme
+    // The address being changed: a new one when its address is empty.
+    var editing by remember { mutableStateOf<AliasItem?>(null) }
+    Caption(stringResource(R.string.account_aliases))
+    Section(null) {
+        account.aliases.forEach { alias ->
+            SettingRow(
+                lead = { Glyph(R.drawable.ic_letter, null, colors.onSurfaceVariant) },
+                title = alias.email,
+                caption = alias.name.ifEmpty { stringResource(R.string.account_alias_same_name) },
+                next = false,
+                onClick = { editing = alias },
+            ) {
+                IconTile(R.drawable.ic_close, stringResource(R.string.action_remove), {
+                    actions.onRemoveAlias(account, alias.email)
+                }, size = 40.dp, tint = colors.onSurfaceVariant)
+            }
+        }
+        SettingRow(R.drawable.ic_add, stringResource(R.string.account_alias_add), next = false) {
+            editing = AliasItem("", "")
+        }
+    }
+    Hint(stringResource(R.string.account_aliases_hint))
+    editing?.let { alias ->
+        AliasDialog(account, alias, onClose = { editing = null }) { email, name ->
+            editing = null
+            actions.onAlias(account, email, name)
+        }
+    }
+}
+
+/** Adds an address to [account], or with [alias]'s address set renames it. */
+@Composable
+private fun AliasDialog(account: AccountItem, alias: AliasItem, onClose: () -> Unit, onSave: (String, String) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val adding = alias.email.isEmpty()
+    var email by rememberSaveable { mutableStateOf(alias.email) }
+    var name by rememberSaveable { mutableStateOf(alias.name) }
+    var wrong by remember { mutableStateOf(false) }
+    fun save() {
+        val typed = email.trim()
+        // As the core checks it: one address, not the account's own.
+        val parts = typed.split('@')
+        wrong = parts.size != 2 || parts.any { it.isEmpty() } || typed.any { it.isWhitespace() } ||
+            typed.equals(account.email, ignoreCase = true)
+        if (!wrong) onSave(typed, name.trim())
+    }
+    AlertDialog(
+        onDismissRequest = onClose,
+        confirmButton = {
+            TextButton(onClick = ::save) {
+                Text(stringResource(if (adding) R.string.account_alias_add_button else R.string.action_save))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onClose) { Text(stringResource(R.string.action_cancel)) }
+        },
+        title = { Text(if (adding) stringResource(R.string.account_alias_new) else alias.email) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (adding) {
+                    OutlinedTextField(
+                        value = email,
+                        onValueChange = {
+                            email = it
+                            wrong = false
+                        },
+                        label = { Text(stringResource(R.string.account_alias_address)) },
+                        isError = wrong,
+                        supportingText = if (wrong) {
+                            { Text(stringResource(R.string.account_alias_bad)) }
+                        } else {
+                            null
+                        },
+                        singleLine = true,
+                        shape = RoundedCornerShape(Radius.medium),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text(stringResource(R.string.account_alias_name)) },
+                    placeholder = { Text(account.senderName.ifEmpty { account.email }) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(Radius.medium),
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { save() }),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (adding) Text(stringResource(R.string.account_alias_server_hint), style = Type.Caption, color = colors.onSurfaceVariant)
+            }
+        },
+        containerColor = colors.background,
+        shape = RoundedCornerShape(Radius.dialog),
     )
 }
 
