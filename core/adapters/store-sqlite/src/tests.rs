@@ -106,6 +106,7 @@ fn message(uid: u32, date: i64) -> NewMessage {
         answer_to: vec![],
         to: vec![],
         cc: vec![],
+        bcc: vec![],
         subject: format!("Subject {uid}"),
         snippet: "Hello".into(),
         date,
