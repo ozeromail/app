@@ -160,7 +160,10 @@ private fun notifySignIn(context: Context, accounts: List<AccountItem>) {
     }
 }
 
-/** One notification per message, newest first, grouped under a summary; a tap opens the inbox. */
+/**
+ * One notification per message, newest first, grouped under a summary; a tap opens the inbox,
+ * and Done, Read and Reply work from the notification.
+ */
 internal fun notifyMail(context: Context, messages: List<MessageItem>) {
     if (messages.isEmpty()) return
     if (context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
@@ -185,6 +188,7 @@ internal fun notifyMail(context: Context, messages: List<MessageItem>) {
                 .setStyle(NotificationCompat.BigTextStyle().bigText(listOf(subject(message), message.snippet).filter { it.isNotBlank() }.joinToString("\n")))
                 .setWhen(message.date * 1000)
                 .setShowWhen(true)
+                .apply { NotificationActions.actions(context, message).forEach(::addAction) }
                 .build(),
         )
     }

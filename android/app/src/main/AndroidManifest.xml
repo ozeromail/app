@@ -36,6 +36,10 @@
                 <data android:scheme="com.ozeromail.app" />
             </intent-filter>
         </activity>
+        <!-- Done, Read and Reply on a new mail notification. -->
+        <receiver
+            android:name=".NotificationActions"
+            android:exported="false" />
         <!-- Hands a downloaded attachment to the app the person picks, to read only. -->
         <provider
             android:name="androidx.core.content.FileProvider"
