@@ -98,8 +98,10 @@ jobs:
             exit 1
           fi
           echo "$KEYSTORE" | base64 -d > "$UPLOAD_KEYSTORE"
-          VERSION_NAME="${VERSION_NAME#v}" ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME" \
-            ./gradlew :app:bundleRelease :app:assembleRelease
+          export VERSION_NAME="${VERSION_NAME#v}" ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          # The bundle goes to Play: the store build, without Google sign-in. The APK keeps it.
+          STORE_BUILD=true ./gradlew :app:bundleRelease
+          ./gradlew :app:assembleRelease
       - name: Upload the release
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         uses: actions/upload-artifact@v4
