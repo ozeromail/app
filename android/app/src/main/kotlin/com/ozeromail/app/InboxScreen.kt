@@ -694,6 +694,19 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
         if (!mail.undo(actions)) note(undoLate)
     }
 
+    // A mailto link or something shared from another app. What was being written is kept as a draft.
+    LaunchedEffect(Unit) {
+        for (shared in mail.shared) {
+            val draft = try {
+                mail.newDraft()
+            } catch (_: CoreException) {
+                NEW_DRAFT
+            }
+            val asked = draft.copy(to = shared.to, cc = shared.cc, subject = shared.subject, text = shared.text)
+            composing = Composing(asked, shared = shared.files)
+        }
+    }
+
     // What changed the mail, here or in the background, shows at once; so does an action the
     // server refused and the phone undid.
     LaunchedEffect(Unit) {

@@ -35,6 +35,21 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="com.ozeromail.app" />
             </intent-filter>
+            <!-- A mailto link opens a new message to it, so the app can be the phone's mail app. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.SENDTO" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="mailto" />
+            </intent-filter>
+            <!-- Anything shared to it, text or files, goes into a new message. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
         </activity>
         <!-- Hands a downloaded attachment to the app the person picks, to read only. -->
         <provider
