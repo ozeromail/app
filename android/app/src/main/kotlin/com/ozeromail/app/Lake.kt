@@ -217,6 +217,7 @@ private class Still {
     // the banks and dies away.
     private val height = FloatArray(SPAN)
     private val speed = FloatArray(SPAN)
+    private val forces = FloatArray(SPAN)
     // Earlier shapes of it, so a nearer streak sees a wave a moment later, as if it came closer.
     private val past = Array(PAST) { FloatArray(SPAN) }
     private var pastAt = 0
@@ -303,26 +304,34 @@ private class Still {
         calm += (min(1f, energy) - calm) * min(1f, dt * 2f)
     }
 
-    /** One step of the surface: a damped wave between two banks, held under a finger, thicker once a wait is over. */
+    /**
+     * One step of the surface: a damped wave between two banks that gravity draws back to the
+     * horizon, held under a finger, livelier while a wait lasts. Short ripples die first.
+     */
     private fun flow(dt: Float) {
         if (settled && abs(jolt) < 1f && !holding) return
-        val damping = if (beat) 0.9f else 1.5f
+        val damping = if (beat) DAMPING_WAITING else DAMPING_CALM
         val mid = (SPAN - 1) / 2f
         for (i in 0 until SPAN) {
-            val bend = height[if (i > 0) i - 1 else 1] - 2 * height[i] + height[if (i < SPAN - 1) i + 1 else SPAN - 2]
+            val l = if (i > 0) i - 1 else 1
+            val r = if (i < SPAN - 1) i + 1 else SPAN - 2
+            val bend = height[l] - 2 * height[i] + height[r]
+            val stir = speed[l] - 2 * speed[i] + speed[r]
             // A sideways jolt of the tabs presses the water toward one bank.
-            var force = STIFF * bend - damping * speed[i] - jolt * JOLT * (i - mid) / mid
+            var force = STIFF * bend + VISCOUS * stir - LEVEL * height[i] - damping * speed[i] -
+                jolt * JOLT * (i - mid) / mid
             if (holding) {
                 // The finger draws the water toward where it holds it, and lets the rest be.
                 val d = middle - BANKS + i * SPACING - holdX
                 val hold = exp(-d * d / (2 * HOLD_WIDTH * HOLD_WIDTH))
                 force += hold * (HOLD_PULL * (holdDepth - height[i]) - HOLD_DAMP * speed[i])
             }
-            speed[i] += force * dt
+            forces[i] = force
         }
         var fast = 0f
         rough = 0f
         for (i in 0 until SPAN) {
+            speed[i] += forces[i] * dt
             height[i] += speed[i] * dt
             fast = maxOf(fast, abs(speed[i]))
             rough = maxOf(rough, abs(height[i]))
@@ -635,6 +644,16 @@ private const val SPACING = 3f
 private const val WAVE_SPEED = 150f
 private const val BANKS = 150f
 private const val STIFF = WAVE_SPEED * WAVE_SPEED / (SPACING * SPACING)
+
+/**
+ * How the surface comes back level: gravity's pull toward the horizon, ω² of a ~0.6 Hz sway; the
+ * damping of its speed, a slight overshoot and calm in under 3 s, lighter while a wait lasts; and
+ * the water's viscosity, which stills short ripples sooner than long waves.
+ */
+private const val LEVEL = 14f
+private const val DAMPING_CALM = 4.5f
+private const val DAMPING_WAITING = 2.7f
+private const val VISCOUS = 30f / (SPACING * SPACING)
 
 /**
  * A finger on the water: how deep a touch alone draws it down and the deepest a pull does, in
