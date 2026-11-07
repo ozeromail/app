@@ -424,20 +424,19 @@ private struct InboxList: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
                 if let status {
-                    // On glass, so the rows passing under it never show through its words.
-                    HStack {
+                    // Quiet words over the dock, centred, with nothing around them; they only fade.
+                    HStack(spacing: 8) {
                         Text(verbatim: status.text)
                             .font(.small)
                             .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .multilineTextAlignment(.center)
                         if status.retry {
                             Button("status_try_again", action: check).font(.smallStrong).fixedSize()
                         }
                     }
+                    .frame(maxWidth: .infinity)
                     .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .glassSurface(in: .rect(cornerRadius: 22, style: .continuous), fallback: Color.ozeroCard.sunk)
-                    .padding(.horizontal, 16)
+                    .padding(.vertical, 4)
                     .transition(.opacity)
                 }
                 // On its side search and a new message are beside the title: without tabs the dock has nothing.
