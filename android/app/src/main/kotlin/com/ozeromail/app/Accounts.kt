@@ -440,8 +440,8 @@ private const val FEW_FOLDERS = 5
 
 /**
  * A small heading over a part of the list, with [action] at its end. With [onToggle] a tap on
- * it hides or shows the part, and a chevron after it says which; with [open] but no [onToggle]
- * the chevron stays, pointing down.
+ * it hides or shows the part, and a chevron after it says which; without [onToggle] (as in Edit)
+ * it is a plain label, so nothing invites a tap that does nothing.
  */
 @Composable
 private fun Caption(text: String, open: Boolean? = null, onToggle: (() -> Unit)? = null, action: (@Composable () -> Unit)? = null) {
@@ -459,7 +459,7 @@ private fun Caption(text: String, open: Boolean? = null, onToggle: (() -> Unit)?
     ) {
         Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
             Text(text, color = colors.onSurfaceVariant, style = Type.Label, fontWeight = Weight.SemiBold)
-            if (open != null) {
+            if (open != null && onToggle != null) {
                 Spacer(Modifier.width(4.dp))
                 Chevron(open, 14.dp)
             }
