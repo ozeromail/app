@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use crate::{AccountId, MessageId};
+use crate::{AccountId, Address, MessageId};
 
 /// Local id of a message waiting to be sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -16,6 +16,8 @@ pub struct Draft {
     pub cc: Vec<String>,
     /// Blind copies, as `cc`: in the envelope, never in the message others get.
     pub bcc: Vec<String>,
+    /// The account's other address it goes from; empty for its own.
+    pub alias: String,
     pub subject: String,
     pub text: String,
     /// The message this answers.
@@ -46,6 +48,8 @@ pub struct SavedDraft {
     pub cc: String,
     /// The blind copies, as `to`.
     pub bcc: String,
+    /// As `Draft::alias`.
+    pub alias: String,
     pub subject: String,
     pub text: String,
     pub signature: String,
@@ -120,6 +124,9 @@ pub struct Outgoing {
     pub cc: Vec<String>,
     /// Written as a `Bcc` header only where the sender takes the recipients from it.
     pub bcc: Vec<String>,
+    /// The account's other address it goes from, without a name to use the account's; none
+    /// for its own.
+    pub alias: Option<Address>,
     pub subject: String,
     /// With the quote under it.
     pub text: String,
@@ -134,6 +141,20 @@ pub struct Outgoing {
     /// The files sent with it: those added to it, then those of `forward`, read when it is
     /// sent.
     pub files: Vec<OutgoingFile>,
+}
+
+impl Outgoing {
+    /// Who it is from: its `alias`, under the account's name unless it has its own, else the
+    /// `account` itself.
+    pub fn sender(&self, account: &Address) -> Address {
+        match &self.alias {
+            Some(alias) => Address {
+                name: alias.name.clone().or_else(|| account.name.clone()),
+                email: alias.email.clone(),
+            },
+            None => account.clone(),
+        }
+    }
 }
 
 /// A file sent with a message.

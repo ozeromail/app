@@ -26,6 +26,7 @@ pub async fn push_sends<P: MailProvider>(
     messages: Vec<Outgoing>,
 ) -> Result<(), SyncError> {
     for mut message in messages {
+        let from = &message.sender(from);
         // With its blind copies, for the sent copy and a server that drops them itself.
         let raw = builder.build(from, &message);
         let bcc = std::mem::take(&mut message.bcc);

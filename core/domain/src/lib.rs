@@ -17,8 +17,8 @@ pub mod typo;
 mod unsubscribe;
 
 pub use account::{
-    Account, AccountId, AccountKind, MailService, NewAccount, NewMail, Server, default_label,
-    email_domain, guess_imap_host, guess_smtp_host, mail_service, saves_sent_itself,
+    Account, AccountId, AccountKind, Alias, MailService, NewAccount, NewMail, Server,
+    default_label, email_domain, guess_imap_host, guess_smtp_host, mail_service, saves_sent_itself,
 };
 pub use encoding::{base64, decode_base64, markup_escape, percent_decode};
 pub use folder::{Folder, FolderId, FolderRole, NewFolder, SNOOZED};

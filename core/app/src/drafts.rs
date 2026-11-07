@@ -52,7 +52,7 @@ pub async fn push_drafts(
             message.message_id = message_id();
         }
         message.files = store.draft_files(draft.id)?;
-        let raw = builder.build(from, &message);
+        let raw = builder.build(&message.sender(from), &message);
         let copy = match provider.save_draft(folder, &raw, &message.message_id).await {
             Ok(place) => place.map(|(validity, remote_id)| DraftCopy {
                 folder: folder.to_owned(),
@@ -150,6 +150,13 @@ pub async fn import_drafts(
             to: typed(&header.to),
             cc: typed(&header.cc),
             bcc: typed(&header.bcc),
+            // From another of its addresses, it stays from that one.
+            alias: store
+                .aliases(account)?
+                .into_iter()
+                .find(|a| a.email.eq_ignore_ascii_case(&header.from.email))
+                .map(|a| a.email)
+                .unwrap_or_default(),
             subject: header.subject,
             // Plain text, so any marks in it stay as written.
             text: ozero_domain::rich::escape(&body.text),

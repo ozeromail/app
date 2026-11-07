@@ -312,6 +312,7 @@ mod tests {
             to: vec!["bob@example.org".into(), "cat@example.net".into()],
             cc: vec!["dan@example.com".into()],
             bcc: vec![],
+            alias: None,
             subject: subject.into(),
             text: text.into(),
             message_id: "1.2@example.com".into(),

@@ -22,6 +22,14 @@ pub struct Server {
     pub certificate: Option<String>,
 }
 
+/// Another address the account sends from, such as one its server forwards to it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Alias {
+    pub email: String,
+    /// The name mail from it carries; empty to use the account's.
+    pub name: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewAccount {
     pub kind: AccountKind,

@@ -9,6 +9,7 @@ fn outgoing(id: i64, to: &str) -> Outgoing {
         to: vec![to.into()],
         cc: vec![],
         bcc: vec![],
+        alias: None,
         subject: format!("Message {id}"),
         text: String::new(),
         message_id: format!("{id}@example.com"),
@@ -132,6 +133,43 @@ fn a_server_that_reads_recipients_gets_the_blind_copies_in_the_message() {
         postman.sent[0].2,
         b"Message 1\nBcc: eve@example.com".to_vec()
     );
+}
+
+#[test]
+fn goes_from_another_of_the_accounts_addresses() {
+    let store = Memory::default();
+    let mut postman = Postman::default();
+    let message = Outgoing {
+        alias: Some(Address {
+            name: None,
+            email: "shop@example.com".into(),
+        }),
+        ..outgoing(1, "bob@example.org")
+    };
+    run(push_sends::<Server>(
+        &store,
+        &mut postman,
+        &Builder,
+        &anna(),
+        None,
+        vec![message],
+    ))
+    .unwrap();
+    assert_eq!(postman.sent[0].0, "shop@example.com");
+    // Without a name of its own, under the account's.
+    let account = Address {
+        name: Some("Anna".into()),
+        ..anna()
+    };
+    let named = Outgoing {
+        alias: Some(Address {
+            name: None,
+            email: "shop@example.com".into(),
+        }),
+        ..outgoing(2, "bob@example.org")
+    };
+    assert_eq!(named.sender(&account).name.as_deref(), Some("Anna"));
+    assert_eq!(outgoing(3, "bob@example.org").sender(&account), account);
 }
 
 #[test]

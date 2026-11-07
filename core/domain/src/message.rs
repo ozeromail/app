@@ -96,6 +96,14 @@ impl Correspondents {
         others
     }
 
+    /// Which of the `own` addresses the message came to: the first in `To`, then `Cc`, or
+    /// the one it is from.
+    pub fn came_to<'a>(&self, own: &[&'a str]) -> Option<&'a str> {
+        self.recipients()
+            .chain([&self.from])
+            .find_map(|a| own.iter().find(|o| o.eq_ignore_ascii_case(a)).copied())
+    }
+
     /// `To` and `Cc`, in that order.
     fn recipients(&self) -> impl Iterator<Item = &String> {
         self.to.iter().chain(&self.cc).map(|a| &a.email)
@@ -471,6 +479,17 @@ mod tests {
             &["list@x.com", "Bob@x.com", "bob@x.com"],
         );
         assert_eq!(emails(m.others("me@x.com")), ["Bob@x.com"]);
+    }
+
+    #[test]
+    fn finds_the_address_it_came_to() {
+        let own = ["me@x.com", "shop@x.com"];
+        let m = mail("anna@x.com", &[], &["bob@x.com", "SHOP@x.com", "me@x.com"]);
+        assert_eq!(m.came_to(&own), Some("shop@x.com"));
+        let m = mail("shop@x.com", &[], &["anna@x.com"]);
+        assert_eq!(m.came_to(&own), Some("shop@x.com"));
+        let m = mail("anna@x.com", &[], &["list@x.com"]);
+        assert_eq!(m.came_to(&own), None);
     }
 
     #[test]

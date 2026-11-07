@@ -1357,6 +1357,7 @@ fn draft(account: AccountId) -> Draft {
         to: vec!["bob@example.org".into(), "cat@example.net".into()],
         cc: vec![],
         bcc: vec![],
+        alias: String::new(),
         subject: "Hi".into(),
         text: "Hello".into(),
         reply_to: None,
@@ -1374,6 +1375,7 @@ fn saved(draft: &Draft, now: i64) -> SavedDraft {
         to: draft.to.join(", "),
         cc: draft.cc.join(", "),
         bcc: draft.bcc.join(", "),
+        alias: draft.alias.clone(),
         subject: draft.subject.clone(),
         text: draft.text.clone(),
         signature: draft.signature.clone(),
@@ -1417,6 +1419,55 @@ fn a_held_message_can_be_taken_back_until_it_is_due() {
     assert_eq!(due[0].date, 100);
     store.sent(id).unwrap();
     assert!(store.due_sends(a, 200).unwrap().is_empty());
+}
+
+#[test]
+fn a_message_goes_from_the_alias_it_was_written_from() {
+    let store = store();
+    let a = account(&store, "a@example.com");
+    let alias = |email: &str, name: &str| Alias {
+        email: email.into(),
+        name: name.into(),
+    };
+    store.save_alias(a, &alias("shop@example.com", "")).unwrap();
+    store
+        .save_alias(a, &alias("SHOP@example.com", "Shop"))
+        .unwrap();
+    store.save_alias(a, &alias("hi@example.com", "")).unwrap();
+    assert_eq!(
+        store.aliases(a).unwrap(),
+        [
+            alias("hi@example.com", ""),
+            alias("shop@example.com", "Shop")
+        ]
+    );
+    let from = |alias: &str| Draft {
+        alias: alias.into(),
+        ..draft(a)
+    };
+    store
+        .queue_send(&from("shop@example.com"), None, "1@example.com", 100, 100)
+        .unwrap();
+    store
+        .queue_send(&from("hi@example.com"), None, "2@example.com", 100, 100)
+        .unwrap();
+    let due = store.due_sends(a, 100).unwrap();
+    let senders: Vec<_> = due.iter().map(|m| m.alias.clone()).collect();
+    assert_eq!(
+        senders,
+        [
+            Some(Address {
+                name: Some("Shop".into()),
+                email: "shop@example.com".into()
+            }),
+            Some(Address {
+                name: None,
+                email: "hi@example.com".into()
+            }),
+        ]
+    );
+    store.remove_alias(a, "hi@example.com").unwrap();
+    assert_eq!(store.aliases(a).unwrap().len(), 1);
 }
 
 #[test]
@@ -2547,6 +2598,7 @@ fn a_draft_is_kept_until_it_is_sent_or_thrown_away() {
         to: "bob@exam".into(),
         cc: String::new(),
         bcc: String::new(),
+        alias: String::new(),
         subject: String::new(),
         text: "Hel".into(),
         reply_to: None,
@@ -2601,6 +2653,7 @@ fn a_draft_outlives_its_answered_message_but_not_its_account() {
         to: String::new(),
         cc: String::new(),
         bcc: String::new(),
+        alias: String::new(),
         subject: "Re: Hi".into(),
         text: "Hello".into(),
         reply_to: Some(MessageId(999)),
@@ -2951,6 +3004,7 @@ fn a_draft_keeps_one_copy_on_its_server() {
         to: "bob@example.org, cat".into(),
         cc: String::new(),
         bcc: String::new(),
+        alias: String::new(),
         subject: "Hi".into(),
         text: "Hello".into(),
         signature: "--\nAnna".into(),
@@ -3052,6 +3106,7 @@ fn only_imap_uids_tell_an_older_draft_copy() {
         to: String::new(),
         cc: String::new(),
         bcc: String::new(),
+        alias: String::new(),
         subject: "Hi".into(),
         text: "Hello".into(),
         signature: String::new(),
@@ -3091,6 +3146,7 @@ fn a_draft_moved_to_another_account_leaves_its_copy_behind() {
         to: String::new(),
         cc: String::new(),
         bcc: String::new(),
+        alias: String::new(),
         subject: "Hi".into(),
         text: "Hello".into(),
         signature: String::new(),

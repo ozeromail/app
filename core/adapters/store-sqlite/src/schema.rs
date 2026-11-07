@@ -453,4 +453,15 @@ pub const MIGRATIONS: &[&str] = &[
     ",
     // 46: senders the user blocked, whose mail goes to junk as it comes.
     "CREATE TABLE blocked_sender (email TEXT PRIMARY KEY COLLATE NOCASE) WITHOUT ROWID;",
+    // 47: other addresses each account sends from, and the one a message goes from.
+    "
+    CREATE TABLE alias (
+        account_id INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+        email      TEXT NOT NULL COLLATE NOCASE,
+        name       TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (account_id, email)
+    ) WITHOUT ROWID;
+    ALTER TABLE draft ADD COLUMN alias TEXT NOT NULL DEFAULT '';
+    ALTER TABLE outbox ADD COLUMN alias TEXT NOT NULL DEFAULT '';
+    ",
 ];
