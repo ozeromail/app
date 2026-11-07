@@ -343,20 +343,14 @@ private struct InboxList: View {
             }
             ForEach(Array(model.messages.enumerated()), id: \.element.id) { index, message in
                 let swipes = model.swipes.on(message)
-                OpenRow(model: model, message: message)
+                // As on Android: how far the row goes picks the short or the long action.
+                SwipeRow(swipes: swipes, message: message, enabled: !choosing, background: OpenRow.background(model, message),
+                         insets: MessageRow.insets, onSwipe: { model.swiped(message, $0) }) {
+                    OpenRow(model: model, message: message)
+                }
                 .tag(message.id)
                 .onScrollVisibilityChange(threshold: 0.5) { shown in
                     if shown { onScreen.ids.insert(message.id) } else { onScreen.ids.remove(message.id) }
-                }
-                // As in the iPhone's own Mail: a full swipe does the long action, a shorter one
-                // shows both to tap. The first is the one at the edge.
-                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                    if let long = swipes.leftLong, long != swipes.left { swipe(long, message) }
-                    swipe(swipes.left, message)
-                }
-                .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                    if let long = swipes.rightLong, long != swipes.right { swipe(long, message) }
-                    swipe(swipes.right, message)
                 }
                 .contextMenu {
                     // A long press starts choosing, as on Android; the rest of the menu acts at once.

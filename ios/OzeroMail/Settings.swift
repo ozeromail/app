@@ -65,6 +65,9 @@ enum SwipeAction: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Read and Flag change the row and leave it in the list; the rest take it away.
+    var stays: Bool { self == .read || self == .flag }
+
     /// The fill of a long swipe that is off.
     static let offTint = Color.gray.opacity(0.45)
 
