@@ -210,7 +210,17 @@ struct InboxView: View {
             onAccountSignature: { account, text in
                 model.changeAccount(account) { try await model.mail.setAccountSignature(account, signature: text) }
             },
-            onAlias: { account, email, name in try await model.mail.saveAlias(account, email: email, name: name) },
+            onAlias: { account, email, name in
+                // A refused address goes back to its field; any other failure shows here.
+                defer { Task { await model.loadAccounts() } }
+                do {
+                    try await model.mail.saveAlias(account, email: email, name: name)
+                } catch CoreError.BadRecipients {
+                    throw CoreError.BadRecipients
+                } catch {
+                    model.error = error.textKey()
+                }
+            },
             onRemoveAlias: { account, email in
                 model.changeAccount(account) { try await model.mail.removeAlias(account, email: email) }
             },

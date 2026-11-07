@@ -882,9 +882,8 @@ private fun AliasDialog(account: AccountItem, alias: AliasItem, onClose: () -> U
                 onSave(email, name)
                 onClose()
             } catch (_: CoreException.BadRecipients) {
+                // Only a refused address comes back: other failures show on the inbox.
                 wrong = true
-            } catch (_: CoreException) {
-                onClose()
             }
         }
     }
