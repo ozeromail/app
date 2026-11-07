@@ -287,17 +287,18 @@ impl Core {
     pub fn accounts(&self) -> Result<Vec<AccountItem>, CoreError> {
         let signature = self.store.signature()?;
         let accounts = self.store.accounts()?;
+        let mut aliases = self.store.aliases()?;
         // The unified inbox keeps one account at least, so the last one in it stays.
         let only = accounts.len() == 1;
         let last = accounts.iter().filter(|a| a.in_all).count() == 1;
-        accounts
+        Ok(accounts
             .into_iter()
             .map(|a| {
                 let fixed = only || a.in_all && last;
-                let aliases = self.store.aliases(a.id)?;
-                Ok(AccountItem::new(a, &signature, fixed, aliases))
+                let aliases = aliases.remove(&a.id).unwrap_or_default();
+                AccountItem::new(a, &signature, fixed, aliases)
             })
-            .collect()
+            .collect())
     }
 
     /// Puts the accounts in this order, by id.
@@ -358,7 +359,7 @@ impl Core {
 
     /// The account no longer sends from the address; mail already written from it still does.
     pub fn remove_alias(&self, account: i64, email: String) -> Result<(), CoreError> {
-        Ok(self.store.remove_alias(AccountId(account), &email)?)
+        Ok(self.store.remove_alias(AccountId(account), email.trim())?)
     }
 
     /// Sets when the phone looks for the account's new mail with the app closed.
@@ -1074,7 +1075,11 @@ impl Core {
         let account = self.account(AccountId(message.account_id))?;
         let correspondents = self.store.correspondents(MessageId(message.id))?;
         // From the address it came to, the account's own or another of its addresses.
-        let aliases = self.store.aliases(account.id)?;
+        let aliases = self
+            .store
+            .aliases()?
+            .remove(&account.id)
+            .unwrap_or_default();
         let own: Vec<&str> = [account.email.as_str()]
             .into_iter()
             .chain(aliases.iter().map(|a| a.email.as_str()))
@@ -1089,13 +1094,14 @@ impl Core {
             .into_iter()
             .collect();
         if all {
+            // Never to the account's other addresses either.
+            let known: Vec<&str> = has
+                .iter()
+                .map(String::as_str)
+                .chain(own.iter().copied())
+                .collect();
             for other in correspondents.others(me) {
-                // Never to the account's other addresses either.
-                let known = has.iter().map(String::as_str).chain(own.iter().copied());
-                if !known
-                    .into_iter()
-                    .any(|c| c.eq_ignore_ascii_case(&other.email))
-                {
+                if !known.iter().any(|c| c.eq_ignore_ascii_case(&other.email)) {
                     cc.push(other.email.clone());
                 }
             }
@@ -1112,10 +1118,11 @@ impl Core {
             to: correspondents.answer(me).join(", "),
             cc: cc.join(", "),
             bcc: String::new(),
-            alias: Some(me)
-                .filter(|m| !m.eq_ignore_ascii_case(&account.email))
-                .unwrap_or_default()
-                .to_owned(),
+            alias: if me.eq_ignore_ascii_case(&account.email) {
+                String::new()
+            } else {
+                me.to_owned()
+            },
             subject: ozero_domain::reply_subject(&message.subject),
             text: String::new(),
             reply_to: Some(message.id),
@@ -3853,20 +3860,32 @@ pub struct AliasItem {
     pub email: String,
     /// The name its mail goes out under; empty for the account's `sender_name`.
     pub name: String,
+    /// Who its mail is from as people see it: `name`, else the account's `sender_name`, else
+    /// the address.
+    pub sends_as: String,
 }
 
 impl AccountItem {
     /// `signature` is the default one, for accounts without their own.
     fn new(a: Account, signature: &str, in_all_fixed: bool, aliases: Vec<Alias>) -> Self {
+        let sender_name = sender(&a).name.unwrap_or_default();
         Self {
             aliases: aliases
                 .into_iter()
-                .map(|a| AliasItem {
-                    email: a.email,
-                    name: a.name,
+                .map(|alias| {
+                    let sends_as = [&alias.name, &sender_name, &alias.email]
+                        .into_iter()
+                        .find(|n| !n.is_empty())
+                        .cloned()
+                        .unwrap_or_default();
+                    AliasItem {
+                        email: alias.email,
+                        name: alias.name,
+                        sends_as,
+                    }
                 })
                 .collect(),
-            sender_name: sender(&a).name.unwrap_or_default(),
+            sender_name,
             in_all_fixed,
             in_all: a.in_all,
             notify: a.notify,

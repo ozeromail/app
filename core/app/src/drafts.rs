@@ -105,6 +105,7 @@ pub async fn import_drafts(
     account: AccountId,
     limit: usize,
 ) -> Result<(), SyncError> {
+    let aliases = store.aliases()?.remove(&account).unwrap_or_default();
     for found in store.server_drafts(account)?.into_iter().take(limit) {
         let copy = &found.copy;
         let raw = match provider
@@ -151,11 +152,10 @@ pub async fn import_drafts(
             cc: typed(&header.cc),
             bcc: typed(&header.bcc),
             // From another of its addresses, it stays from that one.
-            alias: store
-                .aliases(account)?
-                .into_iter()
+            alias: aliases
+                .iter()
                 .find(|a| a.email.eq_ignore_ascii_case(&header.from.email))
-                .map(|a| a.email)
+                .map(|a| a.email.clone())
                 .unwrap_or_default(),
             subject: header.subject,
             // Plain text, so any marks in it stay as written.

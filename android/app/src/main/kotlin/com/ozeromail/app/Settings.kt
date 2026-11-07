@@ -85,7 +85,7 @@ class SettingsActions(
     val onSignature: (String) -> Unit,
     val onAccountSignature: (AccountItem, String) -> Unit,
     /** Adds another address the account sends from, or renames one: address, name. */
-    val onAlias: (AccountItem, String, String) -> Unit,
+    val onAlias: suspend (AccountItem, String, String) -> Unit,
     val onRemoveAlias: (AccountItem, String) -> Unit,
     val onSwipes: (Swipes) -> Unit,
     val onSignIn: (AccountItem) -> Unit,
@@ -845,7 +845,7 @@ private fun Aliases(account: AccountItem, actions: SettingsActions) {
             SettingRow(
                 lead = { Glyph(R.drawable.ic_letter, null, colors.onSurfaceVariant) },
                 title = alias.email,
-                caption = alias.name.ifEmpty { stringResource(R.string.account_alias_same_name) },
+                caption = alias.sendsAs,
                 next = false,
                 onClick = { editing = alias },
             ) {
@@ -855,13 +855,12 @@ private fun Aliases(account: AccountItem, actions: SettingsActions) {
             }
         }
         SettingRow(R.drawable.ic_add, stringResource(R.string.account_alias_add), next = false) {
-            editing = AliasItem("", "")
+            editing = AliasItem("", "", "")
         }
     }
     Hint(stringResource(R.string.account_aliases_hint))
     editing?.let { alias ->
         AliasDialog(account, alias, onClose = { editing = null }) { email, name ->
-            editing = null
             actions.onAlias(account, email, name)
         }
     }
@@ -869,19 +868,25 @@ private fun Aliases(account: AccountItem, actions: SettingsActions) {
 
 /** Adds an address to [account], or with [alias]'s address set renames it. */
 @Composable
-private fun AliasDialog(account: AccountItem, alias: AliasItem, onClose: () -> Unit, onSave: (String, String) -> Unit) {
+private fun AliasDialog(account: AccountItem, alias: AliasItem, onClose: () -> Unit, onSave: suspend (String, String) -> Unit) {
     val colors = MaterialTheme.colorScheme
+    val scope = rememberCoroutineScope()
     val adding = alias.email.isEmpty()
     var email by rememberSaveable { mutableStateOf(alias.email) }
     var name by rememberSaveable { mutableStateOf(alias.name) }
     var wrong by remember { mutableStateOf(false) }
+    // The core checks the address; one it refuses stays here to be fixed.
     fun save() {
-        val typed = email.trim()
-        // As the core checks it: one address, not the account's own.
-        val parts = typed.split('@')
-        wrong = parts.size != 2 || parts.any { it.isEmpty() } || typed.any { it.isWhitespace() } ||
-            typed.equals(account.email, ignoreCase = true)
-        if (!wrong) onSave(typed, name.trim())
+        scope.launch {
+            try {
+                onSave(email, name)
+                onClose()
+            } catch (_: CoreException.BadRecipients) {
+                wrong = true
+            } catch (_: CoreException) {
+                onClose()
+            }
+        }
     }
     AlertDialog(
         onDismissRequest = onClose,

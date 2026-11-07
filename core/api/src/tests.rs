@@ -716,11 +716,13 @@ fn answers_from_the_address_the_mail_came_to() {
         &[
             AliasItem {
                 email: "hello@example.com".into(),
-                name: "Shop".into()
+                name: "Shop".into(),
+                sends_as: "Shop".into()
             },
             AliasItem {
                 email: "hi@example.com".into(),
-                name: String::new()
+                name: String::new(),
+                sends_as: "Me".into()
             }
         ]
     );

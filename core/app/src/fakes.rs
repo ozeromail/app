@@ -533,8 +533,8 @@ impl Store for Memory {
         Ok(())
     }
 
-    fn aliases(&self, _: AccountId) -> Result<Vec<Alias>, StoreError> {
-        Ok(vec![])
+    fn aliases(&self) -> Result<HashMap<AccountId, Vec<Alias>>, StoreError> {
+        Ok(HashMap::new())
     }
 
     fn save_alias(&self, _: AccountId, _: &Alias) -> Result<(), StoreError> {
