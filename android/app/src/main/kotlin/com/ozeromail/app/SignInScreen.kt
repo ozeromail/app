@@ -106,6 +106,7 @@ private enum class Provider(
         Mail.SMTPS_PORT,
         "https://myaccount.google.com/apppasswords",
         if (BuildConfig.GOOGLE_SIGN_IN) R.string.signin_gmail_text else R.string.signin_gmail_store_text,
+        MailService.GOOGLE.takeUnless { BuildConfig.GOOGLE_SIGN_IN },
     ),
     ICLOUD("imap.mail.me.com", "smtp.mail.me.com", 587, "https://account.apple.com/account/manage", service = MailService.I_CLOUD),
     YAHOO("imap.mail.yahoo.com", "smtp.mail.yahoo.com", Mail.SMTPS_PORT, "https://login.yahoo.com/account/security", service = MailService.YAHOO),
@@ -142,6 +143,9 @@ private sealed interface Step : java.io.Serializable {
     /** The ways in that take more than an address. */
     data object Manual : Step
 }
+
+/** Whether the address goes to Google sign-in; never in the store build, which has none. */
+private fun signsInWithGoogle(email: String) = BuildConfig.GOOGLE_SIGN_IN && knownService(email) == MailService.GOOGLE
 
 /** How far a step is from the first, for which way the screens slide. */
 private fun Step?.depth(): Int = when (this) {
@@ -243,11 +247,7 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
 
     fun next() {
         if (busy || suggestedImapHost(email) == null) return
-        when {
-            knownService(email) != MailService.GOOGLE -> go(Provider.of(email)?.let { Step.Known(it) } ?: Step.Found)
-            BuildConfig.GOOGLE_SIGN_IN -> google()
-            else -> go(Step.Known(Provider.GMAIL))
-        }
+        if (signsInWithGoogle(email)) google() else go(Provider.of(email)?.let { Step.Known(it) } ?: Step.Found)
     }
 
     Column(
@@ -302,7 +302,7 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
                         { email = it },
                         busy = busy,
                         onCancel = onCancel,
-                        onGoogle = ::google,
+                        onGoogle = ::google.takeIf { BuildConfig.GOOGLE_SIGN_IN },
                         onNext = ::next,
                         onManual = { go(Step.Manual) },
                     )
@@ -395,8 +395,9 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
 }
 
 /**
- * The first step, and the app's first screen: its name, then Google, or an address whose
- * service is told by its domain. For a further account, a back arrow and a title instead.
+ * The first step, and the app's first screen: its name, then Google when [onGoogle] is
+ * given, or an address whose service is told by its domain. For a further account, a back
+ * arrow and a title instead.
  */
 @Composable
 private fun Start(
@@ -404,12 +405,12 @@ private fun Start(
     onEmail: (String) -> Unit,
     busy: Boolean,
     onCancel: (() -> Unit)?,
-    onGoogle: () -> Unit,
+    onGoogle: (() -> Unit)?,
     onNext: () -> Unit,
     onManual: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
-    val google = BuildConfig.GOOGLE_SIGN_IN && remember(email) { knownService(email) == MailService.GOOGLE }
+    val google = remember(email) { signsInWithGoogle(email) }
     val ready = !busy && remember(email) { suggestedImapHost(email) != null }
     Form(
         top = {
@@ -429,7 +430,7 @@ private fun Start(
             }
         },
         bottom = {
-            if (BuildConfig.GOOGLE_SIGN_IN) {
+            if (onGoogle != null) {
                 SubmitButton(R.string.signin_google, busy = false, ready = !busy, onGoogle, quiet = true)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     HorizontalDivider(Modifier.weight(1f), color = colors.outlineVariant)
