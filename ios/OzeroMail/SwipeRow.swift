@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UIKit.UIGestureRecognizerSubclass
 
 /// A row that does its swipes as on Android: let go past a quarter of the width, it does the
 /// side's short action; past three fifths, the long one; a quick flick does the short one. Short,
@@ -181,15 +182,35 @@ final class SidewaysPan: UIPanGestureRecognizer, UIGestureRecognizerDelegate {
         delegate = self
     }
 
-    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        let velocity = velocity(in: view)
-        guard abs(velocity.x) > abs(velocity.y) * 1.2 else { return false }
-        if velocity.x > 0, let window = view?.window, location(in: window).x < 24 { return false }
-        return true
+    /// A finger that comes down at the very left edge is the system's swipe back, never the
+    /// row's: the row lets go at once, so nothing waits on it.
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        super.touchesBegan(touches, with: event)
+        if state == .possible, let window = view?.window, let touch = touches.first, touch.location(in: window).x < 24 {
+            state = .failed
+        }
     }
 
-    /// The list's scrolling waits to see whether the row is swiped.
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        let velocity = velocity(in: view)
+        return abs(velocity.x) > abs(velocity.y) * 1.2
+    }
+
+    /// The stack the row is in, for its swipes back.
+    private var navigation: UINavigationController? {
+        var next: UIResponder? = view
+        while let responder = next {
+            if let controller = responder as? UIViewController { return controller.navigationController }
+            next = responder.next
+        }
+        return nil
+    }
+
+    /// The list's scrolling, and the swipe back from anywhere on the page, wait to see whether
+    /// the row is swiped.
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldBeRequiredToFailBy other: UIGestureRecognizer) -> Bool {
-        other.view is UIScrollView && other is UIPanGestureRecognizer
+        if other.view is UIScrollView && other is UIPanGestureRecognizer { return true }
+        if #available(iOS 26, *) { return other === navigation?.interactiveContentPopGestureRecognizer }
+        return false
     }
 }
