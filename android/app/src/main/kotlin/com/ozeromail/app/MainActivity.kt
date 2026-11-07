@@ -31,7 +31,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         val mail = (application as OzeroApp).mail
         // Only a fresh launch: a recreated activity keeps the intent it was first started with.
-        if (savedInstanceState == null) googleRedirect(intent)
+        if (savedInstanceState == null) handle(intent)
         setContent {
             // The activity outlives a change of the system theme, so the bars' icons follow it here.
             val dark = isSystemInDarkTheme()
@@ -46,13 +46,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        googleRedirect(intent)
+        handle(intent)
     }
 
-    private fun googleRedirect(intent: Intent) {
+    /** Google sign-in coming back, or a message another app asks for. */
+    private fun handle(intent: Intent) {
         if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
-        val uri = intent.data ?: return
-        if (uri.scheme == packageName) (application as OzeroApp).mail.googleRedirects.trySend(uri.toString())
+        val mail = (application as OzeroApp).mail
+        val uri = intent.data
+        if (uri?.scheme == packageName) mail.googleRedirects.trySend(uri.toString()) else sharedOf(intent)?.let { mail.shared.trySend(it) }
     }
 }
 

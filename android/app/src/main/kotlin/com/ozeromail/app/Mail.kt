@@ -253,6 +253,9 @@ class Mail(private val context: Context) {
         core.addExchangeAccount(email, "", server, login, certificate, trusted, password)
     }
 
+    /** Messages other apps asked for, for the inbox to open once there is an account. */
+    val shared = Channel<Shared>(Channel.CONFLATED)
+
     /** Addresses the browser came back to from Google, for the sign-in screen to finish. */
     val googleRedirects = Channel<String>(Channel.CONFLATED)
 

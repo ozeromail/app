@@ -121,8 +121,8 @@ fun forwardLabels(context: Context) = ForwardLabels(
     context.getString(R.string.compose_forward_subject),
 )
 
-/** A message being written, and the one it answers or forwards. */
-data class Composing(val draft: DraftItem, val original: MessageItem? = null) {
+/** A message being written, the one it answers or forwards, and files another app shared for it. */
+data class Composing(val draft: DraftItem, val original: MessageItem? = null, val shared: List<Uri> = emptyList()) {
     /** A new message is a sheet over the screen it is written from; a reply fills the screen. */
     val inSheet get() = original == null
 }
@@ -314,6 +314,13 @@ fun ComposeScreen(
     fun add(uris: List<Uri>) {
         if (uris.isEmpty()) return
         addFiles({ uris.map { pickedName(context, it) } }, { index, name, room -> readPicked(context, uris[index], name, room) })
+    }
+    // Once: the screen may come back, say turned on its side, with them already in.
+    var sharedAdded by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (sharedAdded) return@LaunchedEffect
+        sharedAdded = true
+        add(composing.shared)
     }
     // Photos go into the text after the caret's line, lighter; videos go with the files.
     fun addMedia(uris: List<Uri>) {
