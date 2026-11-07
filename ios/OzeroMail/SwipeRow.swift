@@ -54,7 +54,7 @@ struct SwipeRow<Content: View>: View {
                 }
             }
             .onGeometryChange(for: CGFloat.self) { $0.size.width + insets.leading + insets.trailing } action: { width = $0 }
-            .gesture(SidewaysDrag(enabled: enabled, onBegan: began, onChanged: dragged, onEnded: release))
+            .gesture(SidewaysDrag(enabled: enabled, onBegan: began, onChanged: dragged, onEnded: release, onCancelled: springBack))
             .sensoryFeedback(trigger: stage) { old, new in
                 guard held else { return nil }
                 return new > old ? .impact(weight: .medium) : .selection
@@ -113,6 +113,12 @@ struct SwipeRow<Content: View>: View {
         offset = (to > 0 && !opens(left: false)) || (to < 0 && !opens(left: true)) ? 0 : min(max(to, -width), width)
     }
 
+    /// Taken from the finger by the system, as by a call: nothing is done.
+    private func springBack() {
+        held = false
+        withAnimation(.smooth(duration: 0.3)) { offset = 0 }
+    }
+
     private func release(_ velocity: CGFloat) {
         let now = stage
         held = false
@@ -156,6 +162,7 @@ private struct SidewaysDrag: UIGestureRecognizerRepresentable {
     let onBegan: () -> Void
     let onChanged: (CGFloat) -> Void
     let onEnded: (CGFloat) -> Void
+    let onCancelled: () -> Void
 
     func makeUIGestureRecognizer(context: Context) -> SidewaysPan { SidewaysPan() }
 
@@ -170,7 +177,7 @@ private struct SidewaysDrag: UIGestureRecognizerRepresentable {
             onChanged(recognizer.translation(in: recognizer.view).x)
         case .changed: onChanged(recognizer.translation(in: recognizer.view).x)
         case .ended: onEnded(recognizer.velocity(in: recognizer.view).x)
-        case .cancelled, .failed: onEnded(0)
+        case .cancelled, .failed: onCancelled()
         default: break
         }
     }
