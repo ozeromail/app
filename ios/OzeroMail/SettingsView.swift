@@ -504,10 +504,11 @@ private struct AccountSettings: View {
         Task {
             do {
                 try await actions.onAlias(account, aliasEmail, aliasName)
-            } catch CoreError.BadRecipients {
+            } catch {
+                // Only a refused address comes back: other failures show on the inbox.
                 aliasWrong = true
                 editing = alias
-            } catch {}
+            }
         }
     }
 }

@@ -1147,7 +1147,13 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
             changeAccount(account) { mail.setAccountSignature(account, text) }
         },
         onAlias = { account, email, name ->
-            if (account.id !in removed) mail.saveAlias(account, email, name)
+            // A refused address goes back to its field; any other failure shows here.
+            try {
+                if (account.id !in removed) mail.saveAlias(account, email, name)
+            } catch (e: CoreException) {
+                if (e is CoreException.BadRecipients) throw e
+                fail(e)
+            }
         },
         onRemoveAlias = { account, email ->
             changeAccount(account) { mail.removeAlias(account, email) }
