@@ -335,6 +335,7 @@ impl MessageParser for Parser {
             answer_to: vec![],
             to: vec![],
             cc: vec![],
+            bcc: vec![],
             subject: String::from_utf8_lossy(&raw.header).into(),
             snippet: String::new(),
             date: raw.received,

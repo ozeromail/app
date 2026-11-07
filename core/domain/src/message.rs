@@ -32,6 +32,8 @@ pub struct NewMessage {
     pub answer_to: Vec<String>,
     pub to: Vec<Address>,
     pub cc: Vec<Address>,
+    /// Only in the user's own drafts and sent copies.
+    pub bcc: Vec<Address>,
     pub subject: String,
     pub snippet: String,
     /// Seconds since the Unix epoch.

@@ -44,6 +44,7 @@ impl MessageParser for MimeParser {
                 .collect(),
             to: addresses(header.and_then(|h| h.to())),
             cc: addresses(header.and_then(|h| h.cc())),
+            bcc: addresses(header.and_then(|h| h.bcc())),
             subject: header
                 .and_then(|h| h.subject())
                 .unwrap_or_default()
