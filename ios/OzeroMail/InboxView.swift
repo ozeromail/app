@@ -383,7 +383,7 @@ private struct InboxList: View {
         // The system's own pull, as in Mail: its spinner shows while the check runs.
         .refreshable { await pulled() }
         .onScrollPhaseChange { _, phase in dragging = phase == .interacting }
-        .gesture(TouchTracker(touch: touch))
+        .gesture(TouchTracker(touch: touch, enabled: lake))
         // A check the user waits on says when it is slow, and lets go after a while: the sync goes
         // on behind, and the words then say so, until it ends.
         .task(id: refreshing || waiting) {

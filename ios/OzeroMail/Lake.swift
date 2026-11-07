@@ -86,8 +86,16 @@ struct LakeWords: Equatable {
 /// Tells a `ListTouch` where the finger on the view is, without taking its gestures from it.
 struct TouchTracker: UIGestureRecognizerRepresentable {
     let touch: ListTouch
+    /// Only while the lake shows: over rows it would be one more recognizer beside their swipes,
+    /// whose open actions then may not close on a tap beside them.
+    var enabled = true
 
     func makeUIGestureRecognizer(context: Context) -> FollowingRecognizer { FollowingRecognizer() }
+
+    func updateUIGestureRecognizer(_ recognizer: FollowingRecognizer, context: Context) {
+        recognizer.isEnabled = enabled
+        if !enabled, touch.x != nil { touch.x = nil }
+    }
 
     func handleUIGestureRecognizerAction(_ recognizer: FollowingRecognizer, context: Context) {
         switch recognizer.state {
