@@ -11,8 +11,8 @@
             <clip-path android:pathData="M-50,-50H150V49.055H-50z" />
             <path android:pathData="M27.05,50a20.25,20.25 0 1,0 40.5,0a20.25,20.25 0 1,0 -40.5,0" android:strokeWidth="13.5">
                 <aapt:attr name="android:strokeColor">
-                    <gradient android:type="linear" android:startX="0" android:startY="23" android:endX="0" android:endY="50"
-                        android:startColor="#FF101A2E" android:endColor="#FF2C4A80" />
+                    <gradient android:type="linear" android:startX="0" android:startY="23" android:endX="0" android:endY="77"
+                        android:startColor="#FF6AB2FF" android:endColor="#FF142036" />
                 </aapt:attr>
             </path>
         </group>
@@ -21,8 +21,8 @@
             <group android:translateX="5.4">
                 <path android:pathData="M27.59,50a19.71,19.71 0 1,0 39.42,0a19.71,19.71 0 1,0 -39.42,0" android:strokeWidth="14.58">
                     <aapt:attr name="android:strokeColor">
-                        <gradient android:type="linear" android:startX="0" android:startY="50" android:endX="0" android:endY="77"
-                            android:startColor="#FF50A0FF" android:endColor="#FF1A6FE0" />
+                        <gradient android:type="linear" android:startX="0" android:startY="23" android:endX="0" android:endY="77"
+                            android:startColor="#FF6AB2FF" android:endColor="#FF142036" />
                     </aapt:attr>
                 </path>
             </group>
