@@ -12,8 +12,10 @@ struct DraftsView: View {
         let left = swipes.left == .delete || swipes.leftLong == .delete || !right
         List {
             if model.drafts.isEmpty {
-                ContentUnavailableView("drafts_empty", systemImage: "square.and.pencil")
+                // The grey lake of every empty folder.
+                LakeNote(title: "drafts_empty", grey: true)
                     .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
             }
             ForEach(model.drafts, id: \.draft.id) { row in
                 Button { model.openDraft(row.draft) } label: { DraftLine(row: row) }
