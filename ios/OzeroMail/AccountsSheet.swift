@@ -45,6 +45,9 @@ struct AccountsSheet: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
+        // Captions close over their rows, as on Android, not the plain list's wide gaps.
+        .listSectionSpacing(0)
+        .environment(\.defaultMinListHeaderHeight, 0)
         // Rows a thumb on the move hits, a little taller than the least the system allows.
         .environment(\.defaultMinListRowHeight, 52)
         .onScrollGeometryChange(for: CGFloat.self) { geometry in
@@ -428,8 +431,10 @@ private struct FoldersArrow: View {
                 .font(.smallStrong)
                 .foregroundStyle(.secondary)
                 .rotationEffect(.degrees(open ? 90 : 0))
-                .frame(width: 44, height: 44)
-                .contentShape(.rect)
+                // As tall as the row's text, so the account's row is as tall as the others; a
+                // finger still gets 44 pt.
+                .frame(width: 44, height: 24)
+                .contentShape(.rect.inset(by: -10))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(Text(verbatim: tr("account_folders_of", account)))
