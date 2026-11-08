@@ -48,7 +48,8 @@ struct AccountsSheet: View {
         // Rows a thumb on the move hits, a little taller than the least the system allows.
         .environment(\.defaultMinListRowHeight, 52)
         .onScrollGeometryChange(for: CGFloat.self) { geometry in
-            geometry.contentSize.height + geometry.contentInsets.top + geometry.contentInsets.bottom
+            // Whole points, so a group opening or closing resizes the sheet once a point, not on every fraction.
+            (geometry.contentSize.height + geometry.contentInsets.top + geometry.contentInsets.bottom).rounded()
         } action: { _, height in
             // A new set of heights makes the system pick among them again, so while the sheet is up
             // at its full height the set stays as it is.
@@ -160,7 +161,7 @@ struct MailboxRows: View {
                 FolderRow(icon: "tray", title: tr("inbox_title"), open: mailbox == Mail.inbox, count: unread[one.id] ?? 0) {
                     actions.onMailbox(Mail.inbox)
                 }
-                signInAgain(one)
+                SignInAgain(account: one, actions: actions)
                 AccountFolders(account: one, folders: folders, mailbox: mailbox, actions: actions)
             }
         } else {
@@ -228,7 +229,7 @@ struct MailboxRows: View {
                         .contextMenu {
                             Button { actions.onAccount(account) } label: { Label("account_settings", systemImage: "gear") }
                         }
-                        signInAgain(account)
+                        SignInAgain(account: account, actions: actions)
                         if shown {
                             AccountFolders(account: account, folders: folders, mailbox: mailbox, actions: actions, depth: 1)
                         }
@@ -275,10 +276,6 @@ struct MailboxRows: View {
             // These switches hide a row; the inboxes' leave an account out of All inboxes.
             if editing { Text("all_boxes_edit_hint") }
         }
-    }
-
-    private func signInAgain(_ account: AccountItem) -> some View {
-        SignInAgain(account: account, actions: actions)
     }
 }
 
@@ -389,7 +386,6 @@ private struct PartHeader<Trailing: View>: View {
         }
     }
 
-    /// Small and quiet, as Android's captions.
     private var label: some View {
         HStack(spacing: 4) {
             Text(title)
@@ -399,9 +395,7 @@ private struct PartHeader<Trailing: View>: View {
                     .rotationEffect(.degrees(open ? 90 : 0))
             }
         }
-        .font(.smallStrong)
-        .foregroundStyle(Color.ozeroMuted)
-        .textCase(nil)
+        .caption()
     }
 }
 
