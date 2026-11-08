@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/ozero-mark.svg" width="120" alt="">
+  <img src="docs/brand/logo/ozero-mail-mark.svg" width="120" alt="">
 </p>
 
 <h1 align="center">Ozero Mail</h1>

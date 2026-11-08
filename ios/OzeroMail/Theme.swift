@@ -3,10 +3,10 @@ import SwiftUI
 extension Color {
     /// The one accent colour; everything else stays neutral. It tints text too, so it takes Android's
     /// readable `primary`, not the brighter fill.
-    static let ozeroAccent = dynamic(light: 0x1A6FE0, dark: 0x6AB2FF)
+    static let ozeroAccent = dynamic(light: 0x2456D6, dark: 0x7FA9FF)
 
-    /// The bright blue of buttons, Done, marks and water, the same in both themes.
-    static let ozeroFill = Color(rgb: 0x2F8CFF)
+    /// The lake blue of buttons, Done, marks and water, the same in both themes.
+    static let ozeroFill = Color(rgb: 0x2F6BFF)
 
     /// The late sun of Snooze.
     static let ozeroSnooze = dynamic(light: 0xE0922B, dark: 0xF0B25A)
@@ -18,14 +18,14 @@ extension Color {
     static let ozeroErrorFill = dynamic(light: 0xDF5260, dark: 0xEE6672)
 
     /// Cards over the list, such as an account to sign in to again.
-    static let ozeroCard = dynamic(light: 0xF2F5FA, dark: 0x1A202C)
+    static let ozeroCard = dynamic(light: 0xF6F2EC, dark: 0x1A2234)
 
     /// The paper itself: white by day, the lake's deep blue at night, as on Android.
-    static let ozeroPage = dynamic(light: 0xFFFFFF, dark: 0x141923)
+    static let ozeroPage = dynamic(light: 0xFFFFFF, dark: 0x12192A)
 
     /// Text in the paper's navy ink, and what is said less loudly.
-    static let ozeroInk = dynamic(light: 0x142036, dark: 0xE5E9F1)
-    static let ozeroMuted = dynamic(light: 0x66728A, dark: 0x8792A7)
+    static let ozeroInk = dynamic(light: 0x12192A, dark: 0xE9EDF4)
+    static let ozeroMuted = dynamic(light: 0x6B7280, dark: 0x94A3B8)
 
     /// A colour from the core, as 0xRRGGBB.
     init(rgb: UInt32) {
@@ -60,7 +60,7 @@ extension Color {
 
     /// A round mark as a tiny window: darker under its top edge, lighter below.
     var window: some ShapeStyle {
-        LinearGradient(colors: [mix(with: Color(rgb: 0x142036), by: 0.3), self, mix(with: .white, by: 0.2)], startPoint: .top, endPoint: .bottom)
+        LinearGradient(colors: [mix(with: Color(rgb: 0x12192A), by: 0.3), self, mix(with: .white, by: 0.2)], startPoint: .top, endPoint: .bottom)
     }
 
     /// A button's fill: the accent lifts off the page, the rest lies flat.
@@ -70,7 +70,7 @@ extension Color {
 
     /// The ink of shadows: the paper's navy by day, black at night, as see-through as asked.
     static func ozeroShade(day: Double, night: Double) -> Color {
-        dynamic(light: 0x142036, dark: 0x000000, alpha: (day, night))
+        dynamic(light: 0x12192A, dark: 0x000000, alpha: (day, night))
     }
 }
 
