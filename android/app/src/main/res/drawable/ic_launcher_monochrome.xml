@@ -1,19 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The mark in one colour for themed icons. -->
+<!-- The Mail mark in one colour for themed icons. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <group android:translateX="26.029" android:translateY="30.824" android:scaleX="0.9990" android:scaleY="0.9990">
+    <group android:translateX="18" android:translateY="18" android:scaleX="0.72" android:scaleY="0.72">
         <group>
-            <clip-path android:pathData="M-10,-10H66V27H-10z" />
-            <path android:pathData="M9.4,24a14.6,14.6 0 1,0 29.2,0a14.6,14.6 0 1,0 -29.2,0" android:strokeColor="#FF000000" android:strokeWidth="9" />
+            <clip-path android:pathData="M-50,-50H150V49.055H-50z" />
+            <path android:pathData="M27.05,50a20.25,20.25 0 1,0 40.5,0a20.25,20.25 0 1,0 -40.5,0" android:strokeColor="#FF000000" android:strokeWidth="13.5" />
         </group>
         <group>
-            <clip-path android:pathData="M-10,27H66V66H-10z" />
-            <path android:pathData="M17.4,24a14.6,14.6 0 1,0 29.2,0a14.6,14.6 0 1,0 -29.2,0" android:strokeColor="#FF000000" android:strokeWidth="10" />
+            <clip-path android:pathData="M-50,50.945H150V150H-50z" />
+            <group android:translateX="5.4">
+                <path android:pathData="M27.59,50a19.71,19.71 0 1,0 39.42,0a19.71,19.71 0 1,0 -39.42,0" android:strokeColor="#FF000000" android:strokeWidth="14.58" />
+            </group>
         </group>
     </group>
 </vector>
