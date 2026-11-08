@@ -199,6 +199,11 @@ extension View {
         presentationBackground(Color.ozeroPage)
     }
 
+    /// What a group is, over it: small and quiet, as Android's captions.
+    func caption() -> some View {
+        font(.smallStrong).foregroundStyle(Color.ozeroMuted).textCase(nil)
+    }
+
     /// A list or form on the paper's page instead of the system's grey.
     func paperList() -> some View {
         scrollContentBackground(.hidden).background(Color.ozeroPage)
@@ -238,6 +243,6 @@ struct FormCaption: View {
     init(_ key: LocalizedStringKey) { self.key = key }
 
     var body: some View {
-        Text(key).font(.smallStrong).foregroundStyle(Color.ozeroMuted).textCase(nil)
+        Text(key).caption()
     }
 }
