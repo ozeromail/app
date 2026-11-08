@@ -4459,7 +4459,7 @@ fn sandboxed(html: &str, styled: bool) -> String {
         "@font-face{font-family:Literata;font-weight:200 900;src:url(https://",
         font_host!(),
         "/literata.ttf)}",
-        "html{color-scheme:light dark;background:transparent;color:#142036}",
+        "html{color-scheme:light dark;background:transparent;color:#12192a}",
         "body{padding-inline:20px;font:17.5px/28px Literata,ui-serif,Georgia,serif;",
         "font-optical-sizing:none;text-wrap:pretty}",
         // The mail's own rules stop at a folded quote that sets its own look.
@@ -4472,19 +4472,19 @@ fn sandboxed(html: &str, styled: bool) -> String {
         "{font-family:inherit!important;font-size:inherit!important;line-height:inherit!important}",
         ":where(p,ul,ol,blockquote,pre,table){margin:0 0 14px}",
         ":where(h1,h2,h3){font-weight:650;line-height:1.3;margin:22px 0 10px}",
-        "a{color:#1a6fe0!important;text-decoration-thickness:1px;text-underline-offset:3px}",
+        "a{color:#2456d6!important;text-decoration-thickness:1px;text-underline-offset:3px}",
         "blockquote{padding-left:14px;border-left:2px solid #e3e9f2;color:#76829a!important}",
         "li::marker{color:#76829a}",
         // A quote that opens a line hangs in the margin; a list item's text hangs past its mark.
         ".ozero-hang{margin-left:-.42em}",
         ".ozero-li{display:flex;gap:.45em}",
         ".ozero-li>:first-child{flex:none;min-width:1.1em;font-variant-numeric:tabular-nums}",
-        "@media(prefers-color-scheme:dark){a{color:#6ab2ff!important}",
-        "blockquote{border-color:#2b3343;color:#8792a7!important}}}",
-        ".ozero-styled{color-scheme:light;background:#fff;color:#142036;font:16px/normal sans-serif;",
+        "@media(prefers-color-scheme:dark){a{color:#7fa9ff!important}",
+        "blockquote{border-color:#2b3343;color:#94a3b8!important}}}",
+        ".ozero-styled{color-scheme:light;background:#fff;color:#12192a;font:16px/normal sans-serif;",
         "text-wrap:wrap;border-radius:12px;padding:10px;overflow-x:auto}",
-        "@media(prefers-color-scheme:dark){html{color:#e5e9f1}",
-        "details.ozero-quote>summary{background:#1f2532;color:#8792a7}}",
+        "@media(prefers-color-scheme:dark){html{color:#e9edf4}",
+        "details.ozero-quote>summary{background:#1f2738;color:#94a3b8}}",
     );
     const BODY: &str = "</style></head><body dir=\"auto\">";
     let theme = if styled { LIGHT } else { THEMED };

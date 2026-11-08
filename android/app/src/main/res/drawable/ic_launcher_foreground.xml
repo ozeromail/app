@@ -1,31 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The Mail mark on the paper tile, from the shared Ozero mark spec. -->
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:aapt="http://schemas.android.com/aapt"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <group android:translateX="18" android:translateY="18" android:scaleX="0.72" android:scaleY="0.72">
-        <group>
-            <clip-path android:pathData="M-50,-50H150V49.055H-50z" />
-            <path android:pathData="M27.05,50a20.25,20.25 0 1,0 40.5,0a20.25,20.25 0 1,0 -40.5,0" android:strokeWidth="13.5">
-                <aapt:attr name="android:strokeColor">
-                    <gradient android:type="linear" android:startX="0" android:startY="23" android:endX="0" android:endY="77"
-                        android:startColor="#FF6AB2FF" android:endColor="#FF142036" />
-                </aapt:attr>
-            </path>
-        </group>
-        <group>
-            <clip-path android:pathData="M-50,50.945H150V150H-50z" />
-            <group android:translateX="5.4">
-                <path android:pathData="M27.59,50a19.71,19.71 0 1,0 39.42,0a19.71,19.71 0 1,0 -39.42,0" android:strokeWidth="14.58">
-                    <aapt:attr name="android:strokeColor">
-                        <gradient android:type="linear" android:startX="0" android:startY="23" android:endX="0" android:endY="77"
-                            android:startColor="#FF6AB2FF" android:endColor="#FF142036" />
-                    </aapt:attr>
-                </path>
-            </group>
-        </group>
-    </group>
+<vector xmlns:android="http://schemas.android.com/apk/res/android" xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:pathData="M0,0 H108 V37.69 H90.00 L57.23,58.22 L56.70,58.65 L56.16,59.00 L55.62,59.27 L55.08,59.47 L54.54,59.59 L54.00,59.62 L53.46,59.59 L52.92,59.47 L52.38,59.27 L51.84,59.00 L51.30,58.65 L50.77,58.22 L18.00,37.69 H0 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="0" android:startY="0" android:endX="0" android:endY="61.03"
+                android:startColor="#FFFFFF" android:endColor="#EEE8DD"/>
+        </aapt:attr>
+    </path>
 </vector>

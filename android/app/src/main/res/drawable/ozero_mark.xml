@@ -1,31 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The mark on the sign-in screen, same spec as the app icon. -->
+<!-- The mark on the sign-in screen: sky over water in a circle, the shore an envelope flap. Same in both themes. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt"
     android:width="76dp"
     android:height="76dp"
-    android:viewportWidth="64"
-    android:viewportHeight="64">
-    <group android:translateX="-18" android:translateY="-18" android:scaleX="1" android:scaleY="1">
-        <group>
-            <clip-path android:pathData="M-50,-50H150V49.055H-50z" />
-            <path android:pathData="M27.05,50a20.25,20.25 0 1,0 40.5,0a20.25,20.25 0 1,0 -40.5,0" android:strokeWidth="13.5">
-                <aapt:attr name="android:strokeColor">
-                    <gradient android:type="linear" android:startX="0" android:startY="23" android:endX="0" android:endY="77"
-                        android:startColor="#FF6AB2FF" android:endColor="#FF142036" />
-                </aapt:attr>
-            </path>
-        </group>
-        <group>
-            <clip-path android:pathData="M-50,50.945H150V150H-50z" />
-            <group android:translateX="5.4">
-                <path android:pathData="M27.59,50a19.71,19.71 0 1,0 39.42,0a19.71,19.71 0 1,0 -39.42,0" android:strokeWidth="14.58">
-                    <aapt:attr name="android:strokeColor">
-                        <gradient android:type="linear" android:startX="0" android:startY="23" android:endX="0" android:endY="77"
-                            android:startColor="#FF6AB2FF" android:endColor="#FF142036" />
-                    </aapt:attr>
-                </path>
-            </group>
-        </group>
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+    <path android:fillColor="#FFE9F0FF" android:pathData="M0,512a512,512 0 1,0 1024,0a512,512 0 1,0 -1024,0z" />
+    <group>
+        <clip-path android:pathData="M0,280L466,572Q512,612 558,572L1024,280V1024H0z" />
+        <path android:pathData="M0,512a512,512 0 1,0 1024,0a512,512 0 1,0 -1024,0z">
+            <aapt:attr name="android:fillColor">
+                <gradient android:type="linear" android:startX="0" android:startY="280" android:endX="0" android:endY="1024"
+                    android:startColor="#FF4F8BFF" android:centerColor="#FF2F6BFF" android:endColor="#FF1B3F7A" />
+            </aapt:attr>
+        </path>
     </group>
 </vector>
