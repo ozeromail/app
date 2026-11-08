@@ -36,6 +36,8 @@
   "compose_subject": "Тема",
   "compose_text": "Текст письма",
   "compose_send": "Отправить",
+  "compose_expand": "Развернуть",
+  "compose_collapse": "Свернуть",
   "action_back": "Назад",
   "action_cancel": "Отмена",
   "message_reply": "Ответить",

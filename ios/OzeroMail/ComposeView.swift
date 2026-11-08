@@ -79,6 +79,10 @@ struct ComposeView: View {
     @State private var pageHeight: CGFloat = 0
     @State private var barHeight: CGFloat = 0
     @State private var headingInSight = true
+    /// Upright, the message on the whole screen for writing: To and Subject fold into the line
+    /// over the bar, the message being answered steps aside, and a new message's sheet goes up
+    /// to its full height. Pulled by its top edge or the button in the bar.
+    @State private var expanded = false
     /// The files the text shows as images, which go without a chip.
     @State private var shownFiles: [Int64] = []
 
@@ -168,7 +172,7 @@ struct ComposeView: View {
                     // One page, low by the thumb: the message being answered, To and Subject, the text.
                     // A longer text grows up and scrolls with the rest, with no frame of its own.
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 12) {
+                        VStack(alignment: .leading, spacing: expanded ? 0 : 12) {
                             if let original = composing.original {
                                 Original(mail: mail, message: original)
                                     // A tap puts the keyboard away, so the message gets the room to read.
@@ -176,8 +180,13 @@ struct ComposeView: View {
                                         focus = nil
                                         hideKeyboard()
                                     }
+                                    // Expanded, it only folds away, so it keeps what it loaded.
+                                    .frame(maxHeight: expanded ? 0 : nil, alignment: .top)
+                                    .clipped()
+                                    .allowsHitTesting(!expanded)
+                                    .accessibilityHidden(expanded)
                             }
-                            if !docked {
+                            if !docked && !expanded {
                                 heading.onGeometryChange(for: Bool.self) { proxy in
                                     // Most of it within the page's visible part.
                                     let frame = proxy.frame(in: .scrollView)
@@ -190,7 +199,7 @@ struct ComposeView: View {
                         }
                         .padding(.bottom, 20)
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { pageHeight = $0 }
-                        .frame(maxWidth: .infinity, minHeight: room, alignment: .bottom)
+                        .frame(maxWidth: .infinity, minHeight: room, alignment: expanded ? .top : .bottom)
                     }
                     .defaultScrollAnchor(.bottom)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { room = $0 }
@@ -199,7 +208,7 @@ struct ComposeView: View {
                     if docked {
                         Divider()
                         heading.padding(.vertical, 8)
-                    } else if !headingInSight {
+                    } else if !headingInSight || expanded {
                         Button {
                             unfolded = true
                         } label: {
@@ -224,6 +233,10 @@ struct ComposeView: View {
                         if hasDraft { deleteButton }
                         sender
                         Spacer(minLength: 0)
+                        BarIcon(
+                            icon: expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+                            label: expanded ? "compose_collapse" : "compose_expand"
+                        ) { expanded.toggle() }
                         attachButton
                         sendButton
                     }
@@ -234,9 +247,10 @@ struct ComposeView: View {
             }
         }
         .coordinateSpace(.named(recipientsSheet))
-        .presentationDetents(growing ? [fitted] : [.large])
+        .presentationDetents(growing ? [fitted, .large] : [.large], selection: detent)
         .paperSheet()
         .animation(.smooth, value: pageHeight)
+        .animation(.smooth, value: expanded)
         .onChange(of: editing) { _, now in
             if !now { unfolded = false }
         }
@@ -326,6 +340,13 @@ struct ComposeView: View {
     /// Upright, a new message is a sheet only as tall as what is written, over the keyboard,
     /// growing up as the text does; the inbox shows above it, so no empty page waits there.
     private var growing: Bool { !sideways && composing.original == nil }
+
+    /// The sheet's height: the full one when expanded; pulled there or back, it says so.
+    private var detent: Binding<PresentationDetent> {
+        Binding(
+            get: { growing && !expanded ? fitted : .large },
+            set: { if growing { expanded = $0 == .large } })
+    }
 
     private var fitted: PresentationDetent {
         .height(max(Self.leastHeight, (pageHeight + barHeight + Self.grabber).rounded()))

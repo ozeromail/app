@@ -264,15 +264,15 @@ private fun SheetBody(
             .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
             .padding(top = 10.dp, bottom = 16.dp),
     ) {
-        Box(
-            Modifier
-                .align(Alignment.CenterHorizontally)
-                .padding(bottom = 12.dp)
-                .size(36.dp, 4.dp)
-                .background(colors.surfaceContainerHighest, RoundedCornerShape(2.dp)),
-        )
+        SheetHandle(Modifier.align(Alignment.CenterHorizontally).padding(bottom = 12.dp))
         Column(Modifier.verticalScroll(rememberScrollState()), content = content)
     }
+}
+
+/** The short bar at the top of a sheet that shows it can be pulled. */
+@Composable
+fun SheetHandle(modifier: Modifier = Modifier) {
+    Box(modifier.size(36.dp, 4.dp).background(MaterialTheme.colorScheme.surfaceContainerHighest, RoundedCornerShape(2.dp)))
 }
 
 /** The dim over the screen under a sheet: a tap on it calls [onClose]. */
