@@ -2,6 +2,7 @@ package com.ozeromail.app
 
 import android.content.Context
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -9,12 +10,16 @@ import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -22,6 +27,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -29,12 +35,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -63,6 +71,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
@@ -73,6 +82,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -80,6 +90,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -90,9 +101,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.offset
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import java.io.IOException
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import uniffi.ozero_api.AccountItem
 import uniffi.ozero_api.CoreException
@@ -447,6 +460,19 @@ fun ComposeScreen(
     // Subject out of sight, a line over the bar names them, and a tap brings them down over it.
     var headingInSight by remember { mutableStateOf(true) }
     val docked = !sideways && unfolded
+    // Upright, the message can take the whole screen for writing: To and Subject fold into the
+    // line over the bar, and the message being answered steps aside. A new message's sheet goes
+    // up to the top with it.
+    // Not saved: a screen built again starts lowered, with To in sight to take the focus.
+    var expanded by remember { mutableStateOf(false) }
+    val lift by animateFloatAsState(if (expanded) 1f else 0f, Motion.calm(Motion.SCREEN), label = "lift")
+    // The page keeps its expanded shape until the sheet is all the way down, so they move together.
+    val open by remember { derivedStateOf { lift > 0f } }
+    val toggleExpanded = remember { { expanded = !expanded } }
+    // Back lowers it first.
+    BackHandler(enabled = expanded && !sideways) { expanded = false }
+    // To and Subject on the page, over the text.
+    val headingOnPage = !docked && !expanded
     LaunchedEffect(writingText) { if (writingText && !sideways) unfolded = false }
     // A forward or a new message starts where it is missing: who it goes to.
     val toFocus = remember { FocusRequester() }
@@ -632,24 +658,43 @@ fun ComposeScreen(
             val fitted = composing.inSheet
             Column(
                 if (fitted) {
+                    val top = WindowInsets.safeDrawing.only(WindowInsetsSides.Top)
                     // As tall as what is written, over the keyboard, growing up as the text does;
                     // the screen it came from shows above it, so no empty page waits there.
+                    // Expanded, it grows to the whole screen, under the status bar too.
                     Modifier
                         .align(Alignment.BottomCenter)
                         .widthIn(max = COMPOSE_MAX)
                         .fillMaxWidth()
-                        .statusBarsPadding()
-                        .padding(top = 12.dp)
-                        .clip(RoundedCornerShape(topStart = Radius.sheet, topEnd = Radius.sheet))
+                        .layout { measurable, constraints ->
+                            val gap = (top.getTop(this) + 12.dp.toPx()) * (1f - lift)
+                            val most = (constraints.maxHeight - gap).roundToInt()
+                            val placeable = measurable.measure(constraints.copy(minHeight = (most * lift).roundToInt(), maxHeight = most))
+                            layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+                        }
+                        .graphicsLayer {
+                            val corner = Radius.sheet * (1f - lift)
+                            shape = RoundedCornerShape(topStart = corner, topEnd = corner)
+                            clip = true
+                        }
                         .background(colors.background)
                         // A tap between its buttons stays on it, not on the dim that closes it.
                         .holdTouches()
-                        .safeDrawingPadding()
-                        .padding(top = 8.dp)
+                        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
+                        // Read while laid out, so the rising sheet does not recompose the screen.
+                        .layout { measurable, constraints ->
+                            val inset = (top.getTop(this) * lift).roundToInt()
+                            val placeable = measurable.measure(constraints.offset(vertical = -inset))
+                            layout(placeable.width, placeable.height + inset) { placeable.place(0, inset) }
+                        }
                 } else {
                     Modifier.fillMaxSize().safeDrawingPadding().imePadding()
                 },
+                // Lowering from the whole screen, the room it leaves is above it.
+                verticalArrangement = Arrangement.Bottom,
             ) {
+                // Pulled up by its top edge it takes the whole screen; pulled down it goes back.
+                if (fitted) Grabber(expanded, toggleExpanded)
                 // One page, low by the thumb: the message being answered, To and Subject, the text.
                 // A longer text grows up and scrolls with the rest, with no frame of its own.
                 val page = rememberScrollState()
@@ -666,11 +711,15 @@ fun ComposeScreen(
                         // As much room under the text as at its sides, so it never touches the bar.
                         Column(
                             Modifier.fillMaxWidth().heightIn(min = room).padding(bottom = Gap.screen),
-                            verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
+                            // Expanded, the text is a page from the top, with no room kept for the folded original.
+                            verticalArrangement = Arrangement.spacedBy(if (expanded) 0.dp else 12.dp, if (open) Alignment.Top else Alignment.Bottom),
                         ) {
-                            if (original != null) Original(mail, original, Modifier, readOriginal, whole = true)
+                            // Expanded, it only folds away, so it keeps what it loaded.
+                            if (original != null) {
+                                Original(mail, original, if (expanded) Modifier.height(0.dp).clipToBounds().clearAndSetSemantics {} else Modifier, readOriginal, whole = true)
+                            }
                             Column(Modifier.padding(horizontal = Gap.screen), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                if (!docked) {
+                                if (headingOnPage) {
                                     heading(Modifier.onGloballyPositioned { headingInSight = it.boundsInWindow().height >= it.size.height * 0.6f })
                                 }
                                 // A new message starts with room to write in, not one line under an empty page.
@@ -680,15 +729,15 @@ fun ComposeScreen(
                     }
                 }
                 if (fitted) {
-                    // Only as tall as what is written, up to the room there is.
-                    pageOf(0.dp, Modifier.weight(1f, fill = false).fillMaxWidth())
+                    // Only as tall as what is written, up to the room there is; expanded, all of it.
+                    pageOf(0.dp, Modifier.weight(1f, fill = open).fillMaxWidth())
                 } else {
                     BoxWithConstraints(Modifier.weight(1f)) { pageOf(maxHeight, Modifier.fillMaxSize()) }
                 }
                 if (docked) {
                     heading(Modifier.fillMaxWidth().hairline(colors.outlineVariant, top = true).padding(horizontal = Gap.screen, vertical = 8.dp))
                 } else {
-                    Reveal(summary.takeUnless { headingInSight }) {
+                    Reveal(summary.takeUnless { headingInSight && !expanded }) {
                         Row(
                             Modifier
                                 .padding(start = Gap.bar, end = Gap.bar, bottom = 6.dp)
@@ -720,6 +769,9 @@ fun ComposeScreen(
                     Box(Modifier.weight(1f)) {
                         if (from != null) Sender(from, alias, enabled = canPick, onClick = { picking = true })
                     }
+                    val (expandIcon, expandLabel) =
+                        if (expanded) R.drawable.ic_collapse to R.string.compose_collapse else R.drawable.ic_expand to R.string.compose_expand
+                    IconTile(expandIcon, stringResource(expandLabel), toggleExpanded, shape = CircleShape)
                     attachTile()
                     sendTile()
                 }
@@ -804,6 +856,49 @@ fun ComposeScreen(
 
 /** The text's room in a new message before anything is written. */
 private val WRITING_ROOM = 96.dp
+
+/**
+ * The top edge of a new message's sheet: pulled up it expands the sheet to the whole screen,
+ * pulled down it brings it back. The button in the bar does the same for one hand and TalkBack.
+ */
+@Composable
+private fun Grabber(expanded: Boolean, onToggle: () -> Unit) {
+    val density = LocalDensity.current
+    val reach = with(density) { 32.dp.toPx() }
+    val flick = with(density) { 800.dp.toPx() }
+    // As it was when the pull started: one pull changes it once.
+    var from by remember { mutableStateOf(expanded) }
+    var pulled by remember { mutableFloatStateOf(0f) }
+    var done by remember { mutableStateOf(false) }
+    // Up while lowered, down while expanded.
+    fun past(value: Float, limit: Float) = if (from) value > limit else value < -limit
+    fun toggle() {
+        done = true
+        onToggle()
+    }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(24.dp)
+            .draggable(
+                rememberDraggableState { delta ->
+                    pulled += delta
+                    // It goes as soon as the pull is clear, so the sheet follows the finger.
+                    if (!done && past(pulled, reach)) toggle()
+                },
+                Orientation.Vertical,
+                onDragStarted = {
+                    from = expanded
+                    pulled = 0f
+                    done = false
+                },
+                onDragStopped = { velocity -> if (!done && past(velocity, flick)) toggle() },
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        SheetHandle()
+    }
+}
 
 /** The message being answered, scrolling in the room it gets or [whole]; [onClick] gives it more. */
 @Composable

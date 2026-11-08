@@ -36,6 +36,8 @@
   "compose_subject": "Subject",
   "compose_text": "Message",
   "compose_send": "Send",
+  "compose_expand": "Expand",
+  "compose_collapse": "Collapse",
   "action_back": "Back",
   "action_cancel": "Cancel",
   "message_reply": "Reply",
