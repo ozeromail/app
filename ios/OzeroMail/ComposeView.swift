@@ -197,6 +197,8 @@ struct ComposeView: View {
                             // A new message starts with room to write in, not one line under an empty page.
                             writing(minHeight: growing ? Self.writingRoom : composing.original == nil ? room / 3 : 0)
                         }
+                        // Expanded, the text starts under the sheet's grabber, not behind it.
+                        .padding(.top, expanded ? Self.grabber + 8 : 0)
                         .padding(.bottom, 20)
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { pageHeight = $0 }
                         .frame(maxWidth: .infinity, minHeight: room, alignment: expanded ? .top : .bottom)

@@ -14,10 +14,9 @@ struct AccountsActions {
 }
 
 /// The mailboxes, for going places. It grows out of the accounts button and lies on paper, as
-/// on Android, without cards: all inboxes and each account's inbox as rows, the mailboxes of all
-/// accounts as tiles. Folders, one row, open the folders of every account as a page. The heading sits
-/// at the left, the settings and Edit at the right; Edit turns the
-/// rows into switches to move, an account's settings open from its ⓘ there, or by holding it.
+/// on Android, without cards: the same rows as beside the inbox on its side, with the settings
+/// as the last row. The heading sits at the left, Edit at the right; Edit turns the rows into
+/// switches to move, an account's settings open from its ⓘ there, or by holding it.
 struct AccountsSheet: View {
     let accounts: [AccountItem]
     let folders: [FolderItem]
@@ -29,62 +28,49 @@ struct AccountsSheet: View {
     @Binding var allBoxes: AllBoxes
     let actions: AccountsActions
     @State private var editing = false
-    @State private var showFolders = false
-    /// How tall the mailboxes are, so the sheet opens showing all of them, tiles too, with no drag.
+    /// How tall the mailboxes are, so the sheet opens showing all of them with no drag.
     @State private var fit: CGFloat = 0
-    /// The height the sheet is at: kept when the rows change, so opening Other folders after
-    /// dragging the sheet up leaves it up.
+    /// The height the sheet is at: kept when the rows change, so opening an account's folders
+    /// after dragging the sheet up leaves it up.
     @State private var detent: PresentationDetent = .medium
     @Environment(\.accountsZoom) private var zoom
 
     var body: some View {
-        NavigationStack {
-            List {
-                if editing {
-                    MailboxRows(
-                        accounts: accounts, folders: folders, mailbox: mailbox, drafts: drafts, unread: unread,
-                        allBoxes: $allBoxes, groups: $groups, actions: actions, editing: $editing, editInHeader: false,
-                        settings: false)
-                } else {
-                    home
-                }
-            }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            // Rows a thumb on the move hits, a little taller than the least the system allows.
-            .environment(\.defaultMinListRowHeight, 52)
-            .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                geometry.contentSize.height + geometry.contentInsets.top + geometry.contentInsets.bottom
-            } action: { _, height in
-                // A new set of heights makes the system pick among them again, so while the sheet is up
-                // at its full height the set stays as it is.
-                guard !editing && !showFolders, height != fit, detent != .large else { return }
-                fit = height
-                detent = .height(height)
-            }
-            // The heading lies on the paper at the left, as on Android, not in a bar; the title
-            // stays for the back button of the folders' page.
-            .navigationTitle("folders_title")
-            .toolbar(.hidden, for: .navigationBar)
-            .safeAreaInset(edge: .top, spacing: 0) { heading }
-            .navigationDestination(isPresented: $showFolders) {
-                FoldersPage(accounts: accounts, folders: folders, mailbox: mailbox, actions: actions)
-            }
+        List {
+            MailboxRows(
+                accounts: accounts, folders: folders, mailbox: mailbox, drafts: drafts, unread: unread,
+                allBoxes: $allBoxes, groups: $groups, actions: actions, editing: $editing, editInHeader: false)
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
         }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        // Rows a thumb on the move hits, a little taller than the least the system allows.
+        .environment(\.defaultMinListRowHeight, 52)
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            geometry.contentSize.height + geometry.contentInsets.top + geometry.contentInsets.bottom
+        } action: { _, height in
+            // A new set of heights makes the system pick among them again, so while the sheet is up
+            // at its full height the set stays as it is.
+            guard !editing, height != fit, detent != .large else { return }
+            fit = height
+            detent = .height(height)
+        }
+        // The heading lies on the paper at the left, as on Android, not in a bar.
+        .safeAreaInset(edge: .top, spacing: 0) { heading }
         .presentationDetents(fit > 0 ? [.height(fit), .large] : [.medium, .large], selection: $detent)
         .paperSheet()
         .presentationDragIndicator(.visible)
         .modifier(ZoomFrom(zoom: zoom))
     }
 
-    /// "Mailboxes" at the left; the settings and Edit at the right, Edit in the accent.
+    /// "Mailboxes" at the left; Edit at the right, in the accent.
     private var heading: some View {
         HStack(spacing: 4) {
             Text("folders_title")
                 .font(.heading)
                 .accessibilityAddTraits(.isHeader)
             Spacer()
-            BarIcon(icon: "gear", label: "settings_title", tint: .secondary, action: actions.onSettings)
             // With one account there is nothing to switch or move.
             if accounts.count > 1 {
                 Button(editing ? "action_done" : "action_edit") { withAnimation(.smooth) { editing.toggle() } }
@@ -98,127 +84,6 @@ struct AccountsSheet: View {
         .padding(.trailing, 12)
         .padding(.top, 14)
         .ink()
-    }
-
-    @ViewBuilder private var home: some View {
-        Group {
-            if drafts > 0 {
-                FolderRow(icon: "square.and.pencil", title: tr("folder_drafts"), open: false, count: drafts, action: actions.onDrafts)
-            }
-            if let one = accounts.first, accounts.count == 1 {
-                FolderRow(icon: "tray", title: tr("inbox_title"), open: mailbox == Mail.inbox, count: unread[one.id] ?? 0) {
-                    actions.onMailbox(Mail.inbox)
-                }
-                SignInAgain(account: one, actions: actions)
-                AccountFolders(account: one, folders: folders, mailbox: mailbox, actions: actions)
-            } else {
-                let inAll = accounts.filter(\.inAll)
-                FolderRow(title: tr("folder_all_inbox"), open: mailbox == Mail.inbox,
-                          count: inAll.reduce(0) { $0 + (unread[$1.id] ?? 0) }, lead: { StackedDots(accounts: inAll) }) {
-                    actions.onMailbox(Mail.inbox)
-                }
-                ForEach(accounts, id: \.id) { account in
-                    let box = folders.first { $0.accountId == account.id && $0.role == .inbox }.map { Mailbox.folder(id: $0.id) }
-                    FolderRow(title: account.name, open: box == mailbox, count: unread[account.id] ?? 0,
-                              lead: { AccountDot(color: account.tint) }) {
-                        if let box { actions.onMailbox(box) }
-                    }
-                    .contextMenu {
-                        Button { actions.onAccount(account) } label: { Label("account_settings", systemImage: "gear") }
-                    }
-                    SignInAgain(account: account, actions: actions)
-                }
-                // The folders, one row that goes to a page of them: each row here does one thing.
-                Button { showFolders = true } label: {
-                    HStack(spacing: afterSlot) {
-                        FolderIcon(name: "folder").frame(width: slot)
-                        Text("folders_accounts")
-                        Spacer()
-                        Image(systemName: "chevron.right").font(.smallStrong).foregroundStyle(.tertiary)
-                    }
-                    .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                let boxes = allBoxes.order.filter { allBoxes.shown.contains($0) && $0.listed(folders) }
-                if !boxes.isEmpty {
-                    Text("inbox_all_accounts")
-                        .font(.smallStrong)
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 14)
-                    BoxTiles(boxes: boxes, mailbox: mailbox, onMailbox: actions.onMailbox)
-                        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 16, trailing: 16))
-                }
-            }
-        }
-        .listRowBackground(Color.clear)
-        .listRowSeparator(.hidden)
-    }
-}
-
-/// The mailboxes of all accounts together, two to a row as Reminders shows its lists: a quiet
-/// icon over the name, colour only on the open one.
-private struct BoxTiles: View {
-    let boxes: [AllBox]
-    let mailbox: Mailbox
-    let onMailbox: (Mailbox) -> Void
-    @Environment(\.dynamicTypeSize) private var textSize
-
-    var body: some View {
-        // At the largest text sizes a name needs the whole width.
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: textSize.isAccessibilitySize ? 1 : 2)
-        LazyVGrid(columns: columns, spacing: 8) {
-            ForEach(boxes) { box in
-                let open = box.mailbox == mailbox
-                Button { onMailbox(box.mailbox) } label: {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Image(systemName: box.icon)
-                            .font(.row)
-                            .foregroundStyle(open ? Color.ozeroAccent : .secondary)
-                            .frame(width: 32, height: 32)
-                            .background(Color(uiColor: .systemBackground), in: .circle)
-                        Text(verbatim: box.shortTitle)
-                            .font(.textStrong)
-                            .foregroundStyle(open ? Color.ozeroAccent : .primary)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
-                    }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.primary.opacity(0.06), in: .rect(cornerRadius: 20))
-                    .contentShape(.rect(cornerRadius: 20))
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-}
-
-/// Each account's folders under its name, a page of the sheet.
-private struct FoldersPage: View {
-    let accounts: [AccountItem]
-    let folders: [FolderItem]
-    let mailbox: Mailbox
-    let actions: AccountsActions
-
-    var body: some View {
-        List {
-            ForEach(accounts, id: \.id) { account in
-                Section {
-                    AccountFolders(account: account, folders: folders, mailbox: mailbox, actions: actions)
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                } header: {
-                    Label { Text(verbatim: account.name) } icon: { AccountDot(color: account.tint) }
-                        .font(.smallStrong)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .listStyle(.plain)
-        // A page pushed in the sheet has the system's grey of its own; it stays on the paper.
-        .paperList()
-        .environment(\.defaultMinListRowHeight, 52)
-        .navigationTitle("folders_accounts")
     }
 }
 
@@ -270,9 +135,8 @@ extension EnvironmentValues {
 
 /// The drafts, if any, then all inboxes, which always shows, the inboxes of the accounts, each
 /// with its folders a tap on its arrow away, the mailboxes of all accounts together, and the
-/// settings. With one account, its inbox and folders.
-/// Rows of a list, in the accounts sheet and beside the inbox on its side. An account, when held,
-/// opens its settings.
+/// settings. With one account, its inbox and folders. Rows of a list, in the accounts sheet and
+/// beside the inbox on its side, as on Android. An account, when held, opens its settings.
 struct MailboxRows: View {
     let accounts: [AccountItem]
     let folders: [FolderItem]
@@ -286,8 +150,6 @@ struct MailboxRows: View {
     @Binding var editing: Bool
     /// Where there is no bar over the list for it, Edit sits in the inboxes' header.
     let editInHeader: Bool
-    /// The settings as the last row, where they are not in a bar.
-    var settings = true
 
     var body: some View {
         if drafts > 0 {
@@ -312,10 +174,10 @@ struct MailboxRows: View {
             inboxes
             allAccounts
         }
-        if settings {
-            Section {
-                FolderRow(icon: "gear", title: tr("settings_title"), open: false, action: actions.onSettings)
-            }
+        // Below a line, as quiet as a mailbox, as on Android.
+        Section {
+            FolderRow(icon: "gear", title: tr("settings_title"), open: false, action: actions.onSettings)
+                .listRowSeparator(.visible, edges: .top)
         }
     }
 
@@ -527,6 +389,7 @@ private struct PartHeader<Trailing: View>: View {
         }
     }
 
+    /// Small and quiet, as Android's captions.
     private var label: some View {
         HStack(spacing: 4) {
             Text(title)
@@ -536,6 +399,9 @@ private struct PartHeader<Trailing: View>: View {
                     .rotationEffect(.degrees(open ? 90 : 0))
             }
         }
+        .font(.smallStrong)
+        .foregroundStyle(Color.ozeroMuted)
+        .textCase(nil)
     }
 }
 
