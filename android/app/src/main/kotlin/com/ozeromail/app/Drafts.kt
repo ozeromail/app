@@ -194,7 +194,8 @@ fun DraftsScreen(mail: Mail, swipes: Swipes, snackbar: SnackbarHostState, onOpen
         Hero(stringResource(R.string.folder_drafts), null, onBack)
         LazyColumn(Modifier.weight(1f)) {
             if (drafts.isEmpty()) {
-                item { EmptyNote(R.drawable.ic_compose, stringResource(R.string.drafts_empty)) }
+                // The grey lake of every empty folder.
+                item { StillNote(stringResource(R.string.drafts_empty), grey = true) }
             }
             itemsIndexed(drafts, key = { _, it -> it.draft.id }) { index, row ->
                 Column(rowMove().graphicsLayer { translationX = pull.near(index) }) {

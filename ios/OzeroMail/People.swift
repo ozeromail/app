@@ -120,8 +120,9 @@ struct PersonMailView: View {
                 Text(error).font(.small).foregroundStyle(.secondary).listRowSeparator(.hidden)
             }
             if messages?.isEmpty == true {
-                ContentUnavailableView("inbox_empty", systemImage: "tray")
+                LakeNote(title: "inbox_empty", grey: true)
                     .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
             }
             ForEach(messages ?? [], id: \.id) { message in
                 OpenRow(model: model, message: message)
