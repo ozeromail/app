@@ -2249,9 +2249,11 @@ private fun Dock(
                                 Spacer(Modifier.width(Gap.inBar))
                             }
                         }
-                        Crossfade(shown, Modifier.weight(1f), Motion.calm(Motion.SMALL), label = "search or toast", contentKey = { it != null }) { data ->
-                            if (data != null) {
-                                ToastPill(data, onGo, Modifier.fillMaxWidth())
+                        // Kept while the toast fades out, so it leaves with its words.
+                        val last = rememberLast(shown)
+                        Crossfade(shown != null, Modifier.weight(1f), Motion.calm(Motion.SMALL), label = "search or toast") { toasting ->
+                            if (toasting && last != null) {
+                                ToastPill(last, onGo, Modifier.fillMaxWidth())
                             } else {
                                 Pill(stringResource(R.string.search_prompt), onSearch, Modifier.fillMaxWidth(), icon = R.drawable.ic_search)
                             }
