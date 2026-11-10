@@ -19,6 +19,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -348,6 +349,8 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
+    // One clock for every place the toasts show: the dock, the drafts and the message screen.
+    ToastClock(snackbar)
     // The report of the crash that closed the app last time, until the person decides.
     var crash by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
@@ -1982,35 +1985,35 @@ private fun InboxList(
                 }
             }
         }
-        Column(Modifier.align(Alignment.BottomCenter)) { BarText {
-            // Low on the screen, in reach of the thumb that swiped.
-            Toast(snackbar, onGo = onGo, modifier = Modifier.padding(bottom = 8.dp))
-            // Quiet words over the dock, centred, with nothing around them; they only fade.
-            val shownStatus = rememberLast(status)
-            AnimatedVisibility(status != null, enter = fadeIn(Motion.calm(Motion.NOTE)), exit = fadeOut(Motion.calm(Motion.SMALL))) {
-                shownStatus?.let {
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = Gap.bar).heightIn(min = 34.dp),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        val text = when {
-                            it.text == R.string.status_offline_account -> stringResource(it.text, it.account.orEmpty())
-                            it.account != null -> stringResource(R.string.status_account_failed, it.account, stringResource(it.text))
-                            else -> stringResource(it.text)
-                        }
-                        Text(
-                            text,
-                            color = colors.onSurfaceVariant,
-                            style = Type.Caption,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.weight(1f, fill = false).padding(vertical = 8.dp),
-                        )
-                        if (it.retry) TextButton(onClick = onSync) { Text(stringResource(R.string.status_try_again)) }
+        Column(Modifier.align(Alignment.BottomCenter)) { BarText { CompositionLocalProvider(LocalGlass provides haze) {
+            // Low on the screen, in reach of the thumb that swiped: in the dock in place of search,
+            // as on iOS, or where the dock has no search, floating over it on the same glass.
+            val toastInDock = !wide && mode < 0.5f
+            if (!toastInDock) Toast(snackbar, onGo = onGo, modifier = Modifier.padding(bottom = 8.dp))
+            // Quiet words over the dock, centred, with nothing around them. It opens and closes as
+            // it fades, so what is above it moves instead of jumping.
+            Reveal(status) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = Gap.bar).heightIn(min = 34.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val text = when {
+                        it.text == R.string.status_offline_account -> stringResource(it.text, it.account.orEmpty())
+                        it.account != null -> stringResource(R.string.status_account_failed, it.account, stringResource(it.text))
+                        else -> stringResource(it.text)
                     }
+                    Text(
+                        text,
+                        color = colors.onSurfaceVariant,
+                        style = Type.Caption,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.weight(1f, fill = false).padding(vertical = 8.dp),
+                    )
+                    if (it.retry) TextButton(onClick = onSync) { Text(stringResource(R.string.status_try_again)) }
                 }
             }
-            CompositionLocalProvider(LocalGlass provides haze) { Dock(
+            Dock(
                 modifier = Modifier.onSizeChanged { dockHeight = with(density) { it.height.toDp() } },
                 tab = tab,
                 // With every tab empty there is nothing to switch to: one lake, no tabs.
@@ -2023,6 +2026,8 @@ private fun InboxList(
                 lift = lift,
                 onSearch = onSearch,
                 onCompose = onCompose,
+                toast = snackbar.takeIf { toastInDock },
+                onGo = onGo,
                 empty = empty.takeIf { messages.isNotEmpty() && !choosing },
                 choosing = mode,
                 choiceBar = {
@@ -2039,8 +2044,8 @@ private fun InboxList(
                     )
                 },
                 wide = wide,
-            ) }
-        } }
+            )
+        } } }
         // The rarer ways to choose, in a sheet like every menu.
         Sheet(visible = more, onClose = { more = false }) {
             @Composable
@@ -2163,6 +2168,9 @@ private fun Dock(
     lift: Lift,
     onSearch: () -> Unit,
     onCompose: () -> Unit,
+    /** The toasts, shown in place of search; null where they float over the dock instead. */
+    toast: SnackbarHostState?,
+    onGo: (Mailbox) -> Unit,
     empty: Pair<Int, () -> Unit>?,
     /** From 0 to 1 as choosing begins: [choiceBar] takes the place of search. */
     choosing: Float,
@@ -2219,7 +2227,6 @@ private fun Dock(
                         .then(if (choosing > 0.5f) Modifier.blockTouches() else Modifier)
                         .padding(horizontal = Gap.bar),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
                 ) {
                     if (wide) {
                         val fill = Modifier.weight(1f)
@@ -2229,8 +2236,27 @@ private fun Dock(
                             else -> Spacer(fill)
                         }
                     } else {
-                        AccountsButton(accounts, onAccounts)
-                        Pill(stringResource(R.string.search_prompt), onSearch, Modifier.weight(1f), icon = R.drawable.ic_search)
+                        val shown = toast?.let { shownToast(it) }
+                        // For a moment after a move the toast takes the place of search, as Undo Send
+                        // in Apple's Mail, and the accounts give it their room.
+                        AnimatedVisibility(
+                            shown == null,
+                            enter = expandHorizontally(Motion.calm(Motion.NOTE), Alignment.Start) + fadeIn(Motion.calm(Motion.SMALL)),
+                            exit = shrinkHorizontally(Motion.calm(Motion.NOTE), Alignment.Start) + fadeOut(Motion.calm(Motion.QUICK)),
+                        ) {
+                            Row {
+                                AccountsButton(accounts, onAccounts)
+                                Spacer(Modifier.width(Gap.inBar))
+                            }
+                        }
+                        Crossfade(shown, Modifier.weight(1f), Motion.calm(Motion.SMALL), label = "search or toast", contentKey = { it != null }) { data ->
+                            if (data != null) {
+                                ToastPill(data, onGo, Modifier.fillMaxWidth())
+                            } else {
+                                Pill(stringResource(R.string.search_prompt), onSearch, Modifier.fillMaxWidth(), icon = R.drawable.ic_search)
+                            }
+                        }
+                        Spacer(Modifier.width(Gap.inBar))
                         ComposeTile(onCompose)
                     }
                 }

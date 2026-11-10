@@ -601,7 +601,11 @@ private struct Dock: View {
                         if model.tabbed { InboxTabs(model: model) } else { EmptyFolderButton(model: model) }
                     } else {
                         HStack(spacing: 10) {
-                            AccountsButton(accounts: model.scope) { model.accountsOpen = true }
+                            // The accounts give a toast their room for the moment it shows.
+                            if model.toast == nil {
+                                AccountsButton(accounts: model.scope) { model.accountsOpen = true }
+                                    .transition(.scale(scale: 0.6, anchor: .leading).combined(with: .opacity))
+                            }
                             // For a moment after a move, Undo takes the place of search, as Apple's
                             // Mail shows Undo Send in its bar.
                             if let toast = model.toast {
