@@ -7,25 +7,34 @@ import android.net.Uri
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -34,7 +43,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarData
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
@@ -46,6 +55,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -58,8 +68,10 @@ import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalAccessibilityManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -271,70 +283,166 @@ private const val TOAST_SHORT_MS = 4_000L
 private const val TOAST_LONG_MS = 10_000L
 
 /**
- * The undo toast: dark, rounded, low on the screen; it rises a little and fades in. A
- * [MovedToast] also offers to show the folder, through [onGo].
+ * Closes a toast without Undo once its time is over, as Material's own host would; [offerUndo]
+ * closes its own. One for each [SnackbarHostState], beside it.
  */
 @Composable
-fun Toast(state: SnackbarHostState, onGo: (Mailbox) -> Unit, modifier: Modifier = Modifier) {
+fun ToastClock(state: SnackbarHostState) {
+    val data = state.currentSnackbarData ?: return
+    val shortFor = when (data.visuals.duration) {
+        SnackbarDuration.Short -> TOAST_SHORT_MS
+        SnackbarDuration.Long -> TOAST_LONG_MS
+        SnackbarDuration.Indefinite -> null
+    } ?: return
+    // Longer where the person asked the phone for more time to read and act.
+    val access = LocalAccessibilityManager.current
+    LaunchedEffect(data) {
+        delay(access?.calculateRecommendedTimeoutMillis(shortFor, containsText = true, containsControls = data.visuals.actionLabel != null) ?: shortFor)
+        data.dismiss()
+    }
+}
+
+/**
+ * The toast to show: the current one, or for a moment after it closes still the last, so a toast
+ * that takes the place of another changes its words instead of closing and opening again.
+ */
+@Composable
+fun shownToast(state: SnackbarHostState): SnackbarData? {
+    val data = state.currentSnackbarData
+    var shown by remember { mutableStateOf(data) }
+    LaunchedEffect(data) {
+        if (data == null) delay(TOAST_GAP_MS)
+        shown = data
+    }
+    return shown
+}
+
+/** Between one toast closing and the next one in its place, which a frame may fall into. */
+private const val TOAST_GAP_MS = 80L
+
+/**
+ * A toast as a glass capsule, one line: the words, and Undo at the end. Tapping the words of a
+ * [MovedToast] shows its folder. A new toast changes the words in place.
+ */
+@Composable
+fun ToastPill(data: SnackbarData, onGo: (Mailbox) -> Unit, modifier: Modifier = Modifier, height: Dp = 48.dp) {
     val colors = MaterialTheme.colorScheme
-    val rise = with(LocalDensity.current) { 16.dp.roundToPx() }
-    AnimatedContent(
-        state.currentSnackbarData,
-        modifier,
-        transitionSpec = {
-            val enter = fadeIn(Motion.calm(Motion.SMALL)) + slideInVertically(Motion.calm(Motion.NOTE)) { rise }
-            val exit = fadeOut(Motion.calm(Motion.SMALL)) + slideOutVertically(Motion.calm(Motion.NOTE)) { rise }
-            (enter togetherWith exit).using(SizeTransform(clip = false) { _, _ -> Motion.calm(Motion.NOTE) })
-        },
-        label = "toast",
-    ) { data ->
-        if (data != null) {
-            // Material's own host times its toasts out; this one does it itself.
-            val shortFor = when (data.visuals.duration) {
-                SnackbarDuration.Short -> TOAST_SHORT_MS
-                SnackbarDuration.Long -> TOAST_LONG_MS
-                SnackbarDuration.Indefinite -> null
+    Box(
+        modifier
+            .heightIn(min = height)
+            // Round at the ends as a capsule, and still so with the words on two lines.
+            .floatingGlass(LocalGlass.current, colors, RoundedCornerShape(height / 2))
+            .semantics { liveRegion = LiveRegionMode.Polite },
+    ) {
+        AnimatedContent(
+            data,
+            transitionSpec = { fadeIn(Motion.calm(Motion.SMALL)) togetherWith fadeOut(Motion.calm(Motion.QUICK)) },
+            label = "toast words",
+        ) { shown ->
+            Row(Modifier.fillMaxWidth().heightIn(min = height).height(IntrinsicSize.Min).padding(end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                ToastWords(shown, onGo)
             }
-            if (shortFor != null) {
-                LaunchedEffect(data) {
-                    delay(shortFor)
-                    data.dismiss()
-                }
-            }
-            val moved = data.visuals as? MovedToast
-            val go = moved?.go
-            Snackbar(
-                modifier = Modifier.padding(horizontal = Gap.bar).semantics { liveRegion = LiveRegionMode.Polite },
-                action = {
-                    Row {
-                        if (go != null) {
-                            TextButton(
-                                onClick = {
-                                    data.dismiss()
-                                    onGo(go)
-                                },
-                            ) { Text(stringResource(R.string.action_show), color = colors.inversePrimary) }
-                        }
-                        moved?.extra?.let { extra ->
-                            TextButton(
-                                onClick = {
-                                    data.dismiss()
-                                    extra.run()
-                                },
-                            ) { Text(extra.label, color = colors.inversePrimary) }
-                        }
-                        data.visuals.actionLabel?.let { label ->
-                            TextButton(onClick = data::performAction) { Text(label, color = colors.inversePrimary) }
-                        }
-                    }
-                },
-                shape = RoundedCornerShape(Radius.medium),
-                containerColor = colors.inverseSurface,
-                contentColor = colors.inverseOnSurface,
-            ) { Text(data.visuals.message) }
         }
     }
 }
+
+@Composable
+private fun RowScope.ToastWords(data: SnackbarData, onGo: (Mailbox) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val moved = data.visuals as? MovedToast
+    val go = moved?.go
+    Row(
+        Modifier
+            .weight(1f)
+            .fillMaxHeight()
+            .then(
+                if (go != null) {
+                    Modifier.clickable(onClickLabel = stringResource(R.string.action_show), role = Role.Button) {
+                        data.dismiss()
+                        onGo(go)
+                    }
+                } else {
+                    Modifier
+                },
+            )
+            .padding(start = 18.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(data.visuals.message, Modifier.weight(1f, fill = false).padding(vertical = 4.dp), style = Type.Text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        if (go != null) Glyph(R.drawable.ic_next, null, colors.onSurfaceVariant, size = 16.dp)
+    }
+    moved?.extra?.let { extra ->
+        ToastButton(extra.label) {
+            data.dismiss()
+            extra.run()
+        }
+    }
+    data.visuals.actionLabel?.let { ToastButton(it, strong = true, onClick = data::performAction) }
+}
+
+@Composable
+private fun ToastButton(label: String, strong: Boolean = false, onClick: () -> Unit) {
+    TextButton(onClick, contentPadding = PaddingValues(horizontal = 12.dp)) {
+        Text(
+            label,
+            color = MaterialTheme.colorScheme.primary,
+            style = Type.Text,
+            fontWeight = if (strong) Weight.SemiBold else Weight.Medium,
+            maxLines = 1,
+        )
+    }
+}
+
+/**
+ * The toast where the dock has no place for it, as on the message screen: a [ToastPill] low on
+ * the screen that rises from below and sinks back, and goes when pulled down.
+ */
+@Composable
+fun Toast(state: SnackbarHostState, onGo: (Mailbox) -> Unit, modifier: Modifier = Modifier) {
+    val data = shownToast(state)
+    val last = rememberLast(data)
+    val density = LocalDensity.current
+    val rise = with(density) { 16.dp.roundToPx() }
+    AnimatedVisibility(
+        data != null,
+        modifier,
+        enter = fadeIn(Motion.calm(Motion.SMALL)) + slideInVertically(Motion.calm(Motion.NOTE)) { rise } +
+            scaleIn(Motion.calm(Motion.NOTE), initialScale = TOAST_FAR_SCALE),
+        exit = fadeOut(Motion.calm(Motion.SMALL)) + slideOutVertically(Motion.calm(Motion.NOTE)) { rise } +
+            scaleOut(Motion.calm(Motion.NOTE), targetScale = TOAST_FAR_SCALE),
+    ) {
+        last?.let { shown ->
+            // Pulled down past a little way, it goes; let go sooner, it springs back.
+            var pull by remember(shown) { mutableFloatStateOf(0f) }
+            val far = with(density) { 28.dp.toPx() }
+            ToastPill(
+                shown,
+                onGo,
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Gap.bar)
+                    .graphicsLayer {
+                        translationY = pull
+                        alpha = 1f - (pull / (far * 3)).coerceIn(0f, 0.6f)
+                    }
+                    .draggable(
+                        rememberDraggableState { delta -> pull = (pull + delta).coerceAtLeast(0f) },
+                        Orientation.Vertical,
+                        onDragStopped = { velocity ->
+                            if (pull > far || velocity > TOAST_FLING) shown.dismiss() else animate(pull, 0f, animationSpec = Motion.settle()) { value, _ -> pull = value }
+                        },
+                    ),
+            )
+        }
+    }
+}
+
+/** How small a toast is as it rises and as it sinks back. */
+private const val TOAST_FAR_SCALE = 0.96f
+
+/** A downward fling that sends a toast away however short the pull, in pixels a second. */
+private const val TOAST_FLING = 1_000f
 
 /**
  * Shows [content] for [value] while there is one: it opens and fades in, then closes with

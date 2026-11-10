@@ -184,6 +184,8 @@ fun MessageScreen(
     val context = LocalContext.current
     val own = remember { SnackbarHostState() }
     val snackbar = toasts ?: own
+    // Only this screen shows its own toasts; the list times its own.
+    ToastClock(own)
     val files = remember(message.id) { Files(mail, context, scope, snackbar) }
     var thread by remember(message.id) { mutableStateOf(listOf(message)) }
     var error by remember(message.id) { mutableStateOf<Int?>(null) }

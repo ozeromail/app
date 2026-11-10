@@ -135,6 +135,15 @@ fun Modifier.glass(state: HazeState?, colors: ColorScheme, shape: Shape): Modifi
         .border(1.dp, if (colors.night) colors.lit else colors.outlineVariant.copy(alpha = 0.8f), shape)
 }
 
+/** [glass] where a list under it shows through; elsewhere a card of the paper floating on its own shadow. */
+fun Modifier.floatingGlass(state: HazeState?, colors: ColorScheme, shape: Shape): Modifier {
+    if (state != null) return glass(state, colors, shape)
+    return floating(colors, shape)
+        .clip(shape)
+        .background(if (colors.night) colors.surfaceContainerHigh else colors.background)
+        .border(1.dp, if (colors.night) colors.lit else colors.outlineVariant, shape)
+}
+
 /** A bar across the screen over the list, such as the compact title: frosted as [glass], edge to edge, faded by [alpha]. */
 fun Modifier.frosted(state: HazeState, colors: ColorScheme, alpha: () -> Float = { 1f }): Modifier =
     hazeEffect(state, frost(colors, colors.background.copy(alpha = 0.72f))) { this.alpha = alpha() }
