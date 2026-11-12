@@ -147,6 +147,8 @@ pub struct MessageRow {
     pub can_unsubscribe: bool,
     /// The meeting it invites to, once its body is saved.
     pub invite: Option<crate::InviteRow>,
+    /// Its `To`, for a list row of mail the user wrote.
+    pub to: Vec<Address>,
 }
 
 /// Someone who wrote in a conversation.
