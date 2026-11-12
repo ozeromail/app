@@ -649,6 +649,8 @@ private class PdfDocument(private val renderer: PdfRenderer, val sizes: List<Int
             }
         } catch (e: SecurityException) {
             null
+        } catch (e: IOException) {
+            null
         }
     }
 }
