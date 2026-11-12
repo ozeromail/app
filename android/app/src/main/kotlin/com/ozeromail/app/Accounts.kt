@@ -372,7 +372,6 @@ private fun AccountFolders(account: AccountItem, state: MailboxesState, actions:
             fontWeight = Weight.Regular,
             modifier = Modifier.weight(1f),
         )
-        if (!all) Text((own.size - shown.size).toString(), color = colors.onSurfaceVariant, style = Type.Caption)
     }
     // Until the first folder is pinned.
     if (all && own.none { it.pinned }) {
