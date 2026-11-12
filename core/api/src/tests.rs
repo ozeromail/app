@@ -1622,3 +1622,22 @@ fn moves_chosen_messages_only_where_all_of_them_can_go() {
         1
     );
 }
+
+#[test]
+fn own_mail_names_who_it_is_to() {
+    let person = |name: Option<&str>, email: &str| Address {
+        name: name.map(Into::into),
+        email: email.into(),
+    };
+    assert_eq!(
+        to_names(&[person(Some("Anna Lee"), "anna@x.com")]),
+        ["Anna Lee"]
+    );
+    assert_eq!(
+        to_names(&[
+            person(Some("Lee, Anna"), "anna@x.com"),
+            person(None, "bob@y.org")
+        ]),
+        ["Anna", "bob"]
+    );
+}

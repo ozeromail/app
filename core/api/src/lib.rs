@@ -2368,6 +2368,11 @@ impl Core {
                         sender.name = name.clone();
                     }
                 }
+                for person in &mut row.to {
+                    if let Some(name) = names.get(&person.email.to_lowercase()) {
+                        person.name = Some(name.clone());
+                    }
+                }
                 let contact_name = names.get(&row.from.email.to_lowercase()).cloned();
                 MessageItem {
                     contact_name,
@@ -4042,12 +4047,11 @@ pub struct AccountMark {
 
 impl From<&Account> for AccountMark {
     fn from(a: &Account) -> Self {
-        // A tag beside a row has room for a word: an account called by its address shows the part
-        // before the @, "work" rather than "work@e…".
-        let name = a.name();
-        let name = match name.split_once('@') {
-            Some((local, _)) if !local.is_empty() && !name.contains(' ') => local,
-            _ => name,
+        // A tag beside a row has room for a word: an account with no name of its own shows the
+        // part of its address before the @, "work" rather than "work@e…".
+        let name = match a.label.trim() {
+            "" => a.email.split('@').next().unwrap_or(&a.email),
+            label => label,
         };
         Self {
             name: name.to_owned(),
@@ -4232,6 +4236,18 @@ fn first_name(name: &str) -> &str {
     match given.split(' ').next() {
         Some(first) if !first.is_empty() => first,
         _ => name,
+    }
+}
+
+/// The people a row of the user's own mail is to: one by their whole name, several by their first.
+fn to_names(to: &[Address]) -> Vec<String> {
+    let shown = |a: &Address| shown_name(a.name.as_deref()).unwrap_or(&a.email).to_owned();
+    match to {
+        [one] => vec![shown(one)],
+        _ => to
+            .iter()
+            .map(|a| first_name(&shown(a)).to_owned())
+            .collect(),
     }
 }
 
@@ -4729,13 +4745,16 @@ pub struct MessageItem {
     pub sending: bool,
     /// The meeting it invites to, once its body is downloaded.
     pub invite: Option<InviteMark>,
-    /// Who it is to, each by name or else address: a row of mail the user wrote names them.
+    /// For mail only the user wrote, who it is to, as its row names them: one person by their
+    /// whole name, several by their first ones. Empty for other mail.
     pub to: Vec<String>,
 }
 
 impl From<MessageRow> for MessageItem {
     fn from(row: MessageRow) -> Self {
         let allows = |action| !row.sending && row.role.allows(action);
+        let mine = row.role == FolderRole::Sent
+            || (!row.senders.is_empty() && row.senders.iter().all(|s| s.me));
         Self {
             id: row.id.0,
             account_id: row.account_id.0,
@@ -4763,11 +4782,7 @@ impl From<MessageRow> for MessageItem {
             attachments: row.attachments,
             sending: row.sending,
             invite: row.invite.map(InviteMark::from),
-            to: row
-                .to
-                .into_iter()
-                .map(|a| a.name.filter(|n| !n.trim().is_empty()).unwrap_or(a.email))
-                .collect(),
+            to: if mine { to_names(&row.to) } else { Vec::new() },
         }
     }
 }

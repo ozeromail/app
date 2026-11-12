@@ -107,41 +107,39 @@ impl MessageParser for MimeParser {
     }
 }
 
-/// The message's attachments but the images its HTML shows by `cid:`.
 /// The text of an HTML part. mail-parser ends a line only at `<br>` and `</p>`, so the words of
 /// headings, divs, list items and cells would run together: "TitleFive places".
 fn html_text(html: &str) -> String {
-    const LINES: [&str; 14] = [
-        "</h1",
-        "</h2",
-        "</h3",
-        "</h4",
-        "</h5",
-        "</h6",
-        "</div",
-        "</li",
-        "</tr",
-        "</table",
-        "</blockquote",
-        "</ul",
-        "</ol",
-        "<hr",
+    // What goes before each tag: a line break, or a space between cells and images.
+    const MARKS: &[(&str, &str)] = &[
+        ("</h1", "<br>"),
+        ("</h2", "<br>"),
+        ("</h3", "<br>"),
+        ("</h4", "<br>"),
+        ("</h5", "<br>"),
+        ("</h6", "<br>"),
+        ("</div", "<br>"),
+        ("</li", "<br>"),
+        ("</tr", "<br>"),
+        ("</table", "<br>"),
+        ("</blockquote", "<br>"),
+        ("</ul", "<br>"),
+        ("</ol", "<br>"),
+        ("<hr", "<br>"),
+        ("</td", " "),
+        ("</th", " "),
+        ("<img", " "),
     ];
     let lower = html.to_ascii_lowercase();
     let mut marked = String::with_capacity(html.len() + 64);
     let mut last = 0;
     for (at, _) in lower.match_indices('<') {
         let tag = &lower[at..];
-        let ends = |name: &str| {
-            tag.starts_with(name)
-                && tag[name.len()..]
-                    .starts_with(|c: char| c == '>' || c == '/' || c.is_ascii_whitespace())
-        };
-        let mark = if LINES.iter().any(|name| ends(name)) {
-            "<br>"
-        } else if ends("</td") || ends("</th") || ends("<img") {
-            " "
-        } else {
+        let Some((_, mark)) = MARKS.iter().find(|(name, _)| {
+            tag.strip_prefix(name).is_some_and(|rest| {
+                rest.starts_with(|c: char| c == '>' || c == '/' || c.is_ascii_whitespace())
+            })
+        }) else {
             continue;
         };
         marked.push_str(&html[last..at]);
@@ -167,6 +165,7 @@ fn html_text(html: &str) -> String {
     out
 }
 
+/// The message's attachments but the images its HTML shows by `cid:`.
 fn attachments(message: &Message<'_>, html: &str) -> Vec<Attachment> {
     if message.attachments.is_empty() {
         return vec![];

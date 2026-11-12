@@ -2707,11 +2707,7 @@ val MessageItem.mailSender: String
  */
 @Composable
 fun MessageItem.participants(): String {
-    val mine = sent || senders.singleOrNull()?.me == true
-    if (senders.size < 2 && mine && to.isNotEmpty()) {
-        val names = if (to.size == 1) to else to.map { it.substringBefore(' ') }
-        return stringResource(R.string.message_to_line, joinNames(names))
-    }
+    if (to.isNotEmpty()) return stringResource(R.string.message_to_line, joinNames(to))
     if (senders.size < 2) return sender
     val me = stringResource(R.string.message_me)
     return senders.joinToString(", ") { if (it.me) me else it.first }
