@@ -165,7 +165,6 @@ class TourTest : TestMail() {
         settle(60)
     }
 
-    @Ignore("seen in an earlier run")
     @Test
     fun a_inbox() {
         group = "inbox"
@@ -197,6 +196,7 @@ class TourTest : TestMail() {
             home()
         }
         Tour.shell("cmd uimode night no")
+        step("sent") { panel(); tapExact("Sent"); shot("sent", 90); home() }
     }
 
     @Test
@@ -357,7 +357,6 @@ class TourTest : TestMail() {
         }
     }
 
-    @Ignore("seen in an earlier run")
     @Test
     fun h_twoAccounts() {
         group = "two"

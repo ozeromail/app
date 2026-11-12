@@ -74,7 +74,7 @@ jobs:
           # The tests are about animations: they must run.
           disable-animations: false
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
-          script: tools/android-ui-test.sh -Pandroid.testInstrumentationRunnerArguments.class=com.ozeromail.app.TourTest,com.ozeromail.app.TourSignInTest
+          script: tools/android-ui-test.sh -Pandroid.testInstrumentationRunnerArguments.class=com.ozeromail.app.TourTest#a_inbox,com.ozeromail.app.TourTest#h_twoAccounts,com.ozeromail.app.TourSignInTest
       - name: Keep the films
         if: always()
         uses: actions/upload-artifact@v4
