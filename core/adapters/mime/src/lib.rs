@@ -72,10 +72,15 @@ impl MessageParser for MimeParser {
             // The card shows the invitation; its files would only repeat it.
             files.retain(|f| !parts.contains(&f.part));
         }
-        let text = message
-            .body_text(0)
-            .map(|t| t.trim_end().to_owned())
-            .unwrap_or_default();
+        // An HTML-only message gets its text from the HTML, with its blocks kept apart.
+        let text = match (message.text_part(0).map(|p| &p.body), &html) {
+            (Some(PartType::Text(text)), _) => text.trim_end().to_owned(),
+            (_, Some(html)) => html_text(html),
+            _ => message
+                .body_text(0)
+                .map(|t| t.trim_end().to_owned())
+                .unwrap_or_default(),
+        };
         Body {
             // A message that is only an invitation has no text but the calendar's own.
             text: if text.starts_with("BEGIN:VCALENDAR") {
@@ -103,6 +108,65 @@ impl MessageParser for MimeParser {
 }
 
 /// The message's attachments but the images its HTML shows by `cid:`.
+/// The text of an HTML part. mail-parser ends a line only at `<br>` and `</p>`, so the words of
+/// headings, divs, list items and cells would run together: "TitleFive places".
+fn html_text(html: &str) -> String {
+    const LINES: [&str; 14] = [
+        "</h1",
+        "</h2",
+        "</h3",
+        "</h4",
+        "</h5",
+        "</h6",
+        "</div",
+        "</li",
+        "</tr",
+        "</table",
+        "</blockquote",
+        "</ul",
+        "</ol",
+        "<hr",
+    ];
+    let lower = html.to_ascii_lowercase();
+    let mut marked = String::with_capacity(html.len() + 64);
+    let mut last = 0;
+    for (at, _) in lower.match_indices('<') {
+        let tag = &lower[at..];
+        let ends = |name: &str| {
+            tag.starts_with(name)
+                && tag[name.len()..]
+                    .starts_with(|c: char| c == '>' || c == '/' || c.is_ascii_whitespace())
+        };
+        let mark = if LINES.iter().any(|name| ends(name)) {
+            "<br>"
+        } else if ends("</td") || ends("</th") || ends("<img") {
+            " "
+        } else {
+            continue;
+        };
+        marked.push_str(&html[last..at]);
+        marked.push_str(mark);
+        last = at;
+    }
+    marked.push_str(&html[last..]);
+    let text = mail_parser::decoders::html::html_to_text(&marked);
+    // One blank line at most between blocks, none at the ends.
+    let mut out = String::with_capacity(text.len());
+    let mut blank = 0;
+    for line in text.lines().map(str::trim) {
+        if line.is_empty() {
+            blank += 1;
+            continue;
+        }
+        if !out.is_empty() {
+            out.push_str(if blank > 0 { "\n\n" } else { "\n" });
+        }
+        out.push_str(line);
+        blank = 0;
+    }
+    out
+}
+
 fn attachments(message: &Message<'_>, html: &str) -> Vec<Attachment> {
     if message.attachments.is_empty() {
         return vec![];
@@ -381,6 +445,19 @@ Content-Disposition: attachment; filename=agenda.pdf\r\n\r\nPDF\r\n\
             .parse_body(b"Content-Type: text/html\r\n\r\n<p>Hello <b>there</b></p>");
         assert_eq!(body.text, "Hello there");
         assert_eq!(body.html.as_deref(), Some("<p>Hello <b>there</b></p>"));
+    }
+
+    #[test]
+    fn keeps_html_blocks_apart() {
+        let body = MimeParser::default().parse_body(
+            b"Content-Type: text/html\r\n\r\n<table><tr><td><h1>Title</h1><img src=x>\
+              <p>Five places</p><a href=y>Read more</a></td><td>Side</td></tr></table>\
+              <div>A</div><DIV class=x>B</DIV><ul><li>x</li><li>y</li></ul>",
+        );
+        assert_eq!(
+            body.text,
+            "Title\nFive places\nRead more Side\n\nA\nB\nx\ny"
+        );
     }
 
     #[test]
