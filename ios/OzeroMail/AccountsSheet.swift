@@ -322,7 +322,6 @@ private struct AccountFolders: View {
                     Image(systemName: all ? "chevron.up" : "ellipsis").frame(width: slot)
                     Text(all ? "folders_pinned_only" : "folders_other")
                     Spacer()
-                    if !all { Text(verbatim: "\(own.count - shown.count)").font(.small) }
                 }
                 .foregroundStyle(.secondary)
                 .padding(.leading, indent(depth))
