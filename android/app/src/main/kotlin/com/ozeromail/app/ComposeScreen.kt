@@ -118,6 +118,7 @@ import uniffi.ozero_api.ImageSize
 import uniffi.ozero_api.MessageItem
 import uniffi.ozero_api.RecentFileItem
 import uniffi.ozero_api.RichBlock
+import uniffi.ozero_api.canSendTo
 import uniffi.ozero_api.fileLimit
 import uniffi.ozero_api.richBlocks
 import uniffi.ozero_api.richChangeImage
@@ -591,8 +592,9 @@ fun ComposeScreen(
             Text(stringResource(it), color = colors.error, modifier = Modifier.padding(horizontal = Gap.screen, vertical = 8.dp))
         }
     }
-    // The files still being read go with it, so it waits for them; and for someone to send to.
-    val ready = !busy && from != null && adding.isEmpty() && !to.isBlank()
+    // The files still being read go with it, so it waits for them; and for addresses to send to.
+    val addressed = remember(to, cc, bcc) { canSendTo(to, cc, bcc) }
+    val ready = !busy && from != null && adding.isEmpty() && addressed
     val attachTile = @Composable {
         IconTile(R.drawable.ic_attach, stringResource(R.string.compose_attach), { attaching = true }, shape = CircleShape)
     }

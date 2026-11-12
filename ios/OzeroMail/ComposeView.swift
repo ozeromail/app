@@ -601,7 +601,7 @@ struct ComposeView: View {
     }
 
     /// The files still being read go with it, so it waits for them; and for someone to send to.
-    private var canSend: Bool { !busy && from != nil && adding.isEmpty && !to.isBlank }
+    private var canSend: Bool { !busy && from != nil && adding.isEmpty && canSendTo(to: to, cc: cc, bcc: bcc) }
 
     private var sendButton: some View {
         SendButton(action: send)

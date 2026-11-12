@@ -117,6 +117,15 @@ pub fn file_limit() -> u64 {
     FILE_LIMIT
 }
 
+/// Whether a message can go to what is typed: one address at least in To, and nothing but
+/// addresses in To, Cc and Bcc. Send takes the same, so its button lights only when it can.
+#[uniffi::export]
+pub fn can_send_to(to: String, cc: String, bcc: String) -> bool {
+    let copies =
+        |list: &str| list.trim().is_empty() || ozero_domain::parse_recipients(list).is_some();
+    ozero_domain::parse_recipients(&to).is_some() && copies(&cc) && copies(&bcc)
+}
+
 /// Version of the core, shown in About and in manual crash reports.
 #[uniffi::export]
 pub fn core_version() -> String {
