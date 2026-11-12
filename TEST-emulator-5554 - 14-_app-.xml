@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuite name="com.ozeromail.app.TourTest" tests="3" failures="0" errors="0" skipped="0" time="213.204" timestamp="2026-11-12T13:42:41" hostname="localhost">
+  <properties>
+    <property name="device" value="emulator-5554 - 14" />
+    <property name="flavor" value="" />
+    <property name="project" value=":app" />
+  </properties>
+  <testcase name="h_twoAccounts" classname="com.ozeromail.app.TourTest" time="56.072" />
+  <testcase name="a_inbox" classname="com.ozeromail.app.TourTest" time="112.279" />
+  <testcase name="walk" classname="com.ozeromail.app.TourSignInTest" time="35.809" />
+</testsuite>

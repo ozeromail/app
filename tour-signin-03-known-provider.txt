@@ -1,0 +1,6 @@
+        [56,168 58x58] d="Back"
+      [53,287 430x79] t="me@yandex.ru"
+      [53,398 974x116] t="This service asks for an app password, not your usual one. Making one takes a minute."
+        [53,583 401x53] t="Make an app password"
+        [95,2014 268x58] t="App password"
+        [482,2185 117x53] t="Sign in"

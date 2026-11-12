@@ -1,0 +1,5 @@
+        [56,168 58x58] d="Back"
+      [53,287 595x101] t="Set up manually"
+        [95,1873 843x56] t="Exchange"
+        [95,2023 843x56] t="Other mail"
+        [95,2173 843x56] t="Gmail with an app password"

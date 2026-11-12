@@ -1,0 +1,8 @@
+      [53,587 396x101] t="Ozero Mail"
+      [53,688 646x71] t="All your mail in one calm place."
+        [353,1509 375x53] t="Continue with Google"
+      [523,1630 33x48] t="or"
+        [95,1776 97x58] t="Email"
+        [461,1947 158x53] t="Continue"
+        [402,2105 277x53] t="Set up manually"
+      [53,2226 974x48] t="Your mail stays on this phone. No tracking."

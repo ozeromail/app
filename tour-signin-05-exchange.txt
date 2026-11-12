@@ -1,0 +1,7 @@
+        [56,168 58x58] d="Back"
+      [53,287 368x101] t="Exchange"
+      [53,420 974x174] t="Work mail on the Exchange server your company runs. The server is found from your address; if it is not, enter it yourself."
+        [53,663 428x53] t="Enter the server yourself"
+        [95,1745 85x48] t="Email"
+        [95,2014 182x58] t="Password"
+        [482,2185 117x53] t="Sign in"
