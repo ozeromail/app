@@ -366,7 +366,6 @@ class TourTest : TestMail() {
             shot("inbox")
         }
         step("panel") { panel(); shot("panel", 80); scrollUp(); shot("panel-scrolled") }
-        step("edit") { panel(); tapExact("Edit"); shot("panel-edit") }
         step("settings") { settings(); shot("settings", 80) }
         step("add") { settings(); tap("Add account"); shot("add-account", 80) }
     }
