@@ -165,7 +165,7 @@ struct MailboxRows: View {
                     actions.onMailbox(Mail.inbox)
                 }
                 SignInAgain(account: one, actions: actions)
-                AccountFolders(account: one, folders: folders, mailbox: mailbox, actions: actions)
+                AccountFolders(account: one, folders: folders, mailbox: mailbox, actions: actions, flagged: true)
             }
         } else {
             Section {
@@ -291,15 +291,20 @@ private struct AccountFolders: View {
     let mailbox: Mailbox
     let actions: AccountsActions
     var depth = 0
+    /// Lists flagged mail even without a flagged folder: for the only account, where it is all flagged mail.
+    var flagged = false
 
     @State private var all = false
 
     var body: some View {
         let mine = folders.filter { $0.accountId == account.id && $0.role != .drafts }
-        ForEach(mine.filter { $0.role != .custom && $0.role != .inbox }.sorted { $0.role.rank < $1.role.rank }, id: \.id) { folder in
-            let box = Mailbox.folder(id: folder.id)
-            FolderRow(icon: folder.role.icon, title: folder.title, open: box == mailbox, depth: depth) { actions.onMailbox(box) }
+        let usual = mine.filter { $0.role != .custom && $0.role != .inbox }.sorted { $0.role.rank < $1.role.rank }
+        ForEach(usual.filter { $0.role.rank < FolderRole.flagged.rank }, id: \.id) { folder in usualRow(folder) }
+        if flagged && !usual.contains(where: { $0.role == .flagged }) {
+            let box = Mailbox.unified(role: .flagged)
+            FolderRow(icon: FolderRole.flagged.icon, title: tr("folder_flagged"), open: box == mailbox, depth: depth) { actions.onMailbox(box) }
         }
+        ForEach(usual.filter { $0.role.rank >= FolderRole.flagged.rank }, id: \.id) { folder in usualRow(folder) }
         let own = mine.filter { $0.role == .custom }
         let few = !own.contains(where: \.pinned) && own.count <= fewFolders
         let shown = treeOrder(all || few ? own : own.filter(\.pinned))
@@ -447,6 +452,13 @@ private let afterSlot: CGFloat = 14
 
 /// How far in a row `depth` steps down goes: one slot and its gap a step.
 private func indent(_ depth: Int) -> CGFloat { CGFloat(depth) * (slot + afterSlot) }
+
+extension AccountFolders {
+    private func usualRow(_ folder: FolderItem) -> some View {
+        let box = Mailbox.folder(id: folder.id)
+        return FolderRow(icon: folder.role.icon, title: folder.title, open: box == mailbox, depth: depth) { actions.onMailbox(box) }
+    }
+}
 
 private struct FolderRow<Lead: View>: View {
     let title: String

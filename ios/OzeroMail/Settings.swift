@@ -270,9 +270,10 @@ enum AllBox: String, CaseIterable, Identifiable {
         return tr(self == .unread ? "folder_unread" : "folder_files")
     }
 
-    /// Shown in the list: a role's mailbox once some account has such a folder.
+    /// Shown in the list: a role's mailbox once some account has such a folder, flagged mail always.
     func listed(_ folders: [FolderItem]) -> Bool {
-        guard let role else { return true }
+        // Flagged mail lists by its flag where no folder holds it.
+        guard let role, role != .flagged else { return true }
         return folders.contains { $0.role == role }
     }
 }
