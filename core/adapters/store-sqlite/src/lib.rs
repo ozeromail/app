@@ -13,7 +13,8 @@ use ozero_domain::{
     InviteKind, InviteRow, ListQuery, ListScope, MessageId, MessageLocation, MessageRow, Moved,
     NewAccount, NewFolder, NewMail, NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile,
     RecentFile, SavedDraft, SavedInvite, SearchFilter, Sender, Server, ServerDraft, Store,
-    StoreError, Unsent, Unsubscribe, default_label, full_text, typed_addresses,
+    StoreError, Unsent, Unsubscribe, default_label, full_text, snippet_after_subject,
+    typed_addresses,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{
@@ -3778,8 +3779,8 @@ fn message_row(r: &Row<'_>) -> rusqlite::Result<MessageRow> {
             name: r.get(2)?,
             email: r.get(3)?,
         },
+        snippet: snippet_after_subject(r.get(5)?, &r.get::<_, String>(4)?),
         subject: r.get(4)?,
-        snippet: r.get(5)?,
         date: r.get(6)?,
         flags: parse_flags(r.get(7)?),
         thread_unread: r.get(8)?,
