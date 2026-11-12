@@ -21,8 +21,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -81,6 +81,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
@@ -595,6 +596,8 @@ private fun PdfPage(doc: PdfDocument, index: Int, width: Int) {
         Modifier
             .fillMaxWidth()
             .aspectRatio(size.width.toFloat() / size.height.coerceAtLeast(1))
+            // A hairline edge, so a white page shows on a light screen.
+            .border(Dp.Hairline, MaterialTheme.colorScheme.outlineVariant)
             .background(Color.White),
         contentAlignment = Alignment.Center,
     ) {
