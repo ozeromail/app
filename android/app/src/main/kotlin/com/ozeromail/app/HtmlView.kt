@@ -5,6 +5,7 @@ import android.graphics.Color
 import android.view.ViewGroup
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.runtime.Composable
@@ -59,6 +60,9 @@ private fun WebView.configure(images: List<RemoteImage?>, onShown: () -> Unit) {
         useWideViewPort = true
         builtInZoomControls = true
         displayZoomControls = false
+        // A newsletter fitted to the screen keeps its paragraphs readable, as Chrome does for
+        // wide pages: their text is boosted, headings and layout stay.
+        layoutAlgorithm = WebSettings.LayoutAlgorithm.TEXT_AUTOSIZING
         // Mail's text at the size the person picked, grown or shrunk with the system's text size
         // as the rest of the app is. A web view left alone follows the system; setting the zoom
         // replaces that, so it is multiplied back in.
