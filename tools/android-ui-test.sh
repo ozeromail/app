@@ -15,6 +15,8 @@ adb push "$ca" "$added" >/dev/null
 adb shell chown system:system "$added"
 adb shell chmod 644 "$added"
 # The app reaches the test server on the emulator's own localhost, which the certificate names.
+# A slow emulator's launcher ANRs would cover the stills.
+adb shell settings put global hide_error_dialogs 1
 adb reverse tcp:31993 tcp:31993
 adb reverse tcp:31587 tcp:31587
 ./gradlew :app:connectedDebugAndroidTest -Pozero.abis=x86_64 "$@"

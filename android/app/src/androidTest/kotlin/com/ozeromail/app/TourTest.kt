@@ -108,6 +108,7 @@ class TourTest : TestMail() {
     }
 
     private fun tap(text: String) = tap(hasText(text, substring = true))
+    private fun tapExact(text: String) = tap(hasText(text))
     private fun tapDesc(desc: String) = tap(hasContentDescription(desc))
 
     private fun hold(text: String) {
@@ -115,8 +116,10 @@ class TourTest : TestMail() {
         settle(30)
     }
 
+    private fun root() = rule.onAllNodes(isRoot()).onFirst()
+
     private fun scrollUp() {
-        rule.onAllNodes(isRoot()).onFirst().performTouchInput { swipeUp(startY = height * 0.75f, endY = height * 0.3f) }
+        root().performTouchInput { swipeUp(startY = height * 0.75f, endY = height * 0.3f) }
     }
 
     private fun type(text: String) {
@@ -128,44 +131,53 @@ class TourTest : TestMail() {
         settle(40)
     }
 
-    private fun panel() = tapDesc("Accounts")
+    /** Back to the inbox with nothing over it, from wherever a step left off. */
+    private fun home() {
+        repeat(5) {
+            if (visible(hasText("Search mail")) && !visible(hasText("Mailboxes")) && !visible(hasContentDescription("Back"))) return
+            back()
+            settle(40)
+        }
+    }
+
+    private fun panel() {
+        home()
+        tapDesc("Accounts")
+        settle(40)
+    }
+
+    private fun settings() {
+        panel()
+        tapExact("Settings")
+        settle(40)
+    }
+
+    /** A sideways drag on a row held part of the way, then taken back before letting go. */
+    private fun drag(row: String, from: Float, by: Float, label: String) {
+        val r = bounds(text(row))
+        val step = androidx.compose.ui.geometry.Offset(screen.width * by / 10, 0f)
+        root().performTouchInput { down(r.center.copy(x = screen.width * from)); repeat(10) { moveBy(step) } }
+        shot("$label-short", 10)
+        root().performTouchInput { repeat(10) { moveBy(step) } }
+        shot("$label-long", 10)
+        root().performTouchInput { repeat(20) { moveBy(-step) }; up() }
+        settle(60)
+    }
 
     @Test
     fun a_inbox() {
         group = "inbox"
         step("people") { shot("people") }
         step("scrolled") { scrollUp(); shot("people-scrolled") }
-        step("notifications") { tap("Notifications"); shot("notifications") }
-        step("newsletters") { tap("Newsletters"); shot("newsletters") }
-        step("back-people") { tap("People") }
-        step("swipe-half-left") {
-            val row = bounds(text("Trip to the lake"))
-            rule.onAllNodes(isRoot()).onFirst().performTouchInput {
-                down(row.center.copy(x = width * 0.8f))
-                repeat(10) { moveBy(androidx.compose.ui.geometry.Offset(-width * 0.035f, 0f)) }
-            }
-            shot("swipe-short-left", 10)
-            rule.onAllNodes(isRoot()).onFirst().performTouchInput {
-                repeat(10) { moveBy(androidx.compose.ui.geometry.Offset(-width * 0.035f, 0f)) }
-            }
-            shot("swipe-long-left", 10)
-            rule.onAllNodes(isRoot()).onFirst().performTouchInput { cancel() }
-            settle(60)
-        }
-        step("swipe-right") {
-            val row = bounds(text("Trip to the lake"))
-            rule.onAllNodes(isRoot()).onFirst().performTouchInput {
-                down(row.center.copy(x = width * 0.2f))
-                repeat(10) { moveBy(androidx.compose.ui.geometry.Offset(width * 0.035f, 0f)) }
-            }
-            shot("swipe-short-right", 10)
-            rule.onAllNodes(isRoot()).onFirst().performTouchInput { cancel() }
-            settle(60)
-        }
-        step("choose") { hold("Trip to the lake"); shot("choosing"); tap("Select all"); shot("choosing-all"); backTo(); shot("after-choose") }
+        step("notifications") { tapExact("Notifications"); shot("notifications") }
+        step("newsletters") { tapExact("Newsletters"); shot("newsletters") }
+        step("back-people") { tapExact("People"); root().performTouchInput { swipeDown() }; settle(60) }
+        step("swipe-left") { drag("People 24:", 0.85f, -0.035f, "swipe-left") }
+        step("swipe-right") { drag("People 24:", 0.15f, 0.035f, "swipe-right") }
+        step("choose") { hold("People 24:"); shot("choosing"); tap("Select all"); shot("choosing-all"); backTo(); shot("after-choose") }
         step("done-toast") {
-            val row = bounds(text("Keys for the cabin"))
-            rule.onAllNodes(isRoot()).onFirst().performTouchInput { swipe(row.center.copy(x = width * 0.9f), row.center.copy(x = width * 0.45f), 250L) }
+            val row = bounds(text("People 23:"))
+            root().performTouchInput { swipe(row.center.copy(x = width * 0.9f), row.center.copy(x = width * 0.45f), 250L) }
             shot("toast-after-swipe", 30)
             tap("Undo")
             shot("after-undo")
@@ -173,11 +185,16 @@ class TourTest : TestMail() {
         step("night") {
             Tour.shell("cmd uimode night yes")
             shot("night", 90)
-            tap("Newsletters")
+            tapExact("Newsletters")
             shot("night-newsletters")
-            Tour.shell("cmd uimode night no")
-            settle(90)
+            panel()
+            shot("night-panel")
+            home()
+            tap("Trip to the lake")
+            shot("night-thread", 90)
+            home()
         }
+        Tour.shell("cmd uimode night no")
     }
 
     @Test
@@ -186,17 +203,19 @@ class TourTest : TestMail() {
         step("open") { panel(); shot("open", 80) }
         step("scrolled") { scrollUp(); shot("scrolled") }
         step("other") { tap("Other folders"); shot("other-folders"); scrollUp(); shot("other-folders-scrolled") }
-        step("edit") { tap("Edit"); shot("edit"); tap("Done") }
-        step("close") { backTo(); shot("closed") }
-        for (folder in listOf("Sent", "Drafts", "Archive", "Trash", "Spam", "Flagged", "Snoozed", "Unread", "With attachments", "Receipts", "Empty")) {
+        step("pin") { hold("Receipts"); shot("hold-folder") }
+        for (folder in listOf("Drafts", "Snoozed", "Sent", "Archive", "Spam", "Trash", "Receipts", "Empty")) {
             step("folder-$folder") {
                 panel()
-                settle(40)
                 if (!visible(hasText(folder))) runCatching { tap("Other folders") }
-                tap(hasText(folder))
-                shot("folder-${folder.replace(' ', '_')}", 80)
-                backTo()
+                tapExact(folder)
+                shot("folder-$folder", 80)
             }
+        }
+        step("folder-trash-empty") {
+            panel(); tapExact("Trash"); settle(60)
+            runCatching { tap("Empty Trash") }
+            shot("empty-trash-confirm")
         }
     }
 
@@ -208,88 +227,94 @@ class TourTest : TestMail() {
             shot("thread", 90)
             scrollUp()
             shot("thread-scrolled")
-            runCatching { tapDesc("More") }
+            val mores = rule.onAllNodes(hasContentDescription("More")).fetchSemanticsNodes().size
+            Log.i(TAG, "thread More buttons: $mores")
+            tapDesc("More")
             shot("thread-more")
-            backTo()
-            backTo()
         }
         step("attachments") {
+            home()
             tap("Photos and the plan")
             shot("attachments", 90)
-            scrollUp()
-            shot("attachments-scrolled")
             tap("plan.pdf")
             shot("attachment-pdf", 90)
             backTo()
-            runCatching { tap("lake.png"); shot("attachment-png", 90); backTo() }
-            backTo()
+            tap("lake.png")
+            shot("attachment-png", 90)
         }
-        step("invite") { tap("Invitation: Planning"); shot("invite", 90); backTo() }
+        step("invite") { home(); tap("Invitation: Planning"); shot("invite", 90); scrollUp(); shot("invite-scrolled") }
         step("long") {
+            home()
             tap("Письмо из поездки")
             shot("long-ru", 90)
             scrollUp(); scrollUp()
             shot("long-ru-scrolled")
-            backTo()
         }
         step("html") {
-            tap("Newsletters")
+            home()
+            tapExact("Newsletters")
             tap("This week by the water")
             shot("html", 120)
             scrollUp()
             shot("html-scrolled", 60)
-            runCatching { tap("Show"); shot("html-images", 120) }
-            backTo()
-            tap("People")
+            tapExact("Show")
+            shot("html-images", 120)
         }
-        step("people-header") {
+        step("sender") {
+            home()
+            tapExact("People")
             tap("Keys for the cabin")
             settle(60)
-            runCatching { tap("Eva Novak"); shot("sender-details") ; backTo() }
-            shot("keys")
-            backTo()
+            tapExact("Eva Novak")
+            shot("sender-details")
         }
+        step("flagged") { home(); tap("Keys for the cabin"); shot("flagged-letter", 80) }
     }
 
     @Test
     fun d_actions() {
         group = "actions"
-        step("more") { tap("Keys for the cabin"); settle(60); tapDesc("More"); shot("more-menu") }
-        step("snooze") { tap("Snooze"); shot("snooze-sheet"); runCatching { tap("Pick a date and time"); shot("snooze-pick") }; backTo(); backTo() }
-        step("move") { runCatching { tapDesc("More") }; tap("Move to folder"); shot("move-sheet"); backTo() }
-        step("block") { runCatching { tapDesc("More") }; tap("Block sender"); shot("block"); backTo() }
-        step("delete") { runCatching { tapDesc("More") }; runCatching { tap("Delete message") }; shot("after-delete", 20); runCatching { tap("Undo") } }
+        fun more() { home(); tap("Keys for the cabin"); settle(60); tapExact("More") }
+        step("more") { more(); shot("more-menu") }
+        step("snooze") { home(); tap("Keys for the cabin"); settle(60); tapExact("Snooze"); shot("snooze-sheet"); tap("Pick a date and time"); shot("snooze-pick") }
+        step("move") { more(); tap("Move to folder"); shot("move-sheet") }
+        step("block") { more(); tap("Block sender"); shot("block") }
         step("unsubscribe") {
-            backTo()
-            tap("Newsletters")
+            home()
+            tapExact("Newsletters")
             tap("Digest 1:")
             settle(60)
-            runCatching { tap("Unsubscribe") }.onFailure { tapDesc("More"); tap("Unsubscribe") }
+            if (visible(hasText("Unsubscribe"))) tap("Unsubscribe") else { tapExact("More"); tap("Unsubscribe") }
             shot("unsubscribe")
-            backTo()
+        }
+        step("delete") {
+            home(); tapExact("People"); tap("People 22:"); settle(60); tapExact("Delete")
+            shot("after-delete", 20)
+            tap("Undo")
+            shot("after-undo")
         }
     }
 
     @Test
     fun e_compose() {
         group = "compose"
-        step("new") { tapDesc("Write"); shot("new", 80); type("anna"); shot("to-suggestions"); backTo(); backTo() }
+        step("new") { tapDesc("Write"); shot("new", 80); type("anna"); shot("to-suggestions") }
         step("reply") {
+            home()
             tap("Trip to the lake")
             settle(60)
-            runCatching { tap("Reply…") }.onFailure { tapDesc("Reply") }
-            shot("reply-inline", 80)
+            if (visible(hasText("Reply…"))) tap("Reply…") else tapExact("Reply")
+            shot("reply", 80)
             runCatching { tapDesc("Open full screen"); shot("reply-full", 80) }
-            backTo(); backTo(); backTo()
         }
         step("forward") {
+            home()
             tap("Photos and the plan")
             settle(60)
-            tapDesc("More")
+            tapExact("More")
             shot("more-before-forward")
             tap("Forward")
             shot("forward", 80)
-            backTo(); backTo()
         }
     }
 
@@ -298,33 +323,33 @@ class TourTest : TestMail() {
         group = "search"
         step("open") { tap("Search mail"); shot("open", 80) }
         step("type") { type("lake"); shot("results", 120) }
-        step("none") { rule.onAllNodes(hasSetTextAction()).onFirst().performTextInput("zzqq"); shot("no-results", 160) }
-        step("person") { backTo(); tap("Search mail"); type("Anna"); shot("person", 120) }
+        step("none") { type("zzqq"); shot("no-results", 160) }
+        step("person") { home(); tap("Search mail"); type("Anna"); shot("person", 120) }
     }
 
     @Test
     fun g_settings() {
         group = "settings"
-        step("open") { panel(); settle(40); tap("Settings"); shot("main", 80) }
-        step("scrolled") { scrollUp(); shot("main-scrolled"); scrollUp(); shot("main-bottom") }
-        step("account") { rule.onAllNodes(isRoot()).onFirst().performTouchInput { swipeDown() }; settle(30); tap(USER); shot("account", 80); scrollUp(); shot("account-scrolled"); scrollUp(); shot("account-bottom"); backTo() }
-        for (page in listOf("Swipes", "Notifications", "Reading", "Images in mail", "Default signature", "Blocked senders")) {
+        step("open") { settings(); shot("main", 80) }
+        step("scrolled") { scrollUp(); shot("main-bottom") }
+        step("account") { settings(); tap(USER); shot("account", 80); scrollUp(); shot("account-scrolled"); scrollUp(); shot("account-bottom") }
+        for (page in listOf("Notifications", "Swipes", "Default signature", "Blocked senders", "Text size", "Images in mail")) {
             step(page) {
+                settings()
                 if (!visible(hasText(page))) scrollUp()
-                tap(page)
+                tapExact(page)
                 shot(page.replace(' ', '_'), 80)
                 scrollUp()
                 shot("${page.replace(' ', '_')}-scrolled")
-                backTo()
             }
         }
         step("remove") {
+            settings()
             tap(USER)
             settle(40)
             repeat(3) { scrollUp() }
             tap("Remove account")
             shot("remove-dialog")
-            backTo()
         }
     }
 
@@ -340,9 +365,10 @@ class TourTest : TestMail() {
             settle(120)
             shot("inbox")
         }
-        step("panel") { panel(); shot("panel", 80); scrollUp(); shot("panel-scrolled"); tap("Edit"); shot("panel-edit"); tap("Done"); backTo() }
-        step("settings") { panel(); settle(40); tap("Settings"); shot("settings", 80); backTo() }
-        step("add") { panel(); settle(40); runCatching { tap("Add account") }; shot("add-account", 80); backTo() }
+        step("panel") { panel(); shot("panel", 80); scrollUp(); shot("panel-scrolled") }
+        step("edit") { panel(); tapExact("Edit"); shot("panel-edit") }
+        step("settings") { settings(); shot("settings", 80) }
+        step("add") { settings(); tap("Add account"); shot("add-account", 80) }
     }
 
     @Test
@@ -350,11 +376,13 @@ class TourTest : TestMail() {
         group = "large"
         try {
             Tour.shell("settings put system font_scale 1.6")
-            settle(120)
+            settle(150)
             step("inbox") { shot("inbox", 60) }
-            step("letter") { tap("Trip to the lake"); shot("thread", 90); backTo() }
-            step("panel") { panel(); shot("panel", 80); tap("Settings"); shot("settings", 80); backTo(); backTo() }
-            step("search") { tap("Search mail"); shot("search", 80); backTo() }
+            step("letter") { home(); tap("Trip to the lake"); shot("thread", 90) }
+            step("panel") { panel(); shot("panel", 80) }
+            step("settings") { settings(); shot("settings", 80) }
+            step("search") { home(); tap("Search mail"); shot("search", 80) }
+            step("compose") { home(); tapDesc("Write"); shot("compose", 80) }
         } finally {
             Tour.shell("settings put system font_scale 1.0")
         }
@@ -367,9 +395,8 @@ class TourTest : TestMail() {
             Tour.shell("cmd locale set-app-locales com.ozeromail.app --locales ru-RU")
             settle(200)
             step("inbox") { shot("inbox", 60) }
-            step("letter") { tap("Trip to the lake"); shot("thread", 90); runCatching { tapDesc("Ещё"); shot("more") ; backTo() }; backTo() }
-            step("panel") { tapDesc("Аккаунты"); shot("panel", 80); tap("Настройки"); shot("settings", 80); scrollUp(); shot("settings-scrolled"); backTo(); backTo() }
-            step("compose") { tapDesc("Написать"); shot("compose", 80); backTo(); backTo() }
+            step("letter") { tap("Trip to the lake"); shot("thread", 90); tapExact("Ещё"); shot("more") }
+            step("panel") { back(); settle(30); back(); settle(30); tapDesc("Аккаунты"); shot("panel", 80); tapExact("Настройки"); shot("settings", 80); scrollUp(); shot("settings-scrolled") }
         } finally {
             Tour.shell("cmd locale set-app-locales com.ozeromail.app --locales en-US")
         }
@@ -382,9 +409,10 @@ class TourTest : TestMail() {
             Tour.shell("settings put system accelerometer_rotation 0")
             Tour.shell("settings put system user_rotation 1")
             settle(200)
+            screen = rule.onAllNodes(isRoot()).fetchSemanticsNodes().first().boundsInRoot
             step("inbox") { shot("inbox", 60) }
-            step("letter") { tap("Trip to the lake"); shot("thread", 90); backTo() }
-            step("panel") { panel(); shot("panel", 80); backTo() }
+            step("letter") { tap("Trip to the lake"); shot("thread", 90) }
+            step("panel") { panel(); shot("panel", 80) }
         } finally {
             Tour.shell("settings put system user_rotation 0")
         }
@@ -397,21 +425,24 @@ class TourTest : TestMail() {
             Tour.shell("svc wifi disable")
             Tour.shell("svc data disable")
             settle(120)
-            rule.onAllNodes(isRoot()).onFirst().performTouchInput { swipeDown(startY = height * 0.3f, endY = height * 0.8f) }
+            root().performTouchInput { swipeDown(startY = height * 0.3f, endY = height * 0.8f) }
             shot("offline-pull", 200)
-            Tour.shell("svc wifi enable")
-            Tour.shell("svc data enable")
-            settle(200)
+            shot("offline-later", 600)
         }
+        Tour.shell("svc wifi enable")
+        Tour.shell("svc data enable")
+        settle(200)
         for (tab in listOf("People", "Notifications", "Newsletters")) {
             step("zero-$tab") {
-                if (visible(hasText(tab))) tap(tab)
+                tapExact(tab)
+                settle(30)
                 val first = rule.onAllNodes(hasText(":", substring = true)).fetchSemanticsNodes()
-                    .firstOrNull { it.boundsInRoot.top > screen.height * 0.15f }
+                    .firstOrNull { it.boundsInRoot.top > screen.height * 0.15f && it.boundsInRoot.top < screen.height * 0.7f }
                     ?.config?.getOrNull(SemanticsProperties.Text)?.firstOrNull()?.text ?: return@step
                 hold(first)
                 tap("Select all")
-                runCatching { tap("Done") }.onFailure { tapDesc("Done") }
+                shot("selected-$tab")
+                tap("Done")
                 shot("after-$tab", 120)
             }
         }
@@ -465,7 +496,7 @@ class TourSignInTest {
         try {
             step("welcome") { shot("welcome", 120) }
             step("typed") { field(0).performTextInput("me@yandex.ru"); shot("typed-yandex") }
-            step("known") { tap("Continue"); shot("known-provider", 80); scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }; settle(60) }
+            step("known") { rule.onAllNodes(hasText("Continue")).onFirst().performClick(); settle(40); shot("known-provider", 80); scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }; settle(60) }
             step("manual") { tap("Set up manually"); shot("manual", 80) }
             step("exchange") { tap("Exchange"); shot("exchange", 80); scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }; settle(60) }
             step("imap") { tap("IMAP"); shot("imap", 80); scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }; settle(60) }
