@@ -56,7 +56,7 @@ jobs:
         with:
           workspaces: core
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       - name: Build and lint
         working-directory: android
         # The release build checks that R8 keeps what the core bindings need; a tag builds it
