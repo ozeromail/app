@@ -3792,7 +3792,10 @@ fn message_row(r: &Row<'_>) -> rusqlite::Result<MessageRow> {
             .get::<_, Option<String>>(14)?
             .as_deref()
             .and_then(parse_invite_row),
-        to: people(&r.get::<_, Option<String>>(15)?.unwrap_or_default()).0,
+        to: match people(&r.get::<_, Option<String>>(15)?.unwrap_or_default()) {
+            (to, cc) if to.is_empty() => cc,
+            (to, _) => to,
+        },
     })
 }
 

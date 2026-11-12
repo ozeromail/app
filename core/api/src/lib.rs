@@ -1275,12 +1275,7 @@ impl Core {
                 // address yet as typed.
                 let people = match people.as_slice() {
                     [] => d.to.trim().to_owned(),
-                    [one] => one.clone(),
-                    many => many
-                        .iter()
-                        .map(|n| first_name(n))
-                        .collect::<Vec<_>>()
-                        .join(", "),
+                    many => row_names(many).join(", "),
                 };
                 let snippet = Body {
                     text: ozero_domain::rich::shown(&d.text),
@@ -2368,9 +2363,11 @@ impl Core {
                         sender.name = name.clone();
                     }
                 }
-                for person in &mut row.to {
-                    if let Some(name) = names.get(&person.email.to_lowercase()) {
-                        person.name = Some(name.clone());
+                if row.is_mine() {
+                    for person in &mut row.to {
+                        if let Some(name) = names.get(&person.email.to_lowercase()) {
+                            person.name = Some(name.clone());
+                        }
                     }
                 }
                 let contact_name = names.get(&row.from.email.to_lowercase()).cloned();
@@ -4049,9 +4046,10 @@ impl From<&Account> for AccountMark {
     fn from(a: &Account) -> Self {
         // A tag beside a row has room for a word: an account with no name of its own shows the
         // part of its address before the @, "work" rather than "work@e…".
-        let name = match a.label.trim() {
-            "" => a.email.split('@').next().unwrap_or(&a.email),
-            label => label,
+        let name = a.name();
+        let name = match name.split_once('@') {
+            Some((local, _)) if name == a.email.trim() && !local.is_empty() => local,
+            _ => name,
         };
         Self {
             name: name.to_owned(),
@@ -4239,16 +4237,21 @@ fn first_name(name: &str) -> &str {
     }
 }
 
-/// The people a row of the user's own mail is to: one by their whole name, several by their first.
-fn to_names(to: &[Address]) -> Vec<String> {
-    let shown = |a: &Address| shown_name(a.name.as_deref()).unwrap_or(&a.email).to_owned();
-    match to {
-        [one] => vec![shown(one)],
-        _ => to
-            .iter()
-            .map(|a| first_name(&shown(a)).to_owned())
-            .collect(),
+/// People as a row names them: one by their whole name, several by their first ones.
+fn row_names(names: &[String]) -> Vec<String> {
+    match names {
+        [one] => vec![one.clone()],
+        many => many.iter().map(|n| first_name(n).to_owned()).collect(),
     }
+}
+
+/// Who a row of the user's own mail is to, by name or else address.
+fn to_names(to: &[Address]) -> Vec<String> {
+    let shown: Vec<String> = to
+        .iter()
+        .map(|a| shown_name(a.name.as_deref()).unwrap_or(&a.email).to_owned())
+        .collect();
+    row_names(&shown)
 }
 
 /// A sender's name as shown, none when it is blank.
@@ -4753,8 +4756,7 @@ pub struct MessageItem {
 impl From<MessageRow> for MessageItem {
     fn from(row: MessageRow) -> Self {
         let allows = |action| !row.sending && row.role.allows(action);
-        let mine = row.role == FolderRole::Sent
-            || (!row.senders.is_empty() && row.senders.iter().all(|s| s.me));
+        let mine = row.is_mine();
         Self {
             id: row.id.0,
             account_id: row.account_id.0,
