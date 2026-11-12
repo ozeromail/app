@@ -152,7 +152,11 @@ struct SearchView: View {
         let messages = found?.messages ?? []
         return List {
             if found?.search == search && messages.isEmpty && !asking {
-                ContentUnavailableView("inbox_empty", systemImage: "magnifyingglass")
+                ContentUnavailableView {
+                    Label("search_nothing", systemImage: "magnifyingglass")
+                } description: {
+                    if !search.text.isBlank { Text(tr("search_nothing_text", search.text.trimmingCharacters(in: .whitespaces))) }
+                }
                     .listRowSeparator(.hidden)
             }
             // No motion in this list: when the servers' answer joins it, rows sliding to their new
