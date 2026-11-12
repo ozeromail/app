@@ -19,11 +19,15 @@ adb shell chmod 644 "$added"
 adb shell settings put global hide_error_dialogs 1
 adb reverse tcp:31993 tcp:31993
 adb reverse tcp:31587 tcp:31587
-./gradlew :app:connectedDebugAndroidTest -Pozero.abis=x86_64 "$@"
+timeout "${UI_TEST_MINUTES:-600}m" ./gradlew :app:connectedDebugAndroidTest -Pozero.abis=x86_64 "$@"
 status=$?
 rm -rf ui-films
 mkdir -p ui-films
 find app/build/outputs/connected_android_test_additional_output -path '*films/*' -type f -exec cp {} ui-films/ \; 2>/dev/null
+# Cut off by the timeout: the stills are still on the device.
+if [ -z "$(ls ui-films)" ]; then
+  adb pull /sdcard/googletest/test_outputfiles/films /tmp/device-films >/dev/null 2>&1 && cp /tmp/device-films/* ui-films/ 2>/dev/null
+fi
 find app/build/outputs/androidTest-results/connected -name '*.xml' -exec cp {} ui-films/ \; 2>/dev/null
 # A device gone offline would keep adb waiting until the job times out, and the report with it.
 timeout 60 adb logcat -d > ui-films/logcat.txt

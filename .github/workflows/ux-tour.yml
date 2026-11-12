@@ -64,6 +64,7 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+          UI_TEST_MINUTES: 40
         with:
           api-level: 34
           target: google_apis
@@ -75,7 +76,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
           script: tools/android-ui-test.sh -Pandroid.testInstrumentationRunnerArguments.class=com.ozeromail.app.TourTest,com.ozeromail.app.TourSignInTest
       - name: Keep the films
-        if: ${{ !cancelled() }}
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ui-films
@@ -87,7 +88,7 @@ jobs:
       # Also on a branch of their own, ui-films/<branch>, where they can be read without a
       # download from Actions storage. Not for pull requests from forks: their token cannot push.
       - name: Put the films on a branch
-        if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        if: always()
         env:
           BRANCH: ui-films/${{ github.head_ref || github.ref_name }}
         run: |
