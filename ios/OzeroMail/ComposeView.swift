@@ -204,7 +204,11 @@ struct ComposeView: View {
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { pageHeight = $0 }
                         .frame(maxWidth: .infinity, minHeight: room, alignment: expanded ? .top : .bottom)
                     }
-                    .defaultScrollAnchor(.bottom)
+                    // Held at its end, where the writing goes on; a draft opened again starts at its
+                    // top, to be read from the beginning.
+                    .defaultScrollAnchor(.bottom, for: .alignment)
+                    .defaultScrollAnchor(.bottom, for: .sizeChanges)
+                    .defaultScrollAnchor(start.id == 0 ? .bottom : .top, for: .initialOffset)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { room = $0 }
                     // When a long text takes To and Subject out of sight, a line names them, and a tap
                     // brings them down here.
@@ -410,11 +414,18 @@ struct ComposeView: View {
                     .zIndex(1)
             }
             Divider()
-            TextField("compose_subject", text: $subject)
+            // A long subject wraps to all of it. Still one line: Return goes on to the text.
+            TextField("compose_subject", text: $subject, axis: .vertical)
                 .font(.subjectTitle)
                 .focused($focus, equals: .subject)
                 .submitLabel(.next)
-                .onSubmit { textRequest += 1 }
+                .onChange(of: subject) { before, now in
+                    guard now.contains(where: \.isNewline) else { return }
+                    // One break typed, wherever the caret is, is Return.
+                    let typed = now.count == before.count + 1 && now.filter(\.isNewline).count == 1
+                    subject = now.split(whereSeparator: \.isNewline).joined(separator: typed ? "" : " ")
+                    if typed { textRequest += 1 }
+                }
         }
         .padding(.horizontal, 20)
     }

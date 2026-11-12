@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -34,6 +35,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.ImageBitmap
@@ -155,8 +158,9 @@ fun RichBody(
     toolbar.chosen = { focused?.let { fields[it] }?.selection?.collapsed == false }
 
     CompositionLocalProvider(LocalTextToolbar provides toolbar) {
-        // The last text field takes what is left of the least height, so a tap anywhere there writes.
+        // What is left of the least height under the text writes at its end when tapped.
         val last = blocks.indexOfLast { it is RichBlock.Text }
+        val lastField = remember { FocusRequester() }
         Column(modifier.heightIn(min = minHeight), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             var above = 0L
             for ((index, block) in blocks.withIndex()) {
@@ -177,9 +181,9 @@ fun RichBody(
                                 look,
                                 placeholder.takeIf { text.value.isEmpty() },
                                 style,
-                                // Only with a least height: on a page that scrolls, a weight with
-                                // nothing to share leaves the field no height, and its text unseen.
-                                (if (index == last && minHeight > 0.dp) Modifier.weight(1f) else Modifier).onFocusChanged {
+                                // As tall as its text: on a page that scrolls, a weight would hold
+                                // it to the least height and scroll a long text inside it.
+                                (if (index == last) Modifier.focusRequester(lastField) else Modifier).onFocusChanged {
                                     if (it.isFocused) {
                                         focused = fieldKey
                                         span(fieldKey)?.let { at -> onCaret(at.first + value.selection.end) }
@@ -203,6 +207,14 @@ fun RichBody(
                         }
                     }
                 }
+            }
+            if (minHeight > 0.dp && last >= 0) {
+                Spacer(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .clickable(interactionSource = null, indication = null) { lastField.requestFocus() },
+                )
             }
         }
         toolbar.Shown()

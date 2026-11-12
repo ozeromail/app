@@ -74,6 +74,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -106,6 +107,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import java.io.IOException
 import kotlin.math.roundToInt
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import uniffi.ozero_api.AccountItem
 import uniffi.ozero_api.CoreException
@@ -511,12 +513,20 @@ fun ComposeScreen(
                 Recipients(mail, bcc, { bcc = it }, R.string.compose_bcc, addresses)
             }
             HorizontalDivider(color = colors.outlineVariant)
+            // A long subject wraps to all of it. Still one line: a pasted break is a space, and
+            // Enter goes on to the text.
             Plain(
                 subject,
-                { subject = it },
+                {
+                    // One break typed, wherever the caret is, is Enter.
+                    val enter = it.length == subject.length + 1 && it.count { c -> c == '\n' } == 1
+                    subject = if (enter) it.replace("\n", "") else it.replace(LINE_BREAK, " ")
+                    if (enter) focusManager.moveFocus(FocusDirection.Next)
+                },
                 R.string.compose_subject,
                 Type.Title,
                 KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Next),
+                singleLine = false,
             )
         }
     }
@@ -699,11 +709,12 @@ fun ComposeScreen(
                 // A longer text grows up and scrolls with the rest, with no frame of its own.
                 val page = rememberScrollState()
                 // Held at its end, where the writing goes on, as the page grows above or the keyboard
-                // takes room; scrolled up by hand, it stays where it was put.
-                var atEnd by remember { mutableStateOf(true) }
+                // takes room; scrolled up by hand, it stays where it was put. A draft opened again
+                // starts at its top, to be read from the beginning.
+                var atEnd by remember { mutableStateOf(start.id == 0L) }
                 LaunchedEffect(page) {
                     launch { snapshotFlow { page.maxValue }.collect { if (atEnd && it != Int.MAX_VALUE) page.scrollTo(it) } }
-                    snapshotFlow { page.isScrollInProgress }.collect { if (!it) atEnd = page.value >= page.maxValue }
+                    snapshotFlow { page.isScrollInProgress }.drop(1).collect { if (!it) atEnd = page.value >= page.maxValue }
                 }
                 // The page, its content low and at least [room] tall.
                 val pageOf = @Composable { room: Dp, modifier: Modifier ->
@@ -856,6 +867,7 @@ fun ComposeScreen(
 
 /** The text's room in a new message before anything is written. */
 private val WRITING_ROOM = 96.dp
+private val LINE_BREAK = Regex("\r?\n")
 
 /**
  * The top edge of a new message's sheet: pulled up it expands the sheet to the whole screen,
