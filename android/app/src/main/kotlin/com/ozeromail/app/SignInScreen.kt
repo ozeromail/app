@@ -255,7 +255,8 @@ fun SignInScreen(mail: Mail, onSignedIn: () -> Unit, onCancel: (() -> Unit)? = n
             .fillMaxSize()
             .safeDrawingPadding()
             .imePadding()
-            .padding(horizontal = Gap.screen, vertical = 24.dp),
+            // The back arrow sits where it does on every other screen, as Hero places it.
+            .padding(start = Gap.screen, end = Gap.screen, top = 4.dp, bottom = 24.dp),
     ) {
         if (again != null) {
             Again(
@@ -421,7 +422,7 @@ private fun Start(
                 Image(
                     painterResource(R.drawable.ozero_mark),
                     null,
-                    Modifier.padding(top = 56.dp, bottom = 6.dp).size(76.dp),
+                    Modifier.padding(top = 76.dp, bottom = 6.dp).size(76.dp),
                 )
                 Column {
                     LargeTitle(stringResource(R.string.app_name))

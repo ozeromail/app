@@ -812,6 +812,7 @@ fn rows_are_marked_only_with_several_accounts() {
         sending: false,
         can_unsubscribe: false,
         invite: None,
+        to: Vec::new(),
     };
     let first = add("a@example.com");
     let item = &core.items(vec![row(first)]).unwrap()[0];
@@ -828,13 +829,14 @@ fn rows_are_marked_only_with_several_accounts() {
     assert_eq!(
         marks,
         [
-            // Named by the domain when added; the second has the same domain, so its address.
+            // Named by the domain when added; the second has the same domain, so its address,
+            // shown by the part before the @.
             AccountMark {
                 name: "Example".into(),
                 color: ACCOUNT_COLORS[0],
             },
             AccountMark {
-                name: "b@example.com".into(),
+                name: "b".into(),
                 color: ACCOUNT_COLORS[1],
             },
         ]
@@ -1630,4 +1632,23 @@ fn sends_only_to_addresses() {
     assert!(!ok("anna@example.com, Bo", ""));
     assert!(!ok("anna@example.com", "not an address"));
     assert!(ok("anna@example.com", "  "));
+}
+
+#[test]
+fn own_mail_names_who_it_is_to() {
+    let person = |name: Option<&str>, email: &str| Address {
+        name: name.map(Into::into),
+        email: email.into(),
+    };
+    assert_eq!(
+        to_names(&[person(Some("Anna Lee"), "anna@x.com")]),
+        ["Anna Lee"]
+    );
+    assert_eq!(
+        to_names(&[
+            person(Some("Lee, Anna"), "anna@x.com"),
+            person(None, "bob@y.org")
+        ]),
+        ["Anna", "bob"]
+    );
 }

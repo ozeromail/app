@@ -54,6 +54,8 @@
   "search_recent": "Recent",
   "search_people": "People",
   "search_clear": "Clear",
+  "search_nothing": "Nothing found",
+  "search_nothing_text": "No mail on this phone or on the server matches “%1$s”.",
   "inbox_add_account": "Add account",
   "inbox_all_accounts": "All accounts",
   "inbox_zero_title": "Inbox is empty",

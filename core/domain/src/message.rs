@@ -147,6 +147,8 @@ pub struct MessageRow {
     pub can_unsubscribe: bool,
     /// The meeting it invites to, once its body is saved.
     pub invite: Option<crate::InviteRow>,
+    /// Its `To`, or its `Cc` when it has no `To`, for a list row of mail the user wrote.
+    pub to: Vec<Address>,
 }
 
 /// Someone who wrote in a conversation.
@@ -185,6 +187,12 @@ impl Sender {
 }
 
 impl MessageRow {
+    /// Only the user wrote it: in the sent folder, or every sender in its conversation is them.
+    pub fn is_mine(&self) -> bool {
+        self.senders.iter().all(|s| s.me)
+            && (self.role == crate::FolderRole::Sent || !self.senders.is_empty())
+    }
+
     /// Where the next page starts.
     pub fn cursor(&self) -> Cursor {
         Cursor {

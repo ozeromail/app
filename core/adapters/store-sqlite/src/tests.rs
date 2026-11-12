@@ -298,6 +298,30 @@ fn list_pages_newest_first() {
 }
 
 #[test]
+fn a_row_says_who_the_mail_is_to() {
+    let store = store();
+    let folder = inbox(&store, account(&store, "a@example.com"));
+    let bob = Address {
+        name: Some("Bob".into()),
+        email: "bob@example.org".into(),
+    };
+    let cat = Address {
+        name: None,
+        email: "cat@example.net".into(),
+    };
+    let mut sent = message(1, 100);
+    sent.to = vec![bob.clone(), cat.clone()];
+    sent.cc = vec![Address {
+        name: Some("Dan".into()),
+        email: "dan@example.com".into(),
+    }];
+    store.save_messages(folder, &[sent]).unwrap();
+
+    let row = &list(&store, ListScope::Folder(folder), 1, None)[0];
+    assert_eq!(row.to, [bob, cat]);
+}
+
+#[test]
 fn unified_inbox_merges_accounts() {
     let store = store();
     let a = account(&store, "a@example.com");
