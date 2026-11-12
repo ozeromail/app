@@ -506,4 +506,6 @@ pub const MIGRATIONS: &[&str] = &[
         SELECT id FROM message WHERE stand_in = 0
     );
     ",
+    // 52: flagged mail outside a flagged folder; `2` is the flagged bit.
+    "CREATE INDEX message_flagged ON message(folder_id, category) WHERE flags & 2 != 0;",
 ];
