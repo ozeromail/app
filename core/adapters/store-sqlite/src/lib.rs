@@ -3252,9 +3252,9 @@ const LIST_FLAGGED: &str = list_sql!(
     "(m.folder_id IN (SELECT id FROM folder WHERE role = 'flagged')
       OR (m.thread_id, +m.folder_id, +m.category) IN (SELECT n.thread_id, n.folder_id, n.category
          FROM message n JOIN folder nf ON nf.id = n.folder_id
-         WHERE n.flags & 2 != 0 AND n.found = 0
-           AND nf.role NOT IN ('trash', 'junk', 'drafts', 'flagged')
-           AND NOT EXISTS (SELECT 1 FROM folder g WHERE g.account_id = nf.account_id AND g.role = 'flagged')
+         WHERE n.flags & 2 != 0 AND n.found = 0 AND nf.role != 'flagged' AND ",
+    shown_role!("nf"),
+    " AND nf.account_id NOT IN (SELECT account_id FROM folder WHERE role = 'flagged')
            AND ",
     not_moving!("n"),
     "))"
@@ -3786,6 +3786,7 @@ fn require(tx: &Transaction<'_>, sql: &str, id: i64) -> Result<(), StoreError> {
 fn message_row(r: &Row<'_>) -> rusqlite::Result<MessageRow> {
     let (thread_count, senders) =
         parse_senders(&r.get::<_, Option<String>>(9)?.unwrap_or_default());
+    let subject: String = r.get(4)?;
     Ok(MessageRow {
         id: MessageId(r.get(0)?),
         account_id: AccountId(r.get(1)?),
@@ -3793,8 +3794,8 @@ fn message_row(r: &Row<'_>) -> rusqlite::Result<MessageRow> {
             name: r.get(2)?,
             email: r.get(3)?,
         },
-        snippet: snippet_after_subject(r.get(5)?, &r.get::<_, String>(4)?),
-        subject: r.get(4)?,
+        snippet: snippet_after_subject(r.get(5)?, &subject),
+        subject,
         date: r.get(6)?,
         flags: parse_flags(r.get(7)?),
         thread_unread: r.get(8)?,

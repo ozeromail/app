@@ -343,7 +343,7 @@ private fun AccountFolders(
     before.forEach { UsualFolder(it, state, actions, depth) }
     if (flagged && usual.none { it.role == FolderRole.FLAGGED }) {
         val box = Mailbox.Unified(FolderRole.FLAGGED)
-        FolderRow(FolderRole.FLAGGED.icon(), stringResource(R.string.folder_flagged), box == state.mailbox, depth = depth) { actions.onMailbox(box) }
+        FolderRow(FolderRole.FLAGGED.icon(), FolderRole.FLAGGED.title(""), box == state.mailbox, depth = depth) { actions.onMailbox(box) }
     }
     after.forEach { UsualFolder(it, state, actions, depth) }
     val own = mine.filter { it.role == FolderRole.CUSTOM }

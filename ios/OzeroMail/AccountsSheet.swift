@@ -302,7 +302,7 @@ private struct AccountFolders: View {
         ForEach(usual.filter { $0.role.rank < FolderRole.flagged.rank }, id: \.id) { folder in usualRow(folder) }
         if flagged && !usual.contains(where: { $0.role == .flagged }) {
             let box = Mailbox.unified(role: .flagged)
-            FolderRow(icon: FolderRole.flagged.icon, title: tr("folder_flagged"), open: box == mailbox, depth: depth) { actions.onMailbox(box) }
+            FolderRow(icon: FolderRole.flagged.icon, title: FolderRole.flagged.title(""), open: box == mailbox, depth: depth) { actions.onMailbox(box) }
         }
         ForEach(usual.filter { $0.role.rank >= FolderRole.flagged.rank }, id: \.id) { folder in usualRow(folder) }
         let own = mine.filter { $0.role == .custom }

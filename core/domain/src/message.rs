@@ -398,16 +398,16 @@ pub struct ListQuery {
 /// heading; the snippet as it is when nothing else would be left.
 pub fn snippet_after_subject(snippet: String, subject: &str) -> String {
     let subject = subject.trim();
-    let rest = match snippet.strip_prefix(subject) {
+    match snippet.strip_prefix(subject) {
         Some(rest) if !subject.is_empty() && rest.starts_with(char::is_whitespace) => {
-            rest.trim_start()
+            let rest = rest.trim_start();
+            if rest.is_empty() {
+                snippet
+            } else {
+                rest.to_owned()
+            }
         }
-        _ => return snippet,
-    };
-    if rest.is_empty() {
-        snippet
-    } else {
-        rest.to_owned()
+        _ => snippet,
     }
 }
 

@@ -1988,12 +1988,13 @@ private fun InboxList(
         }
         // Under the dock the list fades into the page, so no cut-off words show between its pieces.
         if (dockHeight > 0.dp) {
+            val fade = remember(colors.background) { Brush.verticalGradient(0f to Color.Transparent, 0.45f to colors.background.copy(alpha = 0.9f)) }
             Box(
                 Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .height(dockHeight + 24.dp)
-                    .background(Brush.verticalGradient(0f to Color.Transparent, 0.45f to colors.background.copy(alpha = 0.9f))),
+                    .background(fade),
             )
         }
         Column(Modifier.align(Alignment.BottomCenter)) { BarText { CompositionLocalProvider(LocalGlass provides haze) {

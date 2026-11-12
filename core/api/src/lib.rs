@@ -1712,8 +1712,7 @@ impl Core {
             let folders: Vec<Folder> = if mailbox == INBOX {
                 vec![]
             } else {
-                let all = self.store.folders(id)?;
-                all.into_iter().filter(|f| mailbox.holds(f)).collect()
+                mailbox.folders_of(self.store.folders(id)?)
             };
             let mut slot = None;
             // A send that fails, say on a broken SMTP server, must not stop new mail coming in.
@@ -2265,10 +2264,7 @@ impl Core {
         mailbox: Mailbox,
     ) -> Result<Vec<(Folder, Option<i64>)>, CoreError> {
         let mut loadable = vec![];
-        for folder in self.store.folders(account)? {
-            if !mailbox.holds(&folder) {
-                continue;
-            }
+        for folder in mailbox.folders_of(self.store.folders(account)?) {
             if !self.store.older_done(folder.id)? {
                 let oldest = self.store.oldest(folder.id)?;
                 loadable.push((folder, oldest));
@@ -3707,6 +3703,21 @@ const INBOX: Mailbox = Mailbox::Unified {
 };
 
 impl Mailbox {
+    /// The folders of one account's `all` that it covers: for flagged mail, the account's
+    /// flagged folder where it has one.
+    fn folders_of(self, all: Vec<Folder>) -> Vec<Folder> {
+        let flagged = |f: &Folder| f.role == FolderRole::Flagged;
+        if self
+            == (Self::Unified {
+                role: FolderRole::Flagged,
+            })
+            && all.iter().any(flagged)
+        {
+            return all.into_iter().filter(flagged).collect();
+        }
+        all.into_iter().filter(|f| self.holds(f)).collect()
+    }
+
     fn holds(self, folder: &Folder) -> bool {
         match self {
             // Flagged mail lists from every folder of an account without a flagged one.
