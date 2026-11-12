@@ -2038,7 +2038,7 @@ impl Store for SqliteStore {
         .map_err(storage)?;
         let found = tx
             .prepare_cached(
-                "SELECT m.id, f.remote_id, f.validity, m.remote_id, m.message_id
+                "SELECT m.id, f.remote_id, f.validity, m.remote_id, m.message_id, m.date
                  FROM message m JOIN folder f ON f.id = m.folder_id
                  WHERE f.account_id = ?1 AND f.role = 'drafts' AND m.stand_in = 0
                    AND NOT EXISTS (SELECT 1 FROM draft d
@@ -2062,6 +2062,7 @@ impl Store for SqliteStore {
                             remote_id: r.get(3)?,
                         },
                         message_id: r.get(4)?,
+                        date: r.get(5)?,
                     })
                 })?
                 .collect::<Result<Vec<_>, _>>()

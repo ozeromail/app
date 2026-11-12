@@ -123,7 +123,7 @@ pub async fn import_drafts(
         let header = parser.parse(RawMessage {
             remote_id: copy.remote_id.clone(),
             flags: Default::default(),
-            received: 0,
+            received: found.date,
             header: raw[..end].to_vec(),
         });
         let body = parser.parse_body(&raw);

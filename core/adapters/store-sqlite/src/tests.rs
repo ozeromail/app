@@ -3288,6 +3288,39 @@ fn keeps_the_marks_of_text_written_before_styles() {
     }
 }
 
+#[test]
+fn dates_drafts_brought_in_before() {
+    let conn = connect(Connection::open_in_memory).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE folder (id INTEGER, account_id INTEGER, remote_id TEXT, validity INTEGER);
+         CREATE TABLE message (folder_id INTEGER, remote_id TEXT, date INTEGER);
+         CREATE TABLE draft (saved INTEGER, pushed INTEGER, remote_account INTEGER,
+                             remote_folder TEXT, remote_validity INTEGER, remote_id TEXT);
+         INSERT INTO folder VALUES (1, 5, 'Drafts', 7);
+         INSERT INTO message VALUES (1, '42', 1700000000);
+         INSERT INTO draft VALUES (0, 0, 5, 'Drafts', 7, '42');
+         INSERT INTO draft VALUES (0, 0, 5, 'Drafts', 7, '43');
+         INSERT INTO draft VALUES (9000, NULL, NULL, NULL, NULL, NULL);",
+    )
+    .unwrap();
+    conn.execute_batch(schema::MIGRATIONS[48]).unwrap();
+    let dates: Vec<(i64, Option<i64>)> = conn
+        .prepare("SELECT saved, pushed FROM draft ORDER BY rowid")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        dates,
+        [
+            (1_700_000_000_000, Some(1_700_000_000_000)),
+            (0, Some(0)),
+            (9000, None)
+        ]
+    );
+}
+
 fn calendar(uid: &str, sequence: u32, start: &str, method: &str) -> String {
     format!(
         "BEGIN:VCALENDAR\r\nMETHOD:{method}\r\nBEGIN:VEVENT\r\nUID:{uid}\r\nSEQUENCE:{sequence}\r\n\
