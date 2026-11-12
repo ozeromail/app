@@ -83,6 +83,58 @@ pub fn markup_escape(text: &str) -> String {
     out
 }
 
+/// HTML or XML text with its character references as the characters; one it does not know
+/// stays as written.
+pub(crate) fn decode_entities(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains('&') {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        rest = &rest[amp..];
+        let found = rest[1..]
+            .find(';')
+            .filter(|&end| end < 10)
+            .and_then(|end| Some((end + 1, character(&rest[1..=end])?)));
+        if let Some((end, c)) = found {
+            out.push(c);
+            rest = &rest[end + 1..];
+        } else {
+            out.push('&');
+            rest = &rest[1..];
+        }
+    }
+    out.push_str(rest);
+    std::borrow::Cow::Owned(out)
+}
+
+/// The character a reference such as `amp` or `#38` names.
+fn character(name: &str) -> Option<char> {
+    if let Some(number) = name.strip_prefix('#') {
+        let code = match number.strip_prefix(['x', 'X']) {
+            Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+            None => number.parse().ok()?,
+        };
+        return char::from_u32(code);
+    }
+    Some(match name {
+        "amp" => '&',
+        "lt" => '<',
+        "gt" => '>',
+        "quot" => '"',
+        "apos" => '\'',
+        "nbsp" => '\u{A0}',
+        "laquo" => '«',
+        "raquo" => '»',
+        "ndash" => '–',
+        "mdash" => '—',
+        "hellip" => '…',
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

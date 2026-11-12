@@ -540,18 +540,23 @@ struct ComposeView: View {
             } label: {
                 HStack(spacing: 8) {
                     AccountInitial(name: from.name, color: from.tint, size: 22)
-                    // The account's short name: a long address would be cut off here. Another of
-                    // its addresses shows as itself, the one thing that tells it apart.
-                    Text(verbatim: alias.isEmpty ? from.name : alias).font(.text).lineLimit(1).foregroundStyle(.primary)
+                    // An account is its colour: its name would be cut off by the buttons. Another
+                    // of its addresses shows as itself, the one thing that tells it apart.
+                    if !alias.isEmpty {
+                        Text(verbatim: alias).font(.text).lineLimit(1).foregroundStyle(.primary)
+                    }
                 }
-                .padding(.leading, 8)
-                .padding(.trailing, 12)
+                .padding(.leading, 7)
+                .padding(.trailing, alias.isEmpty ? 7 : 12)
                 .frame(height: 36)
                 .background(Color.ozeroCard, in: .capsule)
                 .frame(height: 44)
                 .contentShape(.capsule)
             }
             .disabled(accounts.count < 2 && from.aliases.isEmpty)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(tr("compose_from", alias.isEmpty ? from.email : alias))
+            .help(Text(verbatim: alias.isEmpty ? from.email : alias))
         }
     }
 

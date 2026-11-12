@@ -12,6 +12,9 @@ use std::ops::Range;
 use crate::unsubscribe::is_scheme;
 use crate::{FileId, markup_escape};
 
+mod from_html;
+pub use from_html::from_html;
+
 /// What a mark does to the text it holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Style {

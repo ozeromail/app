@@ -16,7 +16,7 @@ pub struct Page {
 }
 
 /// Elements dropped with all they hold.
-const DROPPED: [&str; 5] = ["script", "iframe", "object", "embed", "template"];
+pub(crate) const DROPPED: [&str; 5] = ["script", "iframe", "object", "embed", "template"];
 /// Tags dropped on their own: they would change how the page loads.
 const VOID_DROPPED: [&str; 3] = ["base", "meta", "link"];
 const IMAGE_MARK: &str = "data-ozero-image";
@@ -223,19 +223,19 @@ fn has_text(html: &str) -> bool {
 }
 
 /// One start or end tag.
-struct Tag<'a> {
+pub(crate) struct Tag<'a> {
     raw: &'a str,
     /// Lowercase.
-    name: String,
-    closing: bool,
+    pub(crate) name: String,
+    pub(crate) closing: bool,
     /// Bytes from `<` to `>`, both included.
-    len: usize,
+    pub(crate) len: usize,
     attrs: Vec<(String, Option<&'a str>)>,
 }
 
 impl<'a> Tag<'a> {
     /// The tag at the start of `html`, which starts with `<`; None if it is not one.
-    fn read(html: &'a str) -> Option<Self> {
+    pub(crate) fn read(html: &'a str) -> Option<Self> {
         let bytes = html.as_bytes();
         let mut at = 1;
         let closing = bytes.get(at) == Some(&b'/');
@@ -325,7 +325,7 @@ impl<'a> Tag<'a> {
             || self.attr("id").is_some_and(|id| QUOTE_IDS.contains(&id))
     }
 
-    fn attr(&self, name: &str) -> Option<&'a str> {
+    pub(crate) fn attr(&self, name: &str) -> Option<&'a str> {
         self.attrs
             .iter()
             .find(|(n, _)| n == name)
@@ -334,7 +334,7 @@ impl<'a> Tag<'a> {
 }
 
 /// What follows the end tag of `name`, or nothing if it never ends.
-fn after_end_tag<'a>(html: &'a str, name: &str) -> &'a str {
+pub(crate) fn after_end_tag<'a>(html: &'a str, name: &str) -> &'a str {
     let end = format!("</{name}");
     let at = html.match_indices("</").map(|(at, _)| at).find(|&at| {
         html.get(at..at + end.len())
@@ -432,7 +432,7 @@ const VERBATIM: [&str; 8] = [
     "pre", "code", "kbd", "samp", "tt", "style", "title", "textarea",
 ];
 /// Tags that start a new line.
-const LINE_TAGS: [&str; 20] = [
+pub(crate) const LINE_TAGS: [&str; 20] = [
     "br",
     "p",
     "div",

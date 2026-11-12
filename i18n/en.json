@@ -279,6 +279,7 @@
   "account_alias_server_hint": "Allow this address on your mail server first, or mail from it won’t go.",
   "account_aliases_hint": "Mail from these addresses goes through this account’s server, which has to allow them. Replies go from the address the mail came to.",
   "compose_signature": "Signature, for this message",
+  "compose_from": "From %1$s",
   "message_you": "You",
   "message_you_to": "you",
   "message_to_line": "To %1$s",

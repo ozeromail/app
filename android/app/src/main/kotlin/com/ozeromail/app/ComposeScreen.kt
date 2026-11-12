@@ -93,6 +93,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
@@ -985,20 +988,26 @@ private fun Quote(text: String?, forwarding: Boolean, onRemove: (() -> Unit)?) {
 @Composable
 private fun Sender(from: AccountItem, alias: String, enabled: Boolean, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
+    val description = stringResource(R.string.compose_from, alias.ifEmpty { from.email })
     Row(
         Modifier
             .height(44.dp)
             .clip(CircleShape)
             .background(colors.surfaceVariant)
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(start = 8.dp, end = 12.dp),
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .clearAndSetSemantics {
+                contentDescription = description
+                role = Role.Button
+                if (enabled) onClick { onClick(); true } else disabled()
+            }
+            .padding(start = 11.dp, end = if (alias.isEmpty()) 11.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         AccountInitial(from.name, from.tint, 22.dp)
-        // The account's short name: a long address would be cut off here. Another of its
+        // An account is its colour: its name would be cut off by the buttons. Another of its
         // addresses shows as itself, the one thing that tells it apart.
-        Text(alias.ifEmpty { from.name }, style = Type.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (alias.isNotEmpty()) Text(alias, style = Type.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
