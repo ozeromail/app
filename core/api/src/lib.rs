@@ -4042,8 +4042,15 @@ pub struct AccountMark {
 
 impl From<&Account> for AccountMark {
     fn from(a: &Account) -> Self {
+        // A tag beside a row has room for a word: an account called by its address shows the part
+        // before the @, "work" rather than "work@e…".
+        let name = a.name();
+        let name = match name.split_once('@') {
+            Some((local, _)) if !local.is_empty() && !name.contains(' ') => local,
+            _ => name,
+        };
         Self {
-            name: a.name().to_owned(),
+            name: name.to_owned(),
             color: rgb(a.color),
         }
     }
