@@ -141,6 +141,7 @@ fn keeps_drafts_written_elsewhere() {
         message: MessageId(1),
         copy: copy(remote_id, 7),
         message_id: Some(format!("{remote_id}@example.com")),
+        date: 1_700_000_000,
     };
     let store = Memory {
         server_drafts: vec![found("x"), found("gone"), found("y"), found("z")],
@@ -158,6 +159,7 @@ fn keeps_drafts_written_elsewhere() {
     let imported = store.imported.lock().unwrap();
     let ids: Vec<&str> = imported.iter().map(|d| d.2.remote_id.as_str()).collect();
     assert_eq!(ids, ["x", "y"]);
+    assert!(imported.iter().all(|d| d.0.saved == 1_700_000_000_000));
     let (draft, message_id, _) = &imported[0];
     assert_eq!(draft.account_id, Some(AccountId(1)));
     assert_eq!(draft.text, "Hello");

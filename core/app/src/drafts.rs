@@ -123,7 +123,7 @@ pub async fn import_drafts(
         let header = parser.parse(RawMessage {
             remote_id: copy.remote_id.clone(),
             flags: Default::default(),
-            received: 0,
+            received: found.date,
             header: raw[..end].to_vec(),
         });
         let body = parser.parse_body(&raw);
@@ -158,8 +158,13 @@ pub async fn import_drafts(
                 .map(|a| a.email.clone())
                 .unwrap_or_default(),
             subject: header.subject,
-            // Plain text, so any marks in it stay as written.
-            text: ozero_domain::rich::escape(&body.text),
+            // With its styles, from the HTML part; plain text keeps any marks in it as written.
+            text: body
+                .html
+                .as_deref()
+                .map(ozero_domain::rich::from_html)
+                .filter(|text| !text.trim().is_empty())
+                .unwrap_or_else(|| ozero_domain::rich::escape(&body.text)),
             signature: String::new(),
             reply_to: None,
             quote: String::new(),

@@ -1624,6 +1624,17 @@ fn moves_chosen_messages_only_where_all_of_them_can_go() {
 }
 
 #[test]
+fn sends_only_to_addresses() {
+    let ok = |to: &str, cc: &str| can_send_to(to.into(), cc.into(), String::new());
+    assert!(ok("anna@example.com, bo@example.org", ""));
+    assert!(!ok("", ""));
+    assert!(!ok("Anna", ""));
+    assert!(!ok("anna@example.com, Bo", ""));
+    assert!(!ok("anna@example.com", "not an address"));
+    assert!(ok("anna@example.com", "  "));
+}
+
+#[test]
 fn own_mail_names_who_it_is_to() {
     let person = |name: Option<&str>, email: &str| Address {
         name: name.map(Into::into),

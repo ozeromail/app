@@ -204,7 +204,11 @@ struct ComposeView: View {
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { pageHeight = $0 }
                         .frame(maxWidth: .infinity, minHeight: room, alignment: expanded ? .top : .bottom)
                     }
-                    .defaultScrollAnchor(.bottom)
+                    // Held at its end, where the writing goes on; a draft opened again starts at its
+                    // top, to be read from the beginning.
+                    .defaultScrollAnchor(.bottom, for: .alignment)
+                    .defaultScrollAnchor(.bottom, for: .sizeChanges)
+                    .defaultScrollAnchor(start.id == 0 ? .bottom : .top, for: .initialOffset)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { room = $0 }
                     // When a long text takes To and Subject out of sight, a line names them, and a tap
                     // brings them down here.
@@ -410,11 +414,18 @@ struct ComposeView: View {
                     .zIndex(1)
             }
             Divider()
-            TextField("compose_subject", text: $subject)
+            // A long subject wraps to all of it. Still one line: Return goes on to the text.
+            TextField("compose_subject", text: $subject, axis: .vertical)
                 .font(.subjectTitle)
                 .focused($focus, equals: .subject)
                 .submitLabel(.next)
-                .onSubmit { textRequest += 1 }
+                .onChange(of: subject) { before, now in
+                    guard now.contains(where: \.isNewline) else { return }
+                    // One break typed, wherever the caret is, is Return.
+                    let typed = now.count == before.count + 1 && now.filter(\.isNewline).count == 1
+                    subject = now.split(whereSeparator: \.isNewline).joined(separator: typed ? "" : " ")
+                    if typed { textRequest += 1 }
+                }
         }
         .padding(.horizontal, 20)
     }
@@ -516,6 +527,7 @@ struct ComposeView: View {
     @ViewBuilder
     private var sender: some View {
         if let from {
+            let address = alias.isEmpty ? from.email : alias
             Menu {
                 ForEach(accounts, id: \.id) { account in
                     // Each account with its other addresses under it, one tap each.
@@ -529,18 +541,23 @@ struct ComposeView: View {
             } label: {
                 HStack(spacing: 8) {
                     AccountInitial(name: from.name, color: from.tint, size: 22)
-                    // The account's short name: a long address would be cut off here. Another of
-                    // its addresses shows as itself, the one thing that tells it apart.
-                    Text(verbatim: alias.isEmpty ? from.name : alias).font(.text).lineLimit(1).foregroundStyle(.primary)
+                    // An account is its colour: its name would be cut off by the buttons. Another
+                    // of its addresses shows as itself, the one thing that tells it apart.
+                    if !alias.isEmpty {
+                        Text(verbatim: alias).font(.text).lineLimit(1).foregroundStyle(.primary)
+                    }
                 }
-                .padding(.leading, 8)
-                .padding(.trailing, 12)
+                .padding(.leading, 7)
+                .padding(.trailing, alias.isEmpty ? 7 : 12)
                 .frame(height: 36)
                 .background(Color.ozeroCard, in: .capsule)
                 .frame(height: 44)
                 .contentShape(.capsule)
             }
             .disabled(accounts.count < 2 && from.aliases.isEmpty)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(tr("compose_from", address))
+            .help(Text(verbatim: address))
         }
     }
 
@@ -584,7 +601,7 @@ struct ComposeView: View {
     }
 
     /// The files still being read go with it, so it waits for them; and for someone to send to.
-    private var canSend: Bool { !busy && from != nil && adding.isEmpty && !to.isBlank }
+    private var canSend: Bool { !busy && from != nil && adding.isEmpty && canSendTo(to: to, cc: cc, bcc: bcc) }
 
     private var sendButton: some View {
         SendButton(action: send)

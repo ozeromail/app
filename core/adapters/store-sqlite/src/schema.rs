@@ -472,4 +472,13 @@ pub const MIGRATIONS: &[&str] = &[
     UPDATE message SET snippet = ltrim(substr(snippet, instr(snippet, ']') + 1))
     WHERE snippet LIKE '[image:%]%';
     ",
+    // 49: drafts brought in from the server, dated 1970 as their date was never read; they
+    // take the date the server got them, and stay pushed.
+    "
+    UPDATE draft SET saved = m.date * 1000, pushed = m.date * 1000
+    FROM message m JOIN folder f ON f.id = m.folder_id
+    WHERE draft.saved = 0 AND draft.pushed = 0
+      AND f.account_id = draft.remote_account AND f.remote_id = draft.remote_folder
+      AND f.validity = draft.remote_validity AND m.remote_id = draft.remote_id;
+    ",
 ];
