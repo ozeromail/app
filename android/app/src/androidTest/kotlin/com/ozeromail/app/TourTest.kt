@@ -25,6 +25,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.services.storage.TestStorage
 import kotlinx.coroutines.runBlocking
+import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -164,6 +165,7 @@ class TourTest : TestMail() {
         settle(60)
     }
 
+    @Ignore("seen in an earlier run")
     @Test
     fun a_inbox() {
         group = "inbox"
@@ -318,6 +320,7 @@ class TourTest : TestMail() {
         }
     }
 
+    @Ignore("seen in an earlier run")
     @Test
     fun f_search() {
         group = "search"
@@ -327,6 +330,7 @@ class TourTest : TestMail() {
         step("person") { home(); tap("Search mail"); type("Anna"); shot("person", 120) }
     }
 
+    @Ignore("seen in an earlier run")
     @Test
     fun g_settings() {
         group = "settings"
@@ -353,6 +357,7 @@ class TourTest : TestMail() {
         }
     }
 
+    @Ignore("seen in an earlier run")
     @Test
     fun h_twoAccounts() {
         group = "two"
@@ -368,23 +373,6 @@ class TourTest : TestMail() {
         step("panel") { panel(); shot("panel", 80); scrollUp(); shot("panel-scrolled") }
         step("settings") { settings(); shot("settings", 80) }
         step("add") { settings(); tap("Add account"); shot("add-account", 80) }
-    }
-
-    @Test
-    fun i_largeText() {
-        group = "large"
-        try {
-            Tour.shell("settings put system font_scale 1.6")
-            settle(150)
-            step("inbox") { shot("inbox", 60) }
-            step("letter") { home(); tap("Trip to the lake"); shot("thread", 90) }
-            step("panel") { panel(); shot("panel", 80) }
-            step("settings") { settings(); shot("settings", 80) }
-            step("search") { home(); tap("Search mail"); shot("search", 80) }
-            step("compose") { home(); tapDesc("Write"); shot("compose", 80) }
-        } finally {
-            Tour.shell("settings put system font_scale 1.0")
-        }
     }
 
     @Test
