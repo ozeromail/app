@@ -3709,13 +3709,17 @@ const INBOX: Mailbox = Mailbox::Unified {
 impl Mailbox {
     fn holds(self, folder: &Folder) -> bool {
         match self {
-            Self::Unified { role } => folder.role == role,
-            Self::Folder { id } => folder.id.0 == id,
-            // The folders their lists cover.
-            Self::Unread | Self::Files => !matches!(
+            // Flagged mail lists from every folder of an account without a flagged one.
+            Self::Unified {
+                role: FolderRole::Flagged,
+            }
+            | Self::Unread
+            | Self::Files => !matches!(
                 folder.role,
                 FolderRole::Trash | FolderRole::Junk | FolderRole::Drafts
             ),
+            Self::Unified { role } => folder.role == role,
+            Self::Folder { id } => folder.id.0 == id,
         }
     }
 }

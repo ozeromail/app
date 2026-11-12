@@ -1326,6 +1326,25 @@ fn lists_unread_mail_and_mail_with_files_of_every_account() {
 }
 
 #[test]
+fn lists_flagged_mail_without_a_flagged_folder() {
+    let store = store();
+    let folder = inbox(&store, account(&store, "a@example.com"));
+    store
+        .save_messages(folder, &[message(1, 100), message(2, 200)])
+        .unwrap();
+    let flagged = ListScope::Unified(FolderRole::Flagged);
+    assert!(list(&store, flagged, 10, None).is_empty());
+    let rows = list(&store, ListScope::Folder(folder), 10, None);
+    let id = rows.iter().find(|r| r.subject == "Subject 1").unwrap().id;
+    store.queue(id, Action::Flagged(true), 0).unwrap();
+    let rows = list(&store, flagged, 10, None);
+    assert_eq!(
+        rows.iter().map(|r| r.subject.as_str()).collect::<Vec<_>>(),
+        ["Subject 1"]
+    );
+}
+
+#[test]
 fn a_refused_archive_shows_the_message_again() {
     let store = store();
     let account = account(&store, "a@example.com");

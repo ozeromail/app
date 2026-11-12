@@ -714,6 +714,7 @@ impl Store for SqliteStore {
             // Their scopes take no value; `?1` stays unused.
             ListScope::Unread => (LIST_UNREAD, &0, None),
             ListScope::Files => (LIST_FILES, &0, None),
+            ListScope::Unified(FolderRole::Flagged) => (LIST_FLAGGED, &0, None),
             ListScope::Unified(role) if walks_by_date(*role) => {
                 (LIST_UNIFIED_BY_DATE, role_ref(*role), None)
             }
@@ -3244,6 +3245,19 @@ const LIST_UNREAD: &str = list_sql!(
          WHERE n.flags & 1 = 0 AND n.found = 0 AND nf.role NOT IN ('trash', 'junk', 'drafts') AND ",
     not_moving!("n"),
     ")"
+);
+// Flagged mail: an account's flagged folder where it has one, as Gmail's Starred, else its
+// flagged messages in any folder but trash, junk and drafts.
+const LIST_FLAGGED: &str = list_sql!(
+    "(m.folder_id IN (SELECT id FROM folder WHERE role = 'flagged')
+      OR (m.thread_id, +m.folder_id, +m.category) IN (SELECT n.thread_id, n.folder_id, n.category
+         FROM message n JOIN folder nf ON nf.id = n.folder_id
+         WHERE n.flags & 2 != 0 AND n.found = 0
+           AND nf.role NOT IN ('trash', 'junk', 'drafts', 'flagged')
+           AND NOT EXISTS (SELECT 1 FROM folder g WHERE g.account_id = nf.account_id AND g.role = 'flagged')
+           AND ",
+    not_moving!("n"),
+    "))"
 );
 const LIST_FILES: &str = list_sql!(
     "(m.thread_id, +m.folder_id, +m.category) IN (SELECT n.thread_id, n.folder_id, n.category

@@ -181,7 +181,7 @@ private fun MailboxList(state: MailboxesState, actions: AccountsActions, editing
             actions.onMailbox(Mail.INBOX)
         }
         SignInAgain(one, actions)
-        AccountFolders(one, state, actions)
+        AccountFolders(one, state, actions, flagged = true)
         return
     }
     val inAll = accounts.filter { it.inAll }
@@ -327,14 +327,25 @@ private fun FoldersArrow(account: String, open: Boolean, onToggle: () -> Unit) {
  * shows the rest, each inside the one it is in. Holding one of its own pins or unpins it.
  */
 @Composable
-private fun AccountFolders(account: AccountItem, state: MailboxesState, actions: AccountsActions, depth: Int = 0) {
+private fun AccountFolders(
+    account: AccountItem,
+    state: MailboxesState,
+    actions: AccountsActions,
+    depth: Int = 0,
+    // Lists flagged mail even without a flagged folder: for the only account, where it is all flagged mail.
+    flagged: Boolean = false,
+) {
     val colors = MaterialTheme.colorScheme
     val haptics = LocalHapticFeedback.current
     val mine = state.folders.filter { it.accountId == account.id && it.role != FolderRole.DRAFTS }
-    mine.filter { it.role != FolderRole.CUSTOM && it.role != FolderRole.INBOX }.sortedBy { it.role.rank() }.forEach { folder ->
-        val box = Mailbox.Folder(folder.id)
-        FolderRow(folder.role.icon(), folder.title(), box == state.mailbox, depth = depth) { actions.onMailbox(box) }
+    val usual = mine.filter { it.role != FolderRole.CUSTOM && it.role != FolderRole.INBOX }.sortedBy { it.role.rank() }
+    val (before, after) = usual.partition { it.role.rank() < FolderRole.FLAGGED.rank() }
+    before.forEach { UsualFolder(it, state, actions, depth) }
+    if (flagged && usual.none { it.role == FolderRole.FLAGGED }) {
+        val box = Mailbox.Unified(FolderRole.FLAGGED)
+        FolderRow(FolderRole.FLAGGED.icon(), stringResource(R.string.folder_flagged), box == state.mailbox, depth = depth) { actions.onMailbox(box) }
     }
+    after.forEach { UsualFolder(it, state, actions, depth) }
     val own = mine.filter { it.role == FolderRole.CUSTOM }
     if (own.isEmpty()) return
     var all by rememberSaveable(account.id) { mutableStateOf(false) }
@@ -382,6 +393,13 @@ private fun AccountFolders(account: AccountItem, state: MailboxesState, actions:
             modifier = Modifier.padding(start = Gap.sheet + indent(depth + 1), end = Gap.sheet, bottom = 8.dp),
         )
     }
+}
+
+/** A folder with a role, such as Sent or Archive. */
+@Composable
+private fun UsualFolder(folder: FolderItem, state: MailboxesState, actions: AccountsActions, depth: Int) {
+    val box = Mailbox.Folder(folder.id)
+    FolderRow(folder.role.icon(), folder.title(), box == state.mailbox, depth = depth) { actions.onMailbox(box) }
 }
 
 /** A folder a message can move to, named and placed as the list shows it. */
@@ -509,9 +527,10 @@ enum class AllBox(val mailbox: Mailbox, @StringRes val title: Int) {
             else -> R.drawable.ic_attach
         }
 
-    /** Shown in the list: a role's mailbox once some account has such a folder. */
+    /** Shown in the list: a role's mailbox once some account has such a folder, flagged mail always. */
     fun listed(folders: List<FolderItem>): Boolean = when (val box = mailbox) {
-        is Mailbox.Unified -> folders.any { it.role == box.role }
+        // Flagged mail lists by its flag where no folder holds it.
+        is Mailbox.Unified -> box.role == FolderRole.FLAGGED || folders.any { it.role == box.role }
         else -> true
     }
 
