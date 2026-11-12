@@ -93,9 +93,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.disabled
-import androidx.compose.ui.semantics.onClick
-import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
@@ -995,11 +992,8 @@ private fun Sender(from: AccountItem, alias: String, enabled: Boolean, onClick: 
             .clip(CircleShape)
             .background(colors.surfaceVariant)
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-            .clearAndSetSemantics {
-                contentDescription = description
-                role = Role.Button
-                if (enabled) onClick { onClick(); true } else disabled()
-            }
+            // Read as the address it goes from, not the letter in the circle.
+            .clearAndSetSemantics { contentDescription = description }
             .padding(start = 11.dp, end = if (alias.isEmpty()) 11.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),

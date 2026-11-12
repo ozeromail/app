@@ -527,6 +527,7 @@ struct ComposeView: View {
     @ViewBuilder
     private var sender: some View {
         if let from {
+            let address = alias.isEmpty ? from.email : alias
             Menu {
                 ForEach(accounts, id: \.id) { account in
                     // Each account with its other addresses under it, one tap each.
@@ -555,8 +556,8 @@ struct ComposeView: View {
             }
             .disabled(accounts.count < 2 && from.aliases.isEmpty)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(tr("compose_from", alias.isEmpty ? from.email : alias))
-            .help(Text(verbatim: alias.isEmpty ? from.email : alias))
+            .accessibilityLabel(tr("compose_from", address))
+            .help(Text(verbatim: address))
         }
     }
 
