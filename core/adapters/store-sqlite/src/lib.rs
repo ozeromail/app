@@ -3179,7 +3179,8 @@ macro_rules! message_from {
                     m.stand_in = 1 AND EXISTS (SELECT 1 FROM outbox WHERE copy = m.id),
                     EXISTS (SELECT 1 FROM unsubscribe WHERE message_id = m.id AND state = 0),
                     (SELECT start || char(31) || all_day || char(31) || cancelled || char(31)
-                            || location FROM invite WHERE message_id = m.id)",
+                            || location FROM invite WHERE message_id = m.id),
+                    m.recipients",
             " FROM message m JOIN folder f ON f.id = m.folder_id"
         )
     };
@@ -3791,6 +3792,10 @@ fn message_row(r: &Row<'_>) -> rusqlite::Result<MessageRow> {
             .get::<_, Option<String>>(14)?
             .as_deref()
             .and_then(parse_invite_row),
+        to: match people(&r.get::<_, Option<String>>(15)?.unwrap_or_default()) {
+            (to, cc) if to.is_empty() => cc,
+            (to, _) => to,
+        },
     })
 }
 

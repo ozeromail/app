@@ -2701,9 +2701,13 @@ val MessageItem.sender: String
 val MessageItem.mailSender: String
     get() = fromName?.takeIf { it.isNotBlank() } ?: fromEmail
 
-/** Who wrote in a conversation, "Anna, me, Boris"; for one person, their whole name. */
+/**
+ * Who wrote in a conversation, "Anna, me, Boris"; for one person, their whole name. Mail only
+ * the user wrote says who it is to instead: "To Anna Petrova", "To Anna and Boris".
+ */
 @Composable
 fun MessageItem.participants(): String {
+    if (to.isNotEmpty()) return stringResource(R.string.message_to_line, joinNames(to))
     if (senders.size < 2) return sender
     val me = stringResource(R.string.message_me)
     return senders.joinToString(", ") { if (it.me) me else it.first }

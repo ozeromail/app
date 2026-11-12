@@ -1206,8 +1206,10 @@ extension MessageItem {
         return name.isEmpty ? fromEmail : name
     }
 
-    /// Who wrote in a conversation, "Anna, me, Boris"; for one person, their whole name.
+    /// Who wrote in a conversation, "Anna, me, Boris"; for one person, their whole name. Mail
+    /// only the user wrote says who it is to instead: "To Anna Petrova", "To Anna and Boris".
     var participants: String {
+        if !to.isEmpty { return tr("message_to_line", joinNames(to)) }
         guard senders.count > 1 else { return sender }
         let me = tr("message_me")
         return senders.map { $0.me ? me : $0.first }.joined(separator: ", ")
