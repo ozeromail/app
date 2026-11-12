@@ -4722,6 +4722,8 @@ pub struct MessageItem {
     pub sending: bool,
     /// The meeting it invites to, once its body is downloaded.
     pub invite: Option<InviteMark>,
+    /// Who it is to, each by name or else address: a row of mail the user wrote names them.
+    pub to: Vec<String>,
 }
 
 impl From<MessageRow> for MessageItem {
@@ -4754,6 +4756,11 @@ impl From<MessageRow> for MessageItem {
             attachments: row.attachments,
             sending: row.sending,
             invite: row.invite.map(InviteMark::from),
+            to: row
+                .to
+                .into_iter()
+                .map(|a| a.name.filter(|n| !n.trim().is_empty()).unwrap_or(a.email))
+                .collect(),
         }
     }
 }

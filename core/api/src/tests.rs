@@ -812,6 +812,7 @@ fn rows_are_marked_only_with_several_accounts() {
         sending: false,
         can_unsubscribe: false,
         invite: None,
+        to: Vec::new(),
     };
     let first = add("a@example.com");
     let item = &core.items(vec![row(first)]).unwrap()[0];
