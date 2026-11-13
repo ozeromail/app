@@ -336,19 +336,22 @@ fn is_quoted(line: &str) -> bool {
 fn without_images(line: &str) -> Cow<'_, str> {
     // "[image: Google]" from Gmail, "[cid:image001.png@01DD...]" from Outlook.
     const MARKS: [&str; 2] = ["[image:", "[cid:"];
-    let next = |s: &str| MARKS.iter().filter_map(|m| s.find(m)).min();
-    if next(line).is_none() {
-        return Cow::Borrowed(line);
-    }
-    let mut out = String::with_capacity(line.len());
+    let mut out = String::new();
     let mut rest = line;
-    while let Some(start) = next(rest) {
-        let Some(len) = rest[start..].find(']') else {
-            break;
+    let mut from = 0;
+    while let Some(at) = rest[from..].find('[').map(|i| from + i) {
+        let mark = MARKS.iter().any(|m| rest[at..].starts_with(m));
+        let Some(len) = rest[at..].find(']').filter(|_| mark) else {
+            from = at + 1;
+            continue;
         };
-        out.push_str(&rest[..start]);
+        out.push_str(&rest[..at]);
         out.push(' ');
-        rest = &rest[start + len + 1..];
+        rest = &rest[at + len + 1..];
+        from = 0;
+    }
+    if rest.len() == line.len() {
+        return Cow::Borrowed(line);
     }
     out.push_str(rest);
     Cow::Owned(out)
