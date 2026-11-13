@@ -91,6 +91,8 @@ pub struct ServerDraft {
     pub message: MessageId,
     pub copy: DraftCopy,
     pub message_id: Option<String>,
+    /// When the server got it, in seconds: the copy's own Date header may be missing.
+    pub date: i64,
 }
 
 /// Local id of a file added to a message being written.

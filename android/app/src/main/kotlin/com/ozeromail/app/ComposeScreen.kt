@@ -74,6 +74,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -106,6 +107,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import java.io.IOException
 import kotlin.math.roundToInt
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import uniffi.ozero_api.AccountItem
 import uniffi.ozero_api.CoreException
@@ -116,6 +118,7 @@ import uniffi.ozero_api.ImageSize
 import uniffi.ozero_api.MessageItem
 import uniffi.ozero_api.RecentFileItem
 import uniffi.ozero_api.RichBlock
+import uniffi.ozero_api.canSendTo
 import uniffi.ozero_api.fileLimit
 import uniffi.ozero_api.richBlocks
 import uniffi.ozero_api.richChangeImage
@@ -511,12 +514,20 @@ fun ComposeScreen(
                 Recipients(mail, bcc, { bcc = it }, R.string.compose_bcc, addresses)
             }
             HorizontalDivider(color = colors.outlineVariant)
+            // A long subject wraps to all of it. Still one line: a pasted break is a space, and
+            // Enter goes on to the text.
             Plain(
                 subject,
-                { subject = it },
+                {
+                    // One break typed, wherever the caret is, is Enter.
+                    val enter = it.length == subject.length + 1 && it.count { c -> c == '\n' } == 1
+                    subject = if (enter) it.replace("\n", "") else it.replace(LINE_BREAK, " ")
+                    if (enter) focusManager.moveFocus(FocusDirection.Next)
+                },
                 R.string.compose_subject,
                 Type.Title,
                 KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Next),
+                singleLine = false,
             )
         }
     }
@@ -581,8 +592,9 @@ fun ComposeScreen(
             Text(stringResource(it), color = colors.error, modifier = Modifier.padding(horizontal = Gap.screen, vertical = 8.dp))
         }
     }
-    // The files still being read go with it, so it waits for them; and for someone to send to.
-    val ready = !busy && from != null && adding.isEmpty() && !to.isBlank()
+    // The files still being read go with it, so it waits for them; and for addresses to send to.
+    val addressed = remember(to, cc, bcc) { canSendTo(to, cc, bcc) }
+    val ready = !busy && from != null && adding.isEmpty() && addressed
     val attachTile = @Composable {
         IconTile(R.drawable.ic_attach, stringResource(R.string.compose_attach), { attaching = true }, shape = CircleShape)
     }
@@ -699,11 +711,12 @@ fun ComposeScreen(
                 // A longer text grows up and scrolls with the rest, with no frame of its own.
                 val page = rememberScrollState()
                 // Held at its end, where the writing goes on, as the page grows above or the keyboard
-                // takes room; scrolled up by hand, it stays where it was put.
-                var atEnd by remember { mutableStateOf(true) }
+                // takes room; scrolled up by hand, it stays where it was put. A draft opened again
+                // starts at its top, to be read from the beginning.
+                var atEnd by remember { mutableStateOf(start.id == 0L) }
                 LaunchedEffect(page) {
                     launch { snapshotFlow { page.maxValue }.collect { if (atEnd && it != Int.MAX_VALUE) page.scrollTo(it) } }
-                    snapshotFlow { page.isScrollInProgress }.collect { if (!it) atEnd = page.value >= page.maxValue }
+                    snapshotFlow { page.isScrollInProgress }.drop(1).collect { if (!it) atEnd = page.value >= page.maxValue }
                 }
                 // The page, its content low and at least [room] tall.
                 val pageOf = @Composable { room: Dp, modifier: Modifier ->
@@ -856,6 +869,7 @@ fun ComposeScreen(
 
 /** The text's room in a new message before anything is written. */
 private val WRITING_ROOM = 96.dp
+private val LINE_BREAK = Regex("\r?\n")
 
 /**
  * The top edge of a new message's sheet: pulled up it expands the sheet to the whole screen,
@@ -973,20 +987,23 @@ private fun Quote(text: String?, forwarding: Boolean, onRemove: (() -> Unit)?) {
 @Composable
 private fun Sender(from: AccountItem, alias: String, enabled: Boolean, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
+    val description = stringResource(R.string.compose_from, alias.ifEmpty { from.email })
     Row(
         Modifier
             .height(44.dp)
             .clip(CircleShape)
             .background(colors.surfaceVariant)
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(start = 8.dp, end = 12.dp),
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            // Read as the address it goes from, not the letter in the circle.
+            .clearAndSetSemantics { contentDescription = description }
+            .padding(start = 11.dp, end = if (alias.isEmpty()) 11.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         AccountInitial(from.name, from.tint, 22.dp)
-        // The account's short name: a long address would be cut off here. Another of its
+        // An account is its colour: its name would be cut off by the buttons. Another of its
         // addresses shows as itself, the one thing that tells it apart.
-        Text(alias.ifEmpty { from.name }, style = Type.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (alias.isNotEmpty()) Text(alias, style = Type.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

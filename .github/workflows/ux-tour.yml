@@ -3,7 +3,7 @@ name: ux tour
 # Stills of every screen on test mail, for a UX review. Runs on the tour branch only.
 on:
   push:
-    branches: [test/ux-tour]
+    branches: [test/ux-tour, test/align-tour]
 
 permissions:
   contents: write

@@ -171,7 +171,16 @@ fun SearchScreen(
             val (shownFor, messages) = found ?: (null to emptyList<MessageItem>())
             val answered = if (person != null) found != null else shownFor == search
             if (answered && messages.isEmpty() && !asking) {
-                item { EmptyNote(R.drawable.ic_search, stringResource(R.string.inbox_empty)) }
+                item {
+                    when {
+                        person != null -> EmptyNote(R.drawable.ic_search, stringResource(R.string.inbox_empty))
+                        else -> EmptyNote(
+                            R.drawable.ic_search,
+                            stringResource(R.string.search_nothing),
+                            query.trim().takeIf { it.isNotEmpty() }?.let { stringResource(R.string.search_nothing_text, it) },
+                        )
+                    }
+                }
             }
             // No motion in this list: when the servers' answer joins it, rows sliding to their
             // new places or the note fading out would pass over the rows that appear at once.
