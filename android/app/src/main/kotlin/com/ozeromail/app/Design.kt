@@ -31,7 +31,7 @@ object Gap {
     /** Titles, headers, fields and body text from the screen edge. */
     val screen = 20.dp
 
-    /** A message row's text from the screen edge, in line with the title; the unread dot hangs before it. */
+    /** A message row's text from the screen edge, in line with the title; the unread dot hangs in the middle of it. */
     val row = screen
 
     /** Rows of a sheet from its edge, in line with the screen's text under it. */
