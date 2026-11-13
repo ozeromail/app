@@ -331,22 +331,30 @@ fn is_quoted(line: &str) -> bool {
     line.trim_start().starts_with('>')
 }
 
-/// The line without the "[image: Logo]" marks that text parts such as Gmail's put where the
-/// HTML part shows an image.
+/// The line without the image marks that text parts put where the HTML part shows an image:
+/// Gmail's "[image: Logo]" and Outlook's "[cid:image001.png@01DD...]".
 fn without_images(line: &str) -> Cow<'_, str> {
-    const MARK: &str = "[image:";
-    if !line.contains(MARK) {
-        return Cow::Borrowed(line);
-    }
+    const MARKS: [&str; 2] = ["[image:", "[cid:"];
     let mut out = String::with_capacity(line.len());
     let mut rest = line;
-    while let Some(start) = rest.find(MARK) {
-        let Some(len) = rest[start..].find(']') else {
-            break;
+    let mut from = 0;
+    while let Some(at) = rest[from..].find('[').map(|i| from + i) {
+        let end = MARKS
+            .iter()
+            .any(|m| rest[at..].starts_with(m))
+            .then(|| rest[at..].find(']'))
+            .flatten();
+        let Some(len) = end else {
+            from = at + 1;
+            continue;
         };
-        out.push_str(&rest[..start]);
+        out.push_str(&rest[..at]);
         out.push(' ');
-        rest = &rest[start + len + 1..];
+        rest = &rest[at + len + 1..];
+        from = 0;
+    }
+    if out.is_empty() {
+        return Cow::Borrowed(line);
     }
     out.push_str(rest);
     Cow::Owned(out)
@@ -473,6 +481,10 @@ mod tests {
         assert_eq!(
             snippet("[image: Google]\nYou allowed[image: x] access [image: open"),
             "You allowed access [image: open"
+        );
+        assert_eq!(
+            snippet("[cid:image001.png@01DD7353.5B9BA630] Hi, team!"),
+            "Hi, team!"
         );
     }
 

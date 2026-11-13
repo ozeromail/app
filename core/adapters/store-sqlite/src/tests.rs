@@ -3695,11 +3695,15 @@ fn drops_the_image_marks_saved_previews_open_with() {
         "[image: G] [image: x] You allowed",
         "Hi [image: x]",
         "[image: open",
+        "[cid:image001.png@01DD7353.5B9BA630] Hi, team!",
+        "[cid:a][image: b] [cid:c] Hello",
+        "[CID:x] kept",
     ] {
         conn.execute("INSERT INTO message VALUES (?1)", [snippet])
             .unwrap();
     }
     conn.execute_batch(schema::MIGRATIONS[47]).unwrap();
+    conn.execute_batch(schema::MIGRATIONS[49]).unwrap();
     let left: Vec<String> = conn
         .prepare("SELECT snippet FROM message ORDER BY rowid")
         .unwrap()
@@ -3707,5 +3711,15 @@ fn drops_the_image_marks_saved_previews_open_with() {
         .unwrap()
         .collect::<Result<_, _>>()
         .unwrap();
-    assert_eq!(left, ["You allowed", "Hi [image: x]", "[image: open"]);
+    assert_eq!(
+        left,
+        [
+            "You allowed",
+            "Hi [image: x]",
+            "[image: open",
+            "Hi, team!",
+            "Hello",
+            "[CID:x] kept"
+        ]
+    );
 }

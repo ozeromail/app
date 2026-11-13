@@ -8,9 +8,12 @@ import androidx.compose.animation.core.SpringSpec
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.lazy.LazyItemScope
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
@@ -40,6 +43,9 @@ object Gap {
     /** Between the controls of a bar. */
     val inBar = 8.dp
 
+    /** Inside a pill of glass, around what it holds: the tabs' thumb, the choice bar's buttons. */
+    val inPill = 3.dp
+
     /** Above and below the controls of a bottom bar. */
     val barTop = 10.dp
     val barBottom = 12.dp
@@ -51,10 +57,35 @@ object Gap {
     /** Captions and hints over and under the cards and fields of a page, in line with what starts their rows. */
     val inset = screen + card
 
+    /** Above and below a message row's text. */
+    val rowY = 16.dp
+
     /** A sheet row's leading icon or dot sits in a slot this wide, so all the labels line up. */
     val slot = 24.dp
     val afterSlot = 14.dp
 }
+
+/** Heights shared by the controls along the bottom, so the dock keeps one height whatever it shows. */
+object Bar {
+    /** The accounts button, search, a new message, the choice bar. */
+    val control = 48.dp
+
+    /** The same on its side, where the height is for the mail. */
+    val controlShort = 44.dp
+
+    /** The big buttons of a solid bottom bar, an icon over its name, as under an open message. */
+    val action = 52.dp
+}
+
+/** [Bar.control], or [Bar.controlShort] on its side. */
+@Composable
+@ReadOnlyComposable
+fun Bar.controlHeight(): Dp = if (LocalRoom.current.short) controlShort else control
+
+/** [Bar.action], or [Bar.controlShort] on its side. */
+@Composable
+@ReadOnlyComposable
+fun Bar.actionHeight(): Dp = if (LocalRoom.current.short) controlShort else action
 
 /** Corner radii, from a segment's thumb to a sheet. */
 object Radius {
