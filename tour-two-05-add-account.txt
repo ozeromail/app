@@ -1,0 +1,7 @@
+        [56,168 58x58] d="Back"
+      [53,287 583x101] t="Add an account"
+        [353,1589 375x53] t="Continue with Google"
+      [523,1710 33x48] t="or"
+        [95,1856 97x58] t="Email"
+        [461,2027 158x53] t="Continue"
+        [402,2185 277x53] t="Set up manually"

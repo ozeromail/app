@@ -1,0 +1,23 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuite name="com.ozeromail.app.TourTest" tests="11" failures="0" errors="0" skipped="2" time="692.82" timestamp="2026-11-13T07:21:06" hostname="localhost">
+  <properties>
+    <property name="device" value="emulator-5554 - 14" />
+    <property name="flavor" value="" />
+    <property name="project" value=":app" />
+  </properties>
+  <testcase name="h_twoAccounts" classname="com.ozeromail.app.TourTest" time="71.532" />
+  <testcase name="g_settings" classname="com.ozeromail.app.TourTest" time="0.002">
+    <skipped />
+  </testcase>
+  <testcase name="a_inbox" classname="com.ozeromail.app.TourTest" time="140.631" />
+  <testcase name="f_search" classname="com.ozeromail.app.TourTest" time="0.002">
+    <skipped />
+  </testcase>
+  <testcase name="c_letters" classname="com.ozeromail.app.TourTest" time="105.574" />
+  <testcase name="b_panel" classname="com.ozeromail.app.TourTest" time="63.493" />
+  <testcase name="d_actions" classname="com.ozeromail.app.TourTest" time="71.246" />
+  <testcase name="k_landscape" classname="com.ozeromail.app.TourTest" time="29.445" />
+  <testcase name="e_compose" classname="com.ozeromail.app.TourTest" time="42.724" />
+  <testcase name="j_russian" classname="com.ozeromail.app.TourTest" time="40.152" />
+  <testcase name="l_offlineAndZero" classname="com.ozeromail.app.TourTest" time="96.968" />
+</testsuite>
