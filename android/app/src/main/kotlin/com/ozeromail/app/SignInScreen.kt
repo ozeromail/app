@@ -492,7 +492,7 @@ private fun Kinds(imap: Boolean, enabled: Boolean, onPick: (imap: Boolean) -> Un
             .fillMaxWidth()
             .clip(RoundedCornerShape(Radius.medium))
             .background(colors.surfaceContainer)
-            .padding(3.dp),
+            .padding(Gap.inPill),
     ) {
         listOf(true to R.string.signin_imap, false to R.string.signin_exchange).forEach { (kind, label) ->
             val on = kind == imap

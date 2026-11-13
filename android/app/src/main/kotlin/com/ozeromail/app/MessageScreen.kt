@@ -1046,7 +1046,7 @@ fun RowScope.BarAction(
     label: String,
     tint: Color,
     background: Color = Color.Transparent,
-    height: Dp = if (LocalRoom.current.short) 44.dp else 52.dp,
+    height: Dp = Bar.actionHeight(),
     shape: Shape = RoundedCornerShape(Radius.medium),
     onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,

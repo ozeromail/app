@@ -135,7 +135,7 @@ fun BackArrow(onBack: () -> Unit, modifier: Modifier = Modifier) {
 fun PillBox(
     modifier: Modifier = Modifier,
     @DrawableRes icon: Int? = null,
-    height: Dp = 48.dp,
+    height: Dp = Bar.control,
     onClick: (() -> Unit)? = null,
     content: @Composable RowScope.() -> Unit,
 ) {
@@ -162,7 +162,7 @@ fun Pill(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     @DrawableRes icon: Int? = null,
-    height: Dp = 48.dp,
+    height: Dp = Bar.control,
 ) {
     PillBox(modifier, icon, height, onClick) {
         Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant, style = Type.Body, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -325,7 +325,7 @@ private const val TOAST_GAP_MS = 80L
  * [MovedToast] shows its folder. A new toast changes the words in place.
  */
 @Composable
-fun ToastPill(data: SnackbarData, onGo: (Mailbox) -> Unit, modifier: Modifier = Modifier, height: Dp = 48.dp) {
+fun ToastPill(data: SnackbarData, onGo: (Mailbox) -> Unit, modifier: Modifier = Modifier, height: Dp = Bar.control) {
     val colors = MaterialTheme.colorScheme
     Box(
         modifier
