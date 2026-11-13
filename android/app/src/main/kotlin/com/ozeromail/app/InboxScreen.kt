@@ -2214,7 +2214,7 @@ private fun Dock(
             empty?.let { (label, onClick) -> EmptyButton(stringResource(label), onClick) }
         }
         // Search and the choice bar are the same height, so the dock keeps it as they change.
-        Box(Modifier.height(if (short) Bar.controlShort else Bar.control), contentAlignment = Alignment.Center) {
+        Box(Modifier.height(Bar.controlHeight()), contentAlignment = Alignment.Center) {
             if (choosing < 1f) {
                 // The same edge as the tabs above, so the accounts button lines up with them.
                 Row(
@@ -2301,13 +2301,13 @@ private fun FolderRole.emptyLabel(): Int? = when (this) {
 
 /** Search as a button of its own, beside the tabs or the title. */
 @Composable
-private fun SearchTile(onClick: () -> Unit, size: Dp = 48.dp) {
+private fun SearchTile(onClick: () -> Unit, size: Dp = Bar.control) {
     IconTile(R.drawable.ic_search, stringResource(R.string.search_prompt), onClick, background = MaterialTheme.colorScheme.surfaceVariant, size = size)
 }
 
 /** A new message, in the accent. */
 @Composable
-private fun ComposeTile(onClick: () -> Unit, size: Dp = 48.dp) {
+private fun ComposeTile(onClick: () -> Unit, size: Dp = Bar.control) {
     val colors = MaterialTheme.colorScheme
     IconTile(R.drawable.ic_compose, stringResource(R.string.compose_new), onClick, background = colors.accent, tint = colors.onAccent, shape = CircleShape, size = size)
 }
@@ -2319,7 +2319,7 @@ private fun AccountsButton(accounts: List<AccountItem>, onClick: () -> Unit) {
     val label = stringResource(R.string.accounts_title)
     Box(
         Modifier
-            .size(48.dp)
+            .size(Bar.control)
             .glass(LocalGlass.current, colors, CircleShape)
             .clickable(onClickLabel = label, role = Role.Button, onClick = onClick)
             .semantics { contentDescription = label },

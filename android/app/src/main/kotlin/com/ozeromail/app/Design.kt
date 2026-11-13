@@ -8,9 +8,12 @@ import androidx.compose.animation.core.SpringSpec
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.lazy.LazyItemScope
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
@@ -69,7 +72,20 @@ object Bar {
 
     /** The same on its side, where the height is for the mail. */
     val controlShort = 44.dp
+
+    /** The big buttons of a solid bottom bar, an icon over its name, as under an open message. */
+    val action = 52.dp
 }
+
+/** [Bar.control], or [Bar.controlShort] on its side. */
+@Composable
+@ReadOnlyComposable
+fun Bar.controlHeight(): Dp = if (LocalRoom.current.short) controlShort else control
+
+/** [Bar.action], or [Bar.controlShort] on its side. */
+@Composable
+@ReadOnlyComposable
+fun Bar.actionHeight(): Dp = if (LocalRoom.current.short) controlShort else action
 
 /** Corner radii, from a segment's thumb to a sheet. */
 object Radius {

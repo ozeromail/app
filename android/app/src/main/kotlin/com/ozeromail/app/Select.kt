@@ -208,7 +208,7 @@ class ChoiceMain(val label: String, val icon: Int, val onClick: () -> Unit)
 @Composable
 fun ChoiceBar(surface: Modifier, main: ChoiceMain?, unread: Boolean, forever: Boolean, onCancel: () -> Unit, onRead: () -> Unit, onDelete: () -> Unit, onMore: () -> Unit) {
     val colors = MaterialTheme.colorScheme
-    val height = (if (LocalRoom.current.short) Bar.controlShort else Bar.control) - Gap.inPill * 2
+    val height = Bar.controlHeight() - Gap.inPill * 2
     Row(
         Modifier.fillMaxWidth().padding(horizontal = Gap.bar).then(surface).padding(Gap.inPill),
         horizontalArrangement = Arrangement.spacedBy(Gap.inBar),

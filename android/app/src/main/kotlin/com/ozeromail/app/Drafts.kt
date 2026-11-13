@@ -240,7 +240,7 @@ private fun DraftLine(row: DraftRow, modifier: Modifier) {
     Column(
         modifier
             .fillMaxWidth()
-            .padding(start = Gap.row, end = Gap.screen, top = 16.dp, bottom = 16.dp),
+            .padding(start = Gap.row, end = Gap.screen, top = Gap.rowY, bottom = Gap.rowY),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
