@@ -481,12 +481,14 @@ pub const MIGRATIONS: &[&str] = &[
       AND f.account_id = draft.remote_account AND f.remote_id = draft.remote_folder
       AND f.validity = draft.remote_validity AND m.remote_id = draft.remote_id;
     ",
-    // 50: previews saved with the "[cid:image001.png@...]" marks Outlook opens with; twice,
-    // as mail with two images opens with two in a row.
+    // 50: previews saved with the "[cid:image001.png@...]" marks Outlook opens with, which new
+    // ones skip, in any mix with "[image: ...]"; three times, for mail opening with a few images.
     "
     UPDATE message SET snippet = ltrim(substr(snippet, instr(snippet, ']') + 1))
-    WHERE snippet LIKE '[cid:%]%';
+    WHERE snippet GLOB '[[]cid:*]*' OR snippet GLOB '[[]image:*]*';
     UPDATE message SET snippet = ltrim(substr(snippet, instr(snippet, ']') + 1))
-    WHERE snippet LIKE '[cid:%]%';
+    WHERE snippet GLOB '[[]cid:*]*' OR snippet GLOB '[[]image:*]*';
+    UPDATE message SET snippet = ltrim(substr(snippet, instr(snippet, ']') + 1))
+    WHERE snippet GLOB '[[]cid:*]*' OR snippet GLOB '[[]image:*]*';
     ",
 ];

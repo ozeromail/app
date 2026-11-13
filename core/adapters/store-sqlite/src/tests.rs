@@ -3696,6 +3696,8 @@ fn drops_the_image_marks_saved_previews_open_with() {
         "Hi [image: x]",
         "[image: open",
         "[cid:image001.png@01DD7353.5B9BA630] Hi, team!",
+        "[cid:a][image: b] [cid:c] Hello",
+        "[CID:x] kept",
     ] {
         conn.execute("INSERT INTO message VALUES (?1)", [snippet])
             .unwrap();
@@ -3711,7 +3713,14 @@ fn drops_the_image_marks_saved_previews_open_with() {
         .unwrap();
     assert_eq!(
         left,
-        ["You allowed", "Hi [image: x]", "[image: open", "Hi, team!"]
+        [
+            "You allowed",
+            "Hi [image: x]",
+            "[image: open",
+            "Hi, team!",
+            "Hello",
+            "[CID:x] kept"
+        ]
     );
 }
 
