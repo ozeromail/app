@@ -2638,11 +2638,13 @@ private fun MessageLine(message: MessageItem, unread: Boolean, dot: Float, accou
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier
                             .weight(1f, fill = false)
-                            // The unread dot hangs in the margin before the text.
+                            // The unread dot hangs in the middle of the margin before the text, on
+                            // whole pixels so its edge stays crisp.
                             .drawBehind {
                                 if (dot > 0f) {
-                                    val x = if (layoutDirection == LayoutDirection.Ltr) -11.dp.toPx() else size.width + 11.dp.toPx()
-                                    windowDot(unreadDot, 3.5.dp.toPx() * (0.4f + 0.6f * dot), Offset(x, size.height / 2), dot)
+                                    val by = (Gap.row / 2).toPx()
+                                    val x = (if (layoutDirection == LayoutDirection.Ltr) -by else size.width + by).roundToInt().toFloat()
+                                    windowDot(unreadDot, 3.5.dp.toPx() * (0.4f + 0.6f * dot), Offset(x, (size.height / 2).roundToInt().toFloat()), dot)
                                 }
                             },
                     )
