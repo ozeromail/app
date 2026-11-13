@@ -394,6 +394,23 @@ pub struct ListQuery {
     pub after: Option<Cursor>,
 }
 
+/// A list snippet without the subject it opens with, as newsletters repeat it in their first
+/// heading; the snippet as it is when nothing else would be left.
+pub fn snippet_after_subject(snippet: String, subject: &str) -> String {
+    let subject = subject.trim();
+    match snippet.strip_prefix(subject) {
+        Some(rest) if !subject.is_empty() && rest.starts_with(char::is_whitespace) => {
+            let rest = rest.trim_start();
+            if rest.is_empty() {
+                snippet
+            } else {
+                rest.to_owned()
+            }
+        }
+        _ => snippet,
+    }
+}
+
 /// The text with every run of blank lines, as a page's layout leaves in it, closed up to one
 /// and none at its ends.
 pub fn close_blank_lines(text: &str) -> String {
@@ -466,6 +483,15 @@ mod tests {
             close_blank_lines("\n Hi,\n\n \n\t\nsee you\n\n\n"),
             "Hi,\n\nsee you"
         );
+    }
+
+    #[test]
+    fn snippet_drops_the_subject_it_repeats() {
+        let after = |s: &str, subject: &str| snippet_after_subject(s.into(), subject);
+        assert_eq!(after("This week Five places", "This week"), "Five places");
+        assert_eq!(after("This weekend away", "This week"), "This weekend away");
+        assert_eq!(after("This week", "This week"), "This week");
+        assert_eq!(after("Hello there", ""), "Hello there");
     }
 
     #[test]

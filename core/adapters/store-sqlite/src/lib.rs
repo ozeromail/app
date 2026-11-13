@@ -13,7 +13,8 @@ use ozero_domain::{
     InviteKind, InviteRow, ListQuery, ListScope, MessageId, MessageLocation, MessageRow, Moved,
     NewAccount, NewFolder, NewMail, NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile,
     RecentFile, SavedDraft, SavedInvite, SearchFilter, Sender, Server, ServerDraft, Store,
-    StoreError, Unsent, Unsubscribe, default_label, full_text, typed_addresses,
+    StoreError, Unsent, Unsubscribe, default_label, full_text, snippet_after_subject,
+    typed_addresses,
 };
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ValueRef};
 use rusqlite::{
@@ -713,6 +714,7 @@ impl Store for SqliteStore {
             // Their scopes take no value; `?1` stays unused.
             ListScope::Unread => (LIST_UNREAD, &0, None),
             ListScope::Files => (LIST_FILES, &0, None),
+            ListScope::Unified(FolderRole::Flagged) => (LIST_FLAGGED, &0, None),
             ListScope::Unified(role) if walks_by_date(*role) => {
                 (LIST_UNIFIED_BY_DATE, role_ref(*role), None)
             }
@@ -3244,6 +3246,19 @@ const LIST_UNREAD: &str = list_sql!(
     not_moving!("n"),
     ")"
 );
+// Flagged mail: an account's flagged folder where it has one, as Gmail's Starred, else its
+// flagged messages in any folder but trash, junk and drafts.
+const LIST_FLAGGED: &str = list_sql!(
+    "(m.folder_id IN (SELECT id FROM folder WHERE role = 'flagged')
+      OR (m.thread_id, +m.folder_id, +m.category) IN (SELECT n.thread_id, n.folder_id, n.category
+         FROM message n JOIN folder nf ON nf.id = n.folder_id
+         WHERE n.flags & 2 != 0 AND n.found = 0 AND nf.role != 'flagged' AND ",
+    shown_role!("nf"),
+    " AND nf.account_id NOT IN (SELECT account_id FROM folder WHERE role = 'flagged')
+           AND ",
+    not_moving!("n"),
+    "))"
+);
 const LIST_FILES: &str = list_sql!(
     "(m.thread_id, +m.folder_id, +m.category) IN (SELECT n.thread_id, n.folder_id, n.category
          FROM attachment a JOIN message n ON n.id = a.message_id JOIN folder nf ON nf.id = n.folder_id
@@ -3771,6 +3786,7 @@ fn require(tx: &Transaction<'_>, sql: &str, id: i64) -> Result<(), StoreError> {
 fn message_row(r: &Row<'_>) -> rusqlite::Result<MessageRow> {
     let (thread_count, senders) =
         parse_senders(&r.get::<_, Option<String>>(9)?.unwrap_or_default());
+    let subject: String = r.get(4)?;
     Ok(MessageRow {
         id: MessageId(r.get(0)?),
         account_id: AccountId(r.get(1)?),
@@ -3778,8 +3794,8 @@ fn message_row(r: &Row<'_>) -> rusqlite::Result<MessageRow> {
             name: r.get(2)?,
             email: r.get(3)?,
         },
-        subject: r.get(4)?,
-        snippet: r.get(5)?,
+        snippet: snippet_after_subject(r.get(5)?, &subject),
+        subject,
         date: r.get(6)?,
         flags: parse_flags(r.get(7)?),
         thread_unread: r.get(8)?,

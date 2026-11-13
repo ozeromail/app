@@ -139,6 +139,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
@@ -1984,6 +1985,17 @@ private fun InboxList(
                     Row(Modifier.align(Alignment.CenterEnd).padding(end = Gap.bar), horizontalArrangement = Arrangement.spacedBy(Gap.inBar)) { actions(this, 36.dp) }
                 }
             }
+        }
+        // Under the dock the list fades into the page, so no cut-off words show between its pieces.
+        if (dockHeight > 0.dp) {
+            val fade = remember(colors.background) { Brush.verticalGradient(0f to Color.Transparent, 0.45f to colors.background.copy(alpha = 0.9f)) }
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(dockHeight + 24.dp)
+                    .background(fade),
+            )
         }
         Column(Modifier.align(Alignment.BottomCenter)) { BarText { CompositionLocalProvider(LocalGlass provides haze) {
             // Low on the screen, in reach of the thumb that swiped: in the dock in place of search,
