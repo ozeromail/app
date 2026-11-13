@@ -40,6 +40,9 @@ object Gap {
     /** Between the controls of a bar. */
     val inBar = 8.dp
 
+    /** Inside a pill of glass, around what it holds: the tabs' thumb, the choice bar's buttons. */
+    val inPill = 3.dp
+
     /** Above and below the controls of a bottom bar. */
     val barTop = 10.dp
     val barBottom = 12.dp
@@ -51,9 +54,21 @@ object Gap {
     /** Captions and hints over and under the cards and fields of a page, in line with what starts their rows. */
     val inset = screen + card
 
+    /** Above and below a message row's text. */
+    val rowY = 16.dp
+
     /** A sheet row's leading icon or dot sits in a slot this wide, so all the labels line up. */
     val slot = 24.dp
     val afterSlot = 14.dp
+}
+
+/** Heights shared by the controls along the bottom, so the dock keeps one height whatever it shows. */
+object Bar {
+    /** The accounts button, search, a new message, the choice bar. */
+    val control = 48.dp
+
+    /** The same on its side, where the height is for the mail. */
+    val controlShort = 44.dp
 }
 
 /** Corner radii, from a segment's thumb to a sheet. */
