@@ -1055,7 +1055,8 @@ fun RowScope.BarAction(
     Column(
         Modifier
             .weight(1f)
-            .height(height)
+            // Taller with large text, so the name is not cut.
+            .heightIn(min = height)
             .liftedIfAccent(colors, background, shape)
             .clip(shape)
             .background(background)
