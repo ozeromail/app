@@ -36,6 +36,11 @@ allow = [
 ]
 confidence-threshold = 0.9
 unused-allowed-license = "allow"
+# SQLCipher's sources ship SQLite's public-domain blessing and libtomcrypt's WTFPL, both
+# without conditions; allowed for this crate only.
+exceptions = [
+  { crate = "sqlcipher-src", allow = ["blessing", "WTFPL"] },
+]
 
 [licenses.private]
 ignore = true
