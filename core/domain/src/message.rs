@@ -334,13 +334,15 @@ fn is_quoted(line: &str) -> bool {
 /// The line without the "[image: Logo]" marks that text parts such as Gmail's put where the
 /// HTML part shows an image.
 fn without_images(line: &str) -> Cow<'_, str> {
-    const MARK: &str = "[image:";
-    if !line.contains(MARK) {
+    // "[image: Google]" from Gmail, "[cid:image001.png@01DD...]" from Outlook.
+    const MARKS: [&str; 2] = ["[image:", "[cid:"];
+    let next = |s: &str| MARKS.iter().filter_map(|m| s.find(m)).min();
+    if next(line).is_none() {
         return Cow::Borrowed(line);
     }
     let mut out = String::with_capacity(line.len());
     let mut rest = line;
-    while let Some(start) = rest.find(MARK) {
+    while let Some(start) = next(rest) {
         let Some(len) = rest[start..].find(']') else {
             break;
         };
@@ -473,6 +475,10 @@ mod tests {
         assert_eq!(
             snippet("[image: Google]\nYou allowed[image: x] access [image: open"),
             "You allowed access [image: open"
+        );
+        assert_eq!(
+            snippet("[cid:image001.png@01DD7353.5B9BA630] Hi, team!"),
+            "Hi, team!"
         );
     }
 
