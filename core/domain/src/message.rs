@@ -331,17 +331,20 @@ fn is_quoted(line: &str) -> bool {
     line.trim_start().starts_with('>')
 }
 
-/// The line without the "[image: Logo]" marks that text parts such as Gmail's put where the
-/// HTML part shows an image.
+/// The line without the image marks that text parts put where the HTML part shows an image:
+/// Gmail's "[image: Logo]" and Outlook's "[cid:image001.png@01DD...]".
 fn without_images(line: &str) -> Cow<'_, str> {
-    // "[image: Google]" from Gmail, "[cid:image001.png@01DD...]" from Outlook.
     const MARKS: [&str; 2] = ["[image:", "[cid:"];
-    let mut out = String::new();
+    let mut out = String::with_capacity(line.len());
     let mut rest = line;
     let mut from = 0;
     while let Some(at) = rest[from..].find('[').map(|i| from + i) {
-        let mark = MARKS.iter().any(|m| rest[at..].starts_with(m));
-        let Some(len) = rest[at..].find(']').filter(|_| mark) else {
+        let end = MARKS
+            .iter()
+            .any(|m| rest[at..].starts_with(m))
+            .then(|| rest[at..].find(']'))
+            .flatten();
+        let Some(len) = end else {
             from = at + 1;
             continue;
         };
@@ -350,7 +353,7 @@ fn without_images(line: &str) -> Cow<'_, str> {
         rest = &rest[at + len + 1..];
         from = 0;
     }
-    if rest.len() == line.len() {
+    if out.is_empty() {
         return Cow::Borrowed(line);
     }
     out.push_str(rest);
