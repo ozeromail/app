@@ -3723,3 +3723,19 @@ fn drops_the_image_marks_saved_previews_open_with() {
         ]
     );
 }
+
+/// SQLite before 3.54.0 can return stale memory from a WAL with another page size
+/// (RUSTSEC-2026-0459); the SQLCipher build must carry a fixed one.
+#[test]
+fn bundles_a_fixed_sqlite() {
+    let conn = connect(Connection::open_in_memory).unwrap();
+    let version: String = conn
+        .query_row("SELECT sqlite_version()", [], |r| r.get(0))
+        .unwrap();
+    let parts: Vec<u32> = version.split('.').map(|p| p.parse().unwrap()).collect();
+    assert!(parts[..2] >= [3, 54][..], "SQLite {version}");
+    let cipher: String = conn
+        .query_row("PRAGMA cipher_version", [], |r| r.get(0))
+        .unwrap();
+    assert!(!cipher.is_empty());
+}
