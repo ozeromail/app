@@ -2032,8 +2032,8 @@ private fun InboxList(
                 choosing = mode,
                 choiceBar = {
                     ChoiceBar(
-                        // Over the list it floats on glass, as the dock it takes the place of.
-                        Modifier.glass(haze, colors, RoundedCornerShape(Radius.sheet)),
+                        // Over the list it floats on glass, a pill as search is, which it takes the place of.
+                        Modifier.glass(haze, colors, CircleShape),
                         main = main,
                         unread = picked.any { it.threadUnread > 0u },
                         forever = picked.isNotEmpty() && picked.none { it.canTrash },
@@ -2213,8 +2213,8 @@ private fun Dock(
             tabs?.let { Tabs(tab, it, glide, thumb, onTab) }
             empty?.let { (label, onClick) -> EmptyButton(stringResource(label), onClick) }
         }
-        // As tall as the taller of the two, so the dock keeps its height as they change.
-        Box(Modifier.height(if (short) 44.dp else 52.dp), contentAlignment = Alignment.Center) {
+        // Search and the choice bar are the same height, so the dock keeps it as they change.
+        Box(Modifier.height(if (short) Bar.controlShort else Bar.control), contentAlignment = Alignment.Center) {
             if (choosing < 1f) {
                 // The same edge as the tabs above, so the accounts button lines up with them.
                 Row(
@@ -2380,7 +2380,7 @@ private fun Tabs(
         modifier
             .glass(LocalGlass.current, colors, CircleShape)
             .whilePressed { pressed = it }
-            .padding(3.dp),
+            .padding(Gap.inPill),
     ) {
         val count = Category.entries.size
         val gap = 2.dp
@@ -2595,13 +2595,18 @@ internal fun MessageRow(message: MessageItem, onClick: () -> Unit, choosing: Flo
         label = "chosen",
     )
     Box(Modifier.fillMaxWidth().background(tint)) {
-        if (choosing > 0f) ChoiceMark(chosen, choosing, Modifier.align(Alignment.CenterStart).padding(start = 14.dp))
+        if (choosing > 0f) {
+            // On the sender's line, where the text began.
+            val line = with(LocalDensity.current) { Type.Row.lineHeight.toDp() }
+            ChoiceMark(chosen, choosing, Modifier.padding(start = Gap.row, top = Gap.rowY + (line - MARK) / 2))
+        }
         // The dot and the bold text are not heard: TalkBack says it in words, as VoiceOver does.
         val unreadWord = stringResource(R.string.inbox_row_unread)
         MessageLine(
             message,
             unread,
-            dot,
+            // The mark stands where the dot hung, and the bold text still says unread.
+            dot * (1f - choosing),
             account,
             MARK_ROOM * choosing,
             Modifier.semantics { if (unread) stateDescription = unreadWord }.clickable(onClick = onClick),
@@ -2617,7 +2622,7 @@ private fun MessageLine(message: MessageItem, unread: Boolean, dot: Float, accou
     Row(
         modifier
             .fillMaxWidth()
-            .padding(start = Gap.row + shift, end = Gap.screen, top = 16.dp, bottom = 16.dp),
+            .padding(start = Gap.row + shift, end = Gap.screen, top = Gap.rowY, bottom = Gap.rowY),
         verticalAlignment = Alignment.Top,
     ) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {

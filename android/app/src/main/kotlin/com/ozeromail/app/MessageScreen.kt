@@ -79,6 +79,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -1045,15 +1046,16 @@ fun RowScope.BarAction(
     label: String,
     tint: Color,
     background: Color = Color.Transparent,
+    height: Dp = if (LocalRoom.current.short) 44.dp else 52.dp,
+    shape: Shape = RoundedCornerShape(Radius.medium),
     onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
-    val shape = RoundedCornerShape(Radius.medium)
     Column(
         Modifier
             .weight(1f)
-            .height(if (LocalRoom.current.short) 44.dp else 52.dp)
+            .height(height)
             .liftedIfAccent(colors, background, shape)
             .clip(shape)
             .background(background)

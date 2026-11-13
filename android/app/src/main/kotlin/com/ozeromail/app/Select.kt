@@ -8,6 +8,7 @@ import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -18,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerId
@@ -32,8 +34,14 @@ import kotlinx.coroutines.launch
 /** How long a finger rests on a row before it starts choosing. */
 private const val HOLD_MS = 350L
 
-/** How far rows move over for their marks while choosing. */
-val MARK_ROOM = 28.dp
+/** The ring before a row while choosing. */
+val MARK = 22.dp
+
+/**
+ * How far a row's text moves over while choosing: the mark takes the text's place at the
+ * screen's edge, in line with the title, and the text follows after a gap.
+ */
+val MARK_ROOM = MARK + 12.dp
 
 /**
  * One stroke over the list: rows between where it began and the finger take the state the
@@ -175,7 +183,7 @@ fun ChoiceMark(chosen: Boolean, shown: Float, modifier: Modifier = Modifier) {
                 scaleX = 0.7f + 0.3f * shown
                 scaleY = scaleX
             }
-            .size(22.dp)
+            .size(MARK)
             .then(
                 if (chosen) {
                     Modifier.background(colors.accent, CircleShape)
@@ -194,26 +202,24 @@ class ChoiceMain(val label: String, val icon: Int, val onClick: () -> Unit)
 
 /**
  * What can be done with the chosen messages, where the search and new message usually are:
- * Read or Unread, Delete (for good in the trash), More, and [main] when one applies.
+ * Read or Unread, Delete (for good in the trash), More, and [main] when one applies. It is as
+ * tall as search and its buttons sit inside its edge, [main] a pill within the pill.
  */
 @Composable
 fun ChoiceBar(surface: Modifier, main: ChoiceMain?, unread: Boolean, forever: Boolean, onCancel: () -> Unit, onRead: () -> Unit, onDelete: () -> Unit, onMore: () -> Unit) {
     val colors = MaterialTheme.colorScheme
-    Row(Modifier.fillMaxWidth().padding(horizontal = Gap.bar).then(surface), horizontalArrangement = Arrangement.spacedBy(Gap.inBar)) {
-        BarAction(R.drawable.ic_close, stringResource(R.string.action_cancel), colors.onSurface, onClick = onCancel)
-        BarAction(
-            R.drawable.ic_unread,
-            stringResource(if (unread) R.string.action_read else R.string.action_unread),
-            colors.onSurface,
-            onClick = onRead,
-        )
-        BarAction(
-            R.drawable.ic_delete,
-            stringResource(if (forever) R.string.action_delete_forever else R.string.action_delete),
-            colors.onSurface,
-            onClick = onDelete,
-        )
-        BarAction(R.drawable.ic_more, stringResource(R.string.action_more), colors.onSurface, onClick = onMore)
-        main?.let { BarAction(it.icon, it.label, colors.onAccent, colors.accent, onClick = it.onClick) }
+    val height = (if (LocalRoom.current.short) Bar.controlShort else Bar.control) - Gap.inPill * 2
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = Gap.bar).then(surface).padding(Gap.inPill),
+        horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
+    ) {
+        @Composable
+        fun RowScope.Action(icon: Int, label: String, tint: Color = colors.onSurface, background: Color = Color.Transparent, onClick: () -> Unit) =
+            BarAction(icon, label, tint, background, height = height, shape = CircleShape, onClick = onClick)
+        Action(R.drawable.ic_close, stringResource(R.string.action_cancel), onClick = onCancel)
+        Action(R.drawable.ic_unread, stringResource(if (unread) R.string.action_read else R.string.action_unread), onClick = onRead)
+        Action(R.drawable.ic_delete, stringResource(if (forever) R.string.action_delete_forever else R.string.action_delete), onClick = onDelete)
+        Action(R.drawable.ic_more, stringResource(R.string.action_more), onClick = onMore)
+        main?.let { Action(it.icon, it.label, colors.onAccent, colors.accent, onClick = it.onClick) }
     }
 }
