@@ -175,7 +175,7 @@ class TourTest : TestMail() {
         step("back-people") { tapExact("People"); root().performTouchInput { swipeDown() }; settle(60) }
         step("swipe-left") { drag("People 24:", 0.85f, -0.035f, "swipe-left") }
         step("swipe-right") { drag("People 24:", 0.15f, 0.035f, "swipe-right") }
-        step("choose") { hold("People 24:"); shot("choosing"); tap("Select all"); shot("choosing-all"); backTo(); shot("after-choose") }
+        step("choose") { tapExact("People"); settle(60); hold("Keys for the cabin"); shot("choosing"); tap("Photos and the plan"); shot("choosing-two"); backTo(); shot("after-choose") }
         step("done-toast") {
             val row = bounds(text("People 23:"))
             root().performTouchInput { swipe(row.center.copy(x = width * 0.9f), row.center.copy(x = width * 0.45f), 250L) }

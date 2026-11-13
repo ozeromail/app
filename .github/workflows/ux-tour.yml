@@ -3,13 +3,13 @@ name: ux tour
 # Stills of every screen on test mail, for a UX review. Runs on the tour branch only.
 on:
   push:
-    branches: [test/ux-tour, test/align-tour]
+    branches: [test/ux-tour, test/align-tour, test/align-before]
 
 permissions:
   contents: write
 
 concurrency:
-  group: ux-tour
+  group: ux-tour-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -64,7 +64,7 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
-          UI_TEST_MINUTES: 40
+          UI_TEST_MINUTES: 60
         with:
           api-level: 34
           target: google_apis
@@ -74,7 +74,7 @@ jobs:
           # The tests are about animations: they must run.
           disable-animations: false
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
-          script: tools/android-ui-test.sh -Pandroid.testInstrumentationRunnerArguments.class=com.ozeromail.app.TourTest#a_inbox,com.ozeromail.app.TourTest#h_twoAccounts,com.ozeromail.app.TourSignInTest
+          script: tools/android-ui-test.sh -Pandroid.testInstrumentationRunnerArguments.class=com.ozeromail.app.TourTest
       - name: Keep the films
         if: always()
         uses: actions/upload-artifact@v4
