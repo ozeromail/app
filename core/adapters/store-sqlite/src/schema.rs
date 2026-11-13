@@ -481,4 +481,11 @@ pub const MIGRATIONS: &[&str] = &[
       AND f.account_id = draft.remote_account AND f.remote_id = draft.remote_folder
       AND f.validity = draft.remote_validity AND m.remote_id = draft.remote_id;
     ",
+    // 50: previews saved with the "[cid:image001.png@...]" marks Outlook opens with.
+    "
+    UPDATE message SET snippet = ltrim(substr(snippet, instr(snippet, ']') + 1))
+    WHERE snippet LIKE '[cid:%]%';
+    UPDATE message SET snippet = ltrim(substr(snippet, instr(snippet, ']') + 1))
+    WHERE snippet LIKE '[cid:%]%';
+    ",
 ];
