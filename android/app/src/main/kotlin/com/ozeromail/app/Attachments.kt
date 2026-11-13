@@ -289,12 +289,16 @@ class Files(
     private fun key(message: MessageItem, file: AttachmentItem) = "${message.id}/${file.part}"
 }
 
+/** Where a file row's tile starts in the card of files. */
+private val FILE_INSET = 12.dp
+
 /** The files sent with a message, under it: a row each, and Save all for more than one. */
 @Composable
 fun AttachmentList(files: Files, message: MessageItem, items: List<AttachmentItem>, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
     Column(modifier.fillMaxWidth().padding(start = Gap.card, end = Gap.card, top = 10.dp, bottom = 6.dp)) {
-        Row(Modifier.fillMaxWidth().padding(start = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        // The caption starts where the files' tiles do.
+        Row(Modifier.fillMaxWidth().padding(start = FILE_INSET, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 stringResource(R.string.message_attachments),
                 color = colors.onSurfaceVariant,
@@ -328,7 +332,7 @@ private fun AttachmentRow(files: Files, message: MessageItem, file: AttachmentIt
         Modifier
             .fillMaxWidth()
             .clickable { files.open(message, file, all) }
-            .padding(start = 12.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
+            .padding(start = FILE_INSET, top = 8.dp, bottom = 8.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
