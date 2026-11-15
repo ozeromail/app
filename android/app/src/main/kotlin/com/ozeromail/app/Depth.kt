@@ -36,7 +36,7 @@ import dev.chrisbanes.haze.hazeEffect
 // a screen pushed in) lifts with a short, straight shadow and light along its top edge; the glass
 // over the list and the accent buttons cast none; what holds things (fields, the tabs' track, the accounts button) is
 // cut in, with a shadow under its top edge; dots are tiny windows. At night shadows hardly show,
-// so the thumb is a shade lighter and a lit edge carries the lifted buttons; the docks stay the
+// so the thumb is a shade lighter and carries a lit edge; the docks stay the
 // page's colour, so the fields cut into them still read lighter than the dock.
 
 val ColorScheme.night: Boolean
@@ -141,7 +141,7 @@ fun Modifier.floatingGlass(state: HazeState?, colors: ColorScheme, shape: Shape)
     return floating(colors, shape)
         .clip(shape)
         .background(if (colors.night) colors.surfaceContainerHigh else colors.background)
-        .border(1.dp, if (colors.night) colors.lit else colors.outlineVariant, shape)
+        .border(1.dp, colors.rim, shape)
 }
 
 /** A bar across the screen over the list, such as the compact title: frosted as [glass], edge to edge, faded by [alpha]. */

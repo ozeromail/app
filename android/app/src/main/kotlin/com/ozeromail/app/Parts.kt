@@ -42,9 +42,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ColorScheme
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.SnackbarData
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
@@ -52,9 +50,6 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.SnackbarVisuals
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TooltipBox
-import androidx.compose.material3.TooltipDefaults
-import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -94,8 +89,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import uniffi.ozero_api.Mailbox
 import uniffi.ozero_api.undoSeconds
 
-/** A square-ish button holding one icon, as in the bottom bars, flat in the accent too; a long press shows its name. */
-@OptIn(ExperimentalMaterial3Api::class)
+/** A square-ish button holding one icon, as in the bottom bars. It lies flat, in the accent too: it sits on glass. */
 @Composable
 fun IconTile(
     @DrawableRes icon: Int,
@@ -108,24 +102,16 @@ fun IconTile(
     size: Dp = 48.dp,
     enabled: Boolean = true,
 ) {
-    TooltipBox(
-        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
-        tooltip = { PlainTooltip { Text(description) } },
-        state = rememberTooltipState(),
-        // Outside the anchor, so a parent's align or weight still reaches it.
-        modifier = modifier,
+    Box(
+        modifier
+            .size(size)
+            .alpha(if (enabled) 1f else 0.4f)
+            .clip(shape)
+            .background(background)
+            .clickable(enabled = enabled, onClickLabel = description, role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
     ) {
-        Box(
-            Modifier
-                .size(size)
-                .alpha(if (enabled) 1f else 0.4f)
-                .clip(shape)
-                .background(background)
-                .clickable(enabled = enabled, onClickLabel = description, role = Role.Button, onClick = onClick),
-            contentAlignment = Alignment.Center,
-        ) {
-            Glyph(icon, description, tint)
-        }
+        Glyph(icon, description, tint)
     }
 }
 
