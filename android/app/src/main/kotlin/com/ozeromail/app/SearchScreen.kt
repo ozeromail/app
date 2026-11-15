@@ -361,15 +361,7 @@ private fun Filters(filter: SearchFilterItem, accounts: List<AccountItem>, onFil
     // The chip last tapped passes over the others on its way.
     var moving by remember { mutableStateOf<String?>(null) }
     val row = rememberLazyListState()
-    // The row keeps its first chip in place by key, so a chip moving to the front would land off
-    // screen and the row jump after it. Kept by index, the chips slide to their places in sight.
-    val order = all.map { it.key }
-    val shown = remember { arrayOf(order) }
-    if (shown[0] != order) {
-        shown[0] = order
-        row.requestScrollToItem(row.firstVisibleItemIndex, row.firstVisibleItemScrollOffset)
-    }
-    // Scrolled along, a chip turned on leaves for the front: bring the front into view with it.
+    // A chip turned on moves to the front: bring the front into view with it.
     LaunchedEffect(filter) {
         if (row.firstVisibleItemIndex > 0 || row.firstVisibleItemScrollOffset > 0) row.animateScrollToItem(0)
     }
