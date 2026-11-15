@@ -1,5 +1,6 @@
 package com.ozeromail.app
 
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isToggleable
@@ -13,35 +14,30 @@ import org.junit.runner.RunWith
 /** The filter chips over the search field. */
 @RunWith(AndroidJUnit4::class)
 class SearchTest : TestMail() {
+    private val unread = hasText("Unread") and isToggleable()
+    private val flagged = hasText("Flagged") and isToggleable()
+
     @Test
     fun aChipTurnedOnSlidesToTheFrontAndBack() {
         rule.onAllNodes(hasContentDescription("Search mail") or hasText("Search mail")).onFirst().performClick()
-        val unread = hasText("Unread") and isToggleable()
-        val flagged = hasText("Flagged") and isToggleable()
-        // Still once the screen and the keyboard have come up.
-        var at = -1f
-        waitFor { has(flagged) && bounds(flagged).let { it.left + it.top * 7 }.let { now -> (now == at).also { at = now } } }
-        film("search-chip-on") {
+        // Still once the screen has slid in from the side and the keyboard has come up.
+        var at: Rect? = null
+        waitFor { has(unread) && bounds(unread).let { now -> (now.left < screen.width / 4 && now == at).also { at = now } } }
+        toggle("on") { assertTrue("the chip turned on is not at the front", it.left < last("unread")!!.left) }
+        toggle("off") { assertTrue("the chip turned off did not go back", it.left > last("unread")!!.left) }
+    }
+
+    /** Films a tap on the flagged chip, checks the motion, then where it ended up. */
+    private fun toggle(step: String, ended: Film.(Rect) -> Unit) {
+        film("search-chip-$step") {
             track("unread", unread)
             track("flagged", flagged)
             frame()
-            val chip = last("flagged")!!
-            down(chip.center)
+            down(last("flagged")!!.center)
             up()
             frames(40)
-            check("on")
-            assertTrue("the chip turned on is not at the front", last("flagged")!!.left < last("unread")!!.left)
-        }
-        film("search-chip-off") {
-            track("unread", unread)
-            track("flagged", flagged)
-            frame()
-            val chip = last("flagged")!!
-            down(chip.center)
-            up()
-            frames(40)
-            check("off")
-            assertTrue("the chip turned off did not go back", last("flagged")!!.left > last("unread")!!.left)
+            check(step)
+            ended(last("flagged")!!)
         }
     }
 
