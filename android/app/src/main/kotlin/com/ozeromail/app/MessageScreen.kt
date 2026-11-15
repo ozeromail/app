@@ -79,7 +79,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -1039,25 +1038,22 @@ private fun Actions(
     }
 }
 
-/** One of the big buttons along the bottom of a screen: an icon over its name. One in the accent lifts off the page. */
+/** One of the big buttons along the bottom of a screen: an icon over its name. */
 @Composable
 fun RowScope.BarAction(
     @DrawableRes icon: Int,
     label: String,
     tint: Color,
     background: Color = Color.Transparent,
-    height: Dp = Bar.actionHeight(),
-    shape: Shape = RoundedCornerShape(Radius.medium),
     onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
-    val colors = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(Radius.medium)
     Column(
         Modifier
             .weight(1f)
             // Taller with large text, so the name is not cut.
-            .heightIn(min = height)
-            .liftedIfAccent(colors, background, shape)
+            .heightIn(min = Bar.actionHeight())
             .clip(shape)
             .background(background)
             .combinedClickable(role = Role.Button, onLongClick = onLongClick, onClick = onClick),

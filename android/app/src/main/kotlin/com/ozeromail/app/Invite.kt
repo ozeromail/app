@@ -297,7 +297,6 @@ private fun RowScope.WideButton(text: String, filled: Boolean, height: Dp, onCli
         Modifier
             .weight(1f)
             .height(height)
-            .liftedIfAccent(colors, fill, shape)
             .clip(shape)
             .background(fill)
             .border(1.dp, if (filled) colors.accent else colors.outlineVariant, shape)

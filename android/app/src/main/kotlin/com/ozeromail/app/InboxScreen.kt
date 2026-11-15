@@ -1752,7 +1752,7 @@ private fun InboxList(
     val chooseNow by rememberUpdatedState(onChoose)
     val shownTitle = if (choosing) stringResource(R.string.select_count, picked.size) else title
     // While choosing, Cancel takes the place of Back.
-    val cancel = if (choosing) ({ onChoose(emptySet()) }) else null
+    val cancel = remember(choosing) { if (choosing) ({ chooseNow(emptySet()) }) else null }
     var dockHeight by remember { mutableStateOf(0.dp) }
     // What the dock and the compact title float over, seen through their glass.
     val haze = rememberHazeState()
@@ -1782,7 +1782,7 @@ private fun InboxList(
             }
         }
     }
-    val away by animateFloatAsState(if (tabsAway && scrolled && !wide) 1f else 0f, Motion.calm(Motion.SMALL), label = "tabs away")
+    val away = animateFloatAsState(if (tabsAway && scrolled && !wide) 1f else 0f, Motion.calm(Motion.SMALL), label = "tabs away")
     val glideScope = rememberCoroutineScope()
     val lake = messages.isEmpty() && (!syncing || listLoaded) && error == null
     val pullState = rememberPullToRefreshState()
@@ -2055,7 +2055,7 @@ private fun InboxList(
                 onGo = onGo,
                 empty = empty.takeIf { messages.isNotEmpty() && !choosing },
                 choosing = mode,
-                tabsAway = away,
+                tabsAway = { away.value },
                 choiceBar = {
                     ChoiceBar(
                         // Over the list it floats on glass, a pill as search is, which it takes the place of.
@@ -2217,8 +2217,8 @@ private fun Dock(
     empty: Pair<Int, () -> Unit>?,
     /** From 0 to 1 as choosing begins: [choiceBar] takes the place of search. */
     choosing: Float,
-    /** From 0 to 1 as the tabs step aside while the list scrolls down. */
-    tabsAway: Float,
+    /** From 0 to 1 as the tabs step aside while the list scrolls down; read as they are drawn. */
+    tabsAway: () -> Float,
     choiceBar: @Composable () -> Unit,
     wide: Boolean,
 ) {
@@ -2257,15 +2257,17 @@ private fun Dock(
         if (!wide) {
             tabs?.let {
                 // They sink and fade behind the row under them; their room stays, so the list never jumps.
+                val gone by remember { derivedStateOf { tabsAway() > 0.5f } }
                 Box(
                     Modifier
                         .graphicsLayer {
-                            alpha = 1f - tabsAway
-                            translationY = rise * 2 * tabsAway
-                            scaleX = 1f - 0.06f * tabsAway
+                            val away = tabsAway()
+                            alpha = 1f - away
+                            translationY = rise * 2 * away
+                            scaleX = 1f - 0.06f * away
                             scaleY = scaleX
                         }
-                        .then(if (tabsAway > 0.5f) Modifier.blockTouches() else Modifier),
+                        .then(if (gone) Modifier.blockTouches() else Modifier),
                 ) { Tabs(tab, it, glide, thumb, onTab) }
             }
             empty?.let { (label, onClick) -> EmptyButton(stringResource(label), onClick) }

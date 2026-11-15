@@ -34,7 +34,7 @@ import dev.chrisbanes.haze.hazeEffect
 
 // A little depth in the icon's paper, kept faint. What lies on top of the page (the tabs' thumb,
 // a screen pushed in) lifts with a short, straight shadow and light along its top edge; the glass
-// over the list and the round accent buttons on it cast none; what holds things (fields, the tabs' track, the accounts button) is
+// over the list and the accent buttons cast none; what holds things (fields, the tabs' track, the accounts button) is
 // cut in, with a shadow under its top edge; dots are tiny windows. At night shadows hardly show,
 // so the thumb is a shade lighter and a lit edge carries the lifted buttons; the docks stay the
 // page's colour, so the fields cut into them still read lighter than the dock.
@@ -99,10 +99,6 @@ fun Modifier.cast(shape: Shape, color: Color, blur: Dp, y: Dp, lit: Color? = nul
 fun Modifier.lifted(colors: ColorScheme, shape: Shape, glow: Color = colors.shade(0.12f, 0.4f), blur: Dp = 2.dp, y: Dp = 1.dp): Modifier =
     cast(shape, glow, blur, y, colors.lit)
 
-/** Only a button in the accent lifts, with a soft shadow of its own blue as on iOS; the rest lie flat on the page. */
-fun Modifier.liftedIfAccent(colors: ColorScheme, background: Color, shape: Shape): Modifier =
-    if (background == colors.accent) lifted(colors, shape, colors.accent.copy(alpha = 0.3f), blur = 4.dp, y = 1.5.dp) else this
-
 /** What floats over the screen, such as suggestions over a field: a wide, soft shadow. Leave room around it. */
 fun Modifier.floating(colors: ColorScheme, shape: Shape): Modifier =
     cast(shape, colors.shade(0.12f, 0.45f), blur = 10.dp, y = 4.dp)
@@ -129,7 +125,7 @@ val LocalGlass = staticCompositionLocalOf<HazeState?> { null }
  */
 fun Modifier.glass(state: HazeState?, colors: ColorScheme, shape: Shape): Modifier {
     if (state == null) return clip(shape).background(colors.surfaceVariant).sunk(colors)
-    val veil = if (colors.night) colors.surfaceContainerHigh.copy(alpha = 0.66f) else colors.background.copy(alpha = 0.66f)
+    val veil = (if (colors.night) colors.surfaceContainerHigh else colors.background).copy(alpha = 0.66f)
     return clip(shape)
         .hazeEffect(state, frost(colors, veil))
         .border(1.dp, colors.rim, shape)
