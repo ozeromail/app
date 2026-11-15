@@ -1,0 +1,10 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuite name="com.ozeromail.app.EmptyTabTest" tests="2" failures="0" errors="0" skipped="0" time="175.985" timestamp="2026-11-15T18:05:19" hostname="localhost">
+  <properties>
+    <property name="device" value="emulator-5554 - 14" />
+    <property name="flavor" value="" />
+    <property name="project" value=":app" />
+  </properties>
+  <testcase name="dragsBetweenEmptyAndFullTabs" classname="com.ozeromail.app.EmptyTabTest" time="78.42" />
+  <testcase name="tapsBetweenEmptyAndFullTabs" classname="com.ozeromail.app.EmptyTabTest" time="90.019" />
+</testsuite>
