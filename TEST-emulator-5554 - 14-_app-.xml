@@ -1,0 +1,34 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuite name="com.ozeromail.app.EmptyTabTest" tests="2" failures="2" errors="0" skipped="0" time="199.266" timestamp="2026-11-15T17:30:11" hostname="localhost">
+  <properties>
+    <property name="device" value="emulator-5554 - 14" />
+    <property name="flavor" value="" />
+    <property name="project" value=":app" />
+  </properties>
+  <testcase name="dragsBetweenEmptyAndFullTabs" classname="com.ozeromail.app.EmptyTabTest" time="95.198">
+    <failure>java.lang.AssertionError: expected:&lt;[]&gt; but was:&lt;[frame 113: water fell from 212 to 0]&gt;
+at org.junit.Assert.fail(Assert.java:89)
+at org.junit.Assert.failNotEquals(Assert.java:835)
+at org.junit.Assert.assertEquals(Assert.java:120)
+at org.junit.Assert.assertEquals(Assert.java:146)
+at com.ozeromail.app.EmptyTabTest.dragsBetweenEmptyAndFullTabs$lambda$0(EmptyTabTest.kt:53)
+at com.ozeromail.app.EmptyTabTest.$r8$lambda$KGamPaV_796EZyHGaXrC7Kd39PQ(Unknown Source:0)
+at com.ozeromail.app.EmptyTabTest$$ExternalSyntheticLambda0.invoke(D8$$SyntheticClass:0)
+at com.ozeromail.app.TestMail.film(TestMail.kt:102)
+at com.ozeromail.app.EmptyTabTest.dragsBetweenEmptyAndFullTabs(EmptyTabTest.kt:42)
+</failure>
+  </testcase>
+  <testcase name="tapsBetweenEmptyAndFullTabs" classname="com.ozeromail.app.EmptyTabTest" time="97.576">
+    <failure>java.lang.AssertionError: expected:&lt;[]&gt; but was:&lt;[frame 74: 377 water against 221 at rest, frame 75: 325 water against 221 at rest, frame 80: water fell from 121 to 0, frame 153: 345 water against 221 at rest, frame 154: 355 water against 221 at rest, frame 155: 348 water against 221 at rest, frame 156: 361 water against 221 at rest, frame 157: 318 water against 221 at rest, frame 214: 377 water against 221 at rest, frame 215: 325 water against 221 at rest, frame 220: water fell from 121 to 0]&gt;
+at org.junit.Assert.fail(Assert.java:89)
+at org.junit.Assert.failNotEquals(Assert.java:835)
+at org.junit.Assert.assertEquals(Assert.java:120)
+at org.junit.Assert.assertEquals(Assert.java:146)
+at com.ozeromail.app.EmptyTabTest.tapsBetweenEmptyAndFullTabs$lambda$0(EmptyTabTest.kt:36)
+at com.ozeromail.app.EmptyTabTest.$r8$lambda$9wcO0O6M5P11g79hEH42K9-qB8Q(Unknown Source:0)
+at com.ozeromail.app.EmptyTabTest$$ExternalSyntheticLambda1.invoke(D8$$SyntheticClass:0)
+at com.ozeromail.app.TestMail.film(TestMail.kt:102)
+at com.ozeromail.app.EmptyTabTest.tapsBetweenEmptyAndFullTabs(EmptyTabTest.kt:22)
+</failure>
+  </testcase>
+</testsuite>
