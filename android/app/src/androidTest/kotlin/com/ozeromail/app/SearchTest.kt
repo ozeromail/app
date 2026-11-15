@@ -20,9 +20,9 @@ class SearchTest : TestMail() {
     @Test
     fun aChipTurnedOnSlidesToTheFrontAndBack() {
         rule.onAllNodes(hasContentDescription("Search mail") or hasText("Search mail")).onFirst().performClick()
-        // Still once the screen and the keyboard have come up.
+        // Still once the screen has slid in from the side and the keyboard has come up.
         var at: Rect? = null
-        waitFor { has(flagged) && bounds(flagged).let { now -> (now == at).also { at = now } } }
+        waitFor { has(unread) && bounds(unread).let { now -> (now.left < screen.width / 4 && now == at).also { at = now } } }
         toggle("on") { assertTrue("the chip turned on is not at the front", it.left < last("unread")!!.left) }
         toggle("off") { assertTrue("the chip turned off did not go back", it.left > last("unread")!!.left) }
     }
