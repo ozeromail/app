@@ -1765,24 +1765,9 @@ private fun InboxList(
     val scrolled by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > titleGone } }
     // Scrolling down, the tabs step aside for the mail, as on iOS; scrolling up, near the top or on
     // another tab they are back. Near the end they stay as they are.
-    var tabsAway by remember { mutableStateOf(false) }
-    LaunchedEffect(tab, mailbox) { tabsAway = false }
-    val awayStep = with(density) { 8.dp.toPx() }
-    val tabsScroll = remember(awayStep) {
-        object : NestedScrollConnection {
-            // How far the list has gone one way since it last turned.
-            var run = 0f
-
-            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
-                val dy = consumed.y
-                if (dy == 0f || !listState.canScrollForward) return Offset.Zero
-                run = if (run * dy < 0f) dy else run + dy
-                if (run < -awayStep) tabsAway = true else if (run > awayStep) tabsAway = false
-                return Offset.Zero
-            }
-        }
-    }
-    val away = animateFloatAsState(if (tabsAway && scrolled && !wide) 1f else 0f, Motion.calm(Motion.SMALL), label = "tabs away")
+    val tabsScroll = remember(listState, density) { TabsAway(with(density) { 8.dp.toPx() }, listState) }
+    LaunchedEffect(tab, mailbox) { tabsScroll.reset() }
+    val away = animateFloatAsState(if (tabsScroll.away && scrolled && !wide) 1f else 0f, Motion.calm(Motion.SMALL), label = "tabs away")
     val glideScope = rememberCoroutineScope()
     val lake = messages.isEmpty() && (!syncing || listLoaded) && error == null
     val pullState = rememberPullToRefreshState()
@@ -2179,6 +2164,28 @@ internal fun Hero(
     }
 }
 
+/** Whether the list was last scrolled down, by [step] px since it turned: the tabs step aside then. Near the end it stays as it is. */
+private class TabsAway(private val step: Float, private val list: LazyListState) : NestedScrollConnection {
+    var away by mutableStateOf(false)
+        private set
+
+    // How far the list has gone one way since it last turned.
+    private var run = 0f
+
+    fun reset() {
+        away = false
+        run = 0f
+    }
+
+    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+        val dy = consumed.y
+        if (dy == 0f || !list.canScrollForward) return Offset.Zero
+        run = if (run * dy < 0f) dy else run + dy
+        if (run < -step) away = true else if (run > step) away = false
+        return Offset.Zero
+    }
+}
+
 /** Top left: Cancel while choosing, else the way back, if there is one. */
 @Composable
 private fun Lead(onBack: (() -> Unit)?, onCancel: (() -> Unit)?, modifier: Modifier = Modifier) {
@@ -2256,24 +2263,27 @@ private fun Dock(
     ) {
         if (!wide) {
             tabs?.let {
-                // They sink and fade behind the row under them; their room stays, so the list never jumps.
-                val gone by remember { derivedStateOf { tabsAway() > 0.5f } }
+                // They fade and settle a little; their room stays, so the list never jumps. Once gone
+                // they are not placed: nothing can touch or read them, and a drag there raises the accounts.
+                val gone by remember { derivedStateOf { tabsAway() >= 1f } }
                 Box(
                     Modifier
+                        .layout { measurable, constraints ->
+                            val placeable = measurable.measure(constraints)
+                            layout(placeable.width, placeable.height) { if (!gone) placeable.place(0, 0) }
+                        }
                         .graphicsLayer {
                             val away = tabsAway()
                             alpha = 1f - away
-                            translationY = rise * 2 * away
-                            scaleX = 1f - 0.06f * away
+                            translationY = rise * 0.5f * away
+                            scaleX = 1f - 0.04f * away
                             scaleY = scaleX
-                        }
-                        .then(if (gone) Modifier.blockTouches() else Modifier),
+                        },
                 ) { Tabs(tab, it, glide, thumb, onTab) }
             }
             empty?.let { (label, onClick) -> EmptyButton(stringResource(label), onClick) }
         }
-        // Search and the choice bar are the same height, so the dock keeps it as they change;
-        // only large text makes the bar's buttons taller.
+        // Search and the choice bar are the same height, so the dock keeps it as they change.
         Box(Modifier.heightIn(min = Bar.controlHeight()), contentAlignment = Alignment.Center) {
             if (choosing < 1f) {
                 // The same edge as the tabs above, so the accounts button lines up with them.
