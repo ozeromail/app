@@ -1,5 +1,6 @@
 package com.ozeromail.app
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -353,7 +354,10 @@ private fun Filters(filter: SearchFilterItem, accounts: List<AccountItem>, onFil
         }
     }.sortedByDescending { it.on }
     val row = rememberLazyListState()
-    // A chip turned on moves to the front: bring the front into view with it.
+    // The row keeps its first chip in place by key, so a chip moving to the front would land off
+    // screen and the row jump after it. Kept by index, the chips slide to their places in sight.
+    remember(all.map { it.key }) { row.requestScrollToItem(row.firstVisibleItemIndex, row.firstVisibleItemScrollOffset) }
+    // Scrolled along, a chip turned on leaves for the front: bring the front into view with it.
     LaunchedEffect(filter) {
         if (row.firstVisibleItemIndex > 0 || row.firstVisibleItemScrollOffset > 0) row.animateScrollToItem(0)
     }
@@ -371,10 +375,11 @@ private fun Filters(filter: SearchFilterItem, accounts: List<AccountItem>, onFil
 @Composable
 private fun SearchChip(text: String, on: Boolean, mark: @Composable (Color) -> Unit, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
-    val tint = if (on) colors.onAccent else colors.onSurface
+    val tint by animateColorAsState(if (on) colors.onAccent else colors.onSurface, Motion.calm(Motion.SMALL))
+    val fill by animateColorAsState(if (on) colors.accent else colors.surfaceVariant, Motion.calm(Motion.SMALL))
     Row(
         modifier
-            .chip(if (on) colors.accent else colors.surfaceVariant)
+            .chip(fill)
             .toggleable(on, role = Role.Checkbox, onValueChange = { onClick() })
             .padding(horizontal = ChipPadding),
         verticalAlignment = Alignment.CenterVertically,
