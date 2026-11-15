@@ -1,5 +1,6 @@
 package com.ozeromail.app
 
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -52,6 +53,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import uniffi.ozero_api.AccountItem
@@ -149,57 +151,60 @@ fun SearchScreen(
     val colors = MaterialTheme.colorScheme
     Column(Modifier.fillMaxSize().safeDrawingPadding()) {
         BackArrow(onBack, Modifier.padding(top = 4.dp))
-        if (starting) Start(
-            recent,
-            people,
-            onSearch = onQuery,
-            onPerson = { found ->
-                scope.launch {
-                    try {
-                        onPerson(mail.person(found.email, found.name))
-                    } catch (e: CoreException) {
-                        error = e.text()
+        // A filter turned on or a first letter typed: what was there fades into what was found.
+        Crossfade(starting, Modifier.weight(1f), Motion.calm(Motion.SMALL), label = "start or found") { start ->
+            if (start) Start(
+                recent,
+                people,
+                onSearch = onQuery,
+                onPerson = { found ->
+                    scope.launch {
+                        try {
+                            onPerson(mail.person(found.email, found.name))
+                        } catch (e: CoreException) {
+                            error = e.text()
+                        }
+                    }
+                },
+                onForget = {
+                    recent = emptyList()
+                    scope.launch { runCatching { mail.forgetSearches() } }
+                },
+                modifier = Modifier.fillMaxSize(),
+            ) else LazyColumn(Modifier.fillMaxSize()) {
+                if (person != null) item(key = "title") { LargeTitle(person.name, Modifier.padding(horizontal = Gap.screen, vertical = 8.dp)) }
+                val (shownFor, messages) = found ?: (null to emptyList<MessageItem>())
+                val answered = if (person != null) found != null else shownFor == search
+                if (answered && messages.isEmpty() && !asking) {
+                    item {
+                        when {
+                            person != null -> EmptyNote(R.drawable.ic_search, stringResource(R.string.inbox_empty))
+                            else -> EmptyNote(
+                                R.drawable.ic_search,
+                                stringResource(R.string.search_nothing),
+                                query.trim().takeIf { it.isNotEmpty() }?.let { stringResource(R.string.search_nothing_text, it) },
+                            )
+                        }
                     }
                 }
-            },
-            onForget = {
-                recent = emptyList()
-                scope.launch { runCatching { mail.forgetSearches() } }
-            },
-            modifier = Modifier.weight(1f),
-        ) else LazyColumn(Modifier.weight(1f)) {
-            if (person != null) item(key = "title") { LargeTitle(person.name, Modifier.padding(horizontal = Gap.screen, vertical = 8.dp)) }
-            val (shownFor, messages) = found ?: (null to emptyList<MessageItem>())
-            val answered = if (person != null) found != null else shownFor == search
-            if (answered && messages.isEmpty() && !asking) {
-                item {
-                    when {
-                        person != null -> EmptyNote(R.drawable.ic_search, stringResource(R.string.inbox_empty))
-                        else -> EmptyNote(
-                            R.drawable.ic_search,
-                            stringResource(R.string.search_nothing),
-                            query.trim().takeIf { it.isNotEmpty() }?.let { stringResource(R.string.search_nothing_text, it) },
+                // No motion in this list: when the servers' answer joins it, rows sliding to their
+                // new places or the note fading out would pass over the rows that appear at once.
+                itemsIndexed(messages, key = { _, it -> it.id }) { index, message ->
+                    Column {
+                        if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.row), color = colors.outlineVariant)
+                        MessageRow(message, onClick = { onOpen(message) })
+                    }
+                }
+                if (asking) {
+                    item(key = "server") {
+                        Text(
+                            stringResource(R.string.search_server),
+                            color = colors.onSurfaceVariant,
+                            style = Type.Caption,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
                         )
                     }
-                }
-            }
-            // No motion in this list: when the servers' answer joins it, rows sliding to their
-            // new places or the note fading out would pass over the rows that appear at once.
-            itemsIndexed(messages, key = { _, it -> it.id }) { index, message ->
-                Column {
-                    if (index > 0) HorizontalDivider(Modifier.padding(start = Gap.row), color = colors.outlineVariant)
-                    MessageRow(message, onClick = { onOpen(message) })
-                }
-            }
-            if (asking) {
-                item(key = "server") {
-                    Text(
-                        stringResource(R.string.search_server),
-                        color = colors.onSurfaceVariant,
-                        style = Type.Caption,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
-                    )
                 }
             }
         }
@@ -353,6 +358,8 @@ private fun Filters(filter: SearchFilterItem, accounts: List<AccountItem>, onFil
             })
         }
     }.sortedByDescending { it.on }
+    // The chip last tapped passes over the others on its way.
+    var moving by remember { mutableStateOf<String?>(null) }
     val row = rememberLazyListState()
     // The row keeps its first chip in place by key, so a chip moving to the front would land off
     // screen and the row jump after it. Kept by index, the chips slide to their places in sight.
@@ -372,7 +379,12 @@ private fun Filters(filter: SearchFilterItem, accounts: List<AccountItem>, onFil
         contentPadding = PaddingValues(start = Gap.bar, end = Gap.bar, top = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
     ) {
-        items(all, key = { it.key }) { SearchChip(it.text, it.on, it.mark, rowMove(), it.toggle) }
+        items(all, key = { it.key }) { chip ->
+            SearchChip(chip.text, chip.on, chip.mark, rowMove().zIndex(if (chip.key == moving) 1f else 0f)) {
+                moving = chip.key
+                chip.toggle()
+            }
+        }
     }
 }
 
