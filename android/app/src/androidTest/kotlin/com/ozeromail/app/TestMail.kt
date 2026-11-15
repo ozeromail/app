@@ -38,12 +38,15 @@ abstract class TestMail {
     /** The whole screen, for gestures placed by its size. */
     lateinit var screen: Rect
 
+    /** Whose inbox the test signs in to on the test server. */
+    open val user = USER
+
     @Before
     fun start() {
         val app = ApplicationProvider.getApplicationContext<OzeroApp>()
         runBlocking {
             if (!app.mail.hasAccounts()) {
-                app.mail.signIn(USER, PASSWORD, Endpoint("localhost", IMAP_PORT), Endpoint("localhost", SMTP_PORT))
+                app.mail.signIn(user, PASSWORD, Endpoint("localhost", IMAP_PORT), Endpoint("localhost", SMTP_PORT))
             }
             // The first sync, waited for here rather than through the screen: the list shows only
             // what is saved, and a slow or failed sync then fails with its own reason.
