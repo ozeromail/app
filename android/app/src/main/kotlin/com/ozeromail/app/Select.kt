@@ -8,18 +8,23 @@ import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.PlainTooltip
+import androidx.compose.material3.Text
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerId
@@ -197,29 +202,50 @@ fun ChoiceMark(chosen: Boolean, shown: Float, modifier: Modifier = Modifier) {
     }
 }
 
-/** The choice bar's filled button: [label] with its count, as Done 3 or Not spam 3. */
+/** The choice bar's accent button, as Done or Not spam; its [label] names it with the count, as Done 3. */
 class ChoiceMain(val label: String, val icon: Int, val onClick: () -> Unit)
 
 /**
- * What can be done with the chosen messages, where the search and new message usually are:
- * Read or Unread, Delete (for good in the trash), More, and [main] when one applies. It is as
- * tall as search and its buttons sit inside its edge, [main] a pill within the pill.
+ * What can be done with the chosen messages, where search and a new message usually are: Read or
+ * Unread, Delete (for good in the trash) and More as icons on a pill as tall as search, their names
+ * shown on a long press; then [main], when one applies, a round accent button where a new message
+ * is. Cancel is at the top, where Back is, and the count is in the title.
  */
 @Composable
-fun ChoiceBar(surface: Modifier, main: ChoiceMain?, unread: Boolean, forever: Boolean, onCancel: () -> Unit, onRead: () -> Unit, onDelete: () -> Unit, onMore: () -> Unit) {
+fun ChoiceBar(surface: Modifier, main: ChoiceMain?, unread: Boolean, forever: Boolean, onRead: () -> Unit, onDelete: () -> Unit, onMore: () -> Unit) {
     val colors = MaterialTheme.colorScheme
-    val height = Bar.controlHeight() - Gap.inPill * 2
+    val height = Bar.controlHeight()
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = Gap.bar).then(surface).padding(Gap.inPill),
+        Modifier.fillMaxWidth().padding(horizontal = Gap.bar),
         horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        @Composable
-        fun RowScope.Action(icon: Int, label: String, tint: Color = colors.onSurface, background: Color = Color.Transparent, onClick: () -> Unit) =
-            BarAction(icon, label, tint, background, height = height, shape = CircleShape, onClick = onClick)
-        Action(R.drawable.ic_close, stringResource(R.string.action_cancel), onClick = onCancel)
-        Action(R.drawable.ic_unread, stringResource(if (unread) R.string.action_read else R.string.action_unread), onClick = onRead)
-        Action(R.drawable.ic_delete, stringResource(if (forever) R.string.action_delete_forever else R.string.action_delete), onClick = onDelete)
-        Action(R.drawable.ic_more, stringResource(R.string.action_more), onClick = onMore)
-        main?.let { Action(it.icon, it.label, colors.onAccent, colors.accent, onClick = it.onClick) }
+        Row(
+            Modifier.weight(1f).height(height).then(surface).padding(horizontal = Gap.inPill),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            @Composable
+            fun Action(icon: Int, label: String, onClick: () -> Unit) =
+                Named(label) { IconTile(icon, label, onClick, shape = CircleShape, size = height - Gap.inPill * 2) }
+            Action(R.drawable.ic_unread, stringResource(if (unread) R.string.action_read else R.string.action_unread), onRead)
+            Action(R.drawable.ic_delete, stringResource(if (forever) R.string.action_delete_forever else R.string.action_delete), onDelete)
+            Action(R.drawable.ic_more, stringResource(R.string.action_more), onMore)
+        }
+        main?.let {
+            Named(it.label) { IconTile(it.icon, it.label, it.onClick, background = colors.accent, tint = colors.onAccent, shape = CircleShape, size = height) }
+        }
     }
+}
+
+/** A button without words, whose [label] shows over it on a long press. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun Named(label: String, content: @Composable () -> Unit) {
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+        tooltip = { PlainTooltip { Text(label) } },
+        state = rememberTooltipState(),
+        content = content,
+    )
 }
