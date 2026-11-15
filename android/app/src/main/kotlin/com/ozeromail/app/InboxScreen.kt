@@ -2314,19 +2314,11 @@ private fun Dock(
                         }
                     } else {
                         val shown = toast?.let { shownToast(it) }
+                        AccountsButton(accounts, onAccounts)
+                        Spacer(Modifier.width(Gap.inBar))
                         // For a moment after a move the toast takes the place of search, as Undo Send
-                        // in Apple's Mail, and the accounts give it their room.
-                        AnimatedVisibility(
-                            shown == null,
-                            enter = expandHorizontally(Motion.calm(Motion.NOTE), Alignment.Start) + fadeIn(Motion.calm(Motion.SMALL)),
-                            exit = shrinkHorizontally(Motion.calm(Motion.NOTE), Alignment.Start) + fadeOut(Motion.calm(Motion.QUICK)),
-                        ) {
-                            Row {
-                                AccountsButton(accounts, onAccounts)
-                                Spacer(Modifier.width(Gap.inBar))
-                            }
-                        }
-                        // Kept while the toast fades out, so it leaves with its words.
+                        // in Apple's Mail; the buttons either side stay. Kept while it fades out,
+                        // so it leaves with its words.
                         val last = rememberLast(shown)
                         Crossfade(shown != null, Modifier.weight(1f), Motion.calm(Motion.SMALL), label = "search or toast") { toasting ->
                             if (toasting && last != null) {
