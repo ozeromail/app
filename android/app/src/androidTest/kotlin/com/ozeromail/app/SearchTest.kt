@@ -20,9 +20,16 @@ class SearchTest : TestMail() {
     @Test
     fun aChipTurnedOnSlidesToTheFrontAndBack() {
         rule.onAllNodes(hasContentDescription("Search mail") or hasText("Search mail")).onFirst().performClick()
-        // Still once the screen has slid in from the side and the keyboard has come up.
+        // Still for a while once the screen has slid in from the side and the keyboard has come
+        // up: the slide may start a few frames after the tap.
         var at: Rect? = null
-        waitFor { has(unread) && bounds(unread).let { now -> (now.left < screen.width / 4 && now == at).also { at = now } } }
+        var still = 0
+        waitFor {
+            val now = if (has(unread)) bounds(unread).takeIf { it.left < screen.width / 4 } else null
+            still = if (now != null && now == at) still + 1 else 0
+            at = now
+            still >= STILL_FRAMES
+        }
         toggle("on") { assertTrue("the chip turned on is not at the front", it.left < last("unread")!!.left) }
         toggle("off") { assertTrue("the chip turned off did not go back", it.left > last("unread")!!.left) }
     }
@@ -49,5 +56,10 @@ class SearchTest : TestMail() {
             val jumps = jumps(label, jerk = 6 * rule.density.density)
             assertTrue("$step: $label jumped: $jumps", jumps.isEmpty())
         }
+    }
+
+    private companion object {
+        /** A third of a second: longer than any wait before a screen starts to move. */
+        const val STILL_FRAMES = 20
     }
 }
