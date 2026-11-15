@@ -29,3 +29,13 @@ for i in $(seq 1 8); do
 done
 # Read mail, so a swipe can mark it unread too.
 docker exec ozero-dovecot doveadm flags add -u "$user" '\Seen' mailbox INBOX subject "People 2:"
+
+# A second inbox with nothing in Notifications, for switching between tabs with and without mail.
+user=tabs@example.com
+for i in $(seq 1 12); do
+  letter "${people[$((i % ${#people[@]}))]}" "People $i: plans for the weekend" "$i" "" "Hi! This is letter $i."
+done
+for i in $(seq 1 6); do
+  letter "Weekly Digest <digest@news.example>" "Digest $i: stories of the week" "$((i * 5))" \
+    "List-Unsubscribe: <mailto:unsubscribe@news.example>\r\n" "Ten stories worth reading this week."
+done

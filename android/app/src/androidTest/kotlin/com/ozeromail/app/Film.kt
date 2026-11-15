@@ -31,7 +31,7 @@ import org.json.JSONObject
  * pictures as one contact sheet, which the CI job keeps.
  */
 class Film(private val rule: ComposeTestRule, private val window: Window, val name: String, private val every: Int = 2) {
-    class Frame(val ms: Long, val finger: Offset?, val at: Map<String, Rect?>)
+    class Frame(val ms: Long, val finger: Offset?, val at: Map<String, Rect?>, val count: Map<String, Int>, var meter: Float? = null)
 
     private val tracks = linkedMapOf<String, SemanticsMatcher>()
     val frames = mutableListOf<Frame>()
@@ -41,6 +41,9 @@ class Film(private val rule: ComposeTestRule, private val window: Window, val na
 
     /** Pictures are slow; a stretch that must pass quickly, as before Undo, goes without. */
     var shooting = true
+
+    /** Read from each picture as it is taken, as a number kept with its frame. */
+    var meter: ((Bitmap) -> Float)? = null
 
     fun track(label: String, matcher: SemanticsMatcher) {
         tracks[label] = matcher
@@ -106,14 +109,15 @@ class Film(private val rule: ComposeTestRule, private val window: Window, val na
 
     private fun record() {
         // Not boundsInRoot: that is cut to the screen, so a row swiped off would seem to stay.
-        val at = tracks.mapValues { (_, matcher) ->
-            rule.onAllNodes(matcher).fetchSemanticsNodes().firstOrNull()?.let { Rect(it.positionInRoot, it.size.toSize()) }
-        }
+        val nodes = tracks.mapValues { (_, matcher) -> rule.onAllNodes(matcher).fetchSemanticsNodes() }
+        val at = nodes.mapValues { (_, found) -> found.firstOrNull()?.let { Rect(it.positionInRoot, it.size.toSize()) } }
         val index = frames.size
         val picture = shooting && index % every == 0
-        frames += Frame(rule.mainClock.currentTime, finger, at)
+        val frame = Frame(rule.mainClock.currentTime, finger, at, nodes.mapValues { it.value.size })
+        frames += frame
         if (picture) {
             val shot = shoot()
+            frame.meter = meter?.invoke(shot)
             pictures += index to Bitmap.createScaledBitmap(shot, shot.width / SCALE, shot.height / SCALE, true)
             shot.recycle()
         }
@@ -195,6 +199,8 @@ class Film(private val rule: ComposeTestRule, private val window: Window, val na
                 .put("ms", frame.ms)
                 .put("finger", frame.finger?.let { JSONArray(listOf(it.x.toDouble(), it.y.toDouble())) } ?: JSONObject.NULL)
                 .put("at", JSONObject(frame.at.mapValues { (_, r) -> r?.let { JSONArray(listOf(it.left, it.top, it.right, it.bottom).map(Float::toDouble)) } ?: JSONObject.NULL }))
+                .put("count", JSONObject(frame.count))
+                .put("meter", frame.meter?.toDouble() ?: JSONObject.NULL)
         }))
         storage.openOutputFile("films/$name.json").use { it.write(json.toString(1).toByteArray()) }
         if (pictures.isEmpty()) return
