@@ -80,6 +80,8 @@ final class InboxModel {
     var syncing = false
     /// Until the saved list is read, an empty one says nothing.
     var listLoaded = false
+    /// The tab whose mail the list shows: the tab picked shows the last one's until its own is read.
+    var listTab = Category.people
     /// Mailboxes synced since the app opened: until then, their empty list waits for its mail.
     var syncedBoxes: Set<Mailbox> = []
     /// Mailboxes ever synced on this phone: one opened again shows its saved mail and syncs quietly.
@@ -225,7 +227,8 @@ final class InboxModel {
 
     /// What an empty list says: the whole inbox or its first tab done, or anything else empty.
     var emptyTitle: LocalizedStringKey {
-        tabbed && (inboxEmpty || tab == .people) ? "inbox_zero_title" : "tab_empty_title"
+        // The words of the list shown, not of a tab picked a moment ago, so they do not change twice.
+        tabbed && (inboxEmpty || listTab == .people) ? "inbox_zero_title" : "tab_empty_title"
     }
 
     /// What the button that empties a folder says; only the trash and spam can be emptied.
@@ -259,6 +262,7 @@ final class InboxModel {
             if (tab, mailbox) == shown { messages = [] }
             self.error = error.textKey()
         }
+        if (tab, mailbox) == shown { listTab = shown.0 }
         listLoaded = true
     }
 
