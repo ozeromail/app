@@ -1822,6 +1822,15 @@ private fun InboxList(
     val firstRow by remember(leading) { derivedStateOf { (listState.firstVisibleItemIndex - leading).coerceAtLeast(0) } }
     // The list leaves to the side the thumb moves away from, and the next one comes in from the other.
     val slide = Modifier.glided { thumb() - page }
+    // Read as it is drawn: the lake left behind as the tab changes is gone in that frame.
+    val tabNow = rememberUpdatedState(tab)
+    // How much of the list's lake shows as the tabs glide: all of it between empty tabs, where
+    // only the words change, and less and less toward a tab with mail on the way to the thumb.
+    val lakeWater = {
+        val at = thumb() - page
+        val passed = Category.entries.filterIndexed { i, _ -> i != page && (i - page) * at > 0f && abs(i - page) < abs(at) + 1f }
+        if (passed.any { others[it].orEmpty().isNotEmpty() }) glidedAlpha(at) else 1f
+    }
     val mini by animateFloatAsState(if (scrolled) 1f else 0f, Motion.calm(Motion.SMALL), label = "title")
     // On a wide screen search and a new message are always beside the title, so the dock is only the tabs.
     val titleActions: (@Composable RowScope.(size: Dp) -> Unit)? = if (wide && !choosing) {
@@ -1849,6 +1858,7 @@ private fun InboxList(
                             afloats = afloats,
                             rows = from?.rows ?: others[category].orEmpty(),
                             words = emptyTitle(inbox = true, allEmpty = false, category),
+                            checkedAt = checkedAt,
                             water = !lake,
                             thumb = thumb,
                             top = { from?.top ?: underTitle() ?: with(density) { (top + 48.dp).toPx() } },
@@ -1903,16 +1913,12 @@ private fun InboxList(
                     }
                     if (lake) {
                         item(key = "empty") {
-                            // New mail covers the lake rather than cutting it off.
-                            // One lake for every tab: only the words go with the tabs. It fades in, without
-                            // moving, when the tabs come from a list with mail.
-                            var fresh by remember { mutableStateOf(glide.isRunning || glide.value != 0f) }
-                            LaunchedEffect(fresh) {
-                                if (!fresh) return@LaunchedEffect
-                                snapshotFlow { glide.isRunning || glide.value != 0f }.first { !it }
-                                fresh = false
-                            }
-                            val fade = if (fresh) Modifier.graphicsLayer { alpha = glidedAlpha(thumb() - page) } else Modifier
+                            // New mail covers the lake rather than cutting it off; another tab's page
+                            // takes it over in the frame the tab changes, so it is not there twice.
+                            // One lake for every empty tab: only the words go with the tabs. Toward a
+                            // tab with mail the water goes with them too, as that tab's page will.
+                            val shownTab = tab
+                            val fade = Modifier.graphicsLayer { if (tabNow.value != shownTab) alpha = 0f }
                             Box(Modifier.animateItem(fadeInSpec = null, placementSpec = null, fadeOutSpec = Motion.calm(Motion.SMALL)).then(fade)) {
                                 key(mailbox) {
                                     StillNote(
@@ -1924,6 +1930,7 @@ private fun InboxList(
                                         finger = finger,
                                         pulled = { pullState.distanceFraction },
                                         glide = thumb,
+                                        water = lakeWater,
                                         wordsModifier = if (allEmpty) Modifier else slide,
                                     )
                                 }
@@ -2885,10 +2892,21 @@ private fun Afloat(
 
 /**
  * The page of the tab [at], under the list while the thumb is near: its first [rows], or its
- * [words] once it is empty, over still [water] where the list has none of its own to share.
+ * [words] once it is empty with when the inbox was [checkedAt] under them, over still [water]
+ * where the list has none of its own to share.
  */
 @Composable
-private fun Page(at: Int, afloats: Afloats, rows: List<MessageItem>, words: Int, water: Boolean, thumb: () -> Float, top: () -> Float, onGone: () -> Unit) {
+private fun Page(
+    at: Int,
+    afloats: Afloats,
+    rows: List<MessageItem>,
+    words: Int,
+    checkedAt: Long?,
+    water: Boolean,
+    thumb: () -> Float,
+    top: () -> Float,
+    onGone: () -> Unit,
+) {
     val thumbNow by rememberUpdatedState(thumb)
     // Read as it is drawn, so the page just left takes over from the list's rows in the same frame.
     val near by remember(at) { derivedStateOf { nearPage(at, thumbNow()) } }
@@ -2911,6 +2929,7 @@ private fun Page(at: Int, afloats: Afloats, rows: List<MessageItem>, words: Int,
             // The water stays where it is and only shows; the words go with the page.
             StillNote(
                 stringResource(words),
+                checkedAt = checkedAt,
                 water = { if (water) glidedAlpha(thumb() - at) else 0f },
                 wordsModifier = Modifier.glided { thumb() - at },
             )
