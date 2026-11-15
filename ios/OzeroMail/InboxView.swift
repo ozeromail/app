@@ -424,6 +424,12 @@ private struct InboxList: View {
                     .accessibilityLabel(Text("action_back"))
                 }
             }
+            // While choosing, Cancel takes the place of Back.
+            if choosing {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("action_cancel") { model.chosen = [] }
+                }
+            }
             // On its side, always beside the title: the short height is for the mail.
             if model.sideways && !choosing {
                 ToolbarItemGroup(placement: .topBarTrailing) {
@@ -784,75 +790,50 @@ private struct ChoiceBar: View {
     let model: InboxModel
     let picked: [MessageItem]
 
-    /// The filled button: Done where mail is not filed yet, else back to the inbox, Not spam out of spam.
-    private func main(done: Int, back: [MessageItem]) -> (label: String, act: ([MessageItem]) async -> Void)? {
+    /// The round accent button: Done where mail is not filed yet, else back to the inbox, Not spam
+    /// out of spam. Its label, with the count, is for VoiceOver; the title shows the count.
+    private func main(done: Int, back: [MessageItem]) -> (label: String, icon: String, act: ([MessageItem]) async -> Void)? {
         if done > 0 {
-            return (tr("action_done_count", done), { rows in await model.archive(rows.filter(\.canArchive)) })
+            return (tr("action_done_count", done), "checkmark", { rows in await model.archive(rows.filter(\.canArchive)) })
         }
         guard !back.isEmpty else { return nil }
         let label = back.allSatisfy(\.spam) ? "action_not_spam_count" : "action_inbox_count"
-        return (tr(label, back.count), { rows in await model.moveToInbox(rows.filter(\.canMoveToInbox)) })
+        return (tr(label, back.count), "tray", { rows in await model.moveToInbox(rows.filter(\.canMoveToInbox)) })
     }
 
+    /// The actions on one capsule as wide as search, then the accent button where a new message is.
+    /// Cancel is at the top, where Back is.
     var body: some View {
-        // Cancel says its name where the bar has room; on a narrow phone or with large text it is a cross.
-        ViewThatFits(in: .horizontal) {
-            bar(wordy: true)
-            bar(wordy: false)
-        }
-    }
-
-    @ViewBuilder
-    private func bar(wordy: Bool) -> some View {
         let done = picked.filter(\.canArchive).count
         let back = picked.filter(\.canMoveToInbox)
         let unread = picked.contains { $0.threadUnread > 0 }
         let forever = !picked.contains(where: \.canTrash)
-        HStack(spacing: 8) {
-            Button { model.chosen = [] } label: {
-                Group {
-                    if wordy {
-                        Text("action_cancel").font(.row).lineLimit(1).fixedSize().padding(.horizontal, 14)
-                    } else {
-                        Image(systemName: "xmark").font(.row).frame(width: glassButton)
-                    }
-                }
-                .frame(height: glassButton)
-                .contentShape(.capsule)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(Text("action_cancel"))
-            .glassSurface(in: .capsule, fallback: Color.clear)
-            Spacer(minLength: 0)
+        HStack(spacing: 10) {
             HStack(spacing: 0) {
                 GlassIcon(icon: unread ? "envelope.open" : "envelope.badge", label: unread ? "action_read" : "action_unread") {
                     model.choice { await model.setRead($0, read: unread) }
                 }
+                .frame(maxWidth: .infinity)
                 GlassIcon(icon: "trash", label: forever ? "action_delete_forever" : "action_delete", tint: .ozeroError) {
                     model.choice { await model.delete($0) }
                 }
+                .frame(maxWidth: .infinity)
                 if picked.contains(where: \.canSnooze) {
                     GlassIcon(icon: "clock", label: "action_snooze") {
                         model.choice { model.snoozing = Snoozing(messages: $0.filter(\.canSnooze)) }
                     }
+                    .frame(maxWidth: .infinity)
                 }
                 Menu { more } label: { GlassIconLabel(icon: "ellipsis") }
                     .accessibilityLabel(Text("action_more"))
+                    .frame(maxWidth: .infinity)
             }
             .glassSurface(in: .capsule, fallback: Color.clear)
             if let main = main(done: done, back: back) {
-                Button { model.choice(main.act) } label: {
-                    Text(verbatim: main.label)
-                        .font(.rowStrong)
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                        .fixedSize()
-                        .padding(.horizontal, 16)
-                        .frame(height: glassButton)
-                        .contentShape(.capsule)
-                }
-                .buttonStyle(.plain)
-                .glassSurface(in: .capsule, tint: .ozeroFill, fallback: Color.ozeroFill.lifted)
+                Button { model.choice(main.act) } label: { RoundGlyph(icon: main.icon, size: glassButton, tint: .white) }
+                    .buttonStyle(.plain)
+                    .glassSurface(in: .circle, tint: .ozeroFill, fallback: Color.ozeroFill.buttonFill)
+                    .accessibilityLabel(Text(verbatim: main.label))
             }
         }
     }
