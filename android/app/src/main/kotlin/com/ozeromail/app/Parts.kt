@@ -89,7 +89,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import uniffi.ozero_api.Mailbox
 import uniffi.ozero_api.undoSeconds
 
-/** A square-ish button holding one icon, as in the bottom bars. One in the accent lifts off the page. */
+/** A square-ish button holding one icon, as in the bottom bars. It lies flat, in the accent too: it sits on glass. */
 @Composable
 fun IconTile(
     @DrawableRes icon: Int,
@@ -102,12 +102,10 @@ fun IconTile(
     size: Dp = 48.dp,
     enabled: Boolean = true,
 ) {
-    val colors = MaterialTheme.colorScheme
     Box(
         modifier
             .size(size)
             .alpha(if (enabled) 1f else 0.4f)
-            .liftedIfAccent(colors, background, shape)
             .clip(shape)
             .background(background)
             .clickable(enabled = enabled, onClickLabel = description, role = Role.Button, onClick = onClick),

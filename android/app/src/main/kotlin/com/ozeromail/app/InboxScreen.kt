@@ -139,6 +139,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
@@ -1748,6 +1751,8 @@ private fun InboxList(
     val chosenNow by rememberUpdatedState(chosen)
     val chooseNow by rememberUpdatedState(onChoose)
     val shownTitle = if (choosing) stringResource(R.string.select_count, picked.size) else title
+    // While choosing, Cancel takes the place of Back.
+    val cancel = if (choosing) ({ onChoose(emptySet()) }) else null
     var dockHeight by remember { mutableStateOf(0.dp) }
     // What the dock and the compact title float over, seen through their glass.
     val haze = rememberHazeState()
@@ -1758,6 +1763,26 @@ private fun InboxList(
     // Half way through the title, under the back arrow's 4 + 44 + 2 dp.
     val titleGone = with(density) { 62.dp.roundToPx() }
     val scrolled by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > titleGone } }
+    // Scrolling down, the tabs step aside for the mail, as on iOS; scrolling up, near the top or on
+    // another tab they are back. Near the end they stay as they are.
+    var tabsAway by remember { mutableStateOf(false) }
+    LaunchedEffect(tab, mailbox) { tabsAway = false }
+    val awayStep = with(density) { 8.dp.toPx() }
+    val tabsScroll = remember(awayStep) {
+        object : NestedScrollConnection {
+            // How far the list has gone one way since it last turned.
+            var run = 0f
+
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                val dy = consumed.y
+                if (dy == 0f || !listState.canScrollForward) return Offset.Zero
+                run = if (run * dy < 0f) dy else run + dy
+                if (run < -awayStep) tabsAway = true else if (run > awayStep) tabsAway = false
+                return Offset.Zero
+            }
+        }
+    }
+    val away by animateFloatAsState(if (tabsAway && scrolled && !wide) 1f else 0f, Motion.calm(Motion.SMALL), label = "tabs away")
     val glideScope = rememberCoroutineScope()
     val lake = messages.isEmpty() && (!syncing || listLoaded) && error == null
     val pullState = rememberPullToRefreshState()
@@ -1826,7 +1851,7 @@ private fun InboxList(
     val heroActions: (@Composable RowScope.() -> Unit)? = titleActions?.let { actions -> { actions(this, if (short) 40.dp else 48.dp) } }
     Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
         // The list and the pages beside it, which show blurred through the glass over them.
-        Box(Modifier.fillMaxSize().hazeSource(haze)) {
+        Box(Modifier.fillMaxSize().hazeSource(haze).nestedScroll(tabsScroll)) {
             // The other tabs' pages, under the list: the one left goes on from where the finger let it
             // go, and the next shows under the finger before it is picked.
             if (tabbed && !allEmpty) {
@@ -1881,7 +1906,7 @@ private fun InboxList(
                     state = listState,
                     contentPadding = PaddingValues(top = top, bottom = dockHeight + 16.dp),
                 ) {
-                    item(key = "title") { Hero(shownTitle, owner, onBack, heroActions) }
+                    item(key = "title") { Hero(shownTitle, owner, onBack, heroActions, onCancel = cancel) }
                     items(signedOut, key = { "signed-out-${it.id}" }) { account ->
                         Afloat(thumb, page, depth = { 0 }, modifier = rowMove()) { SignedOutRow(account, onClick = { onSignIn(account) }) }
                     }
@@ -1979,7 +2004,7 @@ private fun InboxList(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(shownTitle, style = Type.Row, fontWeight = Weight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                onBack?.let { BackArrow(it, Modifier.align(Alignment.CenterStart)) }
+                Lead(onBack, cancel, Modifier.align(Alignment.CenterStart))
                 titleActions?.let { actions ->
                     Row(Modifier.align(Alignment.CenterEnd).padding(end = Gap.bar), horizontalArrangement = Arrangement.spacedBy(Gap.inBar)) { actions(this, 36.dp) }
                 }
@@ -2030,6 +2055,7 @@ private fun InboxList(
                 onGo = onGo,
                 empty = empty.takeIf { messages.isNotEmpty() && !choosing },
                 choosing = mode,
+                tabsAway = away,
                 choiceBar = {
                     ChoiceBar(
                         // Over the list it floats on glass, a pill as search is, which it takes the place of.
@@ -2037,7 +2063,6 @@ private fun InboxList(
                         main = main,
                         unread = picked.any { it.threadUnread > 0u },
                         forever = picked.isNotEmpty() && picked.none { it.canTrash },
-                        onCancel = { onChoose(emptySet()) },
                         onRead = { onRead(picked.any { it.threadUnread > 0u }) },
                         onDelete = onDelete,
                         onMore = { more = true },
@@ -2111,15 +2136,21 @@ private fun scopeAccounts(mailbox: Mailbox, folder: FolderItem?, accounts: List<
 
 /** The large title at the top of the list, where it does not need the thumb. */
 @Composable
-internal fun Hero(title: String, subtitle: String?, onBack: (() -> Unit)?, actions: (@Composable RowScope.() -> Unit)? = null) {
+internal fun Hero(
+    title: String,
+    subtitle: String?,
+    onBack: (() -> Unit)?,
+    actions: (@Composable RowScope.() -> Unit)? = null,
+    onCancel: (() -> Unit)? = null,
+) {
     if (LocalRoom.current.short) {
         // On its side the arrow goes beside the title, and the title is smaller: the height is for the mail.
         Row(
             Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp, end = Gap.bar).heightIn(min = 44.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            onBack?.let { BackArrow(it) }
-            Column(Modifier.weight(1f).padding(start = if (onBack == null) Gap.screen else 4.dp, end = 8.dp)) {
+            Lead(onBack, onCancel)
+            Column(Modifier.weight(1f).padding(start = if (onBack == null && onCancel == null) Gap.screen else 4.dp, end = 8.dp)) {
                 Text(title, style = Type.Title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (subtitle != null) Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, style = Type.Caption)
             }
@@ -2130,7 +2161,7 @@ internal fun Hero(title: String, subtitle: String?, onBack: (() -> Unit)?, actio
     Column {
         // The arrow's row is there even without it, so every title sits at the same height.
         Row(Modifier.fillMaxWidth().padding(top = 4.dp, end = Gap.bar).height(44.dp), verticalAlignment = Alignment.CenterVertically) {
-            onBack?.let { BackArrow(it) }
+            Lead(onBack, onCancel)
             Spacer(Modifier.weight(1f))
             actions?.let { Row(horizontalArrangement = Arrangement.spacedBy(Gap.inBar), content = it) }
         }
@@ -2145,6 +2176,18 @@ internal fun Hero(title: String, subtitle: String?, onBack: (() -> Unit)?, actio
                 )
             }
         }
+    }
+}
+
+/** Top left: Cancel while choosing, else the way back, if there is one. */
+@Composable
+private fun Lead(onBack: (() -> Unit)?, onCancel: (() -> Unit)?, modifier: Modifier = Modifier) {
+    when {
+        // The words line up with the title under them, past the button's own padding.
+        onCancel != null -> TextButton(onCancel, modifier.padding(start = Gap.screen - 12.dp)) {
+            Text(stringResource(R.string.action_cancel), style = Type.Row, fontWeight = Weight.Medium)
+        }
+        onBack != null -> BackArrow(onBack, modifier)
     }
 }
 
@@ -2174,6 +2217,8 @@ private fun Dock(
     empty: Pair<Int, () -> Unit>?,
     /** From 0 to 1 as choosing begins: [choiceBar] takes the place of search. */
     choosing: Float,
+    /** From 0 to 1 as the tabs step aside while the list scrolls down. */
+    tabsAway: Float,
     choiceBar: @Composable () -> Unit,
     wide: Boolean,
 ) {
@@ -2210,7 +2255,19 @@ private fun Dock(
         verticalArrangement = Arrangement.spacedBy(Gap.inBar),
     ) {
         if (!wide) {
-            tabs?.let { Tabs(tab, it, glide, thumb, onTab) }
+            tabs?.let {
+                // They sink and fade behind the row under them; their room stays, so the list never jumps.
+                Box(
+                    Modifier
+                        .graphicsLayer {
+                            alpha = 1f - tabsAway
+                            translationY = rise * 2 * tabsAway
+                            scaleX = 1f - 0.06f * tabsAway
+                            scaleY = scaleX
+                        }
+                        .then(if (tabsAway > 0.5f) Modifier.blockTouches() else Modifier),
+                ) { Tabs(tab, it, glide, thumb, onTab) }
+            }
             empty?.let { (label, onClick) -> EmptyButton(stringResource(label), onClick) }
         }
         // Search and the choice bar are the same height, so the dock keeps it as they change;

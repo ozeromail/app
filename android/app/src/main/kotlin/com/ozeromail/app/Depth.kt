@@ -32,9 +32,9 @@ import dev.chrisbanes.haze.HazeStyle
 import dev.chrisbanes.haze.HazeTint
 import dev.chrisbanes.haze.hazeEffect
 
-// A little depth in the icon's paper, kept faint. What lies on top of the page (the accent
-// buttons, the tabs' thumb, a screen pushed in) lifts with a short, straight shadow and
-// light along its top edge; what holds things (fields, the tabs' track, the accounts button) is
+// A little depth in the icon's paper, kept faint. What lies on top of the page (the tabs' thumb,
+// a screen pushed in) lifts with a short, straight shadow and light along its top edge; the glass
+// over the list and the round accent buttons on it cast none; what holds things (fields, the tabs' track, the accounts button) is
 // cut in, with a shadow under its top edge; dots are tiny windows. At night shadows hardly show,
 // so the thumb is a shade lighter and a lit edge carries the lifted buttons; the docks stay the
 // page's colour, so the fields cut into them still read lighter than the dock.
@@ -124,16 +124,20 @@ val LocalGlass = staticCompositionLocalOf<HazeState?> { null }
 
 /**
  * Frosted glass, as the bars on iOS: what lies under it shows through, blurred and veiled in the
- * paper's colour, with a soft shadow and a faint rim. Without a [state] it is the grey fill cut into the page.
+ * paper's colour, with a thin rim and no shadow. A shadow would show through the glass and pile up
+ * where pills sit close. Without a [state] it is the grey fill cut into the page.
  */
 fun Modifier.glass(state: HazeState?, colors: ColorScheme, shape: Shape): Modifier {
     if (state == null) return clip(shape).background(colors.surfaceVariant).sunk(colors)
-    val veil = if (colors.night) colors.surfaceContainerHigh.copy(alpha = 0.66f) else colors.background.copy(alpha = 0.62f)
-    return floating(colors, shape)
-        .clip(shape)
+    val veil = if (colors.night) colors.surfaceContainerHigh.copy(alpha = 0.66f) else colors.background.copy(alpha = 0.66f)
+    return clip(shape)
         .hazeEffect(state, frost(colors, veil))
-        .border(1.dp, if (colors.night) colors.lit else colors.outlineVariant.copy(alpha = 0.8f), shape)
+        .border(1.dp, colors.rim, shape)
 }
+
+/** The edge of [glass]: a faint line of ink by day, of light at night. */
+private val ColorScheme.rim: Color
+    get() = if (night) lit else onBackground.copy(alpha = 0.1f)
 
 /** [glass] where a list under it shows through; elsewhere a card of the paper floating on its own shadow. */
 fun Modifier.floatingGlass(state: HazeState?, colors: ColorScheme, shape: Shape): Modifier {
