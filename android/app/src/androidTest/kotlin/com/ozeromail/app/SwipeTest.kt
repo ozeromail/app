@@ -2,6 +2,7 @@ package com.ozeromail.app
 
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -33,6 +34,9 @@ class SwipeTest : TestMail() {
             frames(10)
             assertTrue("the row below did not take the swiped row's place", closed)
             assertTrue("no toast", has(hasText("Undo")))
+            // The toast takes the place of search only; the accounts stay beside it.
+            assertTrue("the toast covered the accounts", has(hasContentDescription("Accounts") and hasClickAction()))
+            still("toast")
         }
     }
 
