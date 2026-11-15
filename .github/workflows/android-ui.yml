@@ -80,7 +80,7 @@ jobs:
           # The tests are about animations: they must run.
           disable-animations: false
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
-          script: tools/android-ui-test.sh
+          script: tools/android-ui-test.sh -Pandroid.testInstrumentationRunnerArguments.class=com.ozeromail.app.EmptyTabTest
       - name: Keep the films
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
