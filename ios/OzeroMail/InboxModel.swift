@@ -190,6 +190,19 @@ final class InboxModel {
         return isInbox ? accounts.filter(\.inAll) : accounts
     }
 
+    /// What the held accounts button offers: each account's inbox, then all inboxes, nearest the
+    /// thumb. Nothing to choose with one account.
+    var accountChoices: [AccountChoice] {
+        guard accounts.count > 1 else { return [] }
+        let each = accounts.compactMap { account in
+            folders.first { $0.accountId == account.id && $0.role == .inbox }.map {
+                AccountChoice(account: account, mailbox: .folder(id: $0.id), unread: peopleUnread[account.id] ?? 0)
+            }
+        }
+        let all = accounts.filter(\.inAll).reduce(0) { $0 + (peopleUnread[$1.id] ?? 0) }
+        return each + [AccountChoice(account: nil, mailbox: Mail.inbox, unread: all)]
+    }
+
     var openFolder: FolderItem? {
         if case .folder(let id) = mailbox { folders.first { $0.id == id } } else { nil }
     }
@@ -968,4 +981,13 @@ extension Mailbox {
     }
 
     static let unifiedKey = "all-"
+}
+
+/// A line of the menu the held accounts button opens: an account's inbox, or all inboxes with no account.
+struct AccountChoice: Identifiable {
+    let account: AccountItem?
+    let mailbox: Mailbox
+    let unread: Int
+
+    var id: Int64 { account?.id ?? -1 }
 }

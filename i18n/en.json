@@ -61,6 +61,7 @@
   "inbox_zero_title": "Inbox is empty",
   "tab_empty_title": "Nothing here",
   "accounts_title": "Accounts",
+  "accounts_choose": "Choose account",
   "action_close": "Close",
   "message_reply_prompt": "Reply…",
   "account_color": "Color",

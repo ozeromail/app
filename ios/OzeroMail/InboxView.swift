@@ -607,7 +607,9 @@ private struct Dock: View {
                         if model.tabbed { InboxTabs(model: model) } else { EmptyFolderButton(model: model) }
                     } else {
                         HStack(spacing: 10) {
-                            AccountsButton(accounts: model.scope) { model.accountsOpen = true }
+                            AccountsButton(accounts: model.scope, choices: model.accountChoices, mailbox: model.mailbox, onChoose: { model.mailbox = $0 }) {
+                                model.accountsOpen = true
+                            }
                             // For a moment after a move, Undo takes the place of search, as Apple's
                             // Mail shows Undo Send in its bar.
                             if let toast = model.toast {
@@ -865,39 +867,76 @@ private struct ChoiceBar: View {
     }
 }
 
-/// The accounts' colours; opens the accounts.
+/// The accounts' colours; opens the accounts. Held, it offers `choices` in a menu, which a finger
+/// still down can slide to and lift on, as Apple's own buttons do.
 private struct AccountsButton: View {
     let accounts: [AccountItem]
+    let choices: [AccountChoice]
+    let mailbox: Mailbox
+    let onChoose: (Mailbox) -> Void
     let action: () -> Void
     @Environment(\.accountsZoom) private var zoom
 
     var body: some View {
-        Button(action: action) {
-            Group {
-                if let one = accounts.first, accounts.count == 1 {
-                    AccountInitial(name: one.name, color: one.tint)
-                } else {
-                    // Up to four colours; the sheet lists the rest.
-                    let shown = Array(accounts.prefix(4))
-                    Grid(horizontalSpacing: 4, verticalSpacing: 4) {
-                        GridRow {
-                            ForEach(shown.prefix(2), id: \.id) { AccountDot(color: $0.tint) }
-                        }
-                        if shown.count > 2 {
-                            GridRow {
-                                ForEach(shown.dropFirst(2), id: \.id) { AccountDot(color: $0.tint) }
-                            }
-                        }
+        Group {
+            if choices.isEmpty {
+                Button(action: action) { face }
+            } else {
+                Menu {
+                    // A picker, so the open one has the system's checkmark and is read as chosen.
+                    Picker(selection: Binding(get: { mailbox }, set: onChoose)) {
+                        Section { ForEach(choices.filter { $0.account != nil }, content: line) }
+                        Section { ForEach(choices.filter { $0.account == nil }, content: line) }
+                    } label: {
+                        EmptyView()
                     }
+                    .pickerStyle(.inline)
+                } label: {
+                    face
+                } primaryAction: {
+                    action()
                 }
+                // All inboxes last, nearest the thumb, wherever the menu opens.
+                .menuOrder(.fixed)
+                .menuStyle(.button)
             }
-            .frame(width: glassButton, height: glassButton)
-            .contentShape(.circle)
         }
         .buttonStyle(.plain)
         .glassSurface(in: .circle, fallback: Color.ozeroCard.sunk)
         .modifier(ZoomSource(zoom: zoom))
         .accessibilityLabel(Text("accounts_title"))
+    }
+
+    /// A line of the menu: the name, and the unread under it, if any.
+    private func line(_ choice: AccountChoice) -> some View {
+        VStack {
+            Text(verbatim: choice.account?.name ?? tr("folder_all_inbox"))
+            if choice.unread > 0 { Text(verbatim: String(choice.unread)) }
+        }
+        .tag(choice.mailbox)
+    }
+
+    private var face: some View {
+        Group {
+            if let one = accounts.first, accounts.count == 1 {
+                AccountInitial(name: one.name, color: one.tint)
+            } else {
+                // Up to four colours; the sheet lists the rest.
+                let shown = Array(accounts.prefix(4))
+                Grid(horizontalSpacing: 4, verticalSpacing: 4) {
+                    GridRow {
+                        ForEach(shown.prefix(2), id: \.id) { AccountDot(color: $0.tint) }
+                    }
+                    if shown.count > 2 {
+                        GridRow {
+                            ForEach(shown.dropFirst(2), id: \.id) { AccountDot(color: $0.tint) }
+                        }
+                    }
+                }
+            }
+        }
+        .frame(width: glassButton, height: glassButton)
+        .contentShape(.circle)
     }
 }
 

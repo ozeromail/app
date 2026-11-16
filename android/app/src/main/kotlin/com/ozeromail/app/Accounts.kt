@@ -11,6 +11,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,6 +28,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -44,11 +47,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -57,6 +63,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.toSize
 import uniffi.ozero_api.AccountItem
 import uniffi.ozero_api.FolderItem
 import uniffi.ozero_api.FolderRole
@@ -635,8 +642,7 @@ private fun indent(depth: Int): Dp = (Gap.slot + Gap.afterSlot) * depth
 
 /** Up to three account colours overlapping, as wide as the slot. */
 @Composable
-private fun StackedDots(accounts: List<AccountItem>) {
-    val ring = MaterialTheme.colorScheme.background
+private fun StackedDots(accounts: List<AccountItem>, ring: Color = MaterialTheme.colorScheme.background) {
     Box(Modifier.size(Gap.slot, 10.dp)) {
         accounts.take(3).forEachIndexed { i, account ->
             AccountDot(account.tint, Modifier.offset(x = 7.dp * i).border(1.5.dp, ring, CircleShape))
@@ -657,3 +663,78 @@ fun SheetAction(@DrawableRes icon: Int, text: String, color: Color, onClick: () 
         Text(text, color = color, style = Type.Row)
     }
 }
+
+/** A line of the menu the held accounts button opens: an account's inbox, or all inboxes with no [account]. */
+@Immutable
+data class AccountChoice(val account: AccountItem?, val mailbox: Mailbox, val unread: Int)
+
+/** Each account's inbox, then all inboxes, nearest the thumb; nothing to choose with one account. */
+fun accountChoices(accounts: List<AccountItem>, folders: List<FolderItem>, unread: Map<Long, Int>): List<AccountChoice> {
+    if (accounts.size < 2) return emptyList()
+    val inboxes = folders.filter { it.role == FolderRole.INBOX }.associateBy { it.accountId }
+    val each = accounts.mapNotNull { account ->
+        inboxes[account.id]?.let { AccountChoice(account, Mailbox.Folder(it.id), unread[account.id] ?: 0) }
+    }
+    val inAll = accounts.filter { it.inAll }
+    return each + AccountChoice(null, Mail.INBOX, inAll.sumOf { unread[it.id] ?: 0 })
+}
+
+/**
+ * The accounts to switch to, over the held accounts button, as the sheet shows them: the open one
+ * in the accent. [hot] is the line under a finger still down from the hold; [onPlaced] says where
+ * each line is on the screen, so that finger can pick one as it lifts.
+ */
+@Composable
+fun AccountsMenu(choices: List<AccountChoice>, mailbox: Mailbox, hot: Int?, onPlaced: (Int, Rect) -> Unit, onPick: (Mailbox) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(Radius.tile)
+    val all = stringResource(R.string.folder_all_inbox)
+    Column(
+        Modifier
+            // Room for the shadow: the popup's window ends where the menu does.
+            .padding(MENU_SHADOW)
+            .width(260.dp)
+            .floating(colors, shape)
+            .clip(shape)
+            .background(colors.surface)
+            .border(1.dp, colors.outlineVariant, shape)
+            .padding(vertical = 6.dp)
+            .selectableGroup(),
+    ) {
+        choices.forEachIndexed { i, choice ->
+            val account = choice.account
+            if (account == null && i > 0) HorizontalDivider(Modifier.padding(vertical = 4.dp), color = colors.outlineVariant)
+            val open = choice.mailbox == mailbox
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .onGloballyPositioned { onPlaced(i, Rect(it.positionOnScreen(), it.size.toSize())) }
+                    .background(if (hot == i) colors.surfaceVariant else Color.Transparent)
+                    .selectable(open, role = Role.RadioButton) { onPick(choice.mailbox) }
+                    .heightIn(min = 44.dp)
+                    .padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Box(Modifier.width(Gap.slot), contentAlignment = Alignment.CenterStart) {
+                    if (account != null) AccountDot(account.tint) else StackedDots(choices.mapNotNull { c -> c.account?.takeIf { it.inAll } }, ring = colors.surface)
+                }
+                Text(
+                    account?.name ?: all,
+                    color = if (open) colors.primary else colors.onSurface,
+                    style = Type.Row,
+                    fontWeight = if (open) Weight.SemiBold else Weight.Regular,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (choice.unread > 0) {
+                    Text(choice.unread.toString(), color = if (open) colors.primary else colors.onSurfaceVariant, style = Type.Caption, fontWeight = Weight.Medium)
+                }
+            }
+        }
+    }
+}
+
+/** Around the accounts menu, for its shadow. */
+val MENU_SHADOW = 12.dp

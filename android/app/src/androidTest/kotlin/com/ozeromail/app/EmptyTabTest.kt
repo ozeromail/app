@@ -13,7 +13,7 @@ import org.junit.runner.RunWith
 /** Tabs with mail and without: the lake and the rows pass between them without a blink. */
 @RunWith(AndroidJUnit4::class)
 class EmptyTabTest : TestMail() {
-    override val user = "tabs@example.com"
+    override val user = TABS
 
     @Test
     fun tapsBetweenEmptyAndFullTabs() {
