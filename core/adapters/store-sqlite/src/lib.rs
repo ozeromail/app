@@ -9,9 +9,9 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use ozero_domain::{
     Account, AccountId, AccountKind, Action, Address, Alias, Answer, Attachment, Body, Category,
     Changes, Checkpoint, Contact, Correspondent, Correspondents, DayEvent, Draft, DraftCopy,
-    DraftFile, DraftId, DraftToPush, FileId, Flags, Folder, FolderId, FolderRole, Invite,
-    InviteKind, InviteRow, ListQuery, ListScope, MessageId, MessageLocation, MessageRow, Moved,
-    NewAccount, NewFolder, NewMail, NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile,
+    DraftFile, DraftId, DraftToPush, FileId, Flags, Folder, FolderId, FolderRole, InlineImage,
+    Invite, InviteKind, InviteRow, ListQuery, ListScope, MessageId, MessageLocation, MessageRow,
+    Moved, NewAccount, NewFolder, NewMail, NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile,
     RecentFile, SavedDraft, SavedInvite, SearchFilter, Sender, Server, ServerDraft, Store,
     StoreError, Unsent, Unsubscribe, default_label, full_text, typed_addresses,
 };
@@ -1309,6 +1309,24 @@ impl Store for SqliteStore {
         )
         .map_err(storage)?;
         save_invite(&tx, message, body.calendar.as_deref())?;
+        tx.execute(
+            "DELETE FROM inline_image WHERE message_id = ?1",
+            [message.0],
+        )
+        .map_err(storage)?;
+        {
+            let mut insert = tx
+                .prepare_cached(
+                    "INSERT OR IGNORE INTO inline_image (message_id, cid, mime, data)
+                     VALUES (?1, ?2, ?3, ?4)",
+                )
+                .map_err(storage)?;
+            for i in &body.inline {
+                insert
+                    .execute(params![message.0, i.cid, i.mime, i.data])
+                    .map_err(storage)?;
+            }
+        }
         tx.commit().map_err(storage)
     }
 
@@ -1349,7 +1367,24 @@ impl Store for SqliteStore {
             html,
             attachments,
             calendar,
+            inline: vec![],
         }))
+    }
+
+    fn inline_images(&self, message: MessageId) -> Result<Vec<InlineImage>, StoreError> {
+        self.conn()
+            .prepare_cached("SELECT cid, mime, data FROM inline_image WHERE message_id = ?1")
+            .and_then(|mut s| {
+                s.query_map([message.0], |r| {
+                    Ok(InlineImage {
+                        cid: r.get(0)?,
+                        mime: r.get(1)?,
+                        data: r.get(2)?,
+                    })
+                })?
+                .collect()
+            })
+            .map_err(storage)
     }
 
     fn invite(&self, message: MessageId) -> Result<Option<SavedInvite>, StoreError> {

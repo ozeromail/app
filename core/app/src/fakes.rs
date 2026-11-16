@@ -10,9 +10,9 @@ use std::time::Duration;
 use ozero_domain::{
     Account, AccountId, Action, Address, Alias, Answer, Body, Category, Changes, Checkpoint,
     Contact, Correspondent, Correspondents, DayEvent, Draft, DraftCopy, DraftFile, DraftId,
-    DraftToPush, FileId, Flags, Folder, FolderId, FolderRole, ListQuery, MailProvider, MailSender,
-    MessageBuilder, MessageId, MessageLocation, MessageParser, MessageRow, Moved, NewAccount,
-    NewFolder, NewMail, NewMessage, Older, Op, OpId, OutboxId, Outgoing, OutgoingFile,
+    DraftToPush, FileId, Flags, Folder, FolderId, FolderRole, InlineImage, ListQuery, MailProvider,
+    MailSender, MessageBuilder, MessageId, MessageLocation, MessageParser, MessageRow, Moved,
+    NewAccount, NewFolder, NewMail, NewMessage, Older, Op, OpId, OutboxId, Outgoing, OutgoingFile,
     ProviderError, RawMessage, RecentFile, SavedDraft, SavedInvite, SearchFilter, ServerDraft,
     Store, StoreError, Unsent, Unsubscribe,
 };
@@ -710,6 +710,10 @@ impl Store for Memory {
 
     fn body(&self, _: MessageId) -> Result<Option<Body>, StoreError> {
         Ok(None)
+    }
+
+    fn inline_images(&self, _: MessageId) -> Result<Vec<InlineImage>, StoreError> {
+        Ok(vec![])
     }
 
     fn invite(&self, _: MessageId) -> Result<Option<SavedInvite>, StoreError> {

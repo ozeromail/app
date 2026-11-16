@@ -4,9 +4,9 @@ use std::fmt;
 use crate::{
     Account, AccountId, Action, Alias, Body, Category, Changes, Checkpoint, Contact, Correspondent,
     Correspondents, DayEvent, Draft, DraftCopy, DraftFile, DraftId, DraftToPush, FileId, Folder,
-    FolderId, ListQuery, MessageId, MessageLocation, MessageRow, Moved, NewAccount, NewFolder,
-    NewMail, NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile, RecentFile, SavedDraft,
-    SavedInvite, SearchFilter, ServerDraft, Unsent, Unsubscribe,
+    FolderId, InlineImage, ListQuery, MessageId, MessageLocation, MessageRow, Moved, NewAccount,
+    NewFolder, NewMail, NewMessage, Op, OpId, OutboxId, Outgoing, OutgoingFile, RecentFile,
+    SavedDraft, SavedInvite, SearchFilter, ServerDraft, Unsent, Unsubscribe,
 };
 
 /// Local database port. The UI reads only from here; sync writes here.
@@ -185,7 +185,10 @@ pub trait Store: Send + Sync {
     ) -> Result<Vec<MessageLocation>, StoreError>;
     /// Saves the body and sets the message's snippet from its text, if it has any.
     fn save_body(&self, message: MessageId, body: &Body) -> Result<(), StoreError>;
+    /// The saved body, without its `inline` images.
     fn body(&self, message: MessageId) -> Result<Option<Body>, StoreError>;
+    /// The images saved with the message's body that its HTML shows by `cid:`.
+    fn inline_images(&self, message: MessageId) -> Result<Vec<InlineImage>, StoreError>;
     /// The meeting invitation saved with the message's body, if it is one.
     fn invite(&self, message: MessageId) -> Result<Option<SavedInvite>, StoreError>;
     /// The meetings of saved invitations, of every account, that take some of the time from

@@ -1955,9 +1955,14 @@ impl Core {
     ) -> Result<MessageBody, CoreError> {
         let message = MessageId(message);
         let shows_images = self.store.shows_images(message)?;
+        let mut body = self.body(message, &secret).await?;
+        // A body just downloaded has them; a saved one reads them now.
+        if body.inline.is_empty() && body.html.as_deref().is_some_and(shows_cid) {
+            body.inline = self.store.inline_images(message)?;
+        }
         Ok(MessageBody {
             shows_images,
-            ..self.body(message, &secret).await?.into()
+            ..body.into()
         })
     }
 
@@ -2083,7 +2088,12 @@ impl Core {
                 return Ok(Some(page));
             }
         }
-        let page = self.load_images(message, &source).await?;
+        let inline = if shows_cid(&source) {
+            self.store.inline_images(message)?
+        } else {
+            vec![]
+        };
+        let page = self.load_images(message, &source, &inline).await?;
         // A page with an image missing tries again next time.
         if let Some(page) = page
             .as_ref()
@@ -2187,8 +2197,9 @@ impl Core {
         &self,
         message: MessageId,
         html: &str,
+        inline: &[ozero_domain::InlineImage],
     ) -> Result<Option<ImagesPage>, CoreError> {
-        let page = html::clean(html);
+        let page = html::clean_with(html, inline);
         if page.images.is_empty() {
             return Ok(None);
         }
@@ -4383,7 +4394,10 @@ impl From<Attachment> for AttachmentItem {
 
 impl From<Body> for MessageBody {
     fn from(body: Body) -> Self {
-        let page = body.html.as_deref().map(html::clean);
+        let page = body
+            .html
+            .as_deref()
+            .map(|h| html::clean_with(h, &body.inline));
         let (text, quote) = body.split_quote();
         let remote_images = page
             .as_ref()
@@ -4433,12 +4447,18 @@ pub struct RemoteImage {
 impl RemoteImage {
     /// None for a type that is not an image.
     fn new(content_type: &str, data: Vec<u8>) -> Option<Self> {
-        let mime = content_type.split(';').next()?.trim().to_ascii_lowercase();
-        let plain = mime
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '+' | '-'));
-        (mime.starts_with("image/") && plain).then_some(Self { mime, data })
+        Some(Self {
+            mime: ozero_domain::image_mime(content_type)?,
+            data,
+        })
     }
+}
+
+/// Whether the HTML may show images sent inside the message.
+fn shows_cid(html: &str) -> bool {
+    html.as_bytes()
+        .windows(4)
+        .any(|w| w.eq_ignore_ascii_case(b"cid:"))
 }
 
 /// A message's cleaned HTML as the reader shows it, its quote folded and typeset unless it sets

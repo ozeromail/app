@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use super::*;
-use ozero_domain::Cursor;
+use ozero_domain::{Cursor, InlineImage};
 
 const KEY: [u8; 32] = [7; 32];
 
@@ -484,17 +484,25 @@ fn body_is_saved_with_its_snippet() {
         html: Some("<p>Hi Anna,</p>".into()),
         attachments: vec![file(4, "b.pdf"), file(2, "")],
         calendar: None,
+        inline: vec![InlineImage {
+            cid: "logo@x".into(),
+            mime: "image/png".into(),
+            data: vec![1, 2, 3],
+        }],
     };
     store.save_body(id, &body).unwrap();
     // In part order, the nameless one too.
     body.attachments.reverse();
+    let inline = std::mem::take(&mut body.inline);
     assert_eq!(store.body(id).unwrap().as_ref(), Some(&body));
+    assert_eq!(store.inline_images(id).unwrap(), inline);
     let rows = list(&store, ListScope::Folder(folder), 10, None);
     assert_eq!(rows[0].attachments, ["", "b.pdf"]);
     // Saving again replaces the list.
     body.attachments = vec![file(3, "c.pdf")];
     store.save_body(id, &body).unwrap();
     assert_eq!(store.body(id).unwrap().as_ref(), Some(&body));
+    assert!(store.inline_images(id).unwrap().is_empty());
 
     // A resync with no snippet keeps the one from the body.
     let mut again = message(1, 100);
@@ -1320,6 +1328,7 @@ fn lists_unread_mail_and_mail_with_files_of_every_account() {
             size: 10,
         }],
         calendar: None,
+        inline: vec![],
     };
     store.save_body(id("Subject 2"), &body).unwrap();
     assert_eq!(subjects(ListScope::Files), ["Subject 2"]);
@@ -2831,6 +2840,7 @@ fn offers_recent_files_once_each_newest_first() {
         html: None,
         attachments: files,
         calendar: None,
+        inline: vec![],
     };
     let file = |part: u32, name: &str| Attachment {
         part,
