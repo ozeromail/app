@@ -5,6 +5,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
