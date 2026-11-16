@@ -41,12 +41,15 @@ abstract class TestMail {
     /** Whose inbox the test signs in to on the test server. */
     open val user = USER
 
+    /** Inboxes on the test server signed in to after [user], for tests of more than one account. */
+    open val others = emptyList<String>()
+
     @Before
     fun start() {
         val app = ApplicationProvider.getApplicationContext<OzeroApp>()
         runBlocking {
             if (!app.mail.hasAccounts()) {
-                app.mail.signIn(user, PASSWORD, Endpoint("localhost", IMAP_PORT), Endpoint("localhost", SMTP_PORT))
+                (listOf(user) + others).forEach { app.mail.signIn(it, PASSWORD, Endpoint("localhost", IMAP_PORT), Endpoint("localhost", SMTP_PORT)) }
             }
             // The first sync, waited for here rather than through the screen: the list shows only
             // what is saved, and a slow or failed sync then fails with its own reason.
@@ -110,6 +113,9 @@ abstract class TestMail {
 
     companion object {
         const val USER = "test@example.com"
+
+        /** A second inbox, with nothing in Notifications. */
+        const val TABS = "tabs@example.com"
         const val PASSWORD = "pass"
         val IMAP_PORT: UShort = 31993u
         val SMTP_PORT: UShort = 31587u

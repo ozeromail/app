@@ -46,6 +46,8 @@ import androidx.compose.animation.core.calculateTargetValue
 import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -105,11 +107,19 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.input.pointer.util.addPointerInputChange
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
@@ -151,6 +161,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
@@ -1084,6 +1095,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
 
     val openFolder = (mailbox as? Mailbox.Folder)?.let { box -> folders.find { it.id == box.id } }
     val mailboxesState = MailboxesState(accounts, folders, mailbox, drafts.size, peopleUnread, allBoxes, groups)
+    val choices = remember(accounts, folders, peopleUnread) { accountChoices(accounts, folders, peopleUnread) }
     // The sheet's and the wide screen's mailboxes do the same; going somewhere closes the sheet.
     val accountsActions = AccountsActions(
         onDrafts = {
@@ -1491,6 +1503,7 @@ fun InboxScreen(mail: Mail, onNoAccounts: () -> Unit) {
                                     listState.requestScrollToItem(0)
                                 },
                                 onAccounts = { accountsOpen = true },
+                                choices = choices,
                                 lift = lift,
                                 onSearch = { searching = true },
                                 onCompose = { compose() },
@@ -1699,6 +1712,8 @@ private fun InboxList(
     onSwipe: (MessageItem, SwipeAction, reset: () -> Unit) -> Unit,
     onTab: (Category) -> Unit,
     onAccounts: () -> Unit,
+    /** What the held accounts button offers: each account's inbox and all inboxes. */
+    choices: List<AccountChoice>,
     /** Raises the accounts sheet as a finger drags the dock up. */
     lift: Lift,
     onSearch: () -> Unit,
@@ -2040,6 +2055,9 @@ private fun InboxList(
                 accounts = scope,
                 onTab = pick,
                 onAccounts = onAccounts,
+                choices = choices,
+                mailbox = mailbox,
+                onChoose = onGo,
                 lift = lift,
                 onSearch = onSearch,
                 onCompose = onCompose,
@@ -2222,6 +2240,10 @@ private fun Dock(
     accounts: List<AccountItem>,
     onTab: (Category, from: Float, velocity: Float) -> Unit,
     onAccounts: () -> Unit,
+    /** What the held accounts button offers, and where it goes. */
+    choices: List<AccountChoice>,
+    mailbox: Mailbox,
+    onChoose: (Mailbox) -> Unit,
     lift: Lift,
     onSearch: () -> Unit,
     onCompose: () -> Unit,
@@ -2314,7 +2336,7 @@ private fun Dock(
                         }
                     } else {
                         val shown = toast?.let { shownToast(it) }
-                        AccountsButton(accounts, onAccounts)
+                        AccountsButton(accounts, onAccounts, choices, mailbox, onChoose)
                         Spacer(Modifier.width(Gap.inBar))
                         // For a moment after a move the toast takes the place of search, as Undo Send
                         // in Apple's Mail; the buttons either side stay. Kept while it fades out,
@@ -2381,17 +2403,64 @@ private fun ComposeTile(onClick: () -> Unit, size: Dp = Bar.controlHeight()) {
     IconTile(R.drawable.ic_compose, stringResource(R.string.compose_new), onClick, background = colors.accent, tint = colors.onAccent, shape = CircleShape, size = size)
 }
 
-/** The accounts' colours, overlapping; opens the accounts. */
+/**
+ * The accounts' colours, overlapping; opens the accounts. Held, it offers [choices] in a menu
+ * over it: the finger still down picks the line it lifts on, or, lifted on the button, leaves the
+ * menu open for a tap.
+ */
 @Composable
-private fun AccountsButton(accounts: List<AccountItem>, onClick: () -> Unit) {
+private fun AccountsButton(accounts: List<AccountItem>, onClick: () -> Unit, choices: List<AccountChoice>, mailbox: Mailbox, onChoose: (Mailbox) -> Unit) {
     val colors = MaterialTheme.colorScheme
     val label = stringResource(R.string.accounts_title)
+    val haptics = LocalHapticFeedback.current
+    var open by remember { mutableStateOf(false) }
+    var hot by remember { mutableStateOf<Int?>(null) }
+    // Screen bounds of each line, to find the one under the finger, and the button, which the finger is read in.
+    val lines = remember { mutableMapOf<Int, Rect>() }
+    val button = remember { object { var at: LayoutCoordinates? = null } }
+    val choose by rememberUpdatedState(onChoose)
+    val offered by rememberUpdatedState(choices)
+    fun close() {
+        open = false
+        hot = null
+        lines.clear()
+    }
+    fun pick(box: Mailbox) {
+        close()
+        choose(box)
+    }
     Box(
         Modifier
             .size(Bar.controlHeight())
+            .onGloballyPositioned { button.at = it }
             .glass(LocalGlass.current, colors, CircleShape)
-            .clickable(onClickLabel = label, role = Role.Button, onClick = onClick)
-            .semantics { contentDescription = label },
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    do {
+                        val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+                        if (!open) continue
+                        val at = button.at?.takeIf { it.isAttached }?.localToScreen(change.position)
+                        val under = at?.let { p -> lines.entries.firstOrNull { it.value.contains(p) }?.key }
+                        if (under != hot) {
+                            if (under != null) haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                            hot = under
+                        }
+                        if (!change.pressed) hot?.let { offered.getOrNull(it) }?.let { pick(it.mailbox) }
+                    } while (change.pressed)
+                }
+            }
+            .holdable(
+                haptics,
+                onClick = onClick,
+                onLongClick = { open = true }.takeIf { choices.isNotEmpty() },
+                onClickLabel = label,
+                onLongClickLabel = stringResource(R.string.accounts_choose),
+            )
+            .semantics {
+                contentDescription = label
+                role = Role.Button
+            },
         contentAlignment = Alignment.Center,
     ) {
         val one = accounts.singleOrNull()
@@ -2411,6 +2480,22 @@ private fun AccountsButton(accounts: List<AccountItem>, onClick: () -> Unit) {
                 }
             }
         }
+        if (open) {
+            // The menu's own edge [Gap.inBar] over the button; its window is wider by the shadow's room.
+            val gap = with(LocalDensity.current) { (Gap.inBar - MENU_SHADOW).roundToPx() }
+            val shadow = with(LocalDensity.current) { MENU_SHADOW.roundToPx() }
+            Popup(popupPositionProvider = OverButton(gap, shadow), onDismissRequest = ::close, properties = PopupProperties(focusable = true)) {
+                AccountsMenu(choices, mailbox, hot, onPlaced = { i, rect -> lines[i] = rect }, onPick = ::pick)
+            }
+        }
+    }
+}
+
+/** Over the button, from its leading edge, less [shadow] so the menu's own edge lines up with it. */
+private class OverButton(private val gap: Int, private val shadow: Int) : PopupPositionProvider {
+    override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset {
+        val x = if (layoutDirection == LayoutDirection.Ltr) anchorBounds.left - shadow else anchorBounds.right - popupContentSize.width + shadow
+        return IntOffset(x.coerceIn(0, maxOf(0, windowSize.width - popupContentSize.width)), maxOf(0, anchorBounds.top - gap - popupContentSize.height))
     }
 }
 
