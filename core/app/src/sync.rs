@@ -244,7 +244,7 @@ pub async fn download_attachments(
 }
 
 /// Downloads a saved message whole, and returns it with the files it lists; saves the body
-/// again if those differ from the saved ones.
+/// again if those or the images it shows differ from the saved ones.
 pub async fn download_whole(
     store: &dyn Store,
     provider: &mut impl MailProvider,
@@ -260,7 +260,9 @@ pub async fn download_whole(
         .await?;
     let body = parser.parse_body(&raw);
     let saved = store.body(message.id)?.map(|b| b.attachments);
-    if !raw.is_empty() && saved.as_ref() != Some(&body.attachments) {
+    // A cut body may lack images it shows, or have them cut off.
+    let images = !body.inline.is_empty() && store.inline_images(message.id)? != body.inline;
+    if !raw.is_empty() && (saved.as_ref() != Some(&body.attachments) || images) {
         store.save_body(message.id, &body)?;
     }
     Ok((raw, body.attachments))

@@ -80,6 +80,25 @@ fn holds_back_remote_images_and_counts_them() {
 }
 
 #[test]
+fn shows_images_sent_inside_without_asking() {
+    let body = MessageBody::from(Body {
+        html: Some(r#"<img alt="Logo" src="cid:logo"><img src=https://x.com/a.png>"#.into()),
+        inline: vec![ozero_domain::InlineImage {
+            cid: "logo".into(),
+            mime: "image/png".into(),
+            data: b"hi".to_vec(),
+        }],
+        ..Body::default()
+    });
+    assert_eq!(body.remote_images, 1);
+    assert!(
+        body.html
+            .unwrap()
+            .contains(r#"src="data:image/png;base64,aGk=""#)
+    );
+}
+
+#[test]
 fn keeps_only_images() {
     let image = RemoteImage::new("Image/PNG; charset=x", b"ab".to_vec()).unwrap();
     assert_eq!(image.mime, "image/png");

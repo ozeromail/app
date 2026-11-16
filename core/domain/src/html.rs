@@ -4,7 +4,9 @@
 
 use std::borrow::Cow;
 
+use crate::encoding::{base64, percent_decode};
 use crate::typo::{Lang, Typesetter};
+use crate::{InlineImage, content_id, image_mime};
 
 /// A message's HTML ready to show, and the remote images it holds back.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,6 +28,13 @@ const FORGED_MARK: &str = "data-ozero-imag&#101;";
 
 /// Drops scripts, frames and tracking pixels, and holds back remote images.
 pub fn clean(html: &str) -> Page {
+    clean_with(html, &[])
+}
+
+/// As `clean`, with the images sent inside the message put in where it shows them by `cid:`.
+/// One it lacks, such as one cut off with a long message, shows its text instead of a
+/// broken picture.
+pub fn clean_with(html: &str, inline: &[InlineImage]) -> Page {
     let mut page = Page {
         html: String::with_capacity(html.len()),
         images: Vec::new(),
@@ -50,7 +59,7 @@ pub fn clean(html: &str) -> Page {
                 rest = after_end_tag(rest, name);
             }
         } else if name == "img" && !tag.closing {
-            image(&tag, &mut page);
+            image(&tag, inline, &mut page);
         } else if !VOID_DROPPED.contains(&name) {
             push(&mut page.html, tag.raw);
         }
@@ -344,29 +353,30 @@ pub(crate) fn after_end_tag<'a>(html: &'a str, name: &str) -> &'a str {
     close.map_or("", |close| &html[close..])
 }
 
-/// Writes an image: as is, without a pixel, or held back.
-fn image(tag: &Tag<'_>, page: &mut Page) {
+/// Writes an image: as is, without a pixel, from inside the message, or held back.
+fn image(tag: &Tag<'_>, inline: &[InlineImage], page: &mut Page) {
     if is_pixel(tag) {
         return;
     }
-    let remote = tag.attr("src").and_then(remote_source);
-    let Some(source) = remote else {
+    let source = tag.attr("src").unwrap_or_default();
+    if let Some(cid) = cid_source(source) {
+        image_tag(tag, &mut page.html);
+        let found = inline.iter().find(|i| i.cid == cid);
+        if let Some((image, mime)) = found.and_then(|i| Some((i, image_mime(&i.mime)?))) {
+            page.html.push_str(" src=\"data:");
+            page.html.push_str(&mime);
+            page.html.push_str(";base64,");
+            page.html.push_str(&base64(&image.data));
+            page.html.push('"');
+        }
+        page.html.push('>');
+        return;
+    }
+    let Some(source) = remote_source(source) else {
         push(&mut page.html, tag.raw);
         return;
     };
-    page.html.push_str("<img");
-    for (name, value) in &tag.attrs {
-        if matches!(name.as_str(), "src" | "srcset" | IMAGE_MARK) {
-            continue;
-        }
-        page.html.push(' ');
-        push(&mut page.html, name);
-        if let Some(value) = value {
-            page.html.push_str("=\"");
-            push(&mut page.html, &value.replace('"', "&quot;"));
-            page.html.push('"');
-        }
-    }
+    image_tag(tag, &mut page.html);
     // A repeated image, such as a logo, loads once.
     let n = page
         .images
@@ -377,6 +387,33 @@ fn image(tag: &Tag<'_>, page: &mut Page) {
             page.images.len() - 1
         });
     page.html.push_str(&format!(" {IMAGE_MARK}=\"{n}\">"));
+}
+
+/// An image's start tag without its source or the closing `>`, for another source to follow.
+fn image_tag(tag: &Tag<'_>, out: &mut String) {
+    out.push_str("<img");
+    for (name, value) in &tag.attrs {
+        if matches!(name.as_str(), "src" | "srcset" | IMAGE_MARK) {
+            continue;
+        }
+        out.push(' ');
+        push(out, name);
+        if let Some(value) = value {
+            out.push_str("=\"");
+            push(out, &value.replace('"', "&quot;"));
+            out.push('"');
+        }
+    }
+}
+
+/// The `Content-ID` a `cid:` source names, as `InlineImage::cid` keeps it (RFC 2392).
+pub fn cid_source(source: &str) -> Option<String> {
+    let source = source.trim();
+    let id = source
+        .get(..4)?
+        .eq_ignore_ascii_case("cid:")
+        .then(|| &source[4..])?;
+    Some(content_id(&percent_decode(id)))
 }
 
 /// An image too small to see, or hidden: it is only there to report the message was opened.
@@ -697,6 +734,24 @@ mod tests {
         }
         let line = clean("<img src=https://x/l width=600 height=1>");
         assert_eq!(line.images.len(), 1);
+    }
+
+    #[test]
+    fn shows_images_sent_inside() {
+        let logo = InlineImage {
+            cid: "logo@x".into(),
+            mime: "image/png".into(),
+            data: b"png".to_vec(),
+        };
+        let page = clean_with(
+            r#"<img alt="Logo" SRC="CID:Logo%40x"><img alt="Avatar" src="cid:gone" width=40>"#,
+            &[logo],
+        );
+        assert_eq!(
+            page.html,
+            r#"<img alt="Logo" src="data:image/png;base64,cG5n"><img alt="Avatar" width="40">"#
+        );
+        assert!(page.images.is_empty());
     }
 
     #[test]

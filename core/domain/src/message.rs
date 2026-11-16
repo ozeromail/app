@@ -214,6 +214,45 @@ pub struct Body {
     pub attachments: Vec<Attachment>,
     /// The meeting invitation it is, as iCalendar text.
     pub calendar: Option<String>,
+    /// The images the HTML part shows by `cid:`, sent inside the message. `Store::body` leaves
+    /// them out; `Store::inline_images` reads them.
+    pub inline: Vec<InlineImage>,
+}
+
+/// An image sent inside a message for its HTML part to show by `cid:`. Not remote, so it
+/// shows without asking: loading it tells the sender nothing.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct InlineImage {
+    /// Its `Content-ID`, lowercase, without the angle brackets.
+    pub cid: String,
+    /// A plain `image/...` type.
+    pub mime: String,
+    pub data: Vec<u8>,
+}
+
+/// A plain `image/...` type from a `Content-Type`, lowercase and without parameters; safe to
+/// write into a page. None for anything else.
+pub fn image_mime(content_type: &str) -> Option<String> {
+    let mime = content_type.split(';').next()?.trim().to_ascii_lowercase();
+    let plain = mime
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b"/.+-".contains(&b));
+    (mime.starts_with("image/") && plain).then_some(mime)
+}
+
+/// A `Content-ID` as `InlineImage::cid` keeps it: lowercase, without spaces or angle brackets.
+pub fn content_id(id: &str) -> String {
+    id.trim().trim_matches(['<', '>']).to_ascii_lowercase()
+}
+
+impl std::fmt::Debug for InlineImage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InlineImage")
+            .field("cid", &self.cid)
+            .field("mime", &self.mime)
+            .field("bytes", &self.data.len())
+            .finish()
+    }
 }
 
 /// A file sent with a message.

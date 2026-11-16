@@ -26,8 +26,9 @@ pub use invite::{
     Answer, DayEvent, Frequency, Invite, InviteKind, InviteRow, Repeat, SavedInvite, reply,
 };
 pub use message::{
-    Address, Attachment, Body, Correspondents, Cursor, Flags, ListQuery, ListScope, MessageId,
-    MessageLocation, MessageRow, NewMessage, RecentFile, SearchFilter, Sender, close_blank_lines,
+    Address, Attachment, Body, Correspondents, Cursor, Flags, InlineImage, ListQuery, ListScope,
+    MessageId, MessageLocation, MessageRow, NewMessage, RecentFile, SearchFilter, Sender,
+    close_blank_lines, content_id, image_mime,
 };
 pub use op::{Action, Op, OpId};
 pub use outbox::{

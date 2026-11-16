@@ -491,4 +491,19 @@ pub const MIGRATIONS: &[&str] = &[
     UPDATE message SET snippet = ltrim(substr(snippet, instr(snippet, ']') + 1))
     WHERE snippet GLOB '[[]cid:*]*' OR snippet GLOB '[[]image:*]*';
     ",
+    // 51: the images a message's HTML shows by `cid:`, sent inside it. Saved bodies that show
+    // any download again, so theirs show.
+    "
+    CREATE TABLE inline_image (
+        message_id INTEGER NOT NULL REFERENCES message(id) ON DELETE CASCADE,
+        cid        TEXT NOT NULL,
+        mime       TEXT NOT NULL,
+        data       BLOB NOT NULL,
+        PRIMARY KEY (message_id, cid)
+    );
+    DELETE FROM message_body
+    WHERE (html LIKE '%src=cid:%' OR html LIKE '%src=_cid:%') AND message_id IN (
+        SELECT id FROM message WHERE stand_in = 0
+    );
+    ",
 ];

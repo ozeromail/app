@@ -8,8 +8,8 @@ pub use build::MimeBuilder;
 
 use mail_parser::{Address as Addresses, Message, MessagePart, MimeHeaders, PartType};
 use ozero_domain::{
-    Address, Attachment, Body, Category, Invite, InviteKind, MessageParser, NewMessage, RawMessage,
-    Signals, Unsubscribe, percent_decode,
+    Address, Attachment, Body, Category, InlineImage, Invite, InviteKind, MessageParser,
+    NewMessage, RawMessage, Signals, Unsubscribe, content_id, html, image_mime,
 };
 
 #[derive(Debug, Default)]
@@ -67,7 +67,7 @@ impl MessageParser for MimeParser {
             _ => None,
         });
         let calendar = calendar(&message);
-        let mut files = attachments(&message, html.as_deref().unwrap_or_default());
+        let (mut files, inline) = attachments(&message, html.as_deref().unwrap_or_default());
         if let Some((parts, _)) = &calendar {
             // The card shows the invitation; its files would only repeat it.
             files.retain(|f| !parts.contains(&f.part));
@@ -91,6 +91,7 @@ impl MessageParser for MimeParser {
             attachments: files,
             html,
             calendar: calendar.map(|(_, text)| text),
+            inline,
         }
     }
 
@@ -165,44 +166,95 @@ fn html_text(html: &str) -> String {
     out
 }
 
-/// The message's attachments but the images its HTML shows by `cid:`.
-fn attachments(message: &Message<'_>, html: &str) -> Vec<Attachment> {
+/// Most bytes of images sent inside a message kept to show it; an image past that stays a
+/// file. The page carries them as `data:` text, so it stays small enough to pass around.
+const INLINE: usize = 3 * 1024 * 1024;
+
+/// The message's attachments but the images its HTML shows by `cid:`, and those images.
+fn attachments(message: &Message<'_>, html: &str) -> (Vec<Attachment>, Vec<InlineImage>) {
     if message.attachments.is_empty() {
-        return vec![];
+        return (vec![], vec![]);
     }
-    // `cid:` URLs are case-blind and may be percent-encoded (RFC 2392).
-    let html = html.to_ascii_lowercase();
-    let shown: HashSet<String> = html
+    // `cid:` URLs are case-blind (RFC 2392); lowercase keeps every byte where it was. Only an
+    // image's `src` counts: the reader puts nothing else in, so a background stays a file.
+    let lower = html.to_ascii_lowercase();
+    let shown: HashSet<String> = lower
         .match_indices("cid:")
-        .map(|(at, _)| {
-            let id = &html[at + 4..];
+        .filter(|(at, _)| {
+            lower[..*at]
+                .trim_end_matches(['"', '\'', ' '])
+                .ends_with("src=")
+        })
+        .filter_map(|(at, _)| {
+            let id = &html[at..];
             let end = id.find(['"', '\'', ')', ' ', '>']).unwrap_or(id.len());
-            percent_decode(&id[..end])
+            html::cid_source(&id[..end])
         })
         .collect();
-    message
+    let mut inline: Vec<InlineImage> = vec![];
+    let mut seen = HashSet::new();
+    let mut left = INLINE;
+    let mut files = vec![];
+    for (part, p) in message
         .attachments
         .iter()
         .filter_map(|&n| Some((n, message.part(n)?)))
-        .filter(|(_, p)| {
-            let id = p
-                .content_id()
-                .map(|id| id.trim_matches(['<', '>']).to_ascii_lowercase());
-            !id.is_some_and(|id| shown.contains(&id))
-        })
-        .map(|(part, p)| Attachment {
+    {
+        let mime = p.content_type().map_or_else(
+            || "application/octet-stream".to_owned(),
+            |t| match t.subtype() {
+                Some(sub) => format!("{}/{sub}", t.ctype()).to_ascii_lowercase(),
+                None => t.ctype().to_ascii_lowercase(),
+            },
+        );
+        let cid = p
+            .content_id()
+            .map(content_id)
+            .filter(|id| shown.contains(id));
+        if let Some(cid) = cid {
+            // The same image named twice counts once.
+            if !seen.insert(cid.clone()) {
+                continue;
+            }
+            let data = p.contents();
+            // Some senders call an image `application/octet-stream`; its first bytes tell.
+            let kind = image_mime(&mime).or_else(|| sniff(data).map(str::to_owned));
+            // A part running to the very end was cut off with a long message: the whole
+            // message downloads when it is saved as a file.
+            let whole = (p.offset_end as usize) < message.raw_message.len();
+            if let Some(kind) = kind.filter(|_| whole && data.len() <= left) {
+                left -= data.len();
+                inline.push(InlineImage {
+                    cid,
+                    mime: kind,
+                    data: data.to_vec(),
+                });
+                continue;
+            }
+        }
+        files.push(Attachment {
             part,
             name: name(p),
-            mime: p.content_type().map_or_else(
-                || "application/octet-stream".to_owned(),
-                |t| match t.subtype() {
-                    Some(sub) => format!("{}/{sub}", t.ctype()).to_ascii_lowercase(),
-                    None => t.ctype().to_ascii_lowercase(),
-                },
-            ),
+            mime,
             size: u64::try_from(p.len()).unwrap_or(u64::MAX),
-        })
-        .collect()
+        });
+    }
+    (files, inline)
+}
+
+/// The type of an image by its first bytes: PNG, JPEG, GIF or WebP.
+fn sniff(data: &[u8]) -> Option<&'static str> {
+    if data.starts_with(b"\x89PNG") {
+        Some("image/png")
+    } else if data.starts_with(b"\xff\xd8\xff") {
+        Some("image/jpeg")
+    } else if data.starts_with(b"GIF8") {
+        Some("image/gif")
+    } else if data.starts_with(b"RIFF") && data.get(8..12) == Some(b"WEBP") {
+        Some("image/webp")
+    } else {
+        None
+    }
 }
 
 /// The invitation or cancellation a message carries, and the parts that hold it: its
@@ -503,6 +555,48 @@ Content-Disposition: attachment; filename=agenda.pdf\r\n\r\nPDF\r\n\
                 ("Old-plan.eml", "message/rfc822", 25),
             ]
         );
+        assert_eq!(
+            body.inline,
+            [InlineImage {
+                cid: "logo@x".into(),
+                mime: "image/png".into(),
+                data: b"hi".to_vec(),
+            }]
+        );
+    }
+
+    #[test]
+    fn keeps_images_sent_inside_by_their_bytes() {
+        // Outlook's way: an image called a file of bytes.
+        let raw = b"Content-Type: multipart/related; boundary=r\r\n\r\n\
+            --r\r\nContent-Type: text/html\r\n\r\n<img src=cid:a><img src=cid:b>\r\n\
+            --r\r\nContent-Type: application/octet-stream\r\nContent-ID: <a>\r\n\
+            Content-Transfer-Encoding: base64\r\n\r\n/9j/\r\n\
+            --r\r\nContent-Type: application/octet-stream\r\nContent-ID: <b>\r\n\
+            Content-Transfer-Encoding: base64\r\n\r\naGk=\r\n--r--\r\n";
+        let body = MimeParser::default().parse_body(raw);
+        let inline: Vec<_> = body
+            .inline
+            .iter()
+            .map(|i| (i.cid.as_str(), i.mime.as_str()))
+            .collect();
+        assert_eq!(inline, [("a", "image/jpeg")]);
+        // What is no image the reader can show stays a file to open.
+        let files: Vec<_> = body.attachments.iter().map(|a| a.mime.as_str()).collect();
+        assert_eq!(files, ["application/octet-stream"]);
+    }
+
+    #[test]
+    fn leaves_cut_off_and_background_images_as_files() {
+        let raw = b"Content-Type: multipart/related; boundary=r\r\n\r\n\
+            --r\r\nContent-Type: text/html\r\n\r\n<td background=\"cid:bg\"><img src=cid:a>\r\n\
+            --r\r\nContent-Type: image/png\r\nContent-ID: <bg>\r\n\
+            Content-Transfer-Encoding: base64\r\n\r\naGk=\r\n\
+            --r\r\nContent-Type: image/png\r\nContent-ID: <a>\r\n\
+            Content-Transfer-Encoding: base64\r\n\r\naGk";
+        let body = MimeParser::default().parse_body(raw);
+        assert!(body.inline.is_empty());
+        assert_eq!(body.attachments.len(), 2);
     }
 
     #[test]
