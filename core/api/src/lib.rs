@@ -2224,10 +2224,11 @@ impl Core {
                 }
                 Ok((n, Err(e))) => {
                     log::warn!("image {n} not loaded: {e:?}");
-                    // Only a failed connection may go better on Try again; a missing image,
-                    // or one on a local address, stays as it is.
+                    // A failed connection says the most about why; any failure counts.
+                    lost += 1;
                     if matches!(e, ProviderError::Network(_)) {
-                        lost += 1;
+                        failed = Some(e);
+                    } else {
                         failed.get_or_insert(e);
                     }
                     continue;
@@ -2242,8 +2243,8 @@ impl Core {
                 images[n] = Some(image);
             }
         }
-        // Most did not come for want of a connection: say so, so the reader can try again.
-        // A tracking pixel that came alone must not hide that the pictures did not.
+        // Most did not come: say so, so the reader can try again. A tracking pixel that came
+        // alone must not hide that the pictures did not.
         if let Some(e) = failed.filter(|_| lost > loaded) {
             return Err(e.into());
         }

@@ -129,7 +129,13 @@ pub(crate) fn is_public(ip: IpAddr) -> bool {
                 let [.., a, b, c, d] = v6.octets();
                 return is_public(IpAddr::V4([a, b, c, d].into()));
             }
-            let [first, second, ..] = v6.segments();
+            let [first, second, third, ..] = v6.segments();
+            // A VPN's stand-in addresses, as 198.18.0.0/15 for IPv4: sing-box (Hiddify,
+            // NekoBox, v2rayNG) takes fc00::/18 from fc00::/8, which no network uses, and
+            // Clash Meta fdfe:dcba:9876::/48.
+            if first >> 8 == 0xfc || [first, second, third] == [0xfdfe, 0xdcba, 0x9876] {
+                return true;
+            }
             // Global unicast 2000::/3 only, without the ranges that lead elsewhere: protocol
             // assignments 2001::/23 (Teredo among them), documentation 2001:db8::/32 and
             // 6to4 2002::/16. Multicast and local ranges are outside 2000::/3.
@@ -186,6 +192,7 @@ mod tests {
             "100.64.0.1",
             "::1",
             "fd00::1",
+            "fdfe:dcba:9877::1",
             "fe80::1",
             "::ffff:192.168.0.1",
             "::a00:1",
@@ -197,12 +204,14 @@ mod tests {
         ] {
             assert!(!is_public(ip.parse().unwrap()), "{ip}");
         }
-        // A VPN's stand-in address, and NAT64 to a public one.
+        // VPNs' stand-in addresses, and NAT64 to a public one.
         for ip in [
             "93.184.216.34",
             "2606:4700::1111",
             "2001:4860:4860::8888",
             "198.18.0.1",
+            "fc00::1",
+            "fdfe:dcba:9876::1",
             "64:ff9b::5db8:d822",
         ] {
             assert!(is_public(ip.parse().unwrap()), "{ip}");
