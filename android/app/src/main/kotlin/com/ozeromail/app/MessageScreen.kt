@@ -60,6 +60,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -78,7 +79,6 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -102,6 +102,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
@@ -364,6 +366,8 @@ fun MessageScreen(
         snapshotFlow { scroll.value >= scroll.maxValue }.collect { if (it) barShown = true }
     }
     var barHeight by remember { mutableIntStateOf(0) }
+    // What the floating row's glass shows through, blurred: the page under it.
+    val haze = rememberHazeState()
     // Where each message starts on the page, to begin at the first unread one.
     val tops = remember(message.id) { mutableStateMapOf<Long, Float>() }
     var landed by remember(message.id) { mutableStateOf(false) }
@@ -383,7 +387,7 @@ fun MessageScreen(
             Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(edges))) {
                 BackArrow(onBack, Modifier.padding(top = 4.dp))
                 Box(Modifier.weight(1f).fillMaxWidth()) {
-                    Column(Modifier.fillMaxSize().nestedScroll(hiding).verticalScroll(scroll)) {
+                    Column(Modifier.fillMaxSize().then(if (!pane && replying == null) Modifier.hazeSource(haze) else Modifier).nestedScroll(hiding).verticalScroll(scroll)) {
                         val page = this
                         Title(message)
                         // Until the conversation is read only the title shows, so nothing jumps in above.
@@ -434,19 +438,21 @@ fun MessageScreen(
                     }
                     if (!pane && replying == null) {
                         Hiding({ barShown }, Modifier.align(Alignment.BottomCenter).onSizeChanged { barHeight = it.height }) {
-                            if (asking != null) {
-                                InviteActions(onAnswer = { answerInvite(asking, it) }, onMore = { sheet = ReaderSheet.More })
-                            } else BarText {
-                                Actions(
-                                    onReply = { reply(answer, all = false) },
-                                    onAnswers = { sheet = ReaderSheet.Answers },
-                                    onDelete = onDelete,
-                                    forever = !message.canTrash,
-                                    onSnooze = onSnooze,
-                                    onMore = { sheet = ReaderSheet.More },
-                                    onDone = onDone,
-                                )
-                            }
+                            CompositionLocalProvider(LocalGlass provides haze) { BarText {
+                                if (asking != null) {
+                                    InviteActions(onAnswer = { answerInvite(asking, it) }, onMore = { sheet = ReaderSheet.More })
+                                } else {
+                                    Actions(
+                                        onReply = { reply(answer, all = false) },
+                                        onAnswers = { sheet = ReaderSheet.Answers },
+                                        onDelete = onDelete,
+                                        forever = !message.canTrash,
+                                        onSnooze = onSnooze,
+                                        onMore = { sheet = ReaderSheet.More },
+                                        onDone = onDone,
+                                    )
+                                }
+                            } }
                         }
                     }
                 }
@@ -467,7 +473,7 @@ fun MessageScreen(
                         onSent = { id -> sent(id, writing) },
                     )
                 } else if (pane && asking != null) {
-                    InviteActions(onAnswer = { answerInvite(asking, it) }, onMore = { sheet = ReaderSheet.More })
+                    BarText { InviteActions(onAnswer = { answerInvite(asking, it) }, onMore = { sheet = ReaderSheet.More }) }
                 } else if (pane) {
                     PaneActions(
                         onReply = { reply(answer, all = false) },
@@ -1005,10 +1011,11 @@ private fun PlainText(text: String, quote: String, modifier: Modifier) {
 }
 
 /**
- * The actions under the thumb in one row, each in an equal place; Done, the one used most,
- * takes the last. A long press on Reply offers Reply all and Forward. Snooze and Done are
- * null in a folder where they do not apply, such as Done in the archive; Delete is
- * [forever] in the trash.
+ * The actions under the thumb, floating over the page on glass as the list's choice bar does:
+ * Reply, Delete, Snooze and More on a pill, their names shown on a long press, and Done, the one
+ * used most, in the round accent button. A long press on Reply offers Reply all and Forward
+ * instead. Snooze and Done are null in a folder where they do not apply, such as Done in the
+ * archive; Delete is [forever] in the trash.
  */
 @Composable
 private fun Actions(
@@ -1021,47 +1028,16 @@ private fun Actions(
     onDone: (() -> Unit)?,
 ) {
     val colors = MaterialTheme.colorScheme
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .dock(colors, solid = true)
-            .navigationBarsPadding()
-            .padding(start = Gap.bar, end = Gap.bar, top = Gap.barTop, bottom = Gap.barBottom),
-        horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
-    ) {
-        BarAction(R.drawable.ic_reply, stringResource(R.string.message_reply), colors.onSurface, onLongClick = onAnswers, onClick = onReply)
-        val delete = if (forever) R.string.action_delete_forever else R.string.action_delete
-        BarAction(R.drawable.ic_delete, stringResource(delete), colors.onSurface, onClick = onDelete)
-        onSnooze?.let { BarAction(R.drawable.ic_snooze, stringResource(R.string.action_snooze), colors.onSurface, onClick = it) }
-        BarAction(R.drawable.ic_more, stringResource(R.string.action_more), colors.onSurface, onClick = onMore)
-        onDone?.let { BarAction(R.drawable.ic_done, stringResource(R.string.action_done), colors.onAccent, colors.accent, onClick = it) }
-    }
-}
-
-/** One of the big buttons along the bottom of a screen: an icon over its name. */
-@Composable
-fun RowScope.BarAction(
-    @DrawableRes icon: Int,
-    label: String,
-    tint: Color,
-    background: Color = Color.Transparent,
-    onLongClick: (() -> Unit)? = null,
-    onClick: () -> Unit,
-) {
-    val shape = RoundedCornerShape(Radius.medium)
-    Column(
-        Modifier
-            .weight(1f)
-            // Taller with large text, so the name is not cut.
-            .heightIn(min = Bar.actionHeight())
-            .clip(shape)
-            .background(background)
-            .combinedClickable(role = Role.Button, onLongClick = onLongClick, onClick = onClick),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically),
-    ) {
-        Glyph(icon, null, tint, size = 21.dp)
-        Text(label, color = tint, style = Type.Label, maxLines = 1)
+    val done = onDone?.let { ChoiceMain(stringResource(R.string.action_done), R.drawable.ic_done, it) }
+    FloatingBar(
+        Modifier.glass(LocalGlass.current, colors, CircleShape),
+        done,
+        Modifier.navigationBarsPadding().padding(top = Gap.barTop, bottom = Gap.barBottom),
+    ) { inner ->
+        Named(R.drawable.ic_reply, stringResource(R.string.message_reply), onReply, inner, onLongClick = onAnswers, longLabel = stringResource(R.string.message_reply_options))
+        Named(R.drawable.ic_delete, stringResource(if (forever) R.string.action_delete_forever else R.string.action_delete), onDelete, inner)
+        onSnooze?.let { Named(R.drawable.ic_snooze, stringResource(R.string.action_snooze), it, inner) }
+        Named(R.drawable.ic_more, stringResource(R.string.action_more), onMore, inner)
     }
 }
 
@@ -1390,7 +1366,7 @@ private fun QuickReply(
     Column(
         Modifier
             .fillMaxWidth()
-            .dock(colors, solid = true)
+            .dock(colors)
             .navigationBarsPadding()
             .imePadding()
             .padding(top = 8.dp),
@@ -1532,27 +1508,21 @@ private fun PaneActions(
     Row(
         Modifier
             .fillMaxWidth()
-            .dock(colors)
             .navigationBarsPadding()
             .padding(horizontal = Gap.bar, vertical = if (LocalRoom.current.short) 6.dp else Gap.barTop),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
     ) {
         Pill(stringResource(R.string.message_reply_prompt), onClick = onReply, modifier = Modifier.weight(1f), height = button)
-        IconTile(R.drawable.ic_reply_all, stringResource(R.string.message_reply_all), onReplyAll, shape = CircleShape, size = button)
-        IconTile(R.drawable.ic_forward, stringResource(R.string.message_forward), onForward, shape = CircleShape, size = button)
-        IconTile(
-            R.drawable.ic_delete,
-            stringResource(if (forever) R.string.action_delete_forever else R.string.action_delete),
-            onDelete,
-            shape = CircleShape,
-            size = button,
-        )
-        onSnooze?.let { IconTile(R.drawable.ic_snooze, stringResource(R.string.action_snooze), it, shape = CircleShape, size = button) }
-        IconTile(R.drawable.ic_more, stringResource(R.string.action_more), onMore, shape = CircleShape, size = button)
-        onDone?.let {
-            IconTile(R.drawable.ic_done, stringResource(R.string.action_done), it, background = colors.accent, tint = colors.onAccent, shape = CircleShape, size = button)
+        // The rest on one pill, as on the list's dock and a message's bar.
+        GlassPill(Modifier.glass(null, colors, CircleShape), button) { inner ->
+            Named(R.drawable.ic_reply_all, stringResource(R.string.message_reply_all), onReplyAll, inner)
+            Named(R.drawable.ic_forward, stringResource(R.string.message_forward), onForward, inner)
+            Named(R.drawable.ic_delete, stringResource(if (forever) R.string.action_delete_forever else R.string.action_delete), onDelete, inner)
+            onSnooze?.let { Named(R.drawable.ic_snooze, stringResource(R.string.action_snooze), it, inner) }
+            Named(R.drawable.ic_more, stringResource(R.string.action_more), onMore, inner)
         }
+        onDone?.let { Named(R.drawable.ic_done, stringResource(R.string.action_done), it, button, colors.accent, colors.onAccent) }
     }
 }
 

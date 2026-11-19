@@ -5,34 +5,22 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.scrollBy
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.PlainTooltip
-import androidx.compose.material3.Text
-import androidx.compose.material3.TooltipBox
-import androidx.compose.material3.TooltipDefaults
-import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 import kotlinx.coroutines.coroutineScope
@@ -209,42 +197,14 @@ class ChoiceMain(val label: String, val icon: Int, val onClick: () -> Unit)
 
 /**
  * What can be done with the chosen messages, where search and a new message usually are: Read or
- * Unread, Delete (for good in the trash) and More as icons on a pill as tall as search, their names
- * shown on a long press; then [main], when one applies, a round accent button where a new message
- * is. Cancel is at the top, where Back is, and the count is in the title.
+ * Unread, Delete (for good in the trash) and More on a [FloatingBar]; then [main], when one
+ * applies. Cancel is at the top, where Back is, and the count is in the title.
  */
 @Composable
 fun ChoiceBar(surface: Modifier, main: ChoiceMain?, unread: Boolean, forever: Boolean, onRead: () -> Unit, onDelete: () -> Unit, onMore: () -> Unit) {
-    val colors = MaterialTheme.colorScheme
-    val height = Bar.controlHeight()
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = Gap.bar),
-        horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Row(
-            Modifier.weight(1f).height(height).then(surface).padding(horizontal = Gap.inPill),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            val inner = height - Gap.inPill * 2
-            Named(R.drawable.ic_unread, stringResource(if (unread) R.string.action_read else R.string.action_unread), onRead, inner)
-            Named(R.drawable.ic_delete, stringResource(if (forever) R.string.action_delete_forever else R.string.action_delete), onDelete, inner)
-            Named(R.drawable.ic_more, stringResource(R.string.action_more), onMore, inner)
-        }
-        main?.let { Named(it.icon, it.label, it.onClick, height, colors.accent, colors.onAccent) }
-    }
-}
-
-/** A round button without words, whose [label] shows over it on a long press. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun Named(icon: Int, label: String, onClick: () -> Unit, size: Dp, background: Color = Color.Transparent, tint: Color = MaterialTheme.colorScheme.onSurface) {
-    TooltipBox(
-        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
-        tooltip = { PlainTooltip { Text(label) } },
-        state = rememberTooltipState(),
-    ) {
-        IconTile(icon, label, onClick, background = background, tint = tint, shape = CircleShape, size = size)
+    FloatingBar(surface, main) { inner ->
+        Named(R.drawable.ic_unread, stringResource(if (unread) R.string.action_read else R.string.action_unread), onRead, inner)
+        Named(R.drawable.ic_delete, stringResource(if (forever) R.string.action_delete_forever else R.string.action_delete), onDelete, inner)
+        Named(R.drawable.ic_more, stringResource(R.string.action_more), onMore, inner)
     }
 }

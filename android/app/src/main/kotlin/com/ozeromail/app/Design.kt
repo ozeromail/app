@@ -72,20 +72,12 @@ object Bar {
 
     /** The same on its side, where the height is for the mail. */
     val controlShort = 44.dp
-
-    /** The big buttons of a solid bottom bar, an icon over its name, as under an open message. */
-    val action = 52.dp
 }
 
 /** [Bar.control], or [Bar.controlShort] on its side. */
 @Composable
 @ReadOnlyComposable
 fun Bar.controlHeight(): Dp = if (LocalRoom.current.short) controlShort else control
-
-/** [Bar.action], or [Bar.controlShort] on its side. */
-@Composable
-@ReadOnlyComposable
-fun Bar.actionHeight(): Dp = if (LocalRoom.current.short) controlShort else action
 
 /** Corner radii, from a segment's thumb to a sheet. */
 object Radius {

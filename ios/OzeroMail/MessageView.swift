@@ -411,37 +411,21 @@ struct MessageView: View {
         }
     }
 
-    /// Reply, Delete, Snooze, More and Done in one row; a long press on Reply offers Reply all
-    /// and Forward.
-    @ViewBuilder
+    /// The list's choice bar for a message: Reply, Delete, Snooze and More on one capsule, Done in
+    /// the accent circle under the thumb. A long press on Reply offers Reply all and Forward. On
+    /// iOS 26 it is glass floating over the message; before, it lies on the bar's paper.
     private func bar(answer: MessageItem) -> some View {
-        if hasGlass {
-            glassBar(answer: answer)
-        } else {
-            plainBar(answer: answer)
-        }
-    }
-
-    /// On iOS 26, glass floating over the message: what throws the message away or puts it off on
-    /// the left, the answers and the rest on the right, Done in the accent under the thumb.
-    private func glassBar(answer: MessageItem) -> some View {
         GlassGroup {
-            HStack(spacing: 10) {
-                HStack(spacing: 0) {
-                    GlassIcon(icon: "trash", label: message.canTrash ? "action_delete" : "action_delete_forever", action: delete)
-                    if message.canSnooze {
-                        GlassIcon(icon: "clock", label: "action_snooze", action: snooze)
-                    }
+            FloatingBar {
+                GlassIcon(icon: "arrowshape.turn.up.left", label: "message_reply") { reply(answer, all: false) }
+                    .contextMenu { replyMenu(answer) }
+                GlassIcon(icon: "trash", label: message.canTrash ? "action_delete" : "action_delete_forever", action: delete)
+                if message.canSnooze {
+                    GlassIcon(icon: "clock", label: "action_snooze", action: snooze)
                 }
-                .glassSurface(in: .capsule, fallback: Color.clear)
-                Spacer(minLength: 0)
-                HStack(spacing: 0) {
-                    GlassIcon(icon: "arrowshape.turn.up.left", label: "message_reply") { reply(answer, all: false) }
-                        .contextMenu { replyMenu(answer) }
-                    Menu { moreItems(answer, asking: nil) } label: { GlassIconLabel(icon: "ellipsis") }
-                        .accessibilityLabel(Text("action_more"))
-                }
-                .glassSurface(in: .capsule, fallback: Color.clear)
+                Menu { moreItems(answer, asking: nil) } label: { GlassIconLabel(icon: "ellipsis") }
+                    .accessibilityLabel(Text("action_more"))
+            } main: {
                 if message.canArchive {
                     RoundButton(icon: "checkmark", label: "action_done", size: glassButton, tint: .white, background: .ozeroFill, action: done)
                 }
@@ -450,6 +434,7 @@ struct MessageView: View {
         .padding(.horizontal, 16)
         .padding(.top, 10)
         .padding(.bottom, 4)
+        .dockBackground(floating: true)
     }
 
     @ViewBuilder
@@ -459,55 +444,43 @@ struct MessageView: View {
         Button("message_forward", systemImage: "arrowshape.turn.up.right") { forward(thread.last ?? message) }
     }
 
-    private func plainBar(answer: MessageItem) -> some View {
-        HStack(spacing: 8) {
-            BarAction(icon: "arrowshape.turn.up.left", label: "message_reply") { reply(answer, all: false) }
-                .contextMenu { replyMenu(answer) }
-            BarAction(icon: "trash", label: message.canTrash ? "action_delete" : "action_delete_forever", action: delete)
-            if message.canSnooze {
-                BarAction(icon: "clock", label: "action_snooze", action: snooze)
-            }
-            Menu { moreItems(answer, asking: nil) } label: { BarLabel(icon: "ellipsis", label: "action_more") }
-            if message.canArchive {
-                BarAction(icon: "checkmark", label: "action_done", tint: .white, background: .ozeroFill, action: done)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.top, 10)
-        .padding(.bottom, 4)
-        .dockBackground()
-    }
-
-    /// Beside the list, where the height is short: the answers and the actions in one row.
+    /// Beside the list, where the height is short: the reply prompt, then the other answers and
+    /// the actions on one capsule and Done in the accent circle, as on the message's own bar.
     private func row(answer: MessageItem, newest: MessageItem) -> some View {
-        HStack(spacing: 8) {
-            Button {
-                reply(answer, all: false)
-            } label: {
-                Text("message_reply_prompt")
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, minHeight: paneButton, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .background(Color.ozeroCard.sunk, in: .capsule)
-            }
-            .buttonStyle(.plain)
-            RoundButton(icon: "arrowshape.turn.up.left.2", label: "message_reply_all", size: paneButton) { reply(answer, all: true) }
-            RoundButton(icon: "arrowshape.turn.up.right", label: "message_forward", size: paneButton) { forward(newest) }
-            RoundButton(icon: "trash", label: message.canTrash ? "action_delete" : "action_delete_forever", size: paneButton, action: delete)
-            if message.canSnooze {
-                RoundButton(icon: "clock", label: "action_snooze", size: paneButton, action: snooze)
-            }
-            Menu { moreItems(answer, asking: nil) } label: { RoundGlyph(icon: "ellipsis", size: paneButton, tint: .primary) }
-                .glassSurface(in: .circle, fallback: Color.ozeroCard.buttonFill)
-                .accessibilityLabel(Text("action_more"))
-            if message.canArchive {
-                RoundButton(icon: "checkmark", label: "action_done", size: paneButton, tint: .white, background: .ozeroFill, action: done)
+        GlassGroup {
+            HStack(spacing: 8) {
+                Button {
+                    reply(answer, all: false)
+                } label: {
+                    Text("message_reply_prompt")
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, minHeight: paneButton, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .contentShape(.capsule)
+                }
+                .buttonStyle(.plain)
+                .glassSurface(in: .capsule, fallback: Color.ozeroCard.sunk)
+                HStack(spacing: 0) {
+                    BarIcon(icon: "arrowshape.turn.up.left.2", label: "message_reply_all", size: paneButton) { reply(answer, all: true) }
+                    BarIcon(icon: "arrowshape.turn.up.right", label: "message_forward", size: paneButton) { forward(newest) }
+                    BarIcon(icon: "trash", label: message.canTrash ? "action_delete" : "action_delete_forever", size: paneButton, action: delete)
+                    if message.canSnooze {
+                        BarIcon(icon: "clock", label: "action_snooze", size: paneButton, action: snooze)
+                    }
+                    Menu { moreItems(answer, asking: nil) } label: { RoundGlyph(icon: "ellipsis", size: paneButton, tint: .primary) }
+                        .accessibilityLabel(Text("action_more"))
+                }
+                .glassSurface(in: .capsule, fallback: Color.ozeroCard.sunk)
+                if message.canArchive {
+                    RoundButton(icon: "checkmark", label: "action_done", size: paneButton, tint: .white, background: .ozeroFill, action: done)
+                }
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .dockBackground()
+        // The page's paper, so the message does not show between the capsules.
+        .background(Color.ozeroPage)
     }
 
     /// A reply low on the page, to the sender; with `all` the others it went to are copied.
@@ -649,7 +622,7 @@ struct MessageView: View {
 private let paneButton: CGFloat = 40
 
 /// How tall the bottom row is, for the page's end and the toast to clear it.
-private let barHeight: CGFloat = 84
+private let barHeight: CGFloat = 10 + glassButton + 4 + 8
 
 /// An invitation to say No to, once the reason is asked.
 private struct Declining: Identifiable {
@@ -1355,15 +1328,16 @@ struct RoundButton: View {
 }
 
 /// A round button without glass, lying on a paper bar as on Android: the bar over the keyboard,
-/// a sheet's heading.
+/// a sheet's heading, the capsule beside the list.
 struct BarIcon: View {
     let icon: String
     let label: LocalizedStringKey
+    var size: CGFloat = 44
     var tint: Color = .primary
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) { RoundGlyph(icon: icon, size: 44, tint: tint).contentShape(.circle) }
+        Button(action: action) { RoundGlyph(icon: icon, size: size, tint: tint).contentShape(.circle) }
             .buttonStyle(.plain)
             .accessibilityLabel(Text(label))
     }
@@ -1398,39 +1372,6 @@ struct RoundGlyph: View {
             .foregroundStyle(tint)
             .frame(width: size, height: size)
             .contentShape(.circle)
-    }
-}
-
-/// One of the big buttons along the bottom of a screen: an icon over its name.
-struct BarAction: View {
-    let icon: String
-    let label: LocalizedStringKey
-    var tint: Color = .primary
-    var background: Color = .clear
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) { BarLabel(icon: icon, label: label, tint: tint, background: background) }
-            .buttonStyle(.plain)
-    }
-}
-
-/// What a bar's big button shows, also for a menu's.
-struct BarLabel: View {
-    let icon: String
-    let label: LocalizedStringKey
-    var tint: Color = .primary
-    var background: Color = .clear
-
-    var body: some View {
-        VStack(spacing: 3) {
-            Image(systemName: icon).font(.system(size: 19, weight: .medium))
-            Text(label).font(.label).lineLimit(1)
-        }
-        .foregroundStyle(tint)
-        .frame(maxWidth: .infinity, minHeight: 52)
-        .background(background.buttonFill, in: .rect(cornerRadius: 16))
-        .contentShape(.rect)
     }
 }
 

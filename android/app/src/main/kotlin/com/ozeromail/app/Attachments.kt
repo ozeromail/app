@@ -21,8 +21,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -511,10 +511,11 @@ private fun Viewer(files: Files, viewing: Viewing) {
                 }
             }
         }
-        Row(Modifier.fillMaxWidth().padding(horizontal = Gap.bar, vertical = Gap.barBottom), horizontalArrangement = Arrangement.spacedBy(Gap.inBar)) {
-            BarAction(R.drawable.ic_share, stringResource(R.string.attachment_share), colors.onSurface) { files.share(viewing.message, file) }
-            BarAction(R.drawable.ic_save, stringResource(R.string.attachment_save_short), colors.onSurface) { files.save(viewing.message, file) }
-            BarAction(R.drawable.ic_open, stringResource(R.string.attachment_open_with_short), colors.onSurface) { files.openWith(viewing.message, file) }
+        // The same pill as the bars over the list and a message, their names shown on a long press.
+        FloatingBar(Modifier.glass(null, colors, CircleShape), null, Modifier.padding(vertical = Gap.barBottom)) { inner ->
+            Named(R.drawable.ic_share, stringResource(R.string.attachment_share), { files.share(viewing.message, file) }, inner)
+            Named(R.drawable.ic_save, stringResource(R.string.attachment_save_short), { files.save(viewing.message, file) }, inner)
+            Named(R.drawable.ic_open, stringResource(R.string.attachment_open_with_short), { files.openWith(viewing.message, file) }, inner)
         }
     }
 }

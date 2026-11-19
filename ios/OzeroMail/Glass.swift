@@ -78,6 +78,24 @@ struct GlassGroup<Content: View>: View {
     }
 }
 
+/// A bar floating over the page: the actions as icons on one glass capsule, each in an equal
+/// place, then the one main action, when there is one, in the accent circle under the thumb. The
+/// list's choice bar and a message's bar are both this.
+struct FloatingBar<Actions: View, Main: View>: View {
+    @ViewBuilder let actions: () -> Actions
+    @ViewBuilder let main: () -> Main
+
+    var body: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 0) {
+                Group(content: actions).frame(maxWidth: .infinity)
+            }
+            .glassSurface(in: .capsule, fallback: Color.clear)
+            main()
+        }
+    }
+}
+
 /// An icon to tap in a glass bar.
 struct GlassIcon: View {
     let icon: String
