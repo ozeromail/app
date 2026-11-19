@@ -19,6 +19,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -42,7 +43,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.SnackbarData
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
@@ -50,6 +53,9 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.SnackbarVisuals
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -101,6 +107,8 @@ fun IconTile(
     shape: Shape = RoundedCornerShape(Radius.tile),
     size: Dp = 48.dp,
     enabled: Boolean = true,
+    onLongClick: (() -> Unit)? = null,
+    onLongClickLabel: String? = null,
 ) {
     Box(
         modifier
@@ -108,7 +116,7 @@ fun IconTile(
             .alpha(if (enabled) 1f else 0.4f)
             .clip(shape)
             .background(background)
-            .clickable(enabled = enabled, onClickLabel = description, role = Role.Button, onClick = onClick),
+            .combinedClickable(enabled = enabled, onClickLabel = description, role = Role.Button, onLongClickLabel = onLongClickLabel, onLongClick = onLongClick, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Glyph(icon, description, tint)
@@ -534,3 +542,60 @@ fun BarText(content: @Composable () -> Unit) {
 }
 
 private const val BAR_FONT_SCALE = 1.3f
+
+/**
+ * A bottom bar over the page: [actions] on a [GlassPill] as tall as search, drawn in [surface],
+ * then [main], when one applies, a round accent button where a new message is. The list's choice
+ * bar, an open message's bar and the attachment viewer's are all this.
+ */
+@Composable
+fun FloatingBar(surface: Modifier, main: ChoiceMain?, modifier: Modifier = Modifier, actions: @Composable RowScope.(Dp) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val height = Bar.controlHeight()
+    Row(
+        modifier.fillMaxWidth().padding(horizontal = Gap.bar),
+        horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        GlassPill(Modifier.weight(1f).then(surface), height, actions)
+        main?.let { Named(it.icon, it.label, it.onClick, height, colors.accent, colors.onAccent) }
+    }
+}
+
+/** Round buttons on one pill [height] tall, spread evenly; [actions] get the size their buttons take. */
+@Composable
+fun GlassPill(surface: Modifier, height: Dp, actions: @Composable RowScope.(Dp) -> Unit) {
+    Row(
+        surface.height(height).padding(horizontal = Gap.inPill),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically,
+    ) { actions(height - Gap.inPill * 2) }
+}
+
+/**
+ * A round button without words, whose [label] shows over it on a long press; with [onLongClick]
+ * the long press does that instead, read out as [longLabel].
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun Named(
+    icon: Int,
+    label: String,
+    onClick: () -> Unit,
+    size: Dp,
+    background: Color = Color.Transparent,
+    tint: Color = MaterialTheme.colorScheme.onSurface,
+    onLongClick: (() -> Unit)? = null,
+    longLabel: String? = null,
+) {
+    if (onLongClick != null) {
+        return IconTile(icon, label, onClick, background = background, tint = tint, shape = CircleShape, size = size, onLongClick = onLongClick, onLongClickLabel = longLabel)
+    }
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+        tooltip = { PlainTooltip { Text(label) } },
+        state = rememberTooltipState(),
+    ) {
+        IconTile(icon, label, onClick, background = background, tint = tint, shape = CircleShape, size = size)
+    }
+}

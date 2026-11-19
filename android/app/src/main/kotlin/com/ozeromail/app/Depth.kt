@@ -110,9 +110,9 @@ fun Modifier.sunk(colors: ColorScheme): Modifier = drawWithCache {
     onDrawBehind { drawRect(brush, size = Size(size.width, deep)) }
 }
 
-/** A bottom dock over the list: its fill, see-through as the bars unless [solid], and a hairline along its top edge. */
-fun Modifier.dock(colors: ColorScheme, solid: Boolean = false): Modifier =
-    background(if (solid) colors.background else colors.bar)
+/** A bar fixed to the bottom over the keyboard, as the editor's: the paper, and a hairline along its top edge. */
+fun Modifier.dock(colors: ColorScheme): Modifier =
+    background(colors.background)
         .hairline(colors.outlineVariant.copy(alpha = 0.6f), top = true)
 
 /** What the floating dock's glass shows through, blurred: the list under it. Null where nothing floats. */

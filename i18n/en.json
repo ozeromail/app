@@ -71,6 +71,7 @@
   "account_remove_text": "Its mail is removed from this phone. The mailbox on the server stays as it is.",
   "action_remove": "Remove",
   "message_reply_all": "Reply all",
+  "message_reply_options": "Reply all or forward",
   "compose_add_quote": "Add quote",
   "compose_quote_header": "%1$s, %2$s wrote:",
   "compose_quoted": "The quote goes under your text",

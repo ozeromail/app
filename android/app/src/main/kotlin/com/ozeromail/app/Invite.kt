@@ -47,22 +47,22 @@ import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.TextStyle
+import kotlin.math.abs
 import uniffi.ozero_api.InviteAnswer
 import uniffi.ozero_api.InviteItem
 import uniffi.ozero_api.InviteMark
 import uniffi.ozero_api.RepeatEvery
 import uniffi.ozero_api.RepeatItem
-import kotlin.math.abs
 
 /**
  * The meeting a message invites to, over its text, in three lines: what, when, where with how
@@ -227,24 +227,46 @@ private fun DayLine(invite: InviteItem) {
 
 /**
  * The bottom row while an invitation waits for an answer: No, Maybe and Yes, under the thumb,
- * Yes filled, and the message's other actions in [onMore].
+ * Yes filled, and the message's other actions in [onMore]. Capsules and a round More, on glass
+ * where they float over the page, as the other bottom bars are.
  */
 @Composable
 fun InviteActions(onAnswer: (InviteAnswer) -> Unit, onMore: () -> Unit, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
-    val height = if (LocalRoom.current.short) 44.dp else 50.dp
+    val glass = LocalGlass.current
+    val height = Bar.controlHeight()
     Row(
         modifier
             .fillMaxWidth()
-            .background(colors.background)
             .navigationBarsPadding()
             .padding(start = Gap.bar, end = Gap.bar, top = Gap.barTop, bottom = Gap.barBottom),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(Gap.inBar),
     ) {
         for (answer in listOf(InviteAnswer.NO, InviteAnswer.MAYBE, InviteAnswer.YES)) {
-            WideButton(stringResource(answerLabel(answer)), filled = answer == InviteAnswer.YES, height) { onAnswer(answer) }
+            val yes = answer == InviteAnswer.YES
+            val surface = if (yes) Modifier.clip(CircleShape).background(colors.accent) else Modifier.glass(glass, colors, CircleShape)
+            Answer(stringResource(answerLabel(answer)), yes, height, surface) { onAnswer(answer) }
         }
-        IconTile(R.drawable.ic_more, stringResource(R.string.action_more), onMore, background = colors.surfaceVariant, shape = RoundedCornerShape(Radius.medium), size = height)
+        IconTile(R.drawable.ic_more, stringResource(R.string.action_more), onMore, Modifier.glass(glass, colors, CircleShape), shape = CircleShape, size = height)
+    }
+}
+
+/** A button sharing a row equally with others, drawn in [surface]: in accent when [filled]. */
+@Composable
+private fun RowScope.Answer(text: String, filled: Boolean, height: Dp, surface: Modifier, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Box(
+        Modifier.weight(1f).height(height).then(surface).clickable(role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text,
+            color = if (filled) colors.onAccent else colors.onSurface,
+            style = Type.Body,
+            fontWeight = Weight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -292,26 +314,11 @@ fun ReasonSheet(organizer: String, onSend: (String) -> Unit) {
 private fun RowScope.WideButton(text: String, filled: Boolean, height: Dp, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(Radius.medium)
-    val fill = if (filled) colors.accent else colors.background
-    Box(
-        Modifier
-            .weight(1f)
-            .height(height)
-            .clip(shape)
-            .background(fill)
-            .border(1.dp, if (filled) colors.accent else colors.outlineVariant, shape)
-            .clickable(role = Role.Button, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text,
-            color = if (filled) colors.onAccent else colors.onSurface,
-            style = Type.Body,
-            fontWeight = Weight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
+    val surface = Modifier
+        .clip(shape)
+        .background(if (filled) colors.accent else colors.background)
+        .border(1.dp, if (filled) colors.accent else colors.outlineVariant, shape)
+    Answer(text, filled, height, surface, onClick)
 }
 
 /** What a list shows of an invitation in place of its text: "Wed, 29 Oct, 11:00 · Room 7". */

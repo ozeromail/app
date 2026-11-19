@@ -806,27 +806,21 @@ private struct ChoiceBar: View {
         let back = picked.filter(\.canMoveToInbox)
         let unread = picked.contains { $0.threadUnread > 0 }
         let forever = !picked.contains(where: \.canTrash)
-        HStack(spacing: 10) {
-            HStack(spacing: 0) {
-                GlassIcon(icon: unread ? "envelope.open" : "envelope.badge", label: unread ? "action_read" : "action_unread") {
-                    model.choice { await model.setRead($0, read: unread) }
-                }
-                .frame(maxWidth: .infinity)
-                GlassIcon(icon: "trash", label: forever ? "action_delete_forever" : "action_delete", tint: .ozeroError) {
-                    model.choice { await model.delete($0) }
-                }
-                .frame(maxWidth: .infinity)
-                if picked.contains(where: \.canSnooze) {
-                    GlassIcon(icon: "clock", label: "action_snooze") {
-                        model.choice { model.snoozing = Snoozing(messages: $0.filter(\.canSnooze)) }
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                Menu { more } label: { GlassIconLabel(icon: "ellipsis") }
-                    .accessibilityLabel(Text("action_more"))
-                    .frame(maxWidth: .infinity)
+        FloatingBar {
+            GlassIcon(icon: unread ? "envelope.open" : "envelope.badge", label: unread ? "action_read" : "action_unread") {
+                model.choice { await model.setRead($0, read: unread) }
             }
-            .glassSurface(in: .capsule, fallback: Color.clear)
+            GlassIcon(icon: "trash", label: forever ? "action_delete_forever" : "action_delete", tint: .ozeroError) {
+                model.choice { await model.delete($0) }
+            }
+            if picked.contains(where: \.canSnooze) {
+                GlassIcon(icon: "clock", label: "action_snooze") {
+                    model.choice { model.snoozing = Snoozing(messages: $0.filter(\.canSnooze)) }
+                }
+            }
+            Menu { more } label: { GlassIconLabel(icon: "ellipsis") }
+                .accessibilityLabel(Text("action_more"))
+        } main: {
             if let main = main(done: done, back: back) {
                 Button { model.choice(main.act) } label: { RoundGlyph(icon: main.icon, size: glassButton, tint: .white) }
                     .buttonStyle(.plain)
