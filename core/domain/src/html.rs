@@ -128,42 +128,62 @@ pub struct Folded<'a> {
     /// even with a coloured word or a newsletter in the folded quote under it.
     /// Only the markup counts, tags and `<style>` sheets, never the words of the mail.
     pub styled: bool,
+    /// A styled page brings its own dark look, for a reader in dark mode.
+    pub dark: bool,
     /// Where the folded quote sits when it sets its own look, its wrapper included.
     kept: Option<(usize, usize)>,
 }
 
-fn sets_look(html: &str) -> bool {
+/// Whether the page sets its own look, and whether it then has a sheet for dark mode.
+fn look(html: &str) -> (bool, bool) {
     let paints = |s: &str| ["bgcolor", "background"].iter().any(|n| s.contains(n));
-    html.split('<').skip(1).any(|part| {
+    let (mut styled, mut dark) = (false, false);
+    for part in html.split('<').skip(1) {
         let (tag, after) = part.split_once('>').unwrap_or((part, ""));
         let tag = tag.to_ascii_lowercase();
-        tag.starts_with("table")
-            || paints(&tag)
-            || (tag.starts_with("style") && paints(&after.to_ascii_lowercase()))
-    })
+        let sheet = tag.starts_with("style").then(|| squeezed(after));
+        styled |= tag.starts_with("table") || paints(&tag) || sheet.as_deref().is_some_and(paints);
+        dark |= sheet.is_some_and(|s| s.contains("prefers-color-scheme:dark"));
+        if styled && dark {
+            break;
+        }
+    }
+    (styled, styled && dark)
+}
+
+/// CSS without spaces, in lowercase, to look for a rule in.
+fn squeezed(css: &str) -> String {
+    css.chars()
+        .filter(|c| !c.is_whitespace())
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
 }
 
 /// Folds the quoted mail at the end of a reply under a mark that opens it. Answers written
 /// between quotes stay open, and so does a forward with nothing written above it.
 pub fn fold_quote(html: &str) -> Folded<'_> {
     let Some((start, end)) = folded(html) else {
+        let (styled, dark) = look(html);
         return Folded {
             html: Cow::Borrowed(html),
-            styled: sets_look(html),
+            styled,
+            dark,
             kept: None,
         };
     };
     let (before, quote, after) = (&html[..start], &html[start..end], &html[end..]);
-    let kept = sets_look(quote);
+    let kept = look(quote).0;
     let (open, close) = if kept {
         (STYLED_OPEN, STYLED_CLOSE)
     } else {
         ("", "")
     };
     let at = start + FOLD_OPEN.len();
+    let (before_look, after_look) = (look(before), look(after));
     Folded {
         html: Cow::Owned([before, FOLD_OPEN, open, quote, close, FOLD_CLOSE, after].concat()),
-        styled: sets_look(before) || sets_look(after),
+        styled: before_look.0 || after_look.0,
+        dark: before_look.1 || after_look.1,
         kept: kept.then_some((at, at + open.len() + quote.len() + close.len())),
     }
 }
@@ -353,9 +373,21 @@ pub(crate) fn after_end_tag<'a>(html: &'a str, name: &str) -> &'a str {
     close.map_or("", |close| &html[close..])
 }
 
+/// A clear GIF, one pixel square: what a spacer shows in place of its own.
+const CLEAR: &str =
+    "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+
 /// Writes an image: as is, without a pixel, from inside the message, or held back.
+/// A pixel with a class stays as a clear spacer: newsletters size their gaps with a class
+/// that only their sheet makes taller.
 fn image(tag: &Tag<'_>, inline: &[InlineImage], page: &mut Page) {
     if is_pixel(tag) {
+        if has_class(tag) {
+            image_tag(tag, &mut page.html);
+            page.html.push_str(" src=\"");
+            page.html.push_str(CLEAR);
+            page.html.push_str("\">");
+        }
         return;
     }
     let source = tag.attr("src").unwrap_or_default();
@@ -390,10 +422,13 @@ fn image(tag: &Tag<'_>, inline: &[InlineImage], page: &mut Page) {
 }
 
 /// An image's start tag without its source or the closing `>`, for another source to follow.
+/// Its own width and height set its shape, so the reader's `height:auto` keeps it; else a
+/// clear spacer, 1 by 14, would shrink to the 1 by 1 of its picture. A size in its style
+/// needs no shape: it wins over the reader's anyway.
 fn image_tag(tag: &Tag<'_>, out: &mut String) {
     out.push_str("<img");
     for (name, value) in &tag.attrs {
-        if matches!(name.as_str(), "src" | "srcset" | IMAGE_MARK) {
+        if matches!(name.as_str(), "src" | "srcset" | "style" | IMAGE_MARK) {
             continue;
         }
         out.push(' ');
@@ -404,6 +439,28 @@ fn image_tag(tag: &Tag<'_>, out: &mut String) {
             out.push('"');
         }
     }
+    let size = |name| tag.attr(name).and_then(px).filter(|n| *n > 0.0);
+    let shape = size("width").zip(size("height"));
+    let style = tag.attr("style").unwrap_or_default();
+    if shape.is_some() || !style.is_empty() {
+        out.push_str(" style=\"");
+        if let Some((w, h)) = shape {
+            out.push_str(&format!("aspect-ratio:{w}/{h};"));
+        }
+        // The sender's own shape, if any, comes after and wins.
+        push(out, &style.replace('"', "&quot;"));
+        out.push('"');
+    }
+}
+
+/// A size in pixels, as an attribute or a rule gives it.
+fn px(size: &str) -> Option<f32> {
+    size.trim().trim_end_matches("px").parse().ok()
+}
+
+/// Whether a sheet may change how an image shows.
+fn has_class(tag: &Tag<'_>) -> bool {
+    tag.attr("class").is_some_and(|c| !c.trim().is_empty())
 }
 
 /// The `Content-ID` a `cid:` source names, as `InlineImage::cid` keeps it (RFC 2392).
@@ -417,31 +474,28 @@ pub fn cid_source(source: &str) -> Option<String> {
 }
 
 /// An image too small to see, or hidden: it is only there to report the message was opened.
-/// A line, 600 by 1, is not one.
+/// A line, 600 by 1, is not one, nor a hidden picture with a class: a newsletter's sheet shows
+/// it on a phone in place of the wide one.
 fn is_pixel(tag: &Tag<'_>) -> bool {
-    let style = tag
-        .attr("style")
-        .unwrap_or_default()
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect::<String>()
-        .to_ascii_lowercase();
+    let style = squeezed(tag.attr("style").unwrap_or_default());
     let hidden = ["display:none", "visibility:hidden"]
         .iter()
         .any(|s| style.contains(s));
     let size = |name: &str| {
         let rule = format!("{name}:");
         let styled = style.split(';').find_map(|r| r.strip_prefix(&rule));
-        styled
-            .or(tag.attr(name))
-            .and_then(|v| v.trim().trim_end_matches("px").parse::<f32>().ok())
+        styled.or(tag.attr(name)).and_then(px)
     };
     let (width, height) = (size("width"), size("height"));
     let zero = |n: Option<f32>| n.is_some_and(|n| n <= 0.0);
     let tiny = |n: Option<f32>, other: Option<f32>| {
         n.is_some_and(|n| n <= 1.0) && other.is_none_or(|n| n <= 1.0)
     };
-    hidden || zero(width) || zero(height) || tiny(width, height) || tiny(height, width)
+    tiny(width, height)
+        || tiny(height, width)
+        || zero(width)
+        || zero(height)
+        || (hidden && !has_class(tag))
 }
 
 /// The `https` address of a remote image source; `http` becomes `https`.
@@ -762,6 +816,42 @@ mod tests {
             page.html,
             r#"<img data-ozero-image="0"><img data-ozero-image="0">"#
         );
+    }
+
+    #[test]
+    fn keeps_spacers_and_pictures_a_sheet_shows() {
+        let page = clean(concat!(
+            "<img src=https://x/s.gif width=1 height=14 style=display:block;>",
+            "<img src=https://x/s.gif width=1 height=1 class=ht12>",
+            "<img src=https://x/mob.png width=360 style='display: none;' class=dblock>",
+            "<img src=https://x/t.gif width=1 height=1 style=display:none class=t>",
+        ));
+        assert_eq!(page.images, ["https://x/s.gif", "https://x/mob.png"]);
+        assert_eq!(
+            page.html,
+            [
+                r#"<img width="1" height="14" style="aspect-ratio:1/14;display:block;" data-ozero-image="0">"#,
+                r#"<img width="1" height="1" class="ht12" style="aspect-ratio:1/1;" src=""#,
+                CLEAR,
+                r#""><img width="360" class="dblock" style="display: none;" data-ozero-image="1">"#,
+                r#"<img width="1" height="1" class="t" style="aspect-ratio:1/1;display:none" src=""#,
+                CLEAR,
+                r#"">"#,
+            ]
+            .concat()
+        );
+    }
+
+    #[test]
+    fn sees_a_sheet_for_dark_mode() {
+        let table = "<table bgcolor=#fff><tr><td>Sale</td></tr></table>";
+        assert!(!fold_quote(table).dark);
+        let dark = format!(
+            "<style>@media (prefers-color-scheme : DARK) {{td{{color:#fff}}}}</style>{table}"
+        );
+        assert!(fold_quote(&dark).dark);
+        // Words in the mail are not a sheet.
+        assert!(!fold_quote(&format!("{table}prefers-color-scheme: dark")).dark);
     }
 
     #[test]

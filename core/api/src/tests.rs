@@ -112,21 +112,33 @@ fn keeps_only_images() {
 #[test]
 fn lets_the_page_load_its_images() {
     let host = IMAGE_ADDRESS.trim_end_matches('/');
-    assert!(sandboxed("", false).contains(&format!("img-src data: {host};")));
+    assert!(sandboxed("", Look::Themed).contains(&format!("img-src data: {host};")));
 }
 
 #[test]
 fn lets_a_plain_page_load_the_reading_font() {
-    let page = sandboxed("", false);
+    let page = sandboxed("", Look::Themed);
     assert!(page.contains(concat!("font-src data: https://", font_host!(), ";")));
     assert!(page.contains(concat!("url(https://", font_host!(), "/literata.ttf)")));
 }
 
 #[test]
 fn keeps_a_plain_page_clear_of_a_quoted_sheet() {
-    let page = sandboxed("", false);
+    let page = sandboxed("", Look::Themed);
     assert!(page.contains("html,body{background:transparent!important}"));
-    assert!(!sandboxed("", true).contains("@scope"));
+    assert!(!sandboxed("", Look::Light).contains("@scope"));
+}
+
+#[test]
+fn darkens_only_a_newsletter_with_its_own_dark_look() {
+    let light = r##"<table bgcolor="#fff"><tr><td>Sale</td></tr></table>"##;
+    let dark = format!(
+        "<style>@media (prefers-color-scheme: dark) {{ td {{ color: #fff }} }}</style>{light}"
+    );
+    let (page, styled) = shown_page(light);
+    assert!(styled && page.contains("html{color-scheme:light;"));
+    let (page, styled) = shown_page(&dark);
+    assert!(styled && page.contains("html{color-scheme:light dark;"));
 }
 
 #[test]
