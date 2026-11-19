@@ -2214,12 +2214,12 @@ impl Core {
             });
         }
         let mut images = vec![None; fetches.len()];
-        let (mut failed, mut any) = (None, false);
+        let (mut failed, mut lost, mut loaded) = (None, 0, 0);
         let mut left = IMAGES_SIZE;
         while let Some(fetched) = fetches.join_next().await {
             let (n, image) = match fetched {
                 Ok((n, Ok(image))) => {
-                    any = true;
+                    loaded += 1;
                     (n, image)
                 }
                 Ok((n, Err(e))) => {
@@ -2227,6 +2227,7 @@ impl Core {
                     // Only a failed connection may go better on Try again; a missing image,
                     // or one on a local address, stays as it is.
                     if matches!(e, ProviderError::Network(_)) {
+                        lost += 1;
                         failed.get_or_insert(e);
                     }
                     continue;
@@ -2241,8 +2242,9 @@ impl Core {
                 images[n] = Some(image);
             }
         }
-        // None came for want of a connection: say so, so the reader can try again.
-        if let Some(e) = failed.filter(|_| !any) {
+        // Most did not come for want of a connection: say so, so the reader can try again.
+        // A tracking pixel that came alone must not hide that the pictures did not.
+        if let Some(e) = failed.filter(|_| lost > loaded) {
             return Err(e.into());
         }
         // Addresses, not `data:` copies: a page with all its images inline is too big to
@@ -4527,6 +4529,9 @@ fn sandboxed(html: &str, look: Look) -> String {
         "<style>body{margin:0;padding:0 10px 16px;overflow-wrap:break-word;",
         "width:fit-content;min-width:100%;box-sizing:border-box}",
         "img{max-width:100%;height:auto}",
+        // An image not loaded, held back or still on its way, keeps its place without a broken
+        // picture's mark.
+        "img:not([src]){visibility:hidden}",
         "details.ozero-quote>summary{list-style:none;display:inline-block;margin:10px 0;",
         "padding:0 10px;border-radius:9px;background:#e9eef5;color:#6c7890;",
         "font:700 13px/22px sans-serif;letter-spacing:1px}",
