@@ -2226,10 +2226,8 @@ impl Core {
                     log::warn!("image {n} not loaded: {e:?}");
                     // A failed connection says the most about why; any failure counts.
                     lost += 1;
-                    if matches!(e, ProviderError::Network(_)) {
+                    if failed.is_none() || matches!(e, ProviderError::Network(_)) {
                         failed = Some(e);
-                    } else {
-                        failed.get_or_insert(e);
                     }
                     continue;
                 }
