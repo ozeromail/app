@@ -130,10 +130,10 @@ pub(crate) fn is_public(ip: IpAddr) -> bool {
                 return is_public(IpAddr::V4([a, b, c, d].into()));
             }
             let [first, second, third, ..] = v6.segments();
-            // A VPN's stand-in addresses, as 198.18.0.0/15 for IPv4: sing-box (Hiddify,
-            // NekoBox, v2rayNG) takes fc00::/18 from fc00::/8, which no network uses, and
-            // Clash Meta fdfe:dcba:9876::/48.
-            if first >> 8 == 0xfc || [first, second, third] == [0xfdfe, 0xdcba, 0x9876] {
+            // A VPN's stand-in addresses, as 198.18.0.0/15 for IPv4: Xray and sing-box (Incy,
+            // Hiddify, v2rayNG) fc00::/18, inside fc00::/8 that no network uses; Clash Meta
+            // fdfe:dcba:9876::/48.
+            if first & 0xffc0 == 0xfc00 || [first, second, third] == [0xfdfe, 0xdcba, 0x9876] {
                 return true;
             }
             // Global unicast 2000::/3 only, without the ranges that lead elsewhere: protocol
@@ -193,6 +193,7 @@ mod tests {
             "::1",
             "fd00::1",
             "fdfe:dcba:9877::1",
+            "fc80::1",
             "fe80::1",
             "::ffff:192.168.0.1",
             "::a00:1",
