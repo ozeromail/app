@@ -20,6 +20,9 @@ ignore = [
     # basic-toml is unmaintained, with no upgrade yet. Only uniffi's bindings generator uses
     # it, to read uniffi.toml at build time; none of it ships in the apps.
     { id = "RUSTSEC-2026-0374", reason = "build-time only, through uniffi_bindgen; no upgrade yet" },
+    # chrono is unmaintained, with no upgrade. Only imap-codec and imap-types use it, for the
+    # dates in IMAP commands and replies; we do not use it ourselves.
+    { id = "RUSTSEC-2026-0543", reason = "unmaintained, no upgrade; only through imap-codec" },
 ]
 
 [licenses]
