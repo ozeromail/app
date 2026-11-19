@@ -4466,17 +4466,31 @@ fn shows_cid(html: &str) -> bool {
 fn shown_page(html: &str) -> (String, bool) {
     let folded = html::fold_quote(html);
     let page = if folded.styled {
-        sandboxed(&folded.html, true)
+        let look = if folded.dark {
+            Look::LightDark
+        } else {
+            Look::Light
+        };
+        sandboxed(&folded.html, look)
     } else {
-        sandboxed(&html::typeset(&folded), false)
+        sandboxed(&html::typeset(&folded), Look::Themed)
     };
     (page, folded.styled)
 }
 
+/// How a page looks.
+enum Look {
+    /// Plain mail, in the reader's colours and type, light or dark.
+    Themed,
+    /// A newsletter on the light card it was made for.
+    Light,
+    /// A newsletter with its own dark look, on a dark card in dark mode.
+    LightDark,
+}
+
 /// Wraps a message's HTML so the page can load nothing from outside, even if the
-/// web view's own blocking fails: no scripts, frames, forms or remote images. A `styled`
-/// page stays light; a plain one follows the reader's light or dark theme.
-fn sandboxed(html: &str, styled: bool) -> String {
+/// web view's own blocking fails: no scripts, frames, forms or remote images.
+fn sandboxed(html: &str, look: Look) -> String {
     const HEAD: &str = concat!(
         "<!doctype html><html><head><meta charset=\"utf-8\">",
         "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; ",
@@ -4504,6 +4518,11 @@ fn sandboxed(html: &str, styled: bool) -> String {
         "details.ozero-quote>summary::-webkit-details-marker{display:none}",
     );
     const LIGHT: &str = "html{color-scheme:light;background:#fff}";
+    // The card under a newsletter's own dark look: the app's dark surfaceContainer.
+    const LIGHT_DARK: &str = concat!(
+        "html{color-scheme:light dark;background:#fff}",
+        "@media(prefers-color-scheme:dark){html{background:#1a2234}}",
+    );
     // The app's own colours and reading type, kept in step with the Android Theme.kt and Type.kt
     // (Literata at its default optical size; where the app does not serve it, the system serif).
     // The web view is clear, so the screen shows through. The mail's own text colours, fonts and
@@ -4542,7 +4561,11 @@ fn sandboxed(html: &str, styled: bool) -> String {
         "details.ozero-quote>summary{background:#1f2738;color:#94a3b8}}",
     );
     const BODY: &str = "</style></head><body dir=\"auto\">";
-    let theme = if styled { LIGHT } else { THEMED };
+    let theme = match look {
+        Look::Themed => THEMED,
+        Look::Light => LIGHT,
+        Look::LightDark => LIGHT_DARK,
+    };
     [HEAD, theme, BODY, html, "</body></html>"].concat()
 }
 
