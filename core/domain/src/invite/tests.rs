@@ -157,6 +157,8 @@ fn finds_the_nth_weekday() {
         Some(days_from_civil(2026, 6, 1))
     );
     assert_eq!(nth_weekday(2026, 2, 5, 0), None);
+    assert_eq!(nth_weekday(2026, 2, i64::MAX, 0), None);
+    assert_eq!(nth_weekday(2026, 2, i64::MIN, 0), None);
     assert_eq!(civil_from_days(days_from_civil(2024, 2, 29)), (2024, 2, 29));
 }
 
@@ -212,6 +214,17 @@ END:VCALENDAR\r
     // Still summer time on 28 October: 10:00 is 14:00 UTC.
     assert_eq!(invite.offset, Some(-240));
     assert_eq!(invite.start, utc_seconds(2026, 10, 28, 14));
+}
+
+#[test]
+fn a_zone_rule_past_any_month_is_ignored() {
+    let calendar = EXCHANGE.replace(
+        "BYDAY=-1SU;BYMONTH=10",
+        "BYDAY=9223372036854775807SU;BYMONTH=10",
+    );
+    let invite = Invite::parse(&calendar).unwrap();
+    // Only summer time is left to read, and the meeting still shows.
+    assert_eq!(invite.offset, Some(120));
 }
 
 #[test]
