@@ -42,12 +42,33 @@ impl RefusedCertificates {
     }
 }
 
+/// A server certificate the person chose to trust although the checks refuse it.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Trusted {
+    /// SHA-256 of the certificate.
+    pub fingerprint: [u8; 32],
+    /// The one host it is taken for. None only while signing in, before the account has a
+    /// server: then it is taken for the hosts that sign-in tries.
+    pub host: Option<String>,
+}
+
+impl Trusted {
+    /// Whether it is the certificate `fingerprint`, shown by `host`.
+    fn takes(&self, fingerprint: &[u8; 32], host: &str) -> bool {
+        self.fingerprint == *fingerprint
+            && self
+                .host
+                .as_deref()
+                .is_none_or(|h| h.eq_ignore_ascii_case(host))
+    }
+}
+
 /// The OS checks, but also takes the one certificate the person chose to trust for a server
 /// although the checks refuse it. Notes any other refused certificate.
 #[derive(Debug)]
 pub struct Trusting {
     pub checks: Arc<dyn ServerCertVerifier>,
-    pub trusted: Option<[u8; 32]>,
+    pub trusted: Option<Trusted>,
     /// Where refused certificates go, for a sign-in.
     pub refused: Option<Arc<RefusedCertificates>>,
 }
@@ -72,13 +93,18 @@ impl ServerCertVerifier for Trusting {
             return result;
         };
         let fingerprint = fingerprint(end_entity);
-        if self.trusted == Some(fingerprint) {
+        let host = server_name.to_str();
+        if self
+            .trusted
+            .as_ref()
+            .is_some_and(|t| t.takes(&fingerprint, &host))
+        {
             return Ok(ServerCertVerified::assertion());
         }
         if let Some(refused) = &self.refused {
             let reason = plain(reason);
             refused.note(
-                server_name.to_str().into_owned(),
+                host.into_owned(),
                 Refused {
                     fingerprint,
                     reason,
@@ -186,7 +212,7 @@ mod tests {
     /// Runs `Trusting` over one scripted check, trusting `trusted`, for certificate `[1]`.
     fn trusting(
         check: Result<(), CertificateError>,
-        trusted: Option<[u8; 32]>,
+        trusted: Option<Trusted>,
     ) -> (Result<(), Error>, Option<Refused>) {
         let refused = Arc::new(RefusedCertificates::default());
         let verifier = Trusting {
@@ -212,14 +238,36 @@ mod tests {
 
     #[test]
     fn takes_the_trusted_certificate_the_checks_refuse() {
-        let (result, refused) = trusting(Err(CertificateError::Revoked), Some(fingerprint(&[1])));
+        let (result, refused) = trusting(Err(CertificateError::Revoked), trust(&[1], None));
         assert!(result.is_ok());
         assert_eq!(refused, None);
+        let (result, _) = trusting(
+            Err(CertificateError::NotValidForName),
+            trust(&[1], Some("MAIL.example.com")),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn refuses_the_trusted_certificate_for_another_host() {
+        let (result, refused) = trusting(
+            Err(CertificateError::NotValidForName),
+            trust(&[1], Some("autodiscover.example.com")),
+        );
+        assert!(result.is_err());
+        assert_eq!(refused.unwrap().fingerprint, fingerprint(&[1]));
+    }
+
+    fn trust(certificate: &[u8], host: Option<&str>) -> Option<Trusted> {
+        Some(Trusted {
+            fingerprint: fingerprint(certificate),
+            host: host.map(str::to_owned),
+        })
     }
 
     #[test]
     fn notes_a_refused_certificate_that_is_not_trusted() {
-        let (result, refused) = trusting(Err(CertificateError::Revoked), Some(fingerprint(&[2])));
+        let (result, refused) = trusting(Err(CertificateError::Revoked), trust(&[2], None));
         assert_eq!(
             result,
             Err(Error::InvalidCertificate(CertificateError::Revoked))
