@@ -1,0 +1,35 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuite name="com.ozeromail.app.AccountsMenuTest" tests="27" failures="0" errors="0" skipped="0" time="692.991" timestamp="2026-11-20T18:27:28" hostname="localhost">
+  <properties>
+    <property name="device" value="emulator-5554 - 14" />
+    <property name="flavor" value="" />
+    <property name="project" value=":app" />
+  </properties>
+  <testcase name="holdThenSlideToAnAccountOpensItsInbox" classname="com.ozeromail.app.AccountsMenuTest" time="30.132" />
+  <testcase name="holdLetGoLeavesTheMenuForATap" classname="com.ozeromail.app.AccountsMenuTest" time="19.003" />
+  <testcase name="dragsBetweenEmptyAndFullTabs" classname="com.ozeromail.app.EmptyTabTest" time="55.356" />
+  <testcase name="tapsBetweenEmptyAndFullTabs" classname="com.ozeromail.app.EmptyTabTest" time="64.305" />
+  <testcase name="closingANewMessageLetsGoOfTheKeyboardAtOnce" classname="com.ozeromail.app.KeyboardTest" time="16.207" />
+  <testcase name="tabTapSwitchesTabAndBack" classname="com.ozeromail.app.ListTest" time="36.976" />
+  <testcase name="openALetterAndComeBack" classname="com.ozeromail.app.ListTest" time="19.264" />
+  <testcase name="tabDragSwitchesTab" classname="com.ozeromail.app.ListTest" time="25.266" />
+  <testcase name="aPullOnAnEmptyFolderChecks" classname="com.ozeromail.app.ListTest" time="30.157" />
+  <testcase name="holdAndDrawChoosesRows" classname="com.ozeromail.app.ListTest" time="29.765" />
+  <testcase name="pullChecksAndLeavesTheRowsInPlace" classname="com.ozeromail.app.ListTest" time="17.819" />
+  <testcase name="inboxByDayAndNight" classname="com.ozeromail.app.LookTest" time="12.804" />
+  <testcase name="messageByDayAndNight" classname="com.ozeromail.app.LookTest" time="14.51" />
+  <testcase name="aChipTurnedOnSlidesToTheFrontAndBack" classname="com.ozeromail.app.SearchTest" time="24.463" />
+  <testcase name="neighboursFollowAHeldRow" classname="com.ozeromail.app.SwipeTest" time="19.532" />
+  <testcase name="longSwipeDeletes" classname="com.ozeromail.app.SwipeTest" time="18.347" />
+  <testcase name="dragPastTheEdgeAndBackDoesNothing" classname="com.ozeromail.app.SwipeTest" time="17.6" />
+  <testcase name="longSwipeBackToShortIsDone" classname="com.ozeromail.app.SwipeTest" time="22.058" />
+  <testcase name="dockDraggedUpRaisesTheMailboxes" classname="com.ozeromail.app.SwipeTest" time="17.914" />
+  <testcase name="quickFlickTakesTheRow" classname="com.ozeromail.app.SwipeTest" time="17.695" />
+  <testcase name="doneSwipeTakesTheRowAndRowsBelowCloseUp" classname="com.ozeromail.app.SwipeTest" time="19.07" />
+  <testcase name="shortSwipeSpringsBack" classname="com.ozeromail.app.SwipeTest" time="15.671" />
+  <testcase name="scrollingIsNotASwipe" classname="com.ozeromail.app.SwipeTest" time="15.173" />
+  <testcase name="readSwipeLeavesTheRowInPlace" classname="com.ozeromail.app.SwipeTest" time="14.101" />
+  <testcase name="dockDraggedALittleFallsBack" classname="com.ozeromail.app.SwipeTest" time="18.871" />
+  <testcase name="undoBringsTheRowBack" classname="com.ozeromail.app.SwipeTest" time="16.597" />
+  <testcase name="doneSwipeInTheArchiveMovesBackToInbox" classname="com.ozeromail.app.SwipeTest" time="23.552" />
+</testsuite>
