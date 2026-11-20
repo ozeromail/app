@@ -1,5 +1,6 @@
 package com.ozeromail.app
 
+import android.content.ContentResolver
 import android.content.Intent
 import android.net.MailTo
 import android.net.Uri
@@ -13,8 +14,12 @@ data class Shared(
     val files: List<Uri> = emptyList(),
 )
 
-/** What [intent] asks to write, or null when it asks for no message. */
-fun sharedOf(intent: Intent): Shared? {
+/**
+ * What [intent] asks to write, or null when it asks for no message. Only files another app
+ * gives through its own content provider are taken: a `file:` path or a link to our own
+ * provider would let any app attach this app's private files.
+ */
+fun sharedOf(intent: Intent, ownPackage: String): Shared? {
     val mailto = intent.data?.toString()?.takeIf(MailTo::isMailTo)?.let(MailTo::parse)
     val files = when (intent.action) {
         Intent.ACTION_VIEW, Intent.ACTION_SENDTO -> if (mailto == null) return null else emptyList()
@@ -29,6 +34,6 @@ fun sharedOf(intent: Intent): Shared? {
         cc = addresses(mailto?.cc, Intent.EXTRA_CC),
         subject = intent.getStringExtra(Intent.EXTRA_SUBJECT) ?: mailto?.subject.orEmpty(),
         text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString() ?: mailto?.body.orEmpty(),
-        files = files,
+        files = files.filter { it.scheme == ContentResolver.SCHEME_CONTENT && it.authority?.startsWith(ownPackage) == false },
     )
 }
