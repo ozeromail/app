@@ -29,7 +29,7 @@ use ozero_http::Tls;
 use ozero_imap::rustls::ClientConfig;
 use ozero_imap::rustls::client::ResolvesClientCert;
 use ozero_imap::rustls::client::danger::ServerCertVerifier;
-use ozero_imap::{ImapSession, RefusedCertificates, Watch};
+use ozero_imap::{ImapSession, RefusedCertificates, Trusted, Watch};
 use ozero_mime::{MimeBuilder, MimeParser};
 use ozero_smtp::SmtpSession;
 use ozero_store_sqlite::SqliteStore;
@@ -167,8 +167,8 @@ async fn sender_name(gmail: &mut GmailSession) -> Option<String> {
     })
 }
 
-/// A client certificate's name and a trusted server certificate's SHA-256.
-type TlsKey = (Option<String>, Option<[u8; 32]>);
+/// A client certificate's name and a trusted server certificate.
+type TlsKey = (Option<String>, Option<Trusted>);
 
 /// The mail core of one app install: the encrypted database and the network.
 #[derive(uniffi::Object)]
@@ -1511,13 +1511,19 @@ impl Core {
         password: String,
     ) -> Result<i64, CoreError> {
         let trusted = trusted.as_deref().and_then(unhex);
+        // Any host this sign-in tries: the account has no server yet. Saved, it is bound to
+        // the account's server alone.
+        let trusting = trusted.map(|fingerprint| Trusted {
+            fingerprint,
+            host: None,
+        });
         let certificate = certificate.filter(|c| !c.is_empty());
         // Its own, so a refused certificate it finds is this sign-in's.
         let refused = Arc::new(RefusedCertificates::default());
         let client = self.client_certificate(certificate.as_deref())?;
-        let tls = tls_config(client, trusted, Some(refused.clone()))?;
+        let tls = tls_config(client, trusting.clone(), Some(refused.clone()))?;
         let active_sync = self
-            .tunnel(certificate.as_deref(), trusted, Some(refused.clone()))?
+            .tunnel(certificate.as_deref(), trusting, Some(refused.clone()))?
             .unwrap_or_else(|| tls.clone().into());
         let added = self
             .add_exchange(
@@ -2742,10 +2748,17 @@ impl Core {
         Ok(self.store.add_account(&account)?.0)
     }
 
-    /// The server certificate the person chose to trust for a saved account, if any.
-    fn trusted(&self, account: AccountId) -> Result<Option<[u8; 32]>, CoreError> {
+    /// The server certificate the person chose to trust for a saved account, if any, taken
+    /// only for the account's own server.
+    fn trusted(&self, account: AccountId, host: &str) -> Result<Option<Trusted>, CoreError> {
         let trusted = self.store.provider_state(account, TRUSTED)?;
-        Ok(trusted.as_deref().and_then(unhex))
+        Ok(trusted
+            .as_deref()
+            .and_then(unhex)
+            .map(|fingerprint| Trusted {
+                fingerprint,
+                host: Some(host.to_owned()),
+            }))
     }
 
     /// A Gmail inbox opened to wait in IDLE, signed in to Gmail's IMAP with the account's API
@@ -2880,8 +2893,9 @@ impl Core {
         let server = account.server.as_ref().ok_or_else(|| CoreError::Storage {
             detail: "no Exchange server".into(),
         })?;
-        let (certificate, trusted) = (server.certificate.as_deref(), self.trusted(account.id)?);
-        let tls = match self.tunnel(certificate, trusted, None)? {
+        let certificate = server.certificate.as_deref();
+        let trusted = self.trusted(account.id, &server.host)?;
+        let tls = match self.tunnel(certificate, trusted.clone(), None)? {
             Some(tunnel) => tunnel,
             None => self.tls_for(certificate, trusted)?.into(),
         };
@@ -2898,7 +2912,10 @@ impl Core {
         let server = account.server.as_ref().ok_or_else(|| CoreError::Storage {
             detail: "no Exchange server".into(),
         })?;
-        let tls = self.tls_for(server.certificate.as_deref(), self.trusted(account.id)?)?;
+        let tls = self.tls_for(
+            server.certificate.as_deref(),
+            self.trusted(account.id, &server.host)?,
+        )?;
         let mut ews = EwsSession::new(tls, server, password);
         ews.check().await?;
         Ok(ews)
@@ -3170,16 +3187,16 @@ impl Core {
     }
 
     /// TLS settings that offer the platform's client certificate `certificate`, if any, and
-    /// take the server certificate `trusted`, the SHA-256 of one the person chose to trust.
+    /// take the server certificate `trusted`, one the person chose to trust.
     fn tls_for(
         &self,
         certificate: Option<&str>,
-        trusted: Option<[u8; 32]>,
+        trusted: Option<Trusted>,
     ) -> Result<Arc<ClientConfig>, CoreError> {
         if certificate.is_none() && trusted.is_none() {
             return self.tls();
         }
-        let key = (certificate.map(str::to_owned), trusted);
+        let key = (certificate.map(str::to_owned), trusted.clone());
         let mut built = self
             .certificate_tls
             .lock()
@@ -3197,7 +3214,7 @@ impl Core {
     fn tunnel(
         &self,
         certificate: Option<&str>,
-        trusted: Option<[u8; 32]>,
+        trusted: Option<Trusted>,
         refused: Option<Arc<RefusedCertificates>>,
     ) -> Result<Option<Tls>, CoreError> {
         let (Some(certificate), Some(tls)) = (certificate, self.platform_tls.get()) else {
@@ -3610,7 +3627,7 @@ fn now() -> i64 {
 
 fn tls_config(
     client: Option<Arc<dyn ResolvesClientCert>>,
-    trusted: Option<[u8; 32]>,
+    trusted: Option<Trusted>,
     refused: Option<Arc<RefusedCertificates>>,
 ) -> Result<Arc<ClientConfig>, CoreError> {
     ready()?;
@@ -3621,7 +3638,7 @@ fn tls_config(
 
 /// The checks `tls_config` builds into its settings, for the platform's TLS to ask.
 fn server_checks(
-    trusted: Option<[u8; 32]>,
+    trusted: Option<Trusted>,
     refused: Option<Arc<RefusedCertificates>>,
 ) -> Result<Arc<dyn ServerCertVerifier>, CoreError> {
     ready()?;

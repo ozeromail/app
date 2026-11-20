@@ -84,13 +84,13 @@ impl std::fmt::Debug for ImapSession {
 pub use tokio_rustls::rustls;
 use tokio_rustls::rustls::client::danger::ServerCertVerifier;
 
-pub use verify::{Refused, RefusedCertificates, fingerprint};
+pub use verify::{Refused, RefusedCertificates, Trusted, fingerprint};
 
 /// TLS settings that check servers with `platform_checks`. `client` offers a client
 /// certificate to a server that asks for one.
 pub fn platform_tls(
     client: Option<Arc<dyn rustls::client::ResolvesClientCert>>,
-    trusted: Option<[u8; 32]>,
+    trusted: Option<Trusted>,
     refused: Option<Arc<RefusedCertificates>>,
 ) -> Result<Arc<ClientConfig>, ProviderError> {
     let builder = ClientConfig::builder()
@@ -104,11 +104,11 @@ pub fn platform_tls(
 }
 
 /// Checks a server certificate as the OS does, with the same root certificates.
-/// On Android the verifier must be initialized from Kotlin first. `trusted` is the SHA-256 of
-/// a server certificate the person chose to trust although the checks refuse it; refused ones
+/// On Android the verifier must be initialized from Kotlin first. `trusted` is a server
+/// certificate the person chose to trust although the checks refuse it; refused ones
 /// go to `refused`, for a sign-in.
 pub fn platform_checks(
-    trusted: Option<[u8; 32]>,
+    trusted: Option<Trusted>,
     refused: Option<Arc<RefusedCertificates>>,
 ) -> Result<Arc<dyn ServerCertVerifier>, ProviderError> {
     let provider = ClientConfig::builder().crypto_provider().clone();
