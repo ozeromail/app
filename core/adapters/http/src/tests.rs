@@ -57,6 +57,14 @@ async fn reads_to_the_end_without_a_length() {
 }
 
 #[tokio::test]
+async fn skips_many_interim_responses_without_recursion() {
+    let mut stream = b"HTTP/1.1 100 \r\n\r\n".repeat(3_000);
+    stream.extend_from_slice(b"HTTP/1.1 204 No Content\r\n\r\n");
+    let (response, _) = read(&stream).await.unwrap();
+    assert_eq!(response.status, 204);
+}
+
+#[tokio::test]
 async fn has_no_body_for_204_and_skips_100() {
     let (response, keep) = read(b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 204 No Content\r\n\r\n")
         .await

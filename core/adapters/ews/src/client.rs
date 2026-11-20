@@ -17,7 +17,6 @@ enum Scheme {
     Ntlm(&'static str),
 }
 
-#[derive(Debug)]
 pub struct Client {
     http: HttpsClient,
     path: String,
@@ -29,6 +28,17 @@ pub struct Client {
     bound: bool,
     /// Asks unsigned first, so the password goes only to a server that asks for a login.
     probe: bool,
+}
+
+/// Leaves the password out, so no log can carry it.
+impl std::fmt::Debug for Client {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Client")
+            .field("path", &self.path)
+            .field("login", &self.login)
+            .field("scheme", &self.scheme)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Client {

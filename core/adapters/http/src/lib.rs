@@ -429,17 +429,25 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
     fn head(&mut self) -> Result<Option<(Response, Length, bool)>, ProviderError> {
         let mut headers = [httparse::EMPTY_HEADER; MAX_HEADERS];
         let mut parsed = httparse::Response::new(&mut headers);
-        let size = match parsed.parse(&self.buf) {
-            Ok(httparse::Status::Complete(size)) => size,
-            Ok(httparse::Status::Partial) => return Ok(None),
-            Err(e) => return Err(protocol(format!("bad response: {e}"))),
+        // Skipped 1xx responses at the start of `buf`: we send no Expect, so nothing should
+        // wait for one, but a server may send them all the same, thousands in one read.
+        let mut skip = 0;
+        let (size, status) = loop {
+            let size = match parsed.parse(&self.buf[skip..]) {
+                Ok(httparse::Status::Complete(size)) => size,
+                Ok(httparse::Status::Partial) => {
+                    self.buf.drain(..skip);
+                    return Ok(None);
+                }
+                Err(e) => return Err(protocol(format!("bad response: {e}"))),
+            };
+            let status = parsed.code.ok_or_else(|| protocol("no status"))?;
+            if !(100..200).contains(&status) {
+                break (size, status);
+            }
+            skip += size;
+            parsed = httparse::Response::new(&mut headers);
         };
-        let status = parsed.code.ok_or_else(|| protocol("no status"))?;
-        if (100..200).contains(&status) {
-            // We send no Expect, so nothing should wait for one; skip it all the same.
-            self.buf.drain(..size);
-            return self.head();
-        }
         let header = |name| values(parsed.headers, name);
         let close = header("connection").iter().any(|v| v == "close");
         let chunked = header("transfer-encoding")
@@ -467,7 +475,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
             authenticate: all(parsed.headers, "www-authenticate"),
             body: Vec::new(),
         };
-        self.buf.drain(..size);
+        self.buf.drain(..skip + size);
         Ok(Some((response, length, close)))
     }
 

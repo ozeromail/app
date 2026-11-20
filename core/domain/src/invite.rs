@@ -834,7 +834,8 @@ fn yearly_rule(rule: &str) -> Option<(i64, i64, u8)> {
 /// The day (since the epoch) of the `nth` `weekday` (0 for Monday) of a month; a negative
 /// `nth` counts from the month's end.
 fn nth_weekday(year: i64, month: i64, nth: i64, weekday: u8) -> Option<i64> {
-    if !(1..=12).contains(&month) || nth == 0 {
+    // A month has at most five of each weekday; past that the arithmetic below overflows.
+    if !(1..=12).contains(&month) || !matches!(nth, -5..=-1 | 1..=5) {
         return None;
     }
     let weekday = i64::from(weekday);

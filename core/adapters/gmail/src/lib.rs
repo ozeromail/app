@@ -40,7 +40,6 @@ const BATCH_PACE: Duration = Duration::from_millis(500);
 const POLL: Duration = Duration::from_secs(60);
 
 /// A Gmail mailbox, signed in with an access token.
-#[derive(Debug)]
 pub struct GmailSession {
     http: HttpsClient,
     auth: String,
@@ -48,6 +47,13 @@ pub struct GmailSession {
     last_history: Option<(u64, Vec<Touched>, u64)>,
     /// When the last batch went out.
     last_batch: Option<Instant>,
+}
+
+/// Leaves the token out, so no log can carry it.
+impl std::fmt::Debug for GmailSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GmailSession").finish_non_exhaustive()
+    }
 }
 
 impl GmailSession {
