@@ -366,7 +366,7 @@ class Mail(private val context: Context) {
     suspend fun searchDirectory(text: String): List<PersonFound> =
         eachAccount(INBOX, which = { it.kind == AccountKind.EXCHANGE }) { account, password ->
             core.searchDirectory(account.id, password, text)
-        }.flatten()
+        }.flatten().distinctBy { it.email.lowercase() }
 
     /** The name to show for each of [emails] on its chip: the contacts', the mail's or the address. */
     suspend fun recipientNames(emails: List<String>): List<String> = io { core.recipientNames(emails) }
@@ -551,7 +551,14 @@ class Mail(private val context: Context) {
      */
     suspend fun quickReply(message: MessageItem, text: String) {
         val answer = reply(message, all = false)
-        send(answer.copy(id = 0, cc = "", quote = "", files = emptyList(), text = richEscape(text.trim())))
+            .copy(id = 0, cc = "", quote = "", files = emptyList(), text = richEscape(text.trim()))
+        try {
+            send(answer)
+        } catch (e: CoreException) {
+            // Typed where nothing shows it again: keep it in Drafts rather than lose it.
+            saveDraft(answer)
+            throw e
+        }
         // Only once it is sent: unread, a failed answer is not forgotten.
         markRead(listOf(message))
     }
@@ -716,14 +723,18 @@ class Mail(private val context: Context) {
         // One at a time: a second would download the same mail.
         if (prefetching?.isActive == true) return
         prefetching = background.launch {
-            for (account in core.accounts()) {
-                try {
-                    val password = vault.password(account.email) ?: continue
-                    core.prefetch(account.id, password)
-                } catch (e: CoreException) {
-                    // The reader downloads what is left when a message opens.
-                    Log.w("Ozero", "prefetch failed", e)
+            // The reader downloads what is left when a message opens.
+            try {
+                for (account in core.accounts()) {
+                    try {
+                        val password = vault.password(account.email) ?: continue
+                        core.prefetch(account.id, password)
+                    } catch (e: CoreException) {
+                        Log.w("Ozero", "prefetch failed", e)
+                    }
                 }
+            } catch (e: CoreException) {
+                Log.w("Ozero", "prefetch failed", e)
             }
         }
     }

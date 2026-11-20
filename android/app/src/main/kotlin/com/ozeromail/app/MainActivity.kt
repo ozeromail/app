@@ -54,7 +54,7 @@ class MainActivity : ComponentActivity() {
         if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
         val mail = (application as OzeroApp).mail
         val uri = intent.data
-        if (uri?.scheme == packageName) mail.googleRedirects.trySend(uri.toString()) else sharedOf(intent)?.let { mail.shared.trySend(it) }
+        if (uri?.scheme == packageName) mail.googleRedirects.trySend(uri.toString()) else sharedOf(intent, packageName)?.let { mail.shared.trySend(it) }
     }
 }
 

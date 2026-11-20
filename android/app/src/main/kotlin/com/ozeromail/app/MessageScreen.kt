@@ -1452,7 +1452,8 @@ private fun QuickReply(
                 tint = colors.onAccent,
                 shape = CircleShape,
                 size = 44.dp,
-                enabled = !busy,
+                // An empty answer would go out with only the signature.
+                enabled = !busy && text.isNotBlank(),
             )
         }
     }

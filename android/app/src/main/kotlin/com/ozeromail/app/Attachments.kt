@@ -714,7 +714,8 @@ private fun decode(file: File): ImageBitmap? = try {
 private val IMAGES = setOf("image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp", "image/heic", "image/heif", "image/bmp")
 private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif", "webp", "heic", "heif", "bmp")
 /** Characters no file system takes in a name, and control characters. */
-private val UNSAFE = Regex("""[\\/:*?"<>|\p{Cntrl}]""")
+// Control and format characters, such as U+202E that shows "gpj.exe" as "exe.jpg".
+private val UNSAFE = Regex("""[\\/:*?"<>|\p{Cc}\p{Cf}]""")
 private const val MAX_NAME_BYTES = 200
 private const val MAX_EXTENSION = 10
 private const val CHIPS = 2
